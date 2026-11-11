@@ -4,8 +4,49 @@ import path from 'node:path';
 import { Card, CardRun, Goal, type ActorIdentity, type DeliveryTarget, type StageStatus } from '../../src/core/types.ts';
 import type { StatePaths } from '../../src/state/paths.ts';
 
-export function tmpDir(): string {
-  return mkdtempSync(path.join(os.tmpdir(), 'aidlc-'));
+const tempDirs = new Set<string>();
+let exitHandlerRegistered = false;
+
+/**
+ * Creates a directory under `parent` and registers it for removal when this process exits normally.
+ * Ownership: the process that creates a directory through `tmpDir` owns its removal. A process it starts
+ * with that directory as its working directory or argument must be done with it before the owner exits,
+ * and a child process never creates through `tmpDir` a directory its parent reads after the child exits.
+ * A process that is killed before its exit handler runs leaves its directories.
+ */
+export function tmpDir(prefix = 'aidlc-', parent = os.tmpdir()): string {
+  const dir = mkdtempSync(path.join(parent, prefix));
+  tempDirs.add(dir);
+  if (!exitHandlerRegistered) {
+    exitHandlerRegistered = true;
+    process.once('exit', () => void removeTempDirs());
+  }
+  return dir;
+}
+
+/**
+ * Removes every directory `tmpDir` recorded, synchronously. A removal that throws (on Windows EBUSY or EPERM
+ * while a process still holds the directory) is reported on stderr and the directory is left, still recorded.
+ * Returns the directories it left; never throws and never changes the exit code.
+ */
+export function removeTempDirs(remove: (dir: string) => void = (dir) => rmSync(dir, { recursive: true, force: true, maxRetries: 3 })): string[] {
+  const left: string[] = [];
+  for (const dir of [...tempDirs]) {
+    try {
+      remove(dir);
+      tempDirs.delete(dir);
+    } catch (error) {
+      left.push(dir);
+      try {
+        const code = (error as { code?: unknown } | null)?.code;
+        process.stderr.write(`aidlc tests: could not remove ${dir} (${typeof code === 'string' ? code : 'unknown'})
+`);
+      } catch {
+        /* reporting is best effort */
+      }
+    }
+  }
+  return left;
 }
 
 export function cleanup(dir: string): void {

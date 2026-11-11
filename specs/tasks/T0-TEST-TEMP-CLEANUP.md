@@ -61,3 +61,12 @@ npm run typecheck && node --test tests/surface/test-temp-cleanup.test.ts tests/s
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+| item | test or command | result |
+|---|---|---|
+| 1 | test-temp-cleanup.test.ts "a directory from tmpDir is removed when its process exits" | pass (fails on main: directory left) |
+| 2 | same file, "the owner removes a directory its child used once the child is done" | pass (fails on main) |
+| 3 | same file, "a removal that fails is reported and left, and the others are removed" | pass (fails on main: no export removeTempDirs) |
+| 4 | same file, "the fixtures that leaked leave nothing in the temporary directory" | pass (fails on main: aidlc-hooks-, -discovery-, -audit-, -prereview-, -panel-join-, -answer-marker-, -scn- left) |
+| 5 | dod_command, exit 0: tests 196, pass 192, fail 0, skipped 4 (the skips exist on main) | pass |

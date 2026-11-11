@@ -38,10 +38,12 @@ function runModule(scratch: string, source: string) {
 test('a directory from tmpDir is removed when its process exits', () => {
   inScratch((scratch) => {
     const r = runModule(scratch, `
-      import { writeFileSync } from 'node:fs';
+      import { mkdirSync, writeFileSync } from 'node:fs';
       import path from 'node:path';
       import { tmpDir } from ${JSON.stringify(helpersUrl)};
-      const dir = tmpDir('aidlc-tt-');
+      const parent = path.join(${JSON.stringify(scratch)}, 'parent');
+      mkdirSync(parent);
+      const dir = tmpDir('aidlc-tt-', parent);
       writeFileSync(path.join(dir, 'f.txt'), 'x');
       console.log(dir);
     `);
@@ -49,6 +51,7 @@ test('a directory from tmpDir is removed when its process exits', () => {
     assert.equal(r.exit, 0, r.stderr);
     assert.equal(existsSync(dir), false, `left: ${dir}`);
     assert.ok(path.basename(dir).startsWith('aidlc-tt-'), `printed: ${r.stdout}`);
+    assert.equal(path.dirname(dir), path.join(scratch, 'parent'));
   });
 });
 
@@ -86,6 +89,8 @@ test('a removal that fails is reported and left, and the others are removed', ()
     const out = JSON.parse(r.stdout.trim().split('\n').pop() ?? '{}') as { busy: string; left: string[]; gone: boolean[] };
     assert.deepEqual(out.left, [out.busy]);
     assert.deepEqual(out.gone, [true, false, true]);
+    // The directory it left stays recorded, so the exit handler removes it once the remover works again.
+    assert.equal(existsSync(out.busy), false, `left at exit: ${out.busy}`);
     assert.ok(r.stderr.split('\n').includes(`aidlc tests: could not remove ${out.busy} (EBUSY)`), r.stderr);
   });
 });
