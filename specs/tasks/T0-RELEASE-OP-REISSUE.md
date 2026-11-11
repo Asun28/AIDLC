@@ -64,3 +64,21 @@ npm run typecheck && node --test tests/scenarios/release-reissue.test.ts tests/s
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the two existing release files pass unchanged.
+
+## Attempt evidence
+
+Attempt 1 (effort high). RED receipt `fad53d99` (the test file alone, sources of main): all 9 tests failed; acceptance 1, 2, 5, 6 and 7 at `'stage' !== 'wait'`, `'stage' !== 'stop'` or `'observe' !== 'wait'` (the step was issued again), 3 at the `stage-deploy` step carrying a second operation id, 4 and 9 at `2 !== 1` deploy runs, 8 at a deploy run where none is allowed. The GREEN commit corrects one assertion of acceptance 1 that read every ledger record of the goal (the card's merge operation included) to the attempt's records, and adds the cases the revert check asked for (an `intended` record of the attempt without the step's key; the `na` and empty digest keys; an attempt that already lists the adopted operation; the records read before the binding; evidence environment, digest and kind). Each source hunk was reverted on its own and the tests run: every revert fails a test except the no-step arm of the association predicate (no caller in this card; T0-STAGING-LEASE-RELEASE uses it) and the `cancelled` to `failed` mapping of the adopted step, which the step sync at the top of `next` derives again from the record before any reader sees the step.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/release-reissue.test.ts` "a staging deploy interrupted while its command ran is not issued again; release next waits on the intended operation and names aidlc ops reconcile" | pass |
+| 2 | same file, "an intended release operation past the reconciliation grace stops the attempt for time and lists it" | pass |
+| 3 | same file, "each outcome aidlc ops reconcile records settles the step with no second deploy" | pass |
+| 4 | same file, "a deploy whose result was recorded but whose attempt save was lost becomes the step and is not issued again" | pass |
+| 5 | same file, "an interrupted production deploy and an interrupted recovery wait on their intended operation" | pass |
+| 6 | same file, "a record that matches the step only by its key is waited on before the grace and stops the attempt after it" | pass |
+| 7 | same file, "only the step's exact key matches, and every status has one outcome" | pass |
+| 8 | same file, "an adopted production deploy and an adopted recovery keep the effects of the transitions that follow" | pass |
+| 9 | same file, "two callers of one step record one intent and dispatch once" | pass |
+| 10 | `tests/scenarios/release.test.ts` and `tests/scenarios/release-publication.test.ts`, unchanged | pass |
+| 11 | docs/OPERATIONS.md (Standalone release), docs/ARCHITECTURE.md (`reconcile.ts` sentence), CHANGELOG.md (Unreleased, above T0-SCAN-SETUP-STEP-2) | for the reviewer |

@@ -142,6 +142,14 @@ Without `--by`, `aidlc authorize`, `aidlc plan approve` and `aidlc report --resu
 
 A BREACH routes to RECOVER only with a `recovery` authorization (`aidlc authorize recovery --env production --ops rollback --recovery '{"eligibleBaseline":"v1.4.2","healthTrigger":"5xx>2%","procedure":"rollback","migrationCompatibility":"expand-only","windowMs":1800000,"owner":"oncall"}'`); the attempt closes as `recovered`, and the goal stops with `release-health` so a new candidate re-enters with fresh approval.
 
+A release step whose operation the ledger already holds is never issued again (card T0-RELEASE-OP-REISSUE). The staging deploy, the production deploy and the recovery each record a ledger operation with the idempotency key `<attemptId>:<step>:<candidateDigest>` (`na` without a digest). Before `release next` issues one of these steps it reads the goal's records with exactly that key, whatever their `releaseAttempt`, and records the intent only when there is none, both in one section of the environment lease lock; the command runs after the section, so two callers of one session record one intent and run the command once. What the records decide:
+
+- A record of another kind under the step's key (a `rollback` under a deploy step, a `deploy` under `recover`), in any status, stops the attempt with STOP/audit and the next action `reconcile the ledger record by hand; the release step is not issued again`.
+- A record that is `intended` (the process ended or the command threw while it ran), `issued`, `running` or `UNKNOWN` makes `release next` wait on `unknown:<ids>` until the attempt deadline plus 5 minutes, without saving the attempt, and then stop with STOP/time listing the records. An `intended` or `UNKNOWN` operation of the attempt waits the same way. The wait names, for each record, `aidlc ops reconcile <id> --status <succeeded|failed|cancelled|UNKNOWN>` (or `--status running --provider-id <id>`) and then `aidlc release next <attemptId>`: the command may still be running, so look its outcome up at the provider first.
+- When every record is `succeeded`, `failed` or `cancelled`, the last one becomes the step (`cancelled` counts as `failed`), with its id in the attempt's operations and an `op-<id>` evidence entry, and `release next` continues as after an issued step: a failed production deploy enters RECOVER with a matching recovery authorization and a bound `recover` operation, else STOP/rollback-auth.
+
+After `aidlc ops reconcile <id> --status <s>`, `succeeded`, `failed` and `cancelled` settle the step on the next `release next`, `running` with `--provider-id` is looked up by the bound status command, and `UNKNOWN` keeps the wait. `aidlc goal reconcile <goalId>` lists an `intended` operation as `manual: aidlc ops reconcile <id> --status <s>`, since it has no provider id.
+
 ### Incident -> intent
 
 ```bash

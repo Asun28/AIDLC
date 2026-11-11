@@ -11,7 +11,7 @@ import { assertReleaseTransition, finalStateForTarget, nextAfterObserve, transit
 import { evaluateHealth, windowElapsed } from '../core/health.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket } from '../core/authorization.ts';
-import { ReleaseAttempt, addMs, type Goal, type HealthSignal, type ReleaseState } from '../core/types.ts';
+import { ReleaseAttempt, addMs, type Goal, type HealthSignal, type OperationRecord, type ReleaseState } from '../core/types.ts';
 import { executeOperation, loadDeliveryOps, lookupOperation, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
@@ -45,6 +45,27 @@ export type ReleaseDirective =
   | { kind: 'close'; attemptId: string; narration: string }
   | { kind: 'done'; attemptId: string; disposition: string; narration: string }
   | { kind: 'stop'; attemptId: string; stop: NonNullable<ReleaseAttempt['stop']>; narration: string };
+
+/** The release steps `issue` records an operation for, and the kind of that operation. */
+const RELEASE_STEP_KINDS = { 'stage-deploy': 'deploy', 'apply-deploy': 'deploy', recover: 'rollback' } as const;
+type ReleaseStep = keyof typeof RELEASE_STEP_KINDS;
+
+/** The idempotency key `issue` gives the operation of a release step; `na` stands for an absent candidate digest. */
+function releaseStepKey(attempt: ReleaseAttempt, step: ReleaseStep): string {
+  return `${attempt.id}:${step}:${attempt.candidateDigest ?? 'na'}`;
+}
+
+/**
+ * The association of a ledger record with a release attempt. Without `step`: the record belongs to the attempt when it is of
+ * the attempt's goal and names the attempt as its `releaseAttempt` or carries one of the attempt's release-step keys. With
+ * `step`: the record matches that step when it is of the attempt's goal and carries that step's key, whatever its
+ * `releaseAttempt`. Keys compare as exact strings; the provider id is never read (an `intended` record has none).
+ */
+function releaseOperationOf(record: OperationRecord, attempt: ReleaseAttempt, step?: ReleaseStep): boolean {
+  if (record.goalId !== attempt.goalId) return false;
+  if (step) return record.idempotencyKey === releaseStepKey(attempt, step);
+  return record.releaseAttempt === attempt.id || (Object.keys(RELEASE_STEP_KINDS) as ReleaseStep[]).some((s) => record.idempotencyKey === releaseStepKey(attempt, s));
+}
 
 export class ReleaseRunner {
   readonly paths: StatePaths;
@@ -145,12 +166,9 @@ export class ReleaseRunner {
     if (JSON.stringify(syncedSteps) !== JSON.stringify(attempt.steps)) attempt = this.save({ ...attempt, steps: syncedSteps });
     const still = this.ops.list({ goalId: goal.id }).filter((o) => o.releaseAttempt === attempt.id && ['issued', 'running'].includes(o.status));
     if (still.length) return { attempt, directive: { kind: 'wait', attemptId: attempt.id, on: `operations:${still.map((o) => o.id).join(',')}`, narration: 'Provider operations still running; wait on the known operation ids.' } };
-    const unknown = this.ops.list({ goalId: goal.id }).filter((o) => o.releaseAttempt === attempt.id && o.status === 'UNKNOWN');
-    if (unknown.length && Date.parse(now) > Date.parse(addMs(attempt.deadline, 5 * 60 * 1000))) {
-      const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('time', 'reconciliation grace expired with UNKNOWN release operations', 'hand off environment and operation ids to the named owner', { at: now, unresolvedOperations: unknown.map((o) => o.id) }), disposition: 'failed' });
-      return stopOut(stopped);
-    }
-    if (unknown.length) return { attempt, directive: { kind: 'wait', attemptId: attempt.id, on: `unknown:${unknown.map((o) => o.id).join(',')}`, until: addMs(attempt.deadline, 5 * 60 * 1000), narration: 'Operations with UNKNOWN outcome block dependent steps until reconciled.' } };
+    // An `intended` operation is one of unknown outcome: its command may have run before the process ended.
+    const unknown = this.ops.list({ goalId: goal.id }).filter((o) => o.releaseAttempt === attempt.id && ['intended', 'UNKNOWN'].includes(o.status));
+    if (unknown.length) return this.unknownOutcome(attempt, unknown, now);
 
     // Environment ownership for external mutation states.
     if (['STAGE', 'APPLY', 'RECOVER'].includes(attempt.state) && attempt.environment) {
@@ -298,19 +316,65 @@ export class ReleaseRunner {
     return this.next(goal, saved);
   }
 
-  private issue(goal: Goal, attempt: ReleaseAttempt, role: 'deploy' | 'recover', stepName: string, environment: string, phase: string): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
+  /**
+   * Operations of the attempt whose outcome is not recorded: a wait naming the commands that record it until the
+   * reconciliation grace (the attempt deadline plus 5 minutes) ends, then a saved STOP for time listing them.
+   */
+  private unknownOutcome(attempt: ReleaseAttempt, ops: OperationRecord[], now: string): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
+    const until = addMs(attempt.deadline, 5 * 60 * 1000);
+    if (Date.parse(now) > Date.parse(until)) {
+      const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('time', 'reconciliation grace expired with UNKNOWN release operations', 'hand off environment and operation ids to the named owner', { at: now, unresolvedOperations: ops.map((o) => o.id) }), disposition: 'failed' });
+      return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
+    }
+    const commands = ops.map((o) => `\`aidlc ops reconcile ${o.id} --status <succeeded|failed|cancelled|UNKNOWN>\` (or \`--status running --provider-id <id>\`)`).join('; ');
+    const narration = `The outcome of release operation(s) ${ops.map((o) => o.id).join(', ')} is not recorded: the command of the step may still be running, and the step is not issued again until its outcome is recorded. Look the outcome up at the provider and record it with ${commands}, then run \`aidlc release next ${attempt.id}\`.`;
+    return { attempt, directive: { kind: 'wait', attemptId: attempt.id, on: `unknown:${ops.map((o) => o.id).join(',')}`, until, narration } };
+  }
+
+  /**
+   * A step whose operation the ledger already holds is never issued again: a record of another kind stops the attempt for
+   * audit, a record without a recorded outcome waits, and otherwise the last terminal record becomes the step as `issue`
+   * records an operation it ran.
+   */
+  private settleStep(goal: Goal, attempt: ReleaseAttempt, stepName: ReleaseStep, matches: OperationRecord[], now: string): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
+    const foreign = matches.find((o) => o.kind !== RELEASE_STEP_KINDS[stepName]);
+    if (foreign) {
+      const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('audit', `ledger operation ${foreign.id} of kind ${foreign.kind} carries the key of release step ${stepName}, whose operation is of kind ${RELEASE_STEP_KINDS[stepName]}`, 'reconcile the ledger record by hand; the release step is not issued again', { at: now, global: false }), disposition: 'failed' });
+      return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
+    }
+    const open = matches.filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status));
+    if (open.length) return this.unknownOutcome(attempt, open, now);
+    const op = matches[matches.length - 1]!;
+    const steps = [...attempt.steps.filter((s) => s.name !== stepName), { name: stepName, status: op.status === 'succeeded' ? ('succeeded' as const) : ('failed' as const), operationId: op.id }];
+    const operations = attempt.operations.includes(op.id) ? attempt.operations : [...attempt.operations, op.id];
+    const evidence = attempt.evidence.some((e) => e.id === `op-${op.id}`) ? attempt.evidence : [...attempt.evidence, { id: `op-${op.id}`, kind: op.kind === 'deploy' ? ('deploy' as const) : ('recovery' as const), createdAt: now, candidateDigest: attempt.candidateDigest, environment: op.target, note: op.error }];
+    return this.next(goal, this.save({ ...attempt, steps, operations, evidence }));
+  }
+
+  private issue(goal: Goal, attempt: ReleaseAttempt, role: 'deploy' | 'recover', stepName: ReleaseStep, environment: string, phase: string): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
     const now = this.clock();
     const binding = this.binding(role);
+    const unauthorizedPublication = binding?.triggersPublication && !goal.authorizations.some((a) => a.kind === 'production' && a.environment === environment);
+    const idempotencyKey = releaseStepKey(attempt, stepName);
+    // Read the step's ledger records and, only when there is none, record the intent, in one section of the environment lease
+    // lock; the section returns the lease unchanged, and the command runs only after it.
+    let matches: OperationRecord[] = [];
+    let recorded: OperationRecord | undefined;
+    this.leases.update(resourceKeys.environment(environment), (lease) => {
+      matches = this.ops.list().filter((o) => releaseOperationOf(o, attempt, stepName));
+      if (!matches.length && binding && !unauthorizedPublication) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
+      return lease;
+    });
+    if (matches.length) return this.settleStep(goal, attempt, stepName, matches, now);
     if (!binding) {
       const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-config', `operation ${role} is NOT CONFIGURED`, 'bind it in aidlc.ops.json', { at: now, global: false }), disposition: 'failed' });
       return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
     }
-    if (binding.triggersPublication && !goal.authorizations.some((a) => a.kind === 'production' && a.environment === environment)) {
+    if (unauthorizedPublication) {
       const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-auth', `${role} triggers external publication and no production authority names ${environment}`, 'authorize before any tag/release action that publishes', { at: now, global: false }) });
       return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
     }
-    const idempotencyKey = `${attempt.id}:${stepName}:${attempt.candidateDigest ?? 'na'}`;
-    const intent = this.ops.recordIntent({ kind: role === 'deploy' ? 'deploy' : 'rollback', goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
+    const intent = recorded!;
     this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, generation: goal.generation, data: { operationId: intent.id, kind: intent.kind, target: environment, step: stepName } });
     const exec = executeOperation(binding, environment, { runner: this.runner, idempotencyKey, cwd: this.repo.mainRoot });
     this.ops.markIssued(intent.id, exec.providerOperationId, now);
