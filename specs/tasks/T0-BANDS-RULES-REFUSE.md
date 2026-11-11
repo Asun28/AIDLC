@@ -1,7 +1,7 @@
 ---
 id: T0-BANDS-RULES-REFUSE
 title: bands.yaml refuses every rules value but western_electric, threshold included, with an error at the key rules that names the supported value, so aidlc monitor check exits 1 before any band runs instead of running the Western Electric rules in place of a threshold rule that does not exist
-status: todo
+status: merged
 branch: T0-BANDS-RULES-REFUSE
 worktree: D:\wt\AIDLC\T0-BANDS-RULES-REFUSE
 allow_paths:
