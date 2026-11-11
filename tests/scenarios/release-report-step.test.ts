@@ -12,6 +12,7 @@ import { ReleaseAttempt, HOUR_MS, addMs } from '../../src/core/types.ts';
 import { DeliveryOpsConfig, type OpsLoad } from '../../src/delivery/ops.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { resourceKeys } from '../../src/coordination/lease.ts';
+import { cleanup } from '../infra/helpers.ts';
 import type { SyncRunner } from '../../src/probes/exec.ts';
 
 type Fx = ReturnType<typeof makeFixture>;
@@ -44,7 +45,7 @@ const UNREADABLE: OpsLoad = { status: 'unreadable', file: 'aidlc.ops.json', erro
 
 function setup(t: TestContext): { fx: Fx; goalId: string } {
   const fx = makeFixture();
-  t.after(() => fx.cleanup());
+  t.after(() => cleanup(fx.tmp));
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
   return { fx, goalId: goalForCards(fx, ['T1-HELLO'], { target: 'production' }).id };
 }
