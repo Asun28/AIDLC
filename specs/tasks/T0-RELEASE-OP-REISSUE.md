@@ -1,7 +1,7 @@
 ---
 id: T0-RELEASE-OP-REISSUE
 title: A release step whose operation outcome is not recorded is never issued again; release next waits and names aidlc ops reconcile, a recorded outcome becomes the step, and two callers of one step dispatch once
-status: todo
+status: merged
 branch: T0-RELEASE-OP-REISSUE
 worktree: D:\wt\AIDLC\T0-RELEASE-OP-REISSUE
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 250 to 470 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 70 source lines in one file, the rest the status, exclusion and race tests the rulings require, docs and attempt evidence; raised from 470 to 600 by the coordinator on the candidate f7bd2894, which is 533 changed lines: 86 source lines, 417 lines of the acceptance tests, and one more table test asked for before the review"
