@@ -10,6 +10,7 @@ import { dispatchHook } from '../../src/hooks/entry.ts';
 import { AuthorizationRecord, type Goal, type GoalState } from '../../src/core/types.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { resolveStatePaths } from '../../src/state/paths.ts';
+import { setActorForTests } from '../../src/state/journal.ts';
 
 /** The production record of acceptance 1 without `goalGeneration`. */
 const BASE = { id: 'rel-1', kind: 'production', grantedBy: 'release manager', grantedAt: '2026-09-11T10:00:00.000Z', environment: 'production', candidateDigest: 'sha256:c1', operations: ['deploy'] };
@@ -324,6 +325,8 @@ describe('production gate generation', () => {
     });
 
     function fixture(t: TestContext): Fixture {
+      // `makeFixture` caches the harness actor; the reset is registered first, so it runs whatever happens after.
+      t.after(() => setActorForTests(undefined));
       const fx = makeFixture();
       t.after(() => cleanup(fx.tmp));
       writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
