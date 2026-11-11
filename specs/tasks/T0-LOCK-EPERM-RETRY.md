@@ -121,3 +121,60 @@ npm run typecheck && node --test tests/infra/update-json.test.ts tests/infra/jou
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the existing tests pass with their lines changed only as R5 specifies.
+
+## Attempt evidence
+
+Base 6bb167bc. Commits: 74659df7 (RED tests only), 47ebf4d0 (source and documents), then this evidence commit (card file only).
+
+### RED, measured on 74659df7 (src/state/store.ts as on main)
+`node --test tests/infra/update-json.test.ts tests/infra/journal-lock.test.ts tests/scenarios/journal-lock-refusal.test.ts`: exit 1, tests 33, pass 28, fail 5. Each failure is an assertion with the actual trace `['create']`:
+- acceptance 1: `deepStrictEqual` of the outcome, actual `{ error: EPERM (syscall open) }` from the first create, expected `{ value: { id: 'x', n: 2 } }`.
+- acceptance 2 (the retitled acceptance 15 test): trace actual `['create']`, expected `['create', 'wait', 'create', 'wait', 'create']`; its three kept assertions pass.
+- acceptance 3: trace actual `['create']`, expected seven steps.
+- acceptance 4: row (a) trace actual `['create']`, expected `['create', 'wait']` (rows (b), (c) not reached). Row (d) run alone on main (rows (a) to (c) cut from a scratch copy of the file, restored with `git checkout`): pass 1, fail 0.
+- acceptance 7: absent half trace actual `['create']`, expected `['create', 'wait', 'create', 'wait', 'create']`.
+- acceptance 5 passes on main (as the card states); acceptance 8 passes on main with `armed = false;` deleted.
+
+### Revert table, measured on 47ebf4d0: 17/17 red
+Script: one mutation of src/state/store.ts per row, the named tests run, the file restored; after the last row `git diff --stat` was empty and the file byte-identical.
+
+| # | Mutation (requirement) | Tests run | Red tests |
+|---|---|---|---|
+| M1 | loop hunk reverted to main (R1) | update-json, journal-lock, journal-lock-refusal | acc 1, 2, 3, 4, 7 (fail 5) |
+| M2 | `syscall !== 'open'` dropped (R1, R3) | update-json | acc 5 |
+| M3 | `code !== 'EPERM'` dropped (R1, R3) | update-json | acc 5 |
+| M4 | every error of the create retried (R3) | update-json | acc 5 |
+| M5 | bound 2 refusals (R1) | update-json, journal-lock | acc 1, 2, 3, 4, 7 |
+| M6 | bound 4 refusals (R1) | update-json, journal-lock | acc 2, 3, 7 |
+| M7 | retry without the wait (R1) | update-json | acc 1, 2, 3, 4 |
+| M8 | a wait after the third refusal (R1) | update-json | acc 2, 3 |
+| M9 | count reset by a create that returns false (R1) | update-json | acc 3 |
+| M10 | count kept at module level across calls (R1) | update-json | acc 1, 3, 4 |
+| M11 | the catch throws a new error object instead of the caught one (R1, R3) | update-json | acc 2, 3, 5, EACCES test of :144 |
+| M12 | deadline after a counted refusal throws `locked()` (R2) | update-json | acc 4 |
+| M13 | deadline after a counted refusal throws a new error object (R2) | update-json | acc 4 |
+| M14 | deadline not checked after the wait of a counted refusal (R2) | update-json | acc 4 |
+| M15 | deadline checked before the wait (R2) | update-json, goal-store | acc 4 |
+| M16 | `refusal` kept across creates, so a held create at the deadline throws the earlier EPERM (R2) | update-json | acc 4 |
+| T1 | test side: `armed = false;` put back in journal-lock-refusal.test.ts, R1 applied (R5 (c)) | journal-lock-refusal | (a), (b), (c) (fail 3) |
+
+### DoD, measured on 47ebf4d0 (clean tree)
+`dod_command` exit 0: typecheck clean; tests 224, suites 21, pass 221, fail 0, cancelled 0, skipped 3 (the three POSIX mode-bit subtests of tests/surface/incident.test.ts, skipped on Windows as on main), todo 0. Output digest sha256 ce1742f2e87dab53 (first 16 hex). Windows 11, Node as installed; not run on Linux here (the WSL Ubuntu has no node).
+
+### Writes (acceptance 10)
+tests/scenarios/fault-points.test.ts passes unchanged (ok 14 in the DoD run). The change adds, removes and reorders no write: on the path with no refusal the acquisition runs the same `createExclusive`, change, ownership-checked write and release; a retry repeats only the exclusive create, which on main would have thrown before any write. `.claude/skills/verify-card-run-writes/SKILL.md` is not edited (CLOSE only).
+
+### Documents against code and tests
+| Sentence | Code | Test |
+|---|---|---|
+| JSDoc: deadline checked after every wait and before the next create | store.ts loop, `sleepSync(10)` then the deadline check | acc 4, M15; goal-store :211 |
+| JSDoc: after a held create, `LOCKED` at the deadline unless reading the owner fails | `refusal` undefined, `locked(file, lock)` | acc 4 (c), (d); goal-store :263 |
+| JSDoc: absent-path EPERM retried after the same wait at most twice; third, or one after whose wait the deadline passed, thrown as that EPERM; other errors at once | catch: `code`/`syscall` test, `++refusals > 2`; deadline throws `refusal.error` | acc 1, 2, 3, 4 (a), (b), 5 |
+| OPERATIONS Audit, manifest paragraph (R6 (b)) | same loop through `updateJson` in src/audit/manifest.ts | acc 1 to 4 (store level); manifest-lock passes |
+| OPERATIONS Audit, journal paragraph (R6 (c)) | same loop through src/state/journal.ts | acc 7 |
+| CHANGELOG entry and the T0-JOURNAL-APPEND-LOCK parenthetical (R6 (e), (f)) | as above; `createExclusive` unchanged | acc 1 to 5, 7, 9 (incident :488 passes) |
+
+docs/ARCHITECTURE.md is not in the diff. CHANGELOG entry inserted directly above `- T0-PREPARE-WORKTREE (bugfix)`, followed by a blank line.
+
+### Changed lines
+`git diff --shortstat 6bb167bc...47ebf4d0`: 6 files changed, 240 insertions(+), 24 deletions(-) (store.ts +17 -5, update-json.test.ts +193 -5, journal-lock.test.ts +20 -6, journal-lock-refusal.test.ts +5 -5, OPERATIONS.md +2 -2, CHANGELOG.md +3 -1). With this section: 7 files changed, 297 insertions(+), 24 deletions(-), 321 changed lines against the budget of 360.
