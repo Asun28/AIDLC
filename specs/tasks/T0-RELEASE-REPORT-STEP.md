@@ -74,6 +74,8 @@ Source: `src/loop/release-runner.ts` gains `prepareNeeds` (the needs list `next`
 
 Repair after the Codex pre-review of `d7081674` (card amended at 25efcd24: budget 600, the concurrent writer of the attempt a non-goal). (1) R4 and R5: main accepted a verification report in any state, so an attempt can be stored in STAGE with a `failed` `stage-verify` and no `stage-deploy` step, or in RECOVER with a `failed` `recover-verify` and no `recover` step; on `d7081674` `next` issued the operation for those. Each verification check now comes before its operation-step check, so a stored `failed` verification stops whatever the operation step is; no existing return moved. New test "a failed verification stored with any operation step stops before any operation is issued": attempts written to the store directly with the operation step absent or in each of the six step statuses, each giving the STOP of acceptance 4, with no runner call, no ledger record and no `OPERATION_INTENT`. (2) Order tests that could not fail: the R6 check of acceptance 4 now also asserts zero reads of the ops configuration (a counting `Proxy` around the `OpsLoad`, which `prepareNeeds` reads through `resolveRoles`), and every refusal checked by `assertRefused` asserts zero reads of the runner's clock (a counting clock). (3) The CLI child of the tests gets no variable whose upper-cased name is `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` or `GIT_CEILING_DIRECTORIES` from the caller, and `GIT_CEILING_DIRECTORIES` set to the fixture's parent directory, as given and as `realpathSync.native` returns it (a short 8.3 temporary path and its long form): git then stops discovery at the fixture, so a temporary directory inside a checkout does not resolve to that repository. The fixture is not made a repository because the CLI then takes its identity from git (`isGit` true, a canonical main root) and the scenario fixtures and release.test.ts run it as a plain directory. (4) The "Read once" sentence now names the non-goal. (5) docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md now say that the run proof is expected once the candidate and configuration prerequisites are met (which is when `release next` asks for the install/run proof, not when it lists no need) and say what main did with a status (stored any the step schema accepts; for any other, appended `EVIDENCE_RETAINED` and then failed the schema validation of the save).
 
+Repair after the second Codex pre-review of `d3d2ea65` (card amended at cb5329a0: R4 and R5 stop whatever the operation step is, budget 700; main merged into the worktree at 459dda31). (1) The STOP sentences of docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md, and the `UNKNOWN` sentence of CHANGELOG.md, now say that they apply once `release next` reaches the case of the attempt's state, after the reconciliation of unresolved operations and the environment ownership checks it already makes, which keep their precedence; the source order is unchanged. Acc 4b gains the row that pins it: a `failed` `stage-verify` in STAGE whose environment lease another session holds gives `wait` on `environment:staging-held` and leaves the stored attempt unchanged; the revert row "R4 failed-verification STOP ahead of the reconcile and ownership checks" fails it. (2) The figures below are rerun on the final source commit, after the merge of main. (3) The test comment and the input-class row on a failed run proof stored on a staging attempt now name main's `release report` as a writer of such records as well as the raw patch.
+
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/scenarios/release-report-step.test.ts` "release report accepts only the step the attempt's state asks for" | pass; fails on main |
@@ -125,7 +127,8 @@ Input classes (C).
 | a report repeated before and after `next` | `succeeded` or `UNKNOWN` before `next`: accepted; `UNKNOWN` after `next` (state kept): accepted; after the state advanced (package DONE, staging DONE, RECOVER to CLOSE): refused; `failed` before `next` and after `next` (STOP): refused | acc 5, acc 6, acc 1 |
 | the operation step of the state absent, `UNKNOWN`, `running`, `failed`, `succeeded` | only `succeeded` makes the verification expected | acc 1 STAGE and RECOVER rows |
 | a `failed` `stage-verify` stored in STAGE, or `recover-verify` in RECOVER, with the operation step absent, `pending`, `running`, `succeeded`, `failed`, `UNKNOWN` or `skipped` (main accepted such reports) | STOP of R4 or R5 before any operation is issued | acc 4 (repair test) |
-| a failed run proof stored on an attempt that is not `package` (only the raw `release-result` patch writes one) | not read: `next` returns what it returns for the same attempt without that step | acc 4 |
+| a `failed` `stage-verify` stored in STAGE with `stage-deploy` `succeeded` while another session owns the environment lease | `next` waits on `environment:<env>` and the attempt is not stopped: the reconciliation and ownership checks before the case keep their precedence | acc 4b |
+| a failed run proof stored on an attempt that is not `package` (the raw `release-result` patch writes one, and main's `release report` stored one in any state, so legacy records hold it) | not read: `next` returns what it returns for the same attempt without that step | acc 4 |
 
 Read once (E). `reportStep` decides on the attempt it is given and writes that attempt plus the step: R1 names "the attempt it is given (the stored attempt `aidlc release report` reads)", and the CLI reads it from the store in `releaseCtx` right before the call. A second writer that saves the attempt between that read and the save (a concurrent `release report` or `release next` in another process) is not seen: `GoalStore.saveRelease` has no compare-and-swap, and `src/state/` is outside `allow_paths`. The card's `non_goals` name this window (amended at 25efcd24); no test covers it.
 
@@ -171,16 +174,17 @@ Revert table ("acc N" is the test of acceptance N in tests/scenarios/release-rep
 | R5 verification check after the operation-step check (as d7081674) | fails: acc 4b |
 | R6 prepareNeeds called before the failed-proof check | fails: acc 4 |
 | R3 clock read before the report validation (moved to the top) | fails: acc 1, acc 2, acc 3, acc 5 |
+| R4 failed-verification STOP ahead of the reconcile and ownership checks (second repair) | fails: acc 4b |
 | R10 CLI description | fails: acc 7 |
 
-All 39 rows fail at least one test; no row stays green.
+All 40 rows fail at least one test; no row stays green. After the second repair (test and docs only, no source change), the 9 R4 and R5 rows were run again with the new row: the same tests fail as above.
 
 Forbid and non-goals:
 - weakening or skipping a test: no test file of main is changed (`git diff --stat origin/main...HEAD -- tests` lists only `tests/scenarios/release-report-step.test.ts`).
 - changing `RELEASE_TRANSITIONS` or the guards of `src/core/release-machine.ts`: that file is not in the diff; docs/ARCHITECTURE.md changes the edge label R11 asks for, and `PREPARE --> STOP` is already in `RELEASE_TRANSITIONS`.
 - moving the STOP of R4 to R6 into `reportStep`: `reportStep` writes the step and, for a `succeeded` run proof, the package DONE as on main; the three STOPs are in `next` (acc 4 and 5 report `failed`, then `next` stops).
 - accepting any report of a step whose stored status is `failed`: `expectedSteps` returns no step then (acc 5); the window of a concurrent writer is under "Read once" above.
-- editing .aidlc state by hand: none; every test uses a `makeFixture` state directory removed by `t.after`.
+- editing .aidlc state by hand: none; every test uses a `makeFixture` state directory, removed by `cleanup(fx.tmp)` in a `t.after` hook.
 - non-goal, the raw `aidlc report --result release-result` patch: that command in src/cli/main.ts is not in the diff.
 - non-goal, a `release-result` report to the goal when `release report` delivers a package attempt: the CLI action is unchanged apart from its description.
 - non-goal, new manual step names and a retry of a failed verification within the attempt: none added; a failed step is final.
@@ -188,12 +192,31 @@ Forbid and non-goals:
 - non-goal, the narration of the stage and recover directives: unchanged strings.
 - non-goal, `.claude/skills/aidlc-loop/release.md`: not in the diff.
 
-Hygiene: no `mkdtempSync` in the new file (directories come from `makeFixture`, removed by `t.after(() => fx.cleanup())`); the CLI runs with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and `GIT_CEILING_DIRECTORIES` removed in any letter case, `GIT_CEILING_DIRECTORIES` set to the fixture's parent (repair item 3) and `AIDLC_STATE_DIR` set to the fixture; no test reads the wall clock or sleeps; no assertion reads an OS error message or a path separator.
+Hygiene: no `mkdtempSync` in the new file (directories come from `makeFixture`, removed by `t.after(() => cleanup(fx.tmp))` with `cleanup` of tests/infra/helpers.ts; table below); the CLI runs with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and `GIT_CEILING_DIRECTORIES` removed in any letter case, `GIT_CEILING_DIRECTORIES` set to the fixture's parent (repair item 3) and `AIDLC_STATE_DIR` set to the fixture; no test reads the wall clock or sleeps; no assertion reads an OS error message or a path separator.
 
 Documents pinned by other tests: the 78 test files that name docs/ARCHITECTURE.md, docs/OPERATIONS.md, CHANGELOG.md or release.md (`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md|release\.md" tests --include=*.test.ts`) were run in one `node --test` call after the doc edits: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0. After the repair (docs, tests and source changed), the same 78 files in one call: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0; no file needed a rerun alone.
 
 DoD: `npm run typecheck && node --test tests/scenarios/release-report-step.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/release-reissue.test.ts`, run as the card gives it on the GREEN sources: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 37`, `# pass 37`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 7 tests of the new file are `ok 13` to `ok 19`).
 
 DoD after the repair, run as the card gives it: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 38`, `# pass 38`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 8 tests of the new file are `ok 13` to `ok 20`).
+
+Final verification, after the second repair and the fixture-cleanup change (class `fixture-cleanup-bypasses-helper`), on commit `4d8b739e` (sources, tests and docs; the card commit after it changes only this file):
+
+| Pattern in tests/scenarios/release-report-step.test.ts at `4d8b739e` | Count | Where |
+|---|---|---|
+| `makeFixture(` | 1 | line 47, in `setup`, the only helper that creates a fixture; `makeFixture` (tests/scenarios/_harness.ts:52) creates the directory with `tmpDir('aidlc-scn-')` of tests/infra/helpers.ts |
+| `cleanup(fx.tmp)` | 1 | line 48, `t.after(() => cleanup(fx.tmp))`, registered in `setup` right after the fixture is created; `cleanup` is imported from tests/infra/helpers.ts |
+| `setup(t)` | 8 | the first statement of each of the 8 tests |
+| `fx.cleanup` | 0 | |
+| `mkdtempSync` | 0 | |
+| `tmpDir(` | 0 | |
+| `rmSync` | 0 | |
+| `finally` | 0 | |
+
+The CLI tests write `aidlc.ops.json` inside `fx.tmp` only, so the same hook removes it.
+
+- Doc-pin files: the 79 test files that name docs/ARCHITECTURE.md, docs/OPERATIONS.md, CHANGELOG.md or release.md, in one `node --test` call on `4d8b739e`: 1870 tests, 1857 pass, 1 fail, 12 skipped. The failure is `tests/infra/exec.test.ts` "T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node sleeper) [R1] [R2] [R3] [R4]", which the brief names as machine load: run alone on the same commit it passes 61 of 61, and this card changes no file it executes. The same 79 files on `1bf9b726` (the docs commit, before the cleanup change to the new test file, which none of the 79 reads) gave 1870 tests, 1858 pass, 0 fail, 12 skipped, exit 0.
+- DoD on `4d8b739e`, run exactly as the card gives it: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 38`, `# pass 38`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 8 tests of the new file are `ok 13` to `ok 20`).
+- Revert rows touched by the second repair: the 9 R4 and R5 rows and the new ownership row, run with the test file of `1bf9b726`; each fails a test (table above). The cleanup change alters no assertion.
 
 Coordinator verification:
