@@ -334,3 +334,28 @@ test('the first registry load of a plan-produced report comes after its journal 
   assert.equal(count(), 1, 'main: 3');
   assert.deepEqual(seen, [true, 'CARDS']);
 });
+
+test("a load that completes after a nested call's load returns the kept registry", (t) => {
+  const { fx } = counted(t);
+  writeCard(fx, { id: 'T1-EARLIER', title: 'earlier', status: 'merged', allowPaths: ['src/earlier.ts'] });
+  writeCard(fx, { id: 'T1-NEXT', title: 'next', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+  const goal = goalForCards(fx, ['T1-NEXT']);
+  const merged = fx.registry();
+  writeCard(fx, { id: 'T1-EARLIER', title: 'earlier', status: 'todo', allowPaths: ['src/earlier.ts'] });
+  const stale = fx.registry();
+  let loads = 0;
+  let nested: string | undefined;
+  // The first invocation runs a nested `next` of the same controller, whose own load completes first, then returns `stale`.
+  const c: GoalController = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: () => {
+    loads += 1;
+    if (loads > 1) return merged;
+    nested = c.next(goal.id).kind;
+    return stale;
+  } });
+  const outer = c.next(goal.id);
+  assert.equal(nested, 'run-card');
+  assert.equal(outer.kind, 'run-card', outer.narration);
+  assert.equal(loads, 2);
+  assert.equal(fx.goal(goal.id).state, 'RUN');
+  assert.equal(fx.goal(goal.id).stop, undefined);
+});
