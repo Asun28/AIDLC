@@ -101,8 +101,9 @@ test('R3 decision 1: text removed before the marker search leaves a gap, so a ma
   for (const [risk, marker] of beside) {
     assert.equal(gate3(risk)?.finding, `open marker "${marker}"`, risk);
   }
-  // The two halves of a word on the sides of removed text are not one marker.
-  for (const risk of ['TO[TBD: which backend?]DO', 'TO```js\nconst a = 1;\n```DO', 'cache [TBD: which backend?] size']) {
+  // The two halves of a word on the sides of removed text are not one marker, nor are the words of a phrase marker:
+  // the gap is a line break, which no marker contains.
+  for (const risk of ['TO[TBD: which backend?]DO', 'TO```js\nconst a = 1;\n```DO', 'cache [TBD: which backend?] size', 'not[TBD: which backend?]sure', 'decide[TBD: which backend?]later', 'to be[TBD: which backend?]determined', 'to[TBD: which backend?]be determined', 'not```js\nconst a = 1;\n```sure']) {
     assert.equal(gate3(risk)?.verdict, 'pass', risk);
   }
 });
