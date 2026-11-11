@@ -338,6 +338,10 @@ test('the ledger is written whole and only in a form a read accepts', () => {
   const stored = JSON.parse(bytesOf(ledger.file)) as Record<string, Record<string, unknown>>;
   assert.equal(stored[id]!['note'], 'kept');
   assert.equal(stored[id]!['count'], 2);
+  // A ledger directory that does not exist yet is created by the write.
+  const nested = new IncidentLedger(path.join(dir, 'a', 'b'));
+  nested.write({ [id]: rec({ identity: id }) });
+  assert.deepEqual(Object.keys(nested.read()), [id]);
 });
 
 test('an intent file name that exists is never overwritten', () => {
