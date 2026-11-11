@@ -133,8 +133,10 @@ test("a revised text is classed by the router's bare-number rule, and each class
 function twoCards(fx: Fixture, state: 'PLAN' | 'RUN' | 'WAIT' | 'CARDS' | 'VERIFY_ARC' | 'DELIVER' | 'CLOSE'): string {
   const size = state === 'CARDS' ? 'T2' : 'T1';
   const goal = goalForCards(fx, ['T1-A', 'T1-B'], { size, target: state === 'DELIVER' ? 'staging' : 'development' });
+  // A T2 goal runs its cards only after the checkpoint of revision 0; it is put back in CARDS, where the revision finds it.
+  if (state === 'CARDS') fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
   driveCardToDone(fx, goal.id, 'T1-A');
-  if (state === 'PLAN' || state === 'WAIT') fx.store.saveGoal(Goal.parse({ ...fx.goal(goal.id), state }));
+  if (state === 'PLAN' || state === 'WAIT' || state === 'CARDS') fx.store.saveGoal(Goal.parse({ ...fx.goal(goal.id), state }));
   if (state === 'VERIFY_ARC' || state === 'DELIVER' || state === 'CLOSE') {
     driveCardToDone(fx, goal.id, 'T1-B');
     assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');

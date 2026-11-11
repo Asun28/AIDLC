@@ -147,7 +147,7 @@ stateDiagram-v2
 
 | Kind | Payload | Meaning |
 |---|---|---|
-| `ask` | question, options, responseRoute | one sizing/identity question the context cannot resolve |
+| `ask` | question, options, responseRoute | one sizing/identity question the context cannot resolve; the revision that answers it (`aidlc goal amend <id> --text "<answer>"`) re-classifies the revised text with the router and stores only the new question (none removes it), and every other routing field is the retained intake route (card T0-ASK-RECLASSIFY) |
 | `plan` | size, inputs, invocationAllowance, outputs | produce the plan at the routed depth |
 | `project-cards` | planRef, cardsDir, outputs | write/validate cards; human sign-off owns the registry |
 | `checkpoint` | approvalKind, packet, responseRoute | T2 plan+projection approval, or a production approval packet |
