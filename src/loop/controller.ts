@@ -41,6 +41,7 @@ import {
 import { finalStateForTarget } from '../core/release-machine.ts';
 import { FencedError, LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
+import { ReleaseRunner } from './release-runner.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
@@ -64,6 +65,8 @@ export interface ControllerDeps {
   cards?: () => CardRegistry;
   /** Optional board mirror inside the repo (`_local/aidlc-board.md`). */
   boardMirror?: string;
+  /** The runner whose `checkpointPacket` the release directive carries at CHECKPOINT; defaults to one built from these deps on each read. */
+  releaseRunner?: ReleaseRunner;
 }
 
 export interface CreateGoalOptions {
@@ -92,6 +95,7 @@ export class GoalController {
   private readonly clock: () => string;
   private readonly registryLoader: () => CardRegistry;
   private readonly boardMirror: string | undefined;
+  private readonly releaseRunner: ReleaseRunner | undefined;
 
   constructor(deps: ControllerDeps) {
     this.paths = deps.paths;
@@ -104,6 +108,7 @@ export class GoalController {
     this.clock = deps.now ?? nowIso;
     this.registryLoader = deps.cards ?? (() => loadCardRegistry(path.join(this.repo.mainRoot, this.config.cardsDir), path.join(this.repo.mainRoot, this.config.archiveDir)));
     this.boardMirror = deps.boardMirror;
+    this.releaseRunner = deps.releaseRunner;
   }
 
   journal(goalId: string): Journal {
@@ -438,7 +443,13 @@ export class GoalController {
       this.store.saveRelease(attempt);
       this.journal(goal.id).append({ type: 'RELEASE_STATE', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, state: 'PREPARE', target: goal.target } });
     }
-    const packet = attempt.state === 'CHECKPOINT' ? approvalPacket('production', { candidateDigest: attempt.candidateDigest, sourceSha: attempt.sourceSha, configDigest: attempt.configDigest, environment: attempt.environment, operations: attempt.operations }, { evidence: attempt.evidence.map((e) => e.id) }) : {};
+    // The packet is the release runner's, so an authority recorded from it matches what `release next` checks. The builder is
+    // consulted only at CHECKPOINT, and only for a production or migration attempt: it throws for any other target, which a
+    // release-result patch can store. Without an injected runner one is built per such read, so the ops configuration is read
+    // afresh (as `aidlc release packet` does).
+    const hasPacket = attempt.state === 'CHECKPOINT' && (attempt.target === 'production' || attempt.target === 'migration');
+    const runner = hasPacket ? this.releaseRunner ?? new ReleaseRunner({ paths: this.paths, repo: this.repo, store: this.store, ops: this.ops, leases: this.leases, now: this.clock }) : undefined;
+    const packet = runner?.checkpointPacket(goal, attempt)?.packet ?? {};
     return Directive.parse({ kind: 'release', ...base, attemptId: attempt.id, releaseState: attempt.state, target: goal.target, environment: attempt.environment, packet, narration: `Release attempt ${attempt.id} in ${attempt.state} (final state for ${goal.target}: ${finalStateForTarget(goal.target)}). Drive it with \`aidlc release next ${attempt.id}\`; never promote automatically.` });
   }
 

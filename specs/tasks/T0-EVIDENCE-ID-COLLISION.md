@@ -1,7 +1,7 @@
 ---
 id: T0-EVIDENCE-ID-COLLISION
 title: Evidence retain refuses, before any write, an id whose file name is another retained id's, the review copy directory, or a name other Windows tools cannot open, copy or delete
-status: todo
+status: merged
 branch: T0-EVIDENCE-ID-COLLISION
 worktree: D:\wt\AIDLC\T0-EVIDENCE-ID-COLLISION
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 210 to 320 on the candidate 86f869ea, which is 294 changed lines; 21 source lines in src/audit/manifest.ts, 244 lines of the acceptance tests for the name classes of R2, the rest docs and attempt evidence"

@@ -155,7 +155,7 @@ stateDiagram-v2
 | `checkpoint` | approvalKind, packet, responseRoute | T2 plan+projection approval, or a production approval packet |
 | `run-card` | cardId, cardState, worktree, base, mode, effort, role, cardDeadline, context | run one card through `aidlc card next` |
 | `verify-arc` | cards, integratedChecks, repairCyclesLeft | verify the whole goal on the integrated artifact |
-| `release` | attemptId, releaseState, target, environment, packet | drive the release attempt |
+| `release` | attemptId, releaseState, target, environment, packet | drive the release attempt; at CHECKPOINT of a production or migration attempt `packet` is `ReleaseRunner.checkpointPacket`'s (the production environment and planned operations the authority is matched against, while `environment` stays the attempt's recorded one), `{}` otherwise |
 | `wait` | on, until, pollSeconds | attach to one known signal |
 | `close` | missing | perform only the missing closure steps |
 | `done` | evidence | return the existing result |
