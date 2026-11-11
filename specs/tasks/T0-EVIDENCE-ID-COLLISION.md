@@ -127,3 +127,6 @@ Test numbers are the acceptance items of the table above (1 collision, 2 every c
 `grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md" tests --include=*.test.ts` gave 77 files, run in one `node --test` call: 1829 tests, 1815 pass, 3 fail, 11 skipped. The three failures are `tests/infra/exec.test.ts` (`T0-EXEC-TREE-KILL`), `tests/infra/exec-sync-tree.test.ts` (`T0-EXEC-SYNC-TREE-KILL`) and `tests/scenarios/review-release.test.ts` (acceptance 5); the three files pass when run alone, 116 of 116, so the failures are machine load. No pinned document sentence was displaced.
 
 Coordinator verification:
+- At e3ffb183, before the review, run by the coordinator. Linux (WSL Ubuntu, Node ), the test files this branch adds or changes (tests/scenarios/evidence-id.test.ts): tests 8, pass 8, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1851 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
