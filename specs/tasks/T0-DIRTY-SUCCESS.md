@@ -62,3 +62,17 @@ npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+RED commit 0b33462: 20 of 33 tests in tests/scenarios/dirty-success.test.ts fail on main with `Missing expected exception` at the refusal assertion; tests/infra/git.test.ts "candidate digest binds HEAD ..." fails at `undefined !== []` (`entries`). DoD (attempt 1): exit 0, 221 tests, 221 pass, 0 fail.
+
+| Item | Test or command | Result |
+|---|---|---|
+| 1 | dirty-success.test.ts, 16 tests `github:` / `scaffold:` `a success with <entry list> is refused ... [acceptance 1]` | pass (fail on main) |
+| 2 | dirty-success.test.ts `after a recorded fail, a dirty success opens no attempt ...` and `a dirty success delivers the ATTEMPT_FINISHED ...` | pass (fail on main) |
+| 3 | dirty-success.test.ts, five tests of `the refusals before it keep their order and messages [R3]` | pass (the withdraw test fails on main) |
+| 4 | dirty-success.test.ts, ten tests of `every case outside R1 is recorded as before [R4] [R5]` | pass (merge-conflict test fails on main; the others pass on main) |
+| 5 | dirty-success.test.ts `gets build from card next, and review pre and review r3 refuse it as dirty [acceptance 5]` | pass, on main and after |
+| 6 | tests/infra/git.test.ts `candidate digest binds HEAD to the working-tree status and input manifest` | pass (fails on main at `entries`) |
+| 7 | tests/scenarios/fault-points.test.ts (28/28), journal-owed.test.ts, t0-flow.test.ts, no pin added or changed | pass |
+| 8 | docs/OPERATIONS.md (`aidlc card attempt` paragraph), CHANGELOG.md Unreleased above T0-BOARD-OWNER-WAIT | written; reviewer to verify |

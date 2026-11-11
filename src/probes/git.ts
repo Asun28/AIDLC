@@ -139,14 +139,18 @@ export class GitProbe {
     return { dirty: entries.length > 0, entries, untracked };
   }
 
-  /** Candidate digest binds HEAD to the working-tree status and any relevant input manifest. */
-  candidate(cwd: string, inputManifest: string[] = []): { sha: string; dirty: boolean; untracked: string[]; digest: string } {
+  /**
+   * Candidate digest binds HEAD to the working-tree status and any relevant input manifest. `entries` are the status entries
+   * hashed into it, as `status` returns them (the first without the blank `must` trims), so a caller names the entries of
+   * the same `git status` call that decided it.
+   */
+  candidate(cwd: string, inputManifest: string[] = []): { sha: string; dirty: boolean; untracked: string[]; entries: string[]; digest: string } {
     const sha = this.head(cwd);
     const st = this.status(cwd);
     const h = createHash('sha256').update(sha);
     for (const e of st.entries) h.update('\n' + e);
     for (const m of inputManifest) h.update('\nin:' + m);
-    return { sha, dirty: st.dirty, untracked: st.untracked, digest: h.digest('hex') };
+    return { sha, dirty: st.dirty, untracked: st.untracked, entries: st.entries, digest: h.digest('hex') };
   }
 
   /** Resolve a fully-qualified base ref (remote first, then local), verified as a commit. */
