@@ -111,11 +111,13 @@ test('a ship whose effect is unknown waits on its operation for aidlc ops reconc
     if (r.directive.kind === 'wait') assert.equal(r.directive.on, `operation:${op!.id}`);
     assert.ok(r.directive.narration.includes(`aidlc ops reconcile ${op!.id} --status succeeded|failed|cancelled`), r.directive.narration);
     assert.ok(r.directive.narration.includes(`aidlc card next ${CARD}`), r.directive.narration);
-    assert.deepEqual([op!.status, op!.error, op!.finishedAt], ['UNKNOWN', LINE, fx.now()]);
+    assert.deepEqual([op!.status, op!.error, op!.finishedAt, op!.evidenceRef], ['UNKNOWN', LINE, fx.now(), `ship-${op!.id}`]);
     const results = fx.events(goal.id).filter((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === op!.id);
     assert.deepEqual(results.map((e) => [e.data['status'], e.data['outcome'], e.data['detail'], e.data['completed']]), [['UNKNOWN', 'effect-unknown', LINE, undefined]]);
     const stored = fx.store.getCardRun(goal.id, CARD)!;
-    assert.deepEqual(stored.journalOwed ?? [], []);
+    // Nothing is still owed: every owed entry is a result the journal holds (an entry leaves the record at its next write).
+    const held = (o: { type: string; data: Record<string, unknown> }) => o.type === 'OPERATION_RESULT' && results.some((e) => e.data['operationId'] === o.data['operationId'] && e.data['status'] === o.data['status']);
+    assert.deepEqual((stored.journalOwed ?? []).filter((o) => !held(o)), []);
     assert.equal(stored.state, 'WAIT');
     assert.deepEqual(requestStates(fx, goal.id), ['completed']);
     assert.deepEqual(fx.queue.pool(POOL).active, []);
@@ -152,15 +154,17 @@ test('each persistence step of the owed result can fail and the next step recove
         assert.equal(waiting.directive.kind, 'wait', step);
         assert.match(waiting.directive.narration, new RegExp(`attached to running operation ${op.id}`), step);
         assert.equal(unknownResults(fx, goal.id).length, 0, `${step}: nothing owed is due while the ledger shows issued`);
+        // The ledger shows UNKNOWN only through the operator's reconcile, whose journal event is then the operation's record.
         reconcile(fx, goal.id, op.id, 'UNKNOWN');
       }
       const recovered = next();
       assert.equal(recovered.directive.kind, 'wait', step);
       assert.match(recovered.directive.narration, /reconciling unknown operations/, step);
-      // The finish write held the owed result: when it failed nothing was owed, and the operator's reconcile is the record.
-      assert.deepEqual(unknownResults(fx, goal.id).map((e) => [e.data['status'], e.data['completed']]), step === 'finish' ? [] : [['UNKNOWN', true]], step);
+      // With the runner's own UNKNOWN in the ledger the owed result is appended, marked; with the reconcile first it is held by it.
+      const expected = step === 'append' ? [['UNKNOWN', true]] : [];
+      assert.deepEqual(unknownResults(fx, goal.id).map((e) => [e.data['status'], e.data['completed']]), expected, step);
       next();
-      assert.equal(unknownResults(fx, goal.id).length, step === 'finish' ? 0 : 1, `${step}: appended once`);
+      assert.equal(unknownResults(fx, goal.id).length, expected.length, `${step}: appended at most once`);
       assert.equal(ship.requests.length, 1, `${step}: nothing shipped again`);
       assert.notEqual(mergeOps(fx)[0]!.status, 'failed', step);
     } finally {

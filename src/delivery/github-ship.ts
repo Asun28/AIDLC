@@ -10,7 +10,8 @@
  * carry the check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every
  * failing step prints a sentinel `classifyShipOutput` classifies, and every exit-0 path prints `[SAGA-DONE]`, the merge
  * contract (card T0-EXIT-ZERO-NOT-MERGED); a scaffold success prints no sentinel and is reconciled as `merge-unconfirmed`.
- * Authentication failure never silently becomes local mode.
+ * Authentication failure never silently becomes local mode. Every direct call has a timeout, and a push, PR create or merge
+ * that timed out or ended without an exit code ends the ship with `[SHIP-EFFECT-UNKNOWN]` (card T0-SHIP-TIMEOUT).
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -53,6 +54,10 @@ const CI_LOG_WIDTH = 240;
 /** Reads of GitHub's merge state after a refused merge, and the fixed wait between them (T0-SHIP-MERGE-REFUSED). */
 const MERGE_STATE_READS = 5;
 const MERGE_STATE_WAIT_MS = 3000;
+/** The bounds of the ship's direct calls (card T0-SHIP-TIMEOUT): a git call's of `GitProbe`, the push the longest git bound, a gh call's of `GhProbe`. */
+const GIT_MS = 60_000;
+const PUSH_MS = 300_000;
+const GH_MS = 120_000;
 
 /** The start of the second an ISO time falls in, in milliseconds; undefined when it is not a time. */
 function secondOf(iso: string | null | undefined): number | undefined {
@@ -254,18 +259,32 @@ export class GitHubShipPath implements ShipPath {
       log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, ...(opts.lines ?? []), '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`, ...(opts.after ?? []));
       return { ...classifyShipOutput(this.receipt(log, 1, started)), resumeCommand: resume, prNumber };
     };
+    // Each direct call runs under its bound and a tree kill, capped by a request `timeoutMs` that is a whole number from 1 to
+    // 2147483647; the request value is never a deadline of the whole ship, which would cut the CI wait (card T0-SHIP-TIMEOUT).
+    const requested = req.timeoutMs;
+    // Every bound is below 2147483647, so a larger request leaves the bound as the cap does.
+    const limit = (bound: number): number => (requested !== undefined && Number.isSafeInteger(requested) && requested >= 1 ? Math.min(bound, requested) : bound);
+    const unfinished = (label: string, r: ExecReceipt, bound: number): string | undefined => (r.timedOut ? `${label} timed out after ${limit(bound)} ms` : r.exitCode === null ? `${label} ended without an exit code` : undefined);
+    // A push, PR create or merge that timed out or ended without an exit code may have taken effect: the ship ends there with
+    // this detail. It writes nothing to the log; the caller's `fail` does.
+    const effectUnknown = (label: string, r: ExecReceipt, bound: number, pr?: number): string | undefined => {
+      const why = unfinished(label, r, bound);
+      return why === undefined ? undefined : `${why}; it may have taken effect${pr ? ` (PR #${pr})` : ''}`;
+    };
+    const commitFailure = (label: string, r: ExecReceipt): string => unfinished(label, r, GIT_MS) ?? `${label} exit ${r.exitCode}: ${r.stderr}`;
     if (!existsSync(wt)) return fail('[SHIP-SCOPE-CARD-ABSENT]', `worktree ${wt} missing`);
     // auth guard
     const login = this.gh.login(wt);
     if (!login) return fail('[SHIP-AUTH]', 'gh auth login required (无法确认 GitHub 账号)');
     log.push(`账号校验通过：个人账号 ${login} ✓`);
-    // commit
-    const add = this.runner('git', ['add', '-A'], { cwd: wt });
-    if (add.exitCode !== 0) return fail('[SHIP-COMMIT-FAIL]', add.stderr);
-    const staged = this.runner('git', ['diff', '--cached', '--quiet'], { cwd: wt });
+    // commit: a staged-diff read that did not exit 0 or 1 is no answer, and nothing is committed on it
+    const add = this.runner('git', ['add', '-A'], { cwd: wt, timeoutMs: limit(GIT_MS), killTree: true });
+    if (add.exitCode !== 0 || add.timedOut) return fail('[SHIP-COMMIT-FAIL]', commitFailure('git add -A', add));
+    const staged = this.runner('git', ['diff', '--cached', '--quiet'], { cwd: wt, timeoutMs: limit(GIT_MS), killTree: true });
+    if (staged.timedOut || (staged.exitCode !== 0 && staged.exitCode !== 1)) return fail('[SHIP-COMMIT-FAIL]', commitFailure('git diff --cached --quiet', staged));
     if (staged.exitCode !== 0) {
-      const commit = this.runner('git', ['commit', '-m', `feat(${req.cardId}): implement to DoD green\n\nSee specs/tasks/${req.cardId}.md`], { cwd: wt });
-      if (commit.exitCode !== 0) return fail('[SHIP-COMMIT-FAIL]', commit.stderr);
+      const commit = this.runner('git', ['commit', '-m', `feat(${req.cardId}): implement to DoD green\n\nSee specs/tasks/${req.cardId}.md`], { cwd: wt, timeoutMs: limit(GIT_MS), killTree: true });
+      if (commit.exitCode !== 0 || commit.timedOut) return fail('[SHIP-COMMIT-FAIL]', commitFailure('git commit', commit));
       log.push('[SHIP-TIME] commit');
     }
     const head = this.git.head(wt);
@@ -316,17 +335,23 @@ export class GitHubShipPath implements ShipPath {
     const sync = this.baseSync(req.mode, base, wt, head, log);
     if (sync) return fail(sync.sentinel, sync.detail, prNumber);
     if (req.mode === 'local') {
-      const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot });
+      const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot, timeoutMs: limit(GIT_MS), killTree: true });
+      const unknownMerge = effectUnknown(`git merge --no-ff --no-edit ${req.cardId}`, merge, GIT_MS);
+      if (unknownMerge) return fail('[SHIP-EFFECT-UNKNOWN]', unknownMerge);
       if (merge.exitCode !== 0) return fail('[SHIP-LOCAL-MERGE-FAIL]', merge.stderr);
       this.writeToken(req.cardId, `tip=${head}\nmerged=${this.git.head(this.options.mainRoot)}\nutc=${new Date().toISOString()}`);
       log.push('[SAGA-DONE] local merge');
       return { ...classifyShipOutput(this.receipt(log, 0, started)), resumeCommand: undefined, prNumber: undefined };
     }
     // push + PR
-    const push = this.runner('git', ['push', '-u', 'origin', req.cardId], { cwd: wt });
+    const push = this.runner('git', ['push', '-u', 'origin', req.cardId], { cwd: wt, timeoutMs: limit(PUSH_MS), killTree: true });
+    const unknownPush = effectUnknown(`git push -u origin ${req.cardId}`, push, PUSH_MS, prNumber);
+    if (unknownPush) return fail('[SHIP-EFFECT-UNKNOWN]', unknownPush, prNumber);
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr, prNumber);
     if (!prNumber) {
-      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt });
+      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
+      const unknownCreate = effectUnknown(`gh pr create --base ${base} --head ${req.cardId}`, create, GH_MS);
+      if (unknownCreate) return fail('[SHIP-EFFECT-UNKNOWN]', unknownCreate);
       if (create.exitCode !== 0) return fail('[SHIP-PR-NUMBER-FAIL]', create.stderr);
       prNumber = Number(create.stdout.match(/\/pull\/(\d+)/)?.[1]);
       if (!prNumber) return fail('[SHIP-PR-NUMBER-FAIL]', create.stdout);
@@ -369,7 +394,9 @@ export class GitHubShipPath implements ShipPath {
       sleep(poll);
     }
     log.push('[CI-GATE-PASS]');
-    const merge = this.runner('gh', ['pr', 'merge', String(prNumber), '--repo', this.options.repository, '--squash', '--match-head-commit', head], { cwd: wt });
+    const merge = this.runner('gh', ['pr', 'merge', String(prNumber), '--repo', this.options.repository, '--squash', '--match-head-commit', head], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
+    const unknownMerge = effectUnknown(`gh pr merge ${prNumber} --squash`, merge, GH_MS, prNumber);
+    if (unknownMerge) return fail('[SHIP-EFFECT-UNKNOWN]', unknownMerge, prNumber);
     if (merge.exitCode !== 0) {
       // A refusal after the checks (T0-SHIP-MERGE-REFUSED, issue #85): the base may have moved since the sync. GitHub's
       // merge state is read back; a conflict (CONFLICTING or DIRTY), or an UNKNOWN GitHub has not settled by the last read,

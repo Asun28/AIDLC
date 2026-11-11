@@ -32,6 +32,7 @@ export type ShipOutcomeClass =
   | 'no-reviewer'
   | 'red-missing'
   | 'merge-unconfirmed'
+  | 'effect-unknown'
   | 'unclassified';
 
 export interface ShipResult {
@@ -215,6 +216,10 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   const sentinels = [...new Set([...text.matchAll(/\[[A-Z0-9-]+\]/g)].map((m) => m[0]))];
   const resume = text.match(/\[SAGA-RESUME\]\s*(.+)/)?.[1]?.trim();
   const pr = text.match(/(?:PR|pull request)\s*#(\d+)/i)?.[1];
+  // A push, PR create or merge that timed out or ended without an exit code may have taken effect (card T0-SHIP-TIMEOUT): that
+  // line decides before every other rule, whatever the exit code, a whole-receipt timeout or another sentinel beside it.
+  const unknown = text.split(/\r?\n/).find((l) => l.includes('[SHIP-EFFECT-UNKNOWN]'));
+  if (unknown !== undefined) return { outcome: 'effect-unknown', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: unknown };
   // The merge contract is the adapter's [SAGA-DONE] sentinel beside no failure marker, never a word of the output (card
   // T0-EXIT-ZERO-NOT-MERGED). Every other exit 0 that was read as merged before it ([SAGA-DONE] or a merge word, no sentinel,
   // or no [SAGA-FAIL]) is merge-unconfirmed and verified: a failure class would send a PR that did merge back into repair

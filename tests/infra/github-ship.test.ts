@@ -1613,6 +1613,7 @@ describe('GitHubShipPath subprocess timeouts and effects of unknown outcome (T0-
       ['timed out, no exit code', { timedOut: true, exitCode: null }],
       ['timed out, exit 1 (taskkill on Windows)', { timedOut: true, exitCode: 1, signal: null }],
       ['no exit code after a signal', { timedOut: false, exitCode: null, signal: 'SIGTERM' }],
+      ['timed out, exit 0', { timedOut: true, exitCode: 0 }],
     ];
     for (const e of EFFECTS) {
       for (const [label, receipt] of unknown) {
@@ -1643,6 +1644,7 @@ describe('GitHubShipPath subprocess timeouts and effects of unknown outcome (T0-
       ['timed out, no exit code', { timedOut: true, exitCode: null }, 'timed out after 60000 ms'],
       ['timed out, exit 1', { timedOut: true, exitCode: 1, signal: null }, 'timed out after 60000 ms'],
       ['no exit code', { exitCode: null }, 'ended without an exit code'],
+      ['timed out, exit 0', { timedOut: true, exitCode: 0 }, 'timed out after 60000 ms'],
     ];
     const rows: Array<[string, string, Partial<ExecReceipt>, string]> = [
       ...['git add -A', 'git commit', 'git diff --cached --quiet'].flatMap((command) => unfinished.map(([label, receipt, clause]) => [command, label, receipt, clause] as [string, string, Partial<ExecReceipt>, string])),

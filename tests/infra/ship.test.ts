@@ -556,7 +556,8 @@ describe('delivery/ship effect of unknown outcome (T0-SHIP-TIMEOUT)', () => {
     const onStderr = classifyShipOutput(receipt('[SAGA-FAIL]', 1, { stderr: `noise\r\n${LINE}\r\n` }));
     assert.deepEqual([onStderr.outcome, onStderr.detail], ['effect-unknown', LINE]);
     const second = '[SHIP-EFFECT-UNKNOWN] gh pr merge 7 timed out after 120000 ms; it may have taken effect (PR #7)';
-    const twice = classifyShipOutput(receipt(`${LINE}\n${second}\n[SAGA-FAIL]`, 1));
-    assert.deepEqual([twice.outcome, twice.detail, twice.prNumber], ['effect-unknown', LINE, 7]);
+    const twice = classifyShipOutput(receipt(`${LINE}\n${second}\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-A`, 1));
+    assert.deepEqual([twice.outcome, twice.detail, twice.prNumber, twice.resumeCommand], ['effect-unknown', LINE, 7, 'aidlc card next T1-A']);
+    assert.deepEqual(twice.sentinels, ['[SHIP-EFFECT-UNKNOWN]', '[SAGA-FAIL]', '[SAGA-RESUME]']);
   });
 });
