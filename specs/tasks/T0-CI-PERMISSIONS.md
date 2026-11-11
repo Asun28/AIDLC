@@ -91,7 +91,7 @@ The CHANGELOG entry, one line, directly above `- T0-CARDS-PROJECTED-REENTRY`:
 ## Attempt evidence
 - RED c124def8 (test file alone): acceptance 1, 2 pass; 3 fails `ci.yml: top-level permissions is not a mapping of scopes` (assertion).
 - GREEN 7ea3da91: ci.yml lines 15-17 block, CHANGELOG entry above T0-CARDS-PROJECTED-REENTRY.
-- Revert table on 7ea3da91, 14 of 14 red (checker clause mutated in a scratch copy of the test): top mapping as truthiness; contents exactly read; none accepted; other top scope; jobs container; job container; read-all at job level; job scope; rendering; key order; parse error swallowed; exact by contents alone; exact without job check; exact by truthiness of non-empty job permissions.
-- DoD on 7ea3da91: exit 0, 95 tests, 95 pass, 0 fail.
-- CHANGELOG sentence is true by ci.yml block and the live test (acceptance 3).
-- Changed lines: see report, budget 170.
+- Repair round, measured on e10ebc2a: mapping test is a plain-object test (Map and Set refused) with omap and set rows at each boundary; rows for wrong exact contents (write, none, Read), a null own job permissions, and an added top-level read scope accepted by permissionProblems.
+- Revert table on e10ebc2a, 17 of 17 red: the 14 above plus exact without the contents value check, plain-object test as an Array check, top-level other scope accepting only none. Exact job truthiness is `job.permissions`, red on the null row.
+- DoD on e10ebc2a, no pipe: typecheck exit 0, then the four files exit 0, 95 tests, 95 pass, 0 fail.
+- CHANGELOG sentence is true by the ci.yml block and the live test (acceptance 3). Changed lines against budget 200: see report.
