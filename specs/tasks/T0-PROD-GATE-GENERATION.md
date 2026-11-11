@@ -234,3 +234,8 @@ The `dod_command` as one Bash command line is denied by this repository's own `p
 `git diff --shortstat origin/main...HEAD` on 3a046470: 12 files changed, 521 insertions(+), 12 deletions(-), with the evidence of a96e8ebe in it; this section replaces that evidence. The count after this commit is in the report, against the budget of 600.
 
 Third pre-review (2a6a72f6), test only: 150dec1f registers `setActorForTests(undefined)` in a `t.after` hook of the fixture helper before `makeFixture()`, so the harness actor it caches does not reach a later test; on 7680c2e8 (merge of origin/main) with that change: typecheck exit 0; the nine DoD files before `tests/scenarios/release.test.ts` exit 0, tests 481, pass 477, fail 0, skipped 4; the two `release*` files exit 0, tests 20, pass 20; `git diff --shortstat origin/main...HEAD` on 150dec1f: 12 files changed, 529 insertions(+), 12 deletions(-), against the budget of 600.
+
+Coordinator verification:
+- At 65ef1c7f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/prod-gate-generation.test.ts, tests/surface/command-lines.test.ts, tests/surface/hooks.test.ts, tests/surface/readme.test.ts): tests 77, pass 77, fail 0, skipped 0.
+- Windows, docpins: 82 test files reading 3 changed documents: # tests 1946 # pass 1933 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
