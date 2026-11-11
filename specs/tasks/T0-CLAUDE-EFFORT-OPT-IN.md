@@ -1,7 +1,7 @@
 ---
 id: T0-CLAUDE-EFFORT-OPT-IN
 title: With claudeCode.forwardEffort true the claude-code provider passes the request's effort as --effort after the model and refuses the call while CLAUDE_CODE_EFFORT_LEVEL is in its launch environment; the key is off by default and the argv is then unchanged
-status: todo
+status: merged
 branch: T0-CLAUDE-EFFORT-OPT-IN
 worktree: D:\wt\AIDLC\T0-CLAUDE-EFFORT-OPT-IN
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: about 14 changed lines in src/providers/claude-code.ts (the option, the launch-environment check, the refusal result and the two arguments), 1 in src/config.ts (the claudeCode object), about 6 in src/cli/main.ts (the export and runner argument of providerFor, the third argument of runProviderFor, the aidlc run call); about 240 in tests/surface/providers.test.ts (seven tests: the five levels in both modes, the off rows, the environment refusal rows with per-row isolation, the two constructions, the call-site check and the twelve rows of the acceptance 7 table; the fixed receipt time and the imports); about 40 in tests/surface/config.test.ts (schema rows and loader rows); about 8 in docs/OPERATIONS.md, 2 in docs/ARCHITECTURE.md and 2 in CHANGELOG.md; about 110 lines of attempt evidence; about 423 in all"
@@ -122,3 +122,45 @@ npm run typecheck && node --test tests/surface/providers.test.ts tests/surface/c
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the existing tests these files hold pass unchanged.
+
+## Attempt evidence
+
+RED commit bbaa2f07 (tests only), GREEN commit 54bec90f (source and documents). Evidence commit follows.
+
+### RED on bbaa2f07 (node --test tests/surface/providers.test.ts tests/surface/config.test.ts: 99 tests, 72 pass, 27 fail)
+| Acceptance | Result on main | Reason |
+|---|---|---|
+| 1 | red | assertion: argv lacks `'--effort', 'low'` |
+| 2 | green | passes on main as the card says |
+| 3 | red | 10 subtests fail: the runner was called (refusal rows) and `--effort` missing (option-true controls); the option-absent controls pass |
+| 4 | red | `cli.providerFor is not a function` (missing export, not a behavioural RED) |
+| 5 | red | assertion `1 !== 3` (runProviderFor call has one argument) |
+| 6 | red | assertion: `undefined` against `{ forwardEffort: false }` |
+| 7 | red | T1 to T10 and T12 fail by assertion; T11 passes as the card says |
+
+### Revert table on 54bec90f (each row: one piece mutated in the worktree, providers and config test files run, then restored; `git status --short` empty afterwards)
+25 rows, 25 red. Rows: key absent from the schema; default true; non-strict boolean; no `--effort` push; push for any truthy value; order (push after extraArgs); value not `request.effort`; no environment check; case-sensitive check; request.env only; process.env only; non-empty values only; check outside the `forwardEffort` gate; `durationMs` not 0; model fixed to `claude`; `toolCalls` key present; error text changed; runner called before the refusal; `providerFor` ignores config; `providerFor` drops the runner; `runProviderFor` ignores its third argument; its default true; `aidlc run` call omits the value; `providerFor` not exported; evals call site drops `c.config`. The no-retry clause has no source line to revert; T7 and T8 assert exactly one runner call.
+
+### DoD on 54bec90f
+`npm run typecheck` exit 0; `node --test` of the seven files: 278 tests, 278 pass, 0 fail.
+
+### Document sentences
+| Sentence | Code and test that make it true |
+|---|---|
+| OPERATIONS parenthetical and key list, Claude Code effort paragraph, Evals sentence | `claude-code.ts` push and guard (acceptance 1, 2, 3, 7); `main.ts` constructions (acceptance 4, 5); `config.ts` key (acceptance 6) |
+| ARCHITECTURE sentence | same |
+| CHANGELOG entry | same; the "never read `request.effort`" clause is the RED of acceptance 1 |
+
+### Changed lines
+`git diff --shortstat main...HEAD` before this evidence commit: 8 files changed, 306 insertions, 10 deletions, against a budget of 450.
+
+### Repair round (pre-review of af6da473), measured on 11fb28e0
+- Merged origin/main (4d07c433 card amendment); no source change.
+- docs/OPERATIONS.md: the refusal sentence of the Claude Code effort paragraph and the Evals paragraph are the words of R5 (b) and (c); the config rows of acceptance 6 deep-equal the whole `claudeCode` object. CHANGELOG entry and ARCHITECTURE sentence checked against the amended R2 and R5: neither says a refused effort ends like any other non-zero exit, and the ARCHITECTURE sentence is R5 (d) as written.
+- Revert table rerun on 11fb28e0: 26 rows, 26 red (the 25 above plus "nested schema passes unknown keys through", `z.looseObject`, red in the acceptance 6 test). Tree clean after.
+- DoD, run without a pipe: `npm run typecheck && node --test` of the seven files, exit 0; 278 tests, 278 pass, 0 fail.
+
+Coordinator verification:
+- At d8971fb3, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/config.test.ts, tests/surface/providers.test.ts): tests 99, pass 99, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 3 changed documents: # tests 1888 # pass 1873 # fail 3 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load docpins: tests/scenarios/mutants-review.test.ts failed in the parallel run and passes alone (# pass 17): load docpins: tests/surface/review-bench.test.ts failed in the parallel run and passes alone (# pass 27): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractJson, newInvocationId } from '../../src/providers/types.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
@@ -6,6 +6,12 @@ import { ClaudeCodeProvider } from '../../src/providers/claude-code.ts';
 import { ClaudeApiProvider, type ClaudeMessagesClient } from '../../src/providers/claude-api.ts';
 import type { CompletionRequest } from '../../src/providers/types.ts';
 import type { ExecReceipt, Runner } from '../../src/probes/exec.ts';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import ts from 'typescript';
+import { ProjectConfig } from '../../src/config.ts';
+import { setActorForTests } from '../../src/state/journal.ts';
+import { actor, cleanup, tmpDir } from '../infra/helpers.ts';
 
 test('extractJson handles fenced, bare, embedded and absent JSON', () => {
   assert.deepEqual(extractJson('```json\n{"a": 1}\n```'), { a: 1 });
@@ -40,7 +46,7 @@ test('MockProvider consumes its script per role in order and records calls', asy
 });
 
 function receipt(partial: Partial<ExecReceipt>): ExecReceipt {
-  const now = new Date().toISOString();
+  const now = '2026-11-12T00:00:00.000Z';
   return { command: 'claude', args: [], cwd: '', exitCode: 0, signal: null, timedOut: false, stdout: '', stderr: '', startedAt: now, finishedAt: now, durationMs: 1, outputSha256: '', ...partial };
 }
 
@@ -263,4 +269,250 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 1: a stream whose result event is is_error
   const noResult = await streamRun(STREAM_LINES.slice(0, 5), 0);
   assert.equal(noResult.outcome, 'error');
   assert.equal(noResult.error, 'no result event in the stream');
+});
+
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const JSON_ARGV = ['claude', '-p', 'p', '--output-format', 'json'];
+const STREAM_ARGV = ['claude', '-p', 'p', '--output-format', 'stream-json', '--verbose'];
+const REFUSAL = 'CLAUDE_CODE_EFFORT_LEVEL is set in the environment of the claude process, where it outranks --effort; unset it or turn off claudeCode.forwardEffort';
+const isEffortKey = (k: string) => k.toUpperCase() === 'CLAUDE_CODE_EFFORT_LEVEL';
+
+/** Registers the restore first, then removes every key named CLAUDE_CODE_EFFORT_LEVEL (any letter case) from process.env, saving the pairs. */
+function isolateEnv(t: TestContext): void {
+  const saved: Array<[string, string]> = [];
+  t.after(() => {
+    for (const k of Object.keys(process.env)) if (isEffortKey(k)) delete process.env[k];
+    for (const [k, v] of saved) process.env[k] = v;
+  });
+  for (const k of Object.keys(process.env)) {
+    if (!isEffortKey(k)) continue;
+    saved.push([k, process.env[k]!]);
+    delete process.env[k];
+  }
+}
+
+/** A scripted runner that also records the options of each call. */
+function recording(fn: (args: string[]) => Partial<ExecReceipt> = () => ({ stdout: JSON.stringify({ result: 'done', session_id: 's' }) })): { runner: Runner; calls: string[][]; options: Array<Record<string, unknown> | undefined> } {
+  const calls: string[][] = [];
+  const options: Array<Record<string, unknown> | undefined> = [];
+  const runner: Runner = async (command, args, opts) => {
+    calls.push([command, ...args]);
+    options.push(opts as Record<string, unknown> | undefined);
+    return receipt(fn(args));
+  };
+  return { runner, calls, options };
+}
+const req = (extra: Partial<CompletionRequest> = {}): CompletionRequest => ({ role: 'implementer', system: '', prompt: 'p', effort: 'low', ...extra });
+
+test("T0-CLAUDE-EFFORT-OPT-IN: with forwardEffort the request's effort is passed after the model, in both modes", async (t) => {
+  isolateEnv(t);
+  for (const effort of EFFORTS) {
+    const json = recording();
+    await new ClaudeCodeProvider({ runner: json.runner, forwardEffort: true }).complete(req({ effort }));
+    assert.deepEqual(json.calls[0], [...JSON_ARGV, '--effort', effort]);
+    const stream = recording(() => ({ stdout: streamOf(STREAM_LINES) }));
+    await new ClaudeCodeProvider({ runner: stream.runner, forwardEffort: true }).complete(req({ effort, recordToolCalls: true }));
+    assert.deepEqual(stream.calls[0], [...STREAM_ARGV, '--effort', effort]);
+  }
+});
+
+test("T0-CLAUDE-EFFORT-OPT-IN: with forwardEffort false or absent the argv and the runner options are today's", async (t) => {
+  isolateEnv(t);
+  for (const effort of EFFORTS) {
+    for (const opts of [{}, { forwardEffort: false }, { forwardEffort: 'yes' as unknown as boolean }]) {
+      const json = recording();
+      await new ClaudeCodeProvider({ runner: json.runner, ...opts }).complete(req({ effort }));
+      assert.deepEqual(json.calls[0], JSON_ARGV, `${effort} ${JSON.stringify(opts)}`);
+      const stream = recording(() => ({ stdout: streamOf(STREAM_LINES) }));
+      await new ClaudeCodeProvider({ runner: stream.runner, ...opts }).complete(req({ effort, recordToolCalls: true }));
+      assert.deepEqual(stream.calls[0], STREAM_ARGV, `${effort} ${JSON.stringify(opts)}`);
+    }
+  }
+  for (const opts of [{}, { forwardEffort: true }]) {
+    const bare = recording();
+    await new ClaudeCodeProvider({ runner: bare.runner, ...opts }).complete(req());
+    assert.equal('env' in bare.options[0]!, false, `no env without request env ${JSON.stringify(opts)}`);
+    const withEnv = recording();
+    await new ClaudeCodeProvider({ runner: withEnv.runner, ...opts }).complete(req({ env: { A: '1' } }));
+    assert.deepEqual(withEnv.options[0]!['env'], { ...process.env, A: '1' }, JSON.stringify(opts));
+  }
+});
+
+test('T0-CLAUDE-EFFORT-OPT-IN: CLAUDE_CODE_EFFORT_LEVEL in the launch environment refuses the call and starts no process', async (t) => {
+  const rows: Array<[string, Partial<CompletionRequest>, string | undefined]> = [
+    ['upper case key', { env: { CLAUDE_CODE_EFFORT_LEVEL: 'high' } }, undefined],
+    ['lower case key', { env: { claude_code_effort_level: 'max' } }, undefined],
+    ['empty value', { env: { CLAUDE_CODE_EFFORT_LEVEL: '' } }, undefined],
+    ['inherited from process.env', {}, 'low'],
+  ];
+  for (const stream of [false, true]) {
+    const mode = stream ? 'stream' : 'json';
+    const stdout = stream ? streamOf(STREAM_LINES) : JSON.stringify({ result: 'done' });
+    for (const [name, extra, inherited] of rows) {
+      await t.test(`${name}, ${mode}`, async (st) => {
+        isolateEnv(st);
+        if (inherited !== undefined) process.env['CLAUDE_CODE_EFFORT_LEVEL'] = inherited;
+        const { runner, calls } = recording(() => ({ stdout }));
+        const r = await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ ...extra, ...(stream ? { recordToolCalls: true } : {}) }));
+        assert.equal(r.outcome, 'error');
+        assert.equal(r.error, REFUSAL);
+        assert.equal(r.text, '');
+        assert.equal(r.provider, 'claude-code');
+        assert.equal('toolCalls' in r, false);
+        assert.equal(calls.length, 0);
+      });
+    }
+    await t.test(`control: option absent with the variable, ${mode}`, async (st) => {
+      isolateEnv(st);
+      const { runner, calls } = recording(() => ({ stdout }));
+      await new ClaudeCodeProvider({ runner }).complete(req({ env: { CLAUDE_CODE_EFFORT_LEVEL: 'high' }, ...(stream ? { recordToolCalls: true } : {}) }));
+      assert.deepEqual(calls, [stream ? STREAM_ARGV : JSON_ARGV]);
+    });
+    await t.test(`control: option true without the variable, ${mode}`, async (st) => {
+      isolateEnv(st);
+      const { runner, calls } = recording(() => ({ stdout }));
+      await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req(stream ? { recordToolCalls: true } : {}));
+      assert.deepEqual(calls, [[...(stream ? STREAM_ARGV : JSON_ARGV), '--effort', 'low']]);
+    });
+  }
+});
+
+test('T0-CLAUDE-EFFORT-OPT-IN: providerFor and runProviderFor pass claudeCode.forwardEffort to the claude-code provider', async (t) => {
+  t.after(() => setActorForTests(undefined));
+  setActorForTests(actor('effort-test', 4242));
+  isolateEnv(t);
+  const root = tmpDir();
+  t.after(() => cleanup(root));
+  const cli = (await import('../../src/cli/main.ts')) as unknown as { providerFor: (name: string | undefined, config: ProjectConfig, runner?: Runner) => ClaudeCodeProvider; runProviderFor: (root: string, runner?: Runner, forwardEffort?: boolean) => ClaudeCodeProvider };
+  const sent = async (make: (runner: Runner) => ClaudeCodeProvider) => {
+    const { runner, calls } = recording();
+    await make(runner).complete(req({ effort: 'xhigh' }));
+    return calls[0];
+  };
+  const on = [...JSON_ARGV, '--effort', 'xhigh'];
+  assert.deepEqual(await sent((r) => cli.providerFor('claude-code', ProjectConfig.parse({ claudeCode: { forwardEffort: true } }), r)), on);
+  assert.deepEqual(await sent((r) => cli.providerFor(undefined, ProjectConfig.parse({ provider: 'claude-code', claudeCode: { forwardEffort: true } }), r)), on);
+  assert.deepEqual(await sent((r) => cli.providerFor('claude-code', ProjectConfig.parse({}), r)), JSON_ARGV);
+  assert.deepEqual(await sent((r) => cli.runProviderFor(root, r, true)), on);
+  assert.deepEqual(await sent((r) => cli.runProviderFor(root, r)), JSON_ARGV);
+  assert.deepEqual(await sent((r) => cli.runProviderFor(root, r, false)), JSON_ARGV);
+});
+
+test('T0-CLAUDE-EFFORT-OPT-IN: the aidlc run and evals run actions pass the configured value', () => {
+  const file = path.join(import.meta.dirname, '..', '..', 'src', 'cli', 'main.ts');
+  const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
+  const calls: Record<string, ts.CallExpression[]> = { runProviderFor: [], providerFor: [] };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text in calls) calls[node.expression.text]!.push(node);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  assert.ok(calls['runProviderFor']!.length >= 1);
+  for (const c of calls['runProviderFor']!) {
+    assert.equal(c.arguments.length, 3);
+    assert.equal(c.arguments[2]!.getText(sf), 'c.config.claudeCode.forwardEffort');
+  }
+  assert.ok(calls['providerFor']!.length >= 1);
+  for (const c of calls['providerFor']!) assert.equal(c.arguments[1]?.getText(sf), 'c.config');
+});
+
+test('T0-CLAUDE-EFFORT-OPT-IN: the rows of the acceptance 7 table', async (t) => {
+  const base = { forwardEffort: true, defaultModel: 'claude-opus-5-5', extraArgs: ['--no-color'] };
+  const full = (extra: Partial<CompletionRequest> = {}): CompletionRequest => ({ role: 'implementer', system: 'sys', prompt: 'p', effort: 'high', allowedTools: ['Read'], ...extra });
+  const order = (mode: string[], model: string) => [...mode, '--append-system-prompt', 'sys', '--model', model, '--effort', 'high', '--allowedTools', 'Read', '--no-color'];
+  const orderRows: Array<[string, Partial<CompletionRequest>, string[], string]> = [
+    ['T1 order, JSON', {}, JSON_ARGV, 'claude-opus-5-5'],
+    ['T2 order, JSON, request model', { model: 'm' }, JSON_ARGV, 'm'],
+    ['T3 order, stream', { recordToolCalls: true }, STREAM_ARGV, 'claude-opus-5-5'],
+    ['T4 order, stream, request model', { recordToolCalls: true, model: 'm' }, STREAM_ARGV, 'm'],
+  ];
+  for (const [name, extra, mode, model] of orderRows) {
+    await t.test(name, async (st) => {
+      isolateEnv(st);
+      const { runner, calls } = recording(() => ({ stdout: streamOf(STREAM_LINES) }));
+      await new ClaudeCodeProvider({ ...base, runner }).complete(full(extra));
+      assert.deepEqual(calls[0], order(mode, model));
+    });
+  }
+  await t.test('T5 success, JSON', async (st) => {
+    isolateEnv(st);
+    const { runner, calls } = recording(() => ({ stdout: '{"result":"done","session_id":"s"}' }));
+    const r = await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req());
+    assert.equal(r.outcome, 'ok');
+    assert.equal(r.text, 'done');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]!.slice(-2), ['--effort', 'low']);
+  });
+  await t.test('T6 success, stream', async (st) => {
+    isolateEnv(st);
+    const { runner, calls } = recording(() => ({ stdout: streamOf(STREAM_LINES) }));
+    const r = await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ recordToolCalls: true }));
+    assert.equal(r.outcome, 'ok');
+    assert.equal(r.text, 'all done');
+    assert.deepEqual(r.toolCalls, [
+      { name: 'Read', input: { file_path: 'a.md' } },
+      { name: 'Bash', input: { command: 'aidlc next' } },
+      { name: 'Edit', input: { file_path: 'b.ts', old_string: 'a', new_string: 'b' } },
+    ]);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]!.slice(-2), ['--effort', 'low']);
+  });
+  await t.test('T7 CLI rejection, JSON', async (st) => {
+    isolateEnv(st);
+    const { runner, calls } = recording(() => ({ exitCode: 1, stderr: 'error: invalid effort level' }));
+    const r = await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ effort: 'max' }));
+    assert.equal(r.outcome, 'error');
+    assert.equal(r.error, 'error: invalid effort level');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]!.slice(-2), ['--effort', 'max']);
+  });
+  await t.test('T8 CLI rejection, stream', async (st) => {
+    isolateEnv(st);
+    const { runner, calls } = recording(() => ({ exitCode: 1, stdout: '', stderr: 'error: invalid effort level' }));
+    const r = await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ effort: 'max', recordToolCalls: true }));
+    assert.equal(r.outcome, 'error');
+    assert.equal(r.error, 'no result event in the stream');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]!.slice(-2), ['--effort', 'max']);
+  });
+  await t.test('T9 refusal fields', async (st) => {
+    isolateEnv(st);
+    const env = { CLAUDE_CODE_EFFORT_LEVEL: 'high' };
+    const { runner, calls } = recording();
+    const results = [
+      await new ClaudeCodeProvider({ runner, forwardEffort: true, defaultModel: 'd' }).complete(req({ env, model: 'm' })),
+      await new ClaudeCodeProvider({ runner, forwardEffort: true, defaultModel: 'd' }).complete(req({ env })),
+      await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ env })),
+    ];
+    assert.deepEqual(results.map((r) => r.model), ['m', 'd', 'claude']);
+    for (const r of results) {
+      assert.match(r.invocationId, /^claude-code-[0-9a-z]+-[0-9a-z]+$/);
+      assert.equal(r.durationMs, 0);
+      assert.equal(r.outcome, 'error');
+      assert.equal(r.error, REFUSAL);
+    }
+    assert.equal(new Set(results.map((r) => r.invocationId)).size, 3);
+    assert.equal(calls.length, 0);
+  });
+  await t.test('T10 inherited variable plus env', async (st) => {
+    isolateEnv(st);
+    process.env['CLAUDE_CODE_EFFORT_LEVEL'] = 'low';
+    const { runner, calls } = recording();
+    const r = await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ env: { A: '1' } }));
+    assert.equal(r.outcome, 'error');
+    assert.equal(r.error, REFUSAL);
+    assert.equal(calls.length, 0);
+  });
+  await t.test('T11 explicit false with variable', async (st) => {
+    isolateEnv(st);
+    const { runner, calls } = recording();
+    await new ClaudeCodeProvider({ runner, forwardEffort: false }).complete(req({ env: { CLAUDE_CODE_EFFORT_LEVEL: 'high' } }));
+    assert.deepEqual(calls, [JSON_ARGV]);
+  });
+  await t.test('T12 unrelated variables', async (st) => {
+    isolateEnv(st);
+    const { runner, calls } = recording();
+    await new ClaudeCodeProvider({ runner, forwardEffort: true }).complete(req({ env: { CLAUDE_CODE_EFFORT_LEVELS: 'high', CLAUDE_EFFORT: 'xhigh', EFFORT_LEVEL: 'max' } }));
+    assert.deepEqual(calls, [[...JSON_ARGV, '--effort', 'low']]);
+  });
 });

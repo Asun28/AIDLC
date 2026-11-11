@@ -676,6 +676,8 @@ export const AuthorizationRecord = z.object({
   /** Host/project permission record this approval refers to. */
   ref: z.string().optional(),
   goalRevision: z.number().int().nonnegative().optional(),
+  /** The goal generation the record was granted in; absent on records written before card T0-PROD-GATE-GENERATION. */
+  goalGeneration: z.number().int().nonnegative().optional(),
   candidateDigest: z.string().optional(),
   sourceSha: z.string().optional(),
   configDigest: z.string().optional(),
