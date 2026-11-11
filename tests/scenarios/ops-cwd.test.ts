@@ -130,7 +130,7 @@ test('aidlc goal reconcile looks the status up in the binding directory of the m
   const record = 'require("node:fs").writeFileSync(process.argv[1], process.cwd())';
   writeFileSync(
     path.join(repo, 'aidlc.ops.json'),
-    JSON.stringify({ schemaVersion: 1, operations: [{ role: 'deploy', command: ['deploy-cmd'], async: true, cwd: 'ops', statusLookup: ['node', '-e', record, path.join(out, 'cwd.txt'), '{id}'] }] }),
+    JSON.stringify({ schemaVersion: 1, operations: [{ role: 'deploy', command: ['deploy-cmd'], async: true, cwd: 'ops', statusLookup: [process.execPath, '-e', record, path.join(out, 'cwd.txt'), '{id}'] }] }),
     'utf8',
   );
   const ledger = new OperationLedger(ensureStatePaths(statePathsFromRoot(path.join(repo, '.aidlc'))).operations);
