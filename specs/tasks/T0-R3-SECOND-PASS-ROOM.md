@@ -1,7 +1,7 @@
 ---
 id: T0-R3-SECOND-PASS-ROOM
 title: No second R3 pass is due after a first pass at decision 3, where its block could only stop the card
-status: todo
+status: merged
 branch: T0-R3-SECOND-PASS-ROOM
 worktree: D:\wt\AIDLC\T0-R3-SECOND-PASS-ROOM
 plan_ref: plans/review-convergence.md#order-of-work
