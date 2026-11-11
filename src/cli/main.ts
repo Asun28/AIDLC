@@ -1140,7 +1140,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   release
     .command('report <attemptId>')
-    .description('record an externally observed release step (stage-verify, recover-verify, package-run-proof, ...)')
+    .description('record the manual release step the attempt asks for: package-run-proof (PREPARE of a package attempt), stage-verify (STAGE), recover-verify (RECOVER)')
     .option('--goal <id>')
     .requiredOption('--step <name>')
     .requiredOption('--status <s>', 'succeeded|failed|UNKNOWN')

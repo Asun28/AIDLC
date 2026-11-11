@@ -133,6 +133,20 @@ aidlc release report <attemptId> --step package-run-proof --status succeeded --e
 
 Staging: `--target staging`; `release next` issues the bound `deploy` operation for the staging environment, waits on provider status, then asks for `stage-verify` (`aidlc release report <id> --step stage-verify --status succeeded`). The attempt finishes after staging verification; CHECKPOINT/APPLY are never entered.
 
+`aidlc release report` records a manual step only when the attempt's state asks for it (card T0-RELEASE-REPORT-STEP):
+
+- `package-run-proof` in PREPARE of an attempt whose target is `package`, when the candidate digest and the source sha are present and not empty, the `build` and `package` operations are bound and the ops configuration is readable;
+- `stage-verify` in STAGE, when the `stage-deploy` step is `succeeded`;
+- `recover-verify` in RECOVER, when the `recover` step is `succeeded`.
+
+The step name must match exactly, letter case and whitespace included, and the status must be exactly `succeeded`, `failed` or `UNKNOWN`. Any other report is refused before anything is written, and the command exits 1; once the attempt exists and any `--goal` names its goal, the message names the attempt, its state and the step the state expects, or that it expects none. A step reported `succeeded` or `UNKNOWN` may be reported again while it is still the step the attempt expects. A step stored as `failed` is final: it is no longer expected, and every later report of it is refused. After an `UNKNOWN` report the state does not change; once `release next` reaches the case of that state, it asks for the step again while the stored status of the step is still `UNKNOWN` and that step is still the one the attempt expects.
+
+`release next` stops the attempt with STOP/release-health and disposition `failed` in three cases, each once it reaches the case of the attempt's state (the reconciliation of unresolved operations and the environment ownership checks come first):
+
+- in STAGE on a stored failed `stage-verify`, with `staging verification failed`, whatever the status of the `stage-deploy` step;
+- in RECOVER on a stored failed `recover-verify`, with `recovery verification failed`, whatever the status of the `recover` step;
+- in PREPARE of an attempt whose target is `package` on a stored failed `package-run-proof`, with `package install/run proof failed`, before the candidate and configuration prerequisites are checked. `aidlc release candidate` does not clear that step.
+
 Production: `--target production`; after staging verification `release next` prints the approval packet (`aidlc release packet <id>`). Record the authority bound to the exact candidate, environment and operations:
 
 ```bash

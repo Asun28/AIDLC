@@ -76,6 +76,11 @@ export function releaseOperationOf(record: OperationRecord, attempt: ReleaseAtte
   return record.releaseAttempt === attempt.id || (Object.keys(RELEASE_STEP_KINDS) as ReleaseStep[]).some((s) => record.idempotencyKey === releaseStepKey(attempt, s));
 }
 
+/** The statuses `aidlc release report` records, as exact strings. */
+function isReportStatus(status: string): status is 'succeeded' | 'failed' | 'UNKNOWN' {
+  return status === 'succeeded' || status === 'failed' || status === 'UNKNOWN';
+}
+
 export class ReleaseRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -191,13 +196,11 @@ export class ReleaseRunner {
 
     switch (attempt.state) {
       case 'PREPARE': {
-        const needs: string[] = [];
-        if (!attempt.candidateDigest) needs.push('immutable candidate digest (aidlc release candidate)');
-        if (!attempt.sourceSha) needs.push('source sha bound to the verified goal candidate');
-        const target = attempt.target === 'development' || attempt.target === 'operations' ? 'package' : attempt.target;
-        const roles = resolveRoles(this.opsLoad, target);
-        for (const r of roles.roles) if (r.status === 'NOT CONFIGURED') needs.push(`operation ${r.role}: NOT CONFIGURED`);
-        if (roles.problem) needs.push(roles.problem);
+        if (attempt.target === 'package' && attempt.steps.find((s) => s.name === 'package-run-proof')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'package install/run proof failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
+        const needs = this.prepareNeeds(attempt);
         if (attempt.target === 'package') {
           if (needs.length) return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs, narration: 'Package target: build/package operations and an identified package are required; report with aidlc release report.' } };
           return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs: ['install/run proof'], narration: `Run the package install/run proof and report it (aidlc release report ${attempt.id} --step package-run-proof --status succeeded).` } };
@@ -217,6 +220,10 @@ export class ReleaseRunner {
         return saved.state === 'STOP' ? stopOut(saved) : this.next(goal, saved);
       }
       case 'STAGE': {
+        if (attempt.steps.find((s) => s.name === 'stage-verify')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'staging verification failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
         const done = attempt.steps.find((s) => s.name === 'stage-deploy');
         if (!done) return this.issue(goal, attempt, 'deploy', 'stage-deploy', attempt.environment!, 'stage');
         if (done.status === 'succeeded') {
@@ -280,6 +287,10 @@ export class ReleaseRunner {
         return stopOut(stopped);
       }
       case 'RECOVER': {
+        if (attempt.steps.find((s) => s.name === 'recover-verify')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'recovery verification failed', 'escalate to the named owner with environment and data state', { at: now }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
         const done = attempt.steps.find((s) => s.name === 'recover');
         if (!done) return this.issue(goal, attempt, 'recover', 'recover', attempt.environment!, 'recover');
         if (done.status === 'succeeded') {
@@ -408,8 +419,37 @@ export class ReleaseRunner {
     return { attempt: saved, directive: { kind: 'wait', attemptId: saved.id, on: `${phase}:${intent.id}`, narration: `${role} issued (${exec.detail}); exit zero is not completion. Reconcile via provider status lookup.` } };
   }
 
-  /** Record an externally observed step result (e.g. stage-verify, recover-verify, package proof). */
-  reportStep(goal: Goal, attempt: ReleaseAttempt, stepName: string, status: 'succeeded' | 'failed' | 'UNKNOWN', evidence?: string): ReleaseAttempt {
+  /** What PREPARE still lacks: `next` asks for these, and for the package run proof only when the list is empty. */
+  private prepareNeeds(attempt: ReleaseAttempt): string[] {
+    const needs: string[] = [];
+    if (!attempt.candidateDigest) needs.push('immutable candidate digest (aidlc release candidate)');
+    if (!attempt.sourceSha) needs.push('source sha bound to the verified goal candidate');
+    const target = attempt.target === 'development' || attempt.target === 'operations' ? 'package' : attempt.target;
+    const roles = resolveRoles(this.opsLoad, target);
+    for (const r of roles.roles) if (r.status === 'NOT CONFIGURED') needs.push(`operation ${r.role}: NOT CONFIGURED`);
+    if (roles.problem) needs.push(roles.problem);
+    return needs;
+  }
+
+  /** The manual step the attempt's state asks for, as `next` asks for it; a step stored as `failed` is final and no longer asked for. */
+  private expectedSteps(attempt: ReleaseAttempt): string[] {
+    const status = (name: string) => attempt.steps.find((s) => s.name === name)?.status;
+    let name: string | undefined;
+    if (attempt.state === 'PREPARE' && attempt.target === 'package' && this.prepareNeeds(attempt).length === 0) name = 'package-run-proof';
+    else if (attempt.state === 'STAGE' && status('stage-deploy') === 'succeeded') name = 'stage-verify';
+    else if (attempt.state === 'RECOVER' && status('recover') === 'succeeded') name = 'recover-verify';
+    return name && status(name) !== 'failed' ? [name] : [];
+  }
+
+  /**
+   * Record an externally observed manual step: only the step the attempt's state asks for, only as `succeeded`, `failed` or
+   * `UNKNOWN`. A refusal throws before any journal event or save.
+   */
+  reportStep(goal: Goal, attempt: ReleaseAttempt, stepName: string, status: string, evidence?: string): ReleaseAttempt {
+    const expected = this.expectedSteps(attempt);
+    const refuse = (what: string) => new Error(`release attempt ${attempt.id} is in ${attempt.state} and ${expected.length ? `expects a report of ${expected.join(', ')}` : 'expects no step report'}: ${what}`);
+    if (!expected.includes(stepName)) throw refuse(`step ${JSON.stringify(stepName)} is refused`);
+    if (!isReportStatus(status)) throw refuse(`status ${JSON.stringify(status)} is refused; a step is reported succeeded, failed or UNKNOWN`);
     const now = this.clock();
     const steps = [...attempt.steps.filter((s) => s.name !== stepName), { name: stepName, status }];
     const ev = evidence ? [...attempt.evidence, { id: `${stepName}-${now}`, kind: 'artifact' as const, createdAt: now, candidateDigest: attempt.candidateDigest, environment: attempt.environment, note: evidence }] : attempt.evidence;

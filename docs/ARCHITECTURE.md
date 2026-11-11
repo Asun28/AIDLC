@@ -92,7 +92,7 @@ stateDiagram-v2
   PREPARE --> STAGE: candidate verified, staging providers bound, staging authority
   PREPARE --> DONE: package target with install/run proof
   PREPARE --> WAIT
-  PREPARE --> STOP: NOT CONFIGURED (release-config) / no authority (release-auth)
+  PREPARE --> STOP: NOT CONFIGURED (release-config) / no authority (release-auth) / failed run proof (release-health)
   STAGE --> CHECKPOINT: production target, staging verified
   STAGE --> DONE: staging target, staging verified
   STAGE --> RECOVER
@@ -125,7 +125,7 @@ stateDiagram-v2
   STOP --> [*]
 ```
 
-`finalStateForTarget` fixes where each target ends: package after PREPARE, staging after STAGE, production and migration after OBSERVE. A recovered attempt closes with disposition `recovered`, never `delivered`.
+`finalStateForTarget` fixes where each target ends: package after PREPARE, staging after STAGE, production and migration after OBSERVE. A recovered attempt closes with disposition `recovered`, never `delivered`. `aidlc release report` (`ReleaseRunner.reportStep`) records only the manual step the state asks for, with `succeeded`, `failed` or `UNKNOWN` (`package-run-proof` in PREPARE of a `package` attempt whose candidate and configuration prerequisites are met, `stage-verify` in STAGE after a succeeded `stage-deploy`, `recover-verify` in RECOVER after a succeeded `recover`, none of them once stored as `failed`), refuses any other report before any write, and `release next`, once it reaches the case of the attempt's state, saves STOP/release-health on a stored failed `stage-verify` in STAGE (`staging verification failed`), `recover-verify` in RECOVER (`recovery verification failed`) or `package-run-proof` in PREPARE of a `package` attempt (`package install/run proof failed`) (card T0-RELEASE-REPORT-STEP).
 
 ## Card state precedence
 
