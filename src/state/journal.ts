@@ -9,8 +9,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
+import { z } from 'zod';
 import { ActorIdentity, JournalEvent, JournalEventType, nowIso } from '../core/types.ts';
-import { canonicalJson } from './store.ts';
+import { canonicalJson, updateJson } from './store.ts';
 import { hostName, resolveStatePaths } from './paths.ts';
 
 export const GENESIS_HASH = '0'.repeat(64);
@@ -123,24 +124,37 @@ export class Journal {
     return { seq: parsed.seq, hash: parsed.hash };
   }
 
+  /**
+   * Read the head and append one event in one section of the journal lock (`<file>.append.lock`, through `updateJson` on the
+   * record path `<file>.append`, which is never written), so appenders in separate processes keep one chain. The actor is
+   * resolved before the lock (it may write `session-default`) and `ts` inside it. The journal lock is the innermost lock: a
+   * caller takes any other lock first, and an append reached from inside another append waits and is refused with `LOCKED`.
+   * A held lock refuses with `LOCKED` after the 2 s deadline and nothing is appended; an error of the head read or the
+   * append releases the lock and is rethrown.
+   */
   append(input: AppendInput): JournalEvent {
     mkdirSync(path.dirname(this.file), { recursive: true });
-    const { seq, hash: prevHash } = this.head();
-    const body = {
-      seq: seq + 1,
-      ts: input.ts ?? nowIso(),
-      type: input.type,
-      goalId: input.goalId,
-      cardId: input.cardId,
-      generation: input.generation,
-      actor: input.actor ?? currentActor(),
-      data: input.data ?? {},
-      prevHash,
-    };
-    const hash = sha256(canonicalJson(body));
-    const event = JournalEvent.parse({ ...body, hash });
-    appendFileSync(this.file, JSON.stringify(event) + '\n', 'utf8');
-    return event;
+    const actor = input.actor ?? currentActor();
+    let event: JournalEvent | undefined;
+    updateJson(`${this.file}.append`, z.unknown(), (current) => {
+      const { seq, hash: prevHash } = this.head();
+      const body = {
+        seq: seq + 1,
+        ts: input.ts ?? nowIso(),
+        type: input.type,
+        goalId: input.goalId,
+        cardId: input.cardId,
+        generation: input.generation,
+        actor,
+        data: input.data ?? {},
+        prevHash,
+      };
+      const hash = sha256(canonicalJson(body));
+      event = JournalEvent.parse({ ...body, hash });
+      appendFileSync(this.file, JSON.stringify(event) + '\n', 'utf8');
+      return current;
+    });
+    return event!;
   }
 
   verify(): JournalVerification {

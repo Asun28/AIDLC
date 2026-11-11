@@ -279,5 +279,26 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     const ts = j.readAll().map((e) => Date.parse(e.ts));
     assert.equal(ts.length, 11);
     for (let i = 1; i < ts.length; i++) assert.ok(ts[i]! >= ts[i - 1]!, `ts is non-decreasing along seq at seq ${i}`);
+
+    // An append that has started and not yet taken the lock while another append lands after the clock has moved on: its
+    // ts is read once it holds the lock, so it is no earlier than the event that landed first.
+    const k = journalWith(1);
+    let landed: { seq: number; ts: string } | undefined;
+    let entered = false;
+    const waiting = throughFs('openSync', (real, args) => {
+      if (!entered && String(args[0]) === lockOf(k) && args[1] === 'wx') {
+        entered = true;
+        const from = Date.now();
+        while (Date.now() < from + 2) {
+          /* the clock moves past the waiting append's start */
+        }
+        landed = k.append({ type: 'NOTE', actor: ME, data: { first: true } });
+      }
+      return real(...args);
+    }, () => k.append({ type: 'NOTE', actor: ME, data: { waiting: true } }));
+    assert.ok(landed, 'the other append landed while this one waited for the lock');
+    assert.equal(waiting.seq, landed.seq + 1);
+    assert.ok(Date.parse(waiting.ts) >= Date.parse(landed.ts), `the waiting append's ts ${waiting.ts} is no earlier than ${landed.ts}`);
+    assert.equal(k.verify().ok, true);
   });
 });
