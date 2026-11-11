@@ -4,6 +4,7 @@ title: A success recorded on a worktree with uncommitted or untracked changes is
 status: todo
 branch: T0-DIRTY-SUCCESS
 worktree: D:\wt\AIDLC\T0-DIRTY-SUCCESS
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 230 to 460 on the candidate f98e7e26, which is 434 changed lines; 21 source lines in two files, 400 lines of the acceptance tests for the status codes, ship paths, probe failures and earlier refusals the card lists, the rest docs and attempt evidence"
 allow_paths:
   - src/loop/card-runner.ts
   - src/probes/git.ts
@@ -33,7 +34,7 @@ acceptance:
   - 7. `tests/scenarios/fault-points.test.ts`, `tests/scenarios/journal-owed.test.ts` and `tests/scenarios/t0-flow.test.ts` (which pins the missing-RED refusal at :3848-3889 and the review refusals of a dirty candidate) pass with no pin added or changed. [R3] [R7] [dod arm 1]
   - 8. `docs/OPERATIONS.md` and the CHANGELOG state R1, R2 and R4 (reviewer-verified against the diff). [R8]
 depends_on: []
-budget: 230
+budget: 460
 tdd: true
 diagnosis:
   root_cause: "`recordAttempt` (src/loop/card-runner.ts:1069-1098 at 92796d4f) finishes the attempt as a success and stores the probed candidate with `dirty: true` and a DoD receipt. `assess` then selects BUILD (`buildIncomplete` reads `candidate.dirty`, :699), `build()` finds the episode `succeeded`, `nextEffortAction` answers `done` (src/core/effort.ts:58), so `card next` names an attempt it never opens, and a second `card attempt` throws `episode already succeeded` (:1065). Only `card withdraw` leaves that state, as a counted failure. A dirty candidate can never ship: `refuseDirtyCandidate` (:365-369) refuses both reviews and `candidateReady` is false, so recording it serves no path."
