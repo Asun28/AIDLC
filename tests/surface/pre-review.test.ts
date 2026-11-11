@@ -1901,3 +1901,22 @@ test('R3 decision 1 (F1): a refuted opener whose brackets close later is one doc
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   assert.ok(elapsedMs < 3_000, `24,000 refuted openers walked in ${Math.round(elapsedMs)} ms`);
 });
+
+test('R3 decision 3: the member name before a document of a broken block cut short is read through every whitespace character the scanner skips', () => {
+  // Every character the JavaScript \s class matches, which is what the scanner skips between an opener and its first key.
+  const spaces = ['\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u1680', '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006', '\u2007', '\u2008', '\u2009', '\u200a', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff'];
+  for (const space of spaces) assert.ok(/^\s$/.test(space), JSON.stringify(space));
+  const head = String.raw`{"verdict":"block","reasons":["[spec] 6"],"axes":{"spec":{"verdict":"block","reasons":["src\gate.ts"]},`;
+  const axis = '{"verdict":"pass","reasons":[]}';
+  for (const space of spaces) {
+    for (const [before, after] of [['', space], [space, ''], [space, space], ['', space + space + ' ']]) {
+      const cut = head + '"standards"' + before + ':' + after + axis;
+      assert.equal(inputs.readVerdict(cut).verdict, undefined, JSON.stringify([before, after]));
+      assert.equal(inputs.readVerdict('{"verdict":"pass","reasons":[]}\n' + cut).verdict, undefined, JSON.stringify([before, after]));
+    }
+  }
+  // A document that is not behind a member name still decides after prose that never closed.
+  for (const space of spaces) {
+    assert.equal(inputs.readVerdict('Use {"verdict" as the key.' + space + axis).verdict?.verdict, 'pass', JSON.stringify(space));
+  }
+});

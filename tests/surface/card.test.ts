@@ -449,3 +449,29 @@ describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
     }
   });
 });
+
+test('R3 decision 3: a card is archived by the directory it was read from, never by a path prefix, so a duplicate id blocks in every directory layout', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const card = (dir: string, extra: Record<string, string> = {}) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', ...extra }), 'utf8');
+  };
+  const duplicates = (tasks: string, archive: string) => (validateRegistry(loadCardRegistry(tasks, archive)).get('T1-B') ?? []).filter((f) => f.sentinel === '[CARD-ID-DUPLICATE]' && f.severity === 'block');
+  const dangling = (tasks: string, archive: string) => (validateRegistry(loadCardRegistry(tasks, archive)).get('T1-B') ?? []).filter((f) => f.sentinel === '[CARD-REF-DANGLING]');
+  // The active directory is a sibling of the archive whose name starts with the archive's name.
+  const sibling = { tasks: path.join(root, 'a', 'archive', 'tasks-active'), archive: path.join(root, 'a', 'archive', 'tasks') };
+  // The active directory lies inside the archive directory.
+  const nested = { tasks: path.join(root, 'b', 'archive', 'active'), archive: path.join(root, 'b', 'archive') };
+  // The archive directory lies inside the active directory.
+  const inner = { tasks: path.join(root, 'c', 'tasks'), archive: path.join(root, 'c', 'tasks', 'archive') };
+  for (const layout of [sibling, nested, inner]) {
+    card(layout.tasks, { depends_on: '\n  - T1-MISSING' });
+    card(layout.archive, { status: 'merged' });
+    assert.equal(duplicates(layout.tasks, layout.archive).length, 1, layout.tasks);
+    assert.equal(dangling(layout.tasks, layout.archive).length, 1, 'the active card keeps its own checks: ' + layout.tasks);
+  }
+  // One directory named as both holds each card once: reading it twice is no second file.
+  const same = path.join(root, 'd', 'tasks');
+  card(same);
+  assert.equal(duplicates(same, same).length, 0);
+});
