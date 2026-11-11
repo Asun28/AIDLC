@@ -37,7 +37,7 @@ sweep: "git grep -n \"new Date(\\|Date\\.now(\\|nowIso(\" -- src/loop on main at
 forbid: [weakening or skipping a test to go green, changing an assertion of review-admit-foreign.test.ts or ship-throw.test.ts, any change to those two files beyond the one line each of R3, a change to the `OperationLedger` signatures or defaults, a change to which record a ledger read returns, editing .aidlc state by hand]
 non_goals: [journal event `ts` and `GoalStore` `updatedAt` on the wall clock, the `DryRunShipPath` receipt times, the board's fixed review limits (the other half of audit item F21), the CLI's ledger calls, a tie order for ledger records of one instant]
 hygiene: "Line numbers are from main at 92796d4f (card-runner.ts lines after :1641 moved by 2 when PR 260 merged); read them again at PREPARE. Insert the CHANGELOG entry directly above the entry that begins `- T0-SCAN-SETUP-STEP-2`, followed by a blank line, not at the top of Unreleased: cards running in parallel insert at other anchors so that their merges do not conflict. T0-RELEASE-OP-REISSUE, T0-STAGING-LEASE-RELEASE and T0-RELEASE-REPORT-STEP, the earlier cards of this list, merge first into src/loop/release-runner.ts and CHANGELOG.md; re-run the scan of acceptance 2 after they merge, since a ledger call in their code must pass the time too. The one line added to each of review-admit-foreign.test.ts and ship-throw.test.ts fixes a fixture that relied on wall-clock order between two ships; it weakens no assertion. If another test turns out to depend on that order, stop and amend this card rather than adding an advance outside allow_paths. This card changes src/loop/card-runner.ts, a file the verify-card-run-writes coverage record names, so run that skill before SHIP and at CLOSE; the change adds, removes and reorders no write, so the expected outcome is in sync. Tests assert the fixture time (`fx.now()`), never the wall clock (CLAUDE.md: nothing in tests/ calls Date.now())."
-doc_sync: CHANGELOG.md
+doc_sync: CHANGELOG.md, .claude/skills/verify-card-run-writes/SKILL.md (sync commit at CLOSE, by the coordinator on main)
 ---
 
 # T0-OP-TIMESTAMP-NOW
@@ -54,3 +54,9 @@ npm run typecheck && node --test tests/scenarios/op-clock.test.ts tests/scenario
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Planner note of 2026-11-12 (before the start)
+
+Since this card was written, the cards it follows have merged: T0-RELEASE-OP-REISSUE (PR 263), T0-RELEASE-REPORT-STEP (PR 276), T0-OPS-CWD (PR 275) and T0-STAGING-LEASE-RELEASE as its replacement T0-STAGING-LEASE-RELEASE-2 (PR 282), which created tests/scenarios/release-lease.test.ts and moved the release intent into the attempt and environment lease sections. The line numbers of R1 and R2 are those of main at 92796d4f: find each call by content. The count of calls may differ now: R1 holds for every call of the five ledger methods in src/loop as it is on main today, the scan of acceptance 2 is the completeness check, and the Attempt evidence lists each call found with its file and line. If a ledger call exists today that no branch test of acceptance 1 can reach with the fixtures the card names, stop and report it before writing a test for it.
+
+At CLOSE the coordinator moves both references of the sync commit in .claude/skills/verify-card-run-writes/SKILL.md to the merge commit; the implementer does not edit that file. Fixtures follow the rules of the current cards: temporary directories from tests/infra/helpers.ts or the scenario harness, removed with `cleanup` in an `after` hook; no new `mkdtempSync`; fixed times only.
