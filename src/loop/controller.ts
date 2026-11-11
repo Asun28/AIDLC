@@ -795,11 +795,16 @@ export class GoalController {
     }
   }
 
-  /** The registry kept by the open scope, loaded on first use; a load that throws keeps nothing. Outside a scope every call loads. */
+  /**
+   * The registry kept by the open scope, loaded on first use; a load that throws keeps nothing, and the first load that completes
+   * is kept, also over a later one when a supplied loader re-enters the controller. Outside a scope every call loads.
+   */
   private cardRegistry(): CardRegistry {
     const scope = this.registryScope;
     if (!scope) return this.registryLoader();
-    return (scope.registry ??= this.registryLoader());
+    if (scope.registry) return scope.registry;
+    const loaded = this.registryLoader();
+    return (scope.registry ??= loaded);
   }
 
   private baseOf(goal: Goal) {
