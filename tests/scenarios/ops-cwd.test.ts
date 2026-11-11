@@ -71,15 +71,33 @@ function attemptAtStage(fx: Fx): { goalId: string; attempt: ReleaseAttempt } {
 /**
  * The environment of a child process that works in `fixture`: no inherited variable whose name starts with GIT_ in any case
  * (GIT_DIR, GIT_CONFIG_COUNT and the like; Windows names are case-insensitive) and no AIDLC_STATE_DIR, and git told not to
- * look for a repository above the parent of `fixture`, so one that encloses the temp directory is never found.
+ * look for a repository above the parent of `fixture`, so one that encloses the temp directory is never found. The global git
+ * configuration is an empty file of the test and the system configuration is off, so the caller's signing, hooks and identity
+ * settings reach no child.
  */
-function childEnv(fixture: string): Record<string, string> {
+function childEnv(fixture: string, iso: GitIsolation): Record<string, string> {
   const inherited = Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && !/^GIT_/i.test(entry[0]) && entry[0].toUpperCase() !== 'AIDLC_STATE_DIR');
-  return { ...Object.fromEntries(inherited), GIT_CEILING_DIRECTORIES: path.dirname(fixture) };
+  return { ...Object.fromEntries(inherited), GIT_CEILING_DIRECTORIES: path.dirname(fixture), GIT_CONFIG_GLOBAL: iso.config, GIT_CONFIG_NOSYSTEM: '1' };
 }
 
-function git(cwd: string, fixture: string, ...args: string[]): void {
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, env: childEnv(fixture), encoding: 'utf8', windowsHide: true });
+/** An empty git configuration file and an empty hooks directory, in a directory of the test that `t` removes. */
+interface GitIsolation {
+  config: string;
+  hooks: string;
+}
+
+function isolate(t: TestContext): GitIsolation {
+  const dir = tmpDir('aidlc-ops-cwd-git-');
+  t.after(() => cleanup(dir));
+  writeFileSync(path.join(dir, 'gitconfig'), '', 'utf8');
+  mkdirSync(path.join(dir, 'hooks'));
+  return { config: path.join(dir, 'gitconfig'), hooks: path.join(dir, 'hooks') };
+}
+
+/** A git command of the fixture: identity, hooks and signing come from the arguments, never from the caller's configuration. */
+function git(cwd: string, fixture: string, iso: GitIsolation, ...args: string[]): void {
+  const config = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', `core.hooksPath=${iso.hooks}`, '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false'];
+  const r = spawnSync('git', [...config, ...args], { cwd, env: childEnv(fixture, iso), encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
 }
 
@@ -102,10 +120,11 @@ test('aidlc goal reconcile looks the status up in the binding directory of the m
   const repo = tmpDir('aidlc-ops-cwd-');
   const linked = path.join(tmpDir('aidlc-ops-cwd-wt-'), 'linked');
   const out = tmpDir('aidlc-ops-cwd-out-');
+  const iso = isolate(t);
   t.after(() => [repo, path.dirname(linked), out].forEach(cleanup));
-  git(repo, repo, 'init', '-q', '-b', 'main');
-  git(repo, repo, 'commit', '-q', '--allow-empty', '-m', 'init');
-  git(repo, repo, 'worktree', 'add', '-q', linked, '-b', 'feature');
+  git(repo, repo, iso, 'init', '-q', '-b', 'main');
+  git(repo, repo, iso, 'commit', '-q', '--allow-empty', '-m', 'init');
+  git(repo, repo, iso, 'worktree', 'add', '-q', linked, '-b', 'feature');
   mkdirSync(path.join(repo, 'ops'));
   mkdirSync(path.join(repo, 'src', 'sub'), { recursive: true });
   const record = 'require("node:fs").writeFileSync(process.argv[1], process.cwd())';
@@ -118,7 +137,7 @@ test('aidlc goal reconcile looks the status up in the binding directory of the m
   const rec = ledger.recordIntent({ kind: 'deploy', goalId: 'goal-ops-cwd', target: 'staging', ownerGeneration: 0, timeoutMs: 60_000 }, T0);
   ledger.markIssued(rec.id, 'op-1', T0);
   for (const [label, cwd, fixture] of [['a subdirectory of the main checkout', path.join(repo, 'src', 'sub'), repo], ['a linked worktree', linked, linked]] as const) {
-    const run = spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'goal', 'reconcile', 'goal-ops-cwd'], { cwd, env: childEnv(fixture), encoding: 'utf8', timeout: 60_000 });
+    const run = spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'goal', 'reconcile', 'goal-ops-cwd'], { cwd, env: childEnv(fixture, iso), encoding: 'utf8', timeout: 60_000 });
     assert.equal(run.status, 0, `${label}: ${run.stderr}`);
     assert.ok(run.stdout.includes('provider lookup'), `${label}: ${run.stdout}`);
     assert.equal(realpathSync.native(readFileSync(path.join(out, 'cwd.txt'), 'utf8')), realpathSync.native(path.join(repo, 'ops')), label);
