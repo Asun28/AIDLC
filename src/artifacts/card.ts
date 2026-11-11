@@ -24,6 +24,8 @@ export interface ParsedCard {
   file?: string;
   findings: CardFinding[];
   body: string;
+  /** Set by `loadCardRegistry`: whether the card was read from the archive directory. */
+  archived?: boolean;
 }
 
 /**
@@ -233,6 +235,7 @@ export function loadCardRegistry(dir: string, archiveDir?: string, options: Card
         continue;
       }
       if (archived) result.findings = [];
+      result.archived = archived;
       cards.push(result);
     }
   };
@@ -247,10 +250,13 @@ export function validateRegistry(registry: CardRegistry, tierPaths: { tierS?: st
   const ids = new Set(registry.cards.map((c) => c.card.id));
   for (const parsed of registry.cards) {
     const findings = [...parsed.findings];
-    const isArchived = registry.archiveDir !== undefined && parsed.file?.startsWith(registry.archiveDir);
+    // A card is archived when the registry read it from the archive directory. A card with no record of that (a registry
+    // built by hand) is archived when its file lies inside that directory, which a sibling whose name starts with the
+    // directory's name does not.
+    const isArchived = parsed.archived ?? (registry.archiveDir !== undefined && parsed.file !== undefined && liesInside(registry.archiveDir, parsed.file));
     if (!isArchived) {
       // One id, one card: a second file with the id (a copy left in the archive or beside the card) makes every lookup by id ambiguous.
-      const twins = registry.cards.filter((other) => other !== parsed && other.card.id === parsed.card.id);
+      const twins = registry.cards.filter((other) => other !== parsed && other.card.id === parsed.card.id && !sameFile(other.file, parsed.file));
       if (twins.length) findings.push({ sentinel: '[CARD-ID-DUPLICATE]', severity: 'block', message: `id ${parsed.card.id} is also the id of ${twins.map((t) => t.file ?? 'another card').join(', ')}` });
       for (const dep of parsed.card.depends_on) if (!ids.has(dep)) findings.push({ sentinel: '[CARD-REF-DANGLING]', severity: 'block', message: `depends_on ${dep} does not resolve` });
       for (const p of parsed.card.parallelizable_with) if (!ids.has(p)) findings.push({ sentinel: '[CARD-REF-DANGLING]', severity: 'block', message: `parallelizable_with ${p} does not resolve` });
@@ -269,6 +275,17 @@ export function validateRegistry(registry: CardRegistry, tierPaths: { tierS?: st
     out.set(parsed.card.id, [...(out.get(parsed.card.id) ?? []), ...findings]);
   }
   return out;
+}
+
+/** Whether `file` lies inside `dir`, compared as paths, so `tasks-active/x.md` is not inside `tasks`. */
+function liesInside(dir: string, file: string): boolean {
+  const rel = path.relative(dir, file);
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+}
+
+/** Whether two cards were read from one file: a directory named as both the card and the archive directory holds each card once. */
+function sameFile(a: string | undefined, b: string | undefined): boolean {
+  return a !== undefined && b !== undefined && path.relative(a, b) === '';
 }
 
 function rank(t: ProjectTier): number {

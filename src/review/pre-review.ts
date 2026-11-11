@@ -649,13 +649,18 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
   return { spans, unfinished: undefined, unclosed };
 }
 
-/** Whether the text before `start` ends in a member name: a closing quote, a colon, and only whitespace around them. */
+/**
+ * Whether the text before `start` ends in a member name: a closing quote, a colon, and only whitespace around them.
+ * Whitespace is what the scanner skips between an opener and its first key, every character of the `\s` class, so
+ * that a document the scanner opens behind a member name is read as behind it.
+ */
 function followsMemberName(text: string, start: number): boolean {
+  const space = /\s/;
   let i = start - 1;
-  while (i >= 0 && WHITESPACE.has(text[i]!)) i -= 1;
+  while (i >= 0 && space.test(text[i]!)) i -= 1;
   if (text[i] !== ':') return false;
   i -= 1;
-  while (i >= 0 && WHITESPACE.has(text[i]!)) i -= 1;
+  while (i >= 0 && space.test(text[i]!)) i -= 1;
   return text[i] === '"';
 }
 
