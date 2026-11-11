@@ -1347,9 +1347,16 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const data = JSON.parse(readFileSync(o.data, 'utf8')) as { baseline: number[]; recent: Sample[] };
       const breaches = evaluateBands(cfg, data.baseline, data.recent);
       const filed: string[] = [];
+      let refused: string | undefined;
       if (o.fileIntent) {
         const ledger = new IncidentLedger(c.paths.incidents);
-        for (const b of breaches) {
+        // The ledger is read once, before any breach is filed, so one that does not parse stops the command whatever the breaches (card T0-INCIDENT-INTENT-LEDGER).
+        try {
+          ledger.read();
+        } catch (err) {
+          refused = (err as Error).message;
+        }
+        for (const b of refused === undefined ? breaches : []) {
           if (b.action === 'log') continue;
           const now = new Date().toISOString();
           const decision = ledger.shouldFile(b, cfg.dedupe_window_ms, now);
@@ -1361,6 +1368,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         }
       }
       out(c, { breaches, filed }, () => (breaches.length ? breaches.map((b) => `${b.tier} ${b.rule} ${b.side} -> ${b.action}: ${b.detail}`).join('\n') + (filed.length ? `\nfiled: ${filed.join(', ')}` : '') : 'no breach'));
+      if (refused !== undefined) {
+        process.stderr.write(`aidlc: ${refused}\n`);
+        process.exitCode = 1;
+      }
     });
   program
     .command('security')

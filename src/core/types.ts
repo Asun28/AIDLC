@@ -1139,6 +1139,66 @@ export const HealthResult = z.enum(['PASS', 'BREACH', 'INSUFFICIENT_DATA']);
 export type HealthResult = z.infer<typeof HealthResult>;
 
 // ---------------------------------------------------------------------------
+// Incident ledger (`incidents/incidents.json`)
+// ---------------------------------------------------------------------------
+
+/** One breach identity of the incident ledger; a key the schema does not name is kept as read. */
+export const IncidentRecord = z.looseObject({
+  identity: z.string().min(1),
+  firstSeen: IsoTimestamp,
+  lastSeen: IsoTimestamp,
+  count: z.number().int().positive(),
+  intentFile: z.string().optional(),
+  /** When the latest intent was attached: the start of the dedupe window. A record written before this field has none, and `firstSeen` stands in. */
+  filedAt: IsoTimestamp.optional(),
+  disposition: z.enum(['open', 'fix-now', 'scheduled', 'dismissed']),
+  dismissReason: z.string().optional(),
+});
+export type IncidentRecord = z.infer<typeof IncidentRecord>;
+
+/** Containers (objects and arrays) a ledger may nest, the ledger object itself counting as 1: a record is 2, an object-valued field of a record is 3. */
+const MAX_LEDGER_DEPTH = 64;
+
+/**
+ * The first problem of parsed ledger JSON that the record parse would hide or the store's serializer could not survive, in the order a depth-first search
+ * meets them (a container is checked for the limit, then for an own `__proto__` key, and its children follow in key order):
+ * a container nested deeper than `MAX_LEDGER_DEPTH`, reported at its own path, or an own `__proto__` key, which the record parse and the serializer drop.
+ * An explicit stack, not recursion: a value nested thousands of levels deep (which `JSON.parse` reads) must not overflow the call stack, and the search stops at the first container past the limit.
+ */
+function ledgerIssue(root: unknown): { path: string[]; message: string } | undefined {
+  type Step = { key: string; up: Step | undefined };
+  const stack: Array<{ value: unknown; at: Step | undefined; depth: number }> = [{ value: root, at: undefined, depth: 1 }];
+  const pathOf = (at: Step | undefined): string[] => {
+    const keys: string[] = [];
+    for (let step = at; step; step = step.up) keys.push(step.key);
+    return keys.reverse();
+  };
+  while (stack.length > 0) {
+    const { value, at, depth } = stack.pop()!;
+    if (typeof value !== 'object' || value === null) continue;
+    if (depth > MAX_LEDGER_DEPTH) return { path: pathOf(at), message: `nesting deeper than ${MAX_LEDGER_DEPTH} levels is not allowed` };
+    if (Object.hasOwn(value, '__proto__')) return { path: [...pathOf(at), '__proto__'], message: 'an own "__proto__" key is not allowed' };
+    // The children are the ones the store's serializer visits (`sortKeys` in src/state/store.ts): an array by index from 0 to its length (`Array.prototype.map`
+    // reaches an element that is not enumerable; a hole reads as undefined and is skipped), an object by its enumerable own keys. They are pushed in reverse so that they are searched in order.
+    const keys = Array.isArray(value) ? undefined : Object.keys(value);
+    for (let i = (keys ? keys.length : (value as unknown[]).length) - 1; i >= 0; i--) {
+      const key = keys ? keys[i]! : String(i);
+      stack.push({ value: (value as Record<string, unknown>)[key], at: { key, up: at }, depth: depth + 1 });
+    }
+  }
+  return undefined;
+}
+
+export const IncidentLedgerFile = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    const issue = ledgerIssue(value);
+    if (issue) ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
+  })
+  .pipe(z.record(z.string(), IncidentRecord));
+export type IncidentLedgerFile = z.infer<typeof IncidentLedgerFile>;
+
+// ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
 
