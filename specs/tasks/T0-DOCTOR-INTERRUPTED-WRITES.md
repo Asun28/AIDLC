@@ -1,7 +1,7 @@
 ---
 id: T0-DOCTOR-INTERRUPTED-WRITES
 title: aidlc doctor prints interruptedWrites, the lock files and atomic-write temporary files of the state directory whose process is not running and the entries it cannot read, read without changing anything and with the exit code unchanged, so the doctor claim of CLAUDE.md and entry check 1 holds
-status: todo
+status: merged
 branch: T0-DOCTOR-INTERRUPTED-WRITES
 worktree: D:\wt\AIDLC\T0-DOCTOR-INTERRUPTED-WRITES
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: a read-only check over ten kinds of state directory needs a test per directory, name pattern and class of lock text, and the Codex review of the card added a call-recording fs seam, pid rows derived from the regex of locked() with a stubbed process.kill, injected failure rows, ordering and quoting rows and three doctor runs; about 60 source lines (src/state/store.ts 57, src/cli/main.ts 3), about 390 lines of tests in one new file (tests/surface/doctor-interrupted-writes.test.ts), 4 lines of docs/OPERATIONS.md and CHANGELOG.md, 3 lines of .claude/skills/verify-card-run-writes/SKILL.md at CLOSE, and about 140 lines of attempt evidence; raised from 620 to 700 by the coordinator on 2026-11-12: the pre-review of e4727916 found three clauses of R2 without a test and the planner rulings added their rows (48 test lines); the candidate 12139612 is 632 changed lines before the evidence of that round"
@@ -253,3 +253,7 @@ Coordinator verification:
 - At 8ceb9339, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/doctor-interrupted-writes.test.ts): tests 26, pass 26, fail 0, skipped 0.
 - Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1869 # fail 2 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Planner ruling at CLOSE (2026-11-12)
+
+The hygiene of this card asks, at CLOSE, to move the sync commit of .claude/skills/verify-card-run-writes/SKILL.md to the merge commit and to add to its Bounds list that `interruptedWritesReport` only lists and reads lock and temporary files and writes none, so it adds no fault point. The sync commit is moved. The Bounds statement is not added: the skill file is 7963 bytes and its cap is 8000 (tests/surface/templates.test.ts, "the skill exists, is ASCII and at most 8000 bytes"), so the line does not fit, and the file stays true without it: its Bounds section already defines a fault as a throw from `fs.renameSync` onto the card-run record or from `fs.appendFileSync` onto the goal journal, which excludes a lock refusal and any write this card does not make. The check itself was run at CLOSE on main: tests/scenarios/fault-points.test.ts is in the DoD rerun at the merge commit, and this card adds, removes and reorders no write (outcome: in sync). Making room in the skill file is a card of its own.
