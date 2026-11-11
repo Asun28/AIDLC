@@ -59,3 +59,26 @@ npm run typecheck && node --test tests/scenarios/evidence-id.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the existing retain tests pass unchanged.
+
+## Attempt evidence
+
+RED commit c1e0e6b3 (tests only). On main (c29c594a) six of the eight tests fail: 1 `expected the call to throw` (`a_b` accepted); 2 `id "": EISDIR: illegal operation on a directory`; 4 `evidence source missing` where the collision refusal is expected; 5 `expected the call to throw` (legacy `p/q`); 6 `expected the call to throw`; 8 `Expected "actual" to be strictly unequal to: 0`. Tests 3 and 7 pass on main, as the card says.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/evidence-id.test.ts` "an id whose file name is another retained id's is refused" | pass |
+| 2 | same file, "every class of R2": (a) to (d) with the 24 device stems bare, lower case, `.txt`, mixed case and mixed case with `.Log`; near misses retained | pass |
+| 3 | same file, "the manifest names stay refused" (passes on main too) | pass |
+| 4 | same file, "order of the refusals": sealed, collision before missing source, `review.`, `nul.`, (c) and (d) before (e) | pass |
+| 5 | same file, "same-id replacement and a legacy manifest" | pass |
+| 6 | same file, "two colliding retains in a deterministic interleave" | pass |
+| 7 | same file, "the loop's ids are accepted" (passes on main too) | pass |
+| 8 | same file, "the CLI refuses a colliding id and journals nothing" | pass |
+| 9 | DoD files `manifest-lock`, `surface/manifest`, `surface/verifier`, `audit`, `card-close-cleanup`, `worktree-reclaim`, unchanged | pass |
+| 10 | `docs/OPERATIONS.md` (Audit, the retain paragraph), `docs/ARCHITECTURE.md` (evidence and audit chain, item 2), `CHANGELOG.md` entry above T0-CARD-SIZE | reviewer reads the diff |
+
+Name rules run through `EvidenceStore.retain` on every platform: a refusal happens before any write, and the accepted near misses (`com10`, `console`, `a.nul`, `nul_x`) are not Windows device names, so no test creates a device-named file and none is gated on `process.platform`.
+
+Reading of the card: the refusal text is `evidence id <id> has the file name <name>, refused: <reason>; choose another id`, with the reasons of R6 (`empty`, `ends with a dot`, `the reserved name review`, `the device name <stem>`, `the file of the id <other>`); the card fixes the reasons, not the sentence.
+
+Revert check (each hunk reverted alone, the eight tests run): empty rule removed: "every class of R2"; dot rule: that test and "order of the refusals"; `review` rule: the same two; `review` case-sensitive: "every class of R2"; device rule removed, stem from the last dot, stem the whole name: "every class of R2" and "order of the refusals"; device stem case-sensitive, list without `com0`/`lpt0`, list without `con`: "every class of R2"; other-id rule removed: tests 1, 4, 5, 6, 8; other-id comparison case-sensitive: test 1; other-id rule also against the same id: test 5; rule against the argument manifest, not the stored one: test 6; rules after the missing-source check: tests 1, 2, 4, 5, 6, 8. No hunk left the tests green.

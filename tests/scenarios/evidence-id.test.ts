@@ -72,7 +72,7 @@ function refused(ev: EvidenceStore, id: string, reason: RegExp, content = 'new')
   assert.deepEqual(snapshot(ev), before, `id ${JSON.stringify(id)}`);
 }
 
-const FILE_OF = (id: string): RegExp => new RegExp(`which is the file of the id ${id.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')};`);
+const FILE_OF = (id: string): RegExp => new RegExp(`refused: the file of the id ${id.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')};`);
 
 test('an id whose file name is another retained id\'s is refused', () => {
   const ev = store();
@@ -100,17 +100,17 @@ test('every class of R2', () => {
   retain(ev, 'seed');
 
   // (a) empty
-  refused(ev, '', /which is empty;/);
+  refused(ev, '', /refused: empty;/);
   // (b) ends with a dot
-  for (const id of ['.', '..', 'a.', 'x..']) refused(ev, id, /which ends with a dot;/);
+  for (const id of ['.', '..', 'a.', 'x..']) refused(ev, id, /refused: ends with a dot;/);
   // (c) the copy directory of card close and worktree reclaim, in any case
-  for (const id of ['review', 'Review', 'REVIEW']) refused(ev, id, /which is the reserved name review;/);
+  for (const id of ['review', 'Review', 'REVIEW']) refused(ev, id, /refused: the reserved name review;/);
   // (d) device names: bare, with an extension, and in mixed case
   for (const stem of DEVICES) {
-    for (const id of [stem, stem.toLowerCase(), `${stem}.txt`, `${mixed(stem)}.Log`, mixed(stem)]) refused(ev, id, /which is the device name /);
+    for (const id of [stem, stem.toLowerCase(), `${stem}.txt`, `${mixed(stem)}.Log`, mixed(stem)]) refused(ev, id, /refused: the device name /);
   }
-  refused(ev, 'nUl.Log', /which is the device name nul;/);
-  refused(ev, 'com1.tar.gz', /which is the device name com1;/);
+  refused(ev, 'nUl.Log', /refused: the device name nul;/);
+  refused(ev, 'com1.tar.gz', /refused: the device name com1;/);
 
   // Accepted near misses: each is retained under its own file name.
   const near = ['a.nul', 'console', 'com10', 'lpt', 'reviews', 'review.json', '.x', 'a.b', 'nul_x'];
@@ -140,23 +140,23 @@ test('order of the refusals', () => {
   retain(ev, 'a/b');
   const missing = path.join(tempDir(), 'absent.txt');
   const before = snapshot(ev);
-  assert.match(refusal(() => retain(ev, 'a_b', '', { sourcePath: missing })), /which is the file of the id a\/b;/);
-  assert.match(refusal(() => retain(ev, 'review.', '', { sourcePath: missing })), /which ends with a dot;/);
+  assert.match(refusal(() => retain(ev, 'a_b', '', { sourcePath: missing })), /refused: the file of the id a\/b;/);
+  assert.match(refusal(() => retain(ev, 'review.', '', { sourcePath: missing })), /refused: ends with a dot;/);
   assert.match(refusal(() => retain(ev, 'zz', '', { sourcePath: missing })), /evidence source missing/);
   assert.deepEqual(snapshot(ev), before);
 
   // Rule order (a) to (e): the first rule that applies is reported.
-  assert.match(refusal(() => retain(ev, 'nul.')), /which ends with a dot;/);
-  assert.match(refusal(() => retain(ev, 'manifest.json.')), /which ends with a dot;/);
+  assert.match(refusal(() => retain(ev, 'nul.')), /refused: ends with a dot;/);
+  assert.match(refusal(() => retain(ev, 'manifest.json.')), /refused: ends with a dot;/);
   assert.match(refusal(() => retain(ev, 'MANIFEST.JSON')), /reserved for manifest\.json/);
   // (c) before (e): a legacy entry of another id on the file `review`.
   const legacy = store();
   mkdirSync(legacy.dir, { recursive: true });
   writeFileSync(legacy.manifestFile(), JSON.stringify(handManifest([{ id: 'zz', path: 'review' }])), 'utf8');
-  assert.match(refusal(() => retain(legacy, 'review')), /which is the reserved name review;/);
+  assert.match(refusal(() => retain(legacy, 'review')), /refused: the reserved name review;/);
   // (d) before (e): a legacy entry of another id on a device file name.
   writeFileSync(legacy.manifestFile(), JSON.stringify(handManifest([{ id: 'zz', path: 'nul.txt' }])), 'utf8');
-  assert.match(refusal(() => retain(legacy, 'nul.txt')), /which is the device name nul;/);
+  assert.match(refusal(() => retain(legacy, 'nul.txt')), /refused: the device name nul;/);
 });
 
 /** A manifest as a legacy store could have written it: entries over paths the test chooses. */
@@ -191,8 +191,8 @@ test('same-id replacement and a legacy manifest', () => {
   mkdirSync(legacy.dir, { recursive: true });
   writeFileSync(legacy.manifestFile(), JSON.stringify(handManifest([{ id: 'p/q', path: 'p_q' }, { id: 'p_q', path: 'p_q' }])), 'utf8');
   const before = snapshot(legacy);
-  assert.match(refusal(() => retain(legacy, 'p/q')), /which is the file of the id p_q;/);
-  assert.match(refusal(() => retain(legacy, 'p_q')), /which is the file of the id p\/q;/);
+  assert.match(refusal(() => retain(legacy, 'p/q')), /refused: the file of the id p_q;/);
+  assert.match(refusal(() => retain(legacy, 'p_q')), /refused: the file of the id p\/q;/);
   assert.deepEqual(snapshot(legacy), before);
   const next = retain(legacy, 'r');
   assert.deepEqual(next.entries.map((e) => e.id), ['p/q', 'p_q', 'r']);
@@ -202,7 +202,7 @@ test('two colliding retains in a deterministic interleave', () => {
   const ev = store();
   const copy = ev.load('g1', 0, 0, NOW);
   ev.retain(ev.load('g1', 0, 0, NOW), { id: 'a/b', kind: 'artifact', content: 'first' });
-  assert.match(refusal(() => ev.retain(copy, { id: 'a_b', kind: 'artifact', content: 'second' })), /which is the file of the id a\/b;/);
+  assert.match(refusal(() => ev.retain(copy, { id: 'a_b', kind: 'artifact', content: 'second' })), /refused: the file of the id a\/b;/);
   assert.equal(bytes(path.join(ev.dir, 'a_b')), 'first');
   assert.deepEqual(ev.load('g1', 0, 0, NOW).entries.map((e) => e.id), ['a/b']);
 });
@@ -237,7 +237,7 @@ test('the CLI refuses a colliding id and journals nothing', () => {
   const manifest = bytes(ev.manifestFile());
   const second = cli('evidence', 'retain', '--id', 'a_b', '--kind', 'artifact', '--content', 'second');
   assert.notEqual(second.status, 0);
-  assert.match(second.stderr, /which is the file of the id a\/b;/);
+  assert.match(second.stderr, /refused: the file of the id a\/b;/);
   assert.equal(journal(), events);
   assert.equal(bytes(ev.manifestFile()), manifest);
   assert.equal(bytes(path.join(ev.dir, 'a_b')), 'first');
