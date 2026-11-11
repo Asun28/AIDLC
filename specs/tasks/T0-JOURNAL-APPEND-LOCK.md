@@ -166,3 +166,8 @@ Coordinator verification:
 - At 41257b4f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 11, pass 11, fail 0, skipped 0.
 - Windows, docpins: 79 test files reading 3 changed documents: # tests 1866 # pass 1854 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At 128c6e47, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1866 # pass 1853 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
