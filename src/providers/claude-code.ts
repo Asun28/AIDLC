@@ -14,6 +14,8 @@ export interface ClaudeCodeOptions {
   defaultModel?: string;
   /** Extra CLI flags appended to every invocation. */
   extraArgs?: string[];
+  /** Pass `--effort <request.effort>` after the model (card T0-CLAUDE-EFFORT-OPT-IN). Off unless `true`. */
+  forwardEffort?: boolean;
 }
 
 export class ClaudeCodeProvider implements ModelProvider {
@@ -39,6 +41,12 @@ export class ClaudeCodeProvider implements ModelProvider {
     if (request.system) args.push('--append-system-prompt', request.system);
     const model = request.model ?? this.opts.defaultModel;
     if (model) args.push('--model', model);
+    if (this.opts.forwardEffort === true) {
+      if (Object.keys(request.env ? { ...process.env, ...request.env } : process.env).some((k) => k.toUpperCase() === 'CLAUDE_CODE_EFFORT_LEVEL')) {
+        return { invocationId: newInvocationId('claude-code'), provider: this.name, model: model ?? 'claude', text: '', outcome: 'error', error: 'CLAUDE_CODE_EFFORT_LEVEL is set in the environment of the claude process, where it outranks --effort; unset it or turn off claudeCode.forwardEffort', durationMs: 0 };
+      }
+      args.push('--effort', request.effort);
+    }
     if (request.allowedTools?.length) args.push('--allowedTools', request.allowedTools.join(','));
     if (this.opts.extraArgs?.length) args.push(...this.opts.extraArgs);
     const r = await this.runner(this.opts.binary ?? 'claude', args, { cwd: request.cwd, timeoutMs: request.timeoutMs ?? 30 * 60 * 1000, ...(request.env ? { env: { ...process.env, ...request.env } } : {}) });

@@ -23,7 +23,7 @@ acceptance:
   - 4. tests/surface/bench.test.ts, tests/surface/init-base-ci.test.ts and tests/surface/review-bench.test.ts, the readers of ci.yml, pass unchanged. Passes on main and with this card. [R1] [dod arm 1] Detail: body section Acceptance detail, item 4.
   - 5. The CHANGELOG entry is the text of the detail (reviewer-verified against the diff). [R4]
 depends_on: []
-budget: 170
+budget: 200
 tdd: true
 diagnosis:
   root_cause: "`.github/workflows/ci.yml` has no `permissions` block (:1-15), so the token of its `check` and `bench` jobs gets the repository's default scopes, while agent-evals.yml:13, aidlc-ci.yml:14, docs-check.yml:17 and security-scanners.yml:10 each set `contents: read`. No test reads the `permissions` key of any workflow, so nothing pinned the four or caught the fifth."

@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { ZodError } from 'zod';
+import { cleanup, tmpDir } from '../infra/helpers.ts';
 import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, PreReviewConfig, PreReviewFallback, preReviewFallbackSettings, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 
 const explicit = ProjectConfig.parse({ worktreeRoot: 'D:\\wt\\AIDLC' });
@@ -594,4 +595,34 @@ describe('the shipped configs hold only keys the schema keeps (T0-AUDIT-DOC-TRUT
     const b = Object.defineProperty({ ...template }, 'toString', { value: 1, enumerable: true, configurable: true, writable: true });
     assert.deepEqual(dropped(b), ['toString']);
   });
+});
+
+test('T0-CLAUDE-EFFORT-OPT-IN: claudeCode.forwardEffort is a boolean that defaults to false', (t) => {
+  assert.deepEqual(ProjectConfig.parse({}).claudeCode, { forwardEffort: false });
+  assert.deepEqual(ProjectConfig.parse({ claudeCode: {} }).claudeCode, { forwardEffort: false });
+  assert.deepEqual(ProjectConfig.parse({ claudeCode: { forwardEffort: true } }).claudeCode, { forwardEffort: true });
+  assert.deepEqual(ProjectConfig.parse({ claudeCode: { forwardEffort: false } }).claudeCode, { forwardEffort: false });
+  for (const bad of ['true', 1, null, 'yes']) {
+    const r = ProjectConfig.safeParse({ claudeCode: { forwardEffort: bad } });
+    assert.equal(r.success, false, String(bad));
+    assert.deepEqual(r.error?.issues.map((i) => i.path), [['claudeCode', 'forwardEffort']], String(bad));
+  }
+  for (const bad of [null, true, 'x', []]) {
+    const r = ProjectConfig.safeParse({ claudeCode: bad });
+    assert.equal(r.success, false, JSON.stringify(bad));
+    assert.deepEqual(r.error?.issues.map((i) => i.path), [['claudeCode']], JSON.stringify(bad));
+  }
+  assert.deepEqual(ProjectConfig.parse({ claudeCode: { ForwardEffort: true } }).claudeCode, { forwardEffort: false });
+  assert.deepEqual(ProjectConfig.parse({ claudeCode: { forwardEffort: true, ForwardEffort: false } }).claudeCode, { forwardEffort: true });
+  for (const file of ['aidlc.config.json', 'templates/aidlc.config.json']) {
+    const raw = JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', file), 'utf8')) as Record<string, unknown>;
+    assert.equal('claudeCode' in raw, false, file);
+    assert.deepEqual(ProjectConfig.parse(raw).claudeCode, { forwardEffort: false }, file);
+  }
+  const dir = tmpDir();
+  t.after(() => cleanup(dir));
+  for (const [body, expected] of [[{ claudeCode: null }, 'claudeCode:'], [{ claudeCode: { forwardEffort: 'yes' } }, 'claudeCode.forwardEffort:']] as const) {
+    writeFileSync(path.join(dir, 'aidlc.config.json'), JSON.stringify(body));
+    assert.throws(() => loadProjectConfig(dir), (err: unknown) => err instanceof ConfigError && err.message.includes(expected), expected);
+  }
 });
