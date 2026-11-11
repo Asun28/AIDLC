@@ -122,3 +122,34 @@ npm run typecheck && node --test tests/surface/providers.test.ts tests/surface/c
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the existing tests these files hold pass unchanged.
+
+## Attempt evidence
+
+RED commit bbaa2f07 (tests only), GREEN commit 54bec90f (source and documents). Evidence commit follows.
+
+### RED on bbaa2f07 (node --test tests/surface/providers.test.ts tests/surface/config.test.ts: 99 tests, 72 pass, 27 fail)
+| Acceptance | Result on main | Reason |
+|---|---|---|
+| 1 | red | assertion: argv lacks `'--effort', 'low'` |
+| 2 | green | passes on main as the card says |
+| 3 | red | 10 subtests fail: the runner was called (refusal rows) and `--effort` missing (option-true controls); the option-absent controls pass |
+| 4 | red | `cli.providerFor is not a function` (missing export, not a behavioural RED) |
+| 5 | red | assertion `1 !== 3` (runProviderFor call has one argument) |
+| 6 | red | assertion: `undefined` against `{ forwardEffort: false }` |
+| 7 | red | T1 to T10 and T12 fail by assertion; T11 passes as the card says |
+
+### Revert table on 54bec90f (each row: one piece mutated in the worktree, providers and config test files run, then restored; `git status --short` empty afterwards)
+25 rows, 25 red. Rows: key absent from the schema; default true; non-strict boolean; no `--effort` push; push for any truthy value; order (push after extraArgs); value not `request.effort`; no environment check; case-sensitive check; request.env only; process.env only; non-empty values only; check outside the `forwardEffort` gate; `durationMs` not 0; model fixed to `claude`; `toolCalls` key present; error text changed; runner called before the refusal; `providerFor` ignores config; `providerFor` drops the runner; `runProviderFor` ignores its third argument; its default true; `aidlc run` call omits the value; `providerFor` not exported; evals call site drops `c.config`. The no-retry clause has no source line to revert; T7 and T8 assert exactly one runner call.
+
+### DoD on 54bec90f
+`npm run typecheck` exit 0; `node --test` of the seven files: 278 tests, 278 pass, 0 fail.
+
+### Document sentences
+| Sentence | Code and test that make it true |
+|---|---|
+| OPERATIONS parenthetical and key list, Claude Code effort paragraph, Evals sentence | `claude-code.ts` push and guard (acceptance 1, 2, 3, 7); `main.ts` constructions (acceptance 4, 5); `config.ts` key (acceptance 6) |
+| ARCHITECTURE sentence | same |
+| CHANGELOG entry | same; the "never read `request.effort`" clause is the RED of acceptance 1 |
+
+### Changed lines
+`git diff --shortstat main...HEAD` before this evidence commit: 8 files changed, 306 insertions, 10 deletions, against a budget of 450.
