@@ -117,3 +117,8 @@ Source setup. The scans run in WSL from the main checkout (`/mnt/d/Projects/AIDL
 The first row shows the named directory is read (the source has no ignore file and the finding is suppressed); the second shows that without the entry the scan reports exactly the finding of R1. The four commits of the branch alone (`--log-opts=origin/main..c1bbbe71`) scan clean, and each file this card changes scans clean as file content (`gitleaks dir`).
 
 Commits after c1bbbe71 change this card file only (this section and the coordinator's Linux and document-reader runs below). The scan of the final head is the Gitleaks check of this card's pull request, which reads the branch's own `.gitleaksignore`; the coordinator also scans `origin/main..HEAD` at the final head before the push.
+
+Coordinator verification:
+- At 6fd0cf6d, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/gitleaks-ignore.test.ts): tests 4, pass 4, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1885 # pass 1873 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
