@@ -8,7 +8,7 @@ import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import os from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, opsConfigured, opsRunner, candidateShaFor, actorA, actorB, T0 } from './_harness.ts';
-import { ReleaseRunner, type ReleaseDirective } from '../../src/loop/release-runner.ts';
+import { ReleaseRunner, releaseOperationOf, type ReleaseDirective } from '../../src/loop/release-runner.ts';
 import { ReleaseAttempt, HOUR_MS, MINUTE_MS, addMs, type ActorIdentity, type HealthSignal, type Lease, type OperationStatus, type ReleaseState } from '../../src/core/types.ts';
 import { LeaseStore } from '../../src/coordination/lease.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -416,5 +416,84 @@ test('aidlc release next run twice on a stopped attempt exits 0 both times', () 
     assert.equal(second.status, 0, second.stderr);
     assert.equal(reports(), reported, 'the second run skips the report');
     assert.equal(released(fx, STAGING), true);
+  });
+});
+
+/** Whenever an operation of the attempt is unresolved, the attempt's lease on `key` is held (the forbid of the card). */
+function assertNoUnresolvedWithoutLease(fx: Fx, attempt: ReleaseAttempt, key: string): void {
+  const open = fx.ops.list({ goalId: attempt.goalId }).filter((o) => releaseOperationOf(o, attempt) && UNRESOLVED.includes(o.status));
+  if (open.length) assert.equal(held(fx, key), true, `${open.map((o) => `${o.id} ${o.status}`).join(', ')} with ${key} released`);
+}
+
+test('an intent recorded around the cleanup is seen by its lease section or never recorded for a released lease', () => {
+  // The intent lands after the cleanup's first ledger read and before its lease section takes the lock.
+  for (const status of ['intended', 'running'] as const) {
+    inFixture((fx) => {
+      const attempt = stored(fx, 'STOP');
+      hold(fx, 'staging', `release:${attempt.id}`);
+      let recorded = '';
+      const leases = new (class extends LeaseStore {
+        override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
+          if (key === STAGING && !recorded) recorded = record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, idempotencyKey: `${attempt.id}:stage-deploy:c1`, status });
+          return super.update(key, change);
+        }
+      })(fx.paths.leases);
+      releaseRunner(fx, { leases }).next(fx.goal(attempt.goalId), attempt);
+      assert.equal(fx.ops.get(recorded)?.status, status, 'the intent landed before the section');
+      assertNoUnresolvedWithoutLease(fx, attempt, STAGING);
+      assert.equal(held(fx, STAGING), true, `${status}: the section saw the record and kept the lease`);
+    });
+  }
+  // The reverse order: a caller holding a STAGE copy of the attempt claimed the lease, then the cleanup of the stored terminal
+  // attempt released it (or the lease changed otherwise) before that caller's `issue` took the lock.
+  const interventions: [string, (fx: Fx, attempt: ReleaseAttempt) => void][] = [
+    ['released by the cleanup', (fx, attempt) => void releaseRunner(fx).next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!)],
+    ['renewed by this session for another attempt', (fx) => void fx.leases.claim(STAGING, { operation: 'release:rel-other', now: fx.now() })],
+    ['removed', (fx) => rmSync(fx.leases.file(STAGING))],
+  ];
+  for (const [label, intervene] of interventions) {
+    inFixture((fx) => {
+      const attempt = stored(fx, 'STOP');
+      let intervened = false;
+      const leases = new (class extends LeaseStore {
+        override claim(key: string, options: Parameters<LeaseStore['claim']>[1] = {}): ReturnType<LeaseStore['claim']> {
+          const claimed = super.claim(key, options);
+          if (key === STAGING && !intervened) {
+            intervened = true;
+            intervene(fx, attempt);
+          }
+          return claimed;
+        }
+      })(fx.paths.leases);
+      let runs = 0;
+      const runner = scriptedRunner({ 'deploy-cmd': () => (runs++, { stdout: 'ok id=dep1', exitCode: 0 }) });
+      const stale = ReleaseAttempt.parse({ ...attempt, state: 'STAGE', stop: undefined, disposition: 'pending' });
+      const r = releaseRunner(fx, { leases, runner, opsLoad: opsConfigured({ asyncDeploy: true }) }).next(fx.goal(attempt.goalId), stale);
+      assert.ok(intervened, label);
+      assertNoUnresolvedWithoutLease(fx, attempt, STAGING);
+      assert.deepEqual({ kind: r.directive.kind, on: r.directive.kind === 'wait' ? r.directive.on : undefined, runs, records: fx.ops.list({ goalId: attempt.goalId }).length }, { kind: 'wait', on: 'environment:staging', runs: 0, records: 0 }, `${label}: ${r.directive.narration}`);
+    });
+  }
+  // A ledger that becomes unreadable after the first read keeps the lease whose section met it and every key after it.
+  inFixture((fx) => {
+    const attempt = stored(fx, 'DONE', { target: 'production' });
+    record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'succeeded' });
+    hold(fx, 'production', `release:${attempt.id}`);
+    hold(fx, 'staging', `release:${attempt.id}`);
+    let broken = false;
+    const leases = new (class extends LeaseStore {
+      override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
+        if (!broken) {
+          broken = true;
+          writeFileSync(path.join(fx.paths.operations, 'op-unreadable.json'), '{');
+        }
+        return super.update(key, change);
+      }
+    })(fx.paths.leases);
+    const r = releaseRunner(fx, { leases }).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(r.directive.kind, 'done');
+    assertRetryNamed(r.directive, attempt.id, 'operation ledger', /MALFORMED_JSON/);
+    assert.ok(r.directive.narration.includes(`${PRODUCTION}, ${STAGING} kept`), r.directive.narration);
+    assert.deepEqual({ production: held(fx, PRODUCTION), staging: held(fx, STAGING) }, { production: true, staging: true });
   });
 });
