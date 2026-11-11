@@ -47,8 +47,8 @@ test('a directory from tmpDir is removed when its process exits', () => {
     `);
     const dir = r.stdout.trim();
     assert.equal(r.exit, 0, r.stderr);
-    assert.ok(path.basename(dir).startsWith('aidlc-tt-'), `printed: ${r.stdout}`);
     assert.equal(existsSync(dir), false, `left: ${dir}`);
+    assert.ok(path.basename(dir).startsWith('aidlc-tt-'), `printed: ${r.stdout}`);
   });
 });
 
@@ -64,8 +64,8 @@ test('the owner removes a directory its child used once the child is done', () =
     `);
     const dir = r.stdout.trim();
     assert.equal(r.exit, 0, r.stderr);
-    assert.ok(path.basename(dir).startsWith('aidlc-tt-'), `printed: ${r.stdout}`);
     assert.equal(existsSync(dir), false, `left: ${dir}`);
+    assert.ok(path.basename(dir).startsWith('aidlc-tt-'), `printed: ${r.stdout}`);
   });
 });
 
