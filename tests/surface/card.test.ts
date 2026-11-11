@@ -194,6 +194,26 @@ test('registry: dangling depends_on, parallel overlap, computed tier and declare
   assert.deepEqual(findings.get('T0-OLD'), []);
 });
 
+test('registry: a card id carried by two files is a block on the active card, and no card overwrites the findings of another', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const tasks = path.join(dir, 'tasks');
+  const archive = path.join(dir, 'archive');
+  mkdirSync(tasks);
+  mkdirSync(archive);
+  writeFileSync(path.join(tasks, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', depends_on: '\n  - T1-MISSING' }), 'utf8');
+  writeFileSync(path.join(tasks, 'T1-OK.md'), templateCard({ id: 'T1-OK', branch: 'T1-OK', worktree: 'C:\\wt\\T1-OK', allow_paths: '\n  - src/ok/' }), 'utf8');
+  // An archived copy of the active card loads last: it must not replace the active card's blocks with its empty list.
+  writeFileSync(path.join(archive, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', status: 'merged' }), 'utf8');
+  const findings = validateRegistry(loadCardRegistry(tasks, archive));
+  const b = findings.get('T1-B')!;
+  assert.ok(b.some((f) => f.sentinel === '[CARD-REF-DANGLING]' && f.severity === 'block'), JSON.stringify(b));
+  const duplicate = b.filter((f) => f.sentinel === '[CARD-ID-DUPLICATE]');
+  assert.equal(duplicate.length, 1, JSON.stringify(b));
+  assert.equal(duplicate[0]!.severity, 'block');
+  assert.ok(duplicate[0]!.message.includes(path.join(archive, 'T1-B.md')), duplicate[0]!.message);
+  assert.ok(!findings.get('T1-OK')!.some((f) => f.severity === 'block'), 'a card with its own id is untouched');
+});
+
 test('renderCard output re-parses with zero blocking findings', () => {
   const text = renderCard({
     id: 'T2-NEW',

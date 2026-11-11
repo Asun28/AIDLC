@@ -46,6 +46,31 @@ test('shouldFile files once, dedupes within the window, respects dismissal and r
   assert.ok(existsSync(ledger.file));
 });
 
+test('the dedupe window starts at each filing: a breach refiled after the window is deduped again until the next window ends', () => {
+  const ledger = new IncidentLedger(mkdtempSync(path.join(tmpdir(), 'aidlc-incident-')));
+  const id = breachIdentity(breach);
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, t0).file, true);
+  ledger.attachIntent(id, 'intent/x.md', t0);
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(5.9)).file, false);
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(7)).file, true);
+  ledger.attachIntent(id, 'intent/y.md', later(7));
+  // The second window runs from hour 7, so hours 8 and 12.9 are inside it and hour 13.1 is past it.
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(8)).file, false);
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(12.9)).file, false);
+  const third = ledger.shouldFile(breach, 6 * HOUR, later(13.1));
+  assert.equal(third.file, true);
+  assert.equal(third.record.firstSeen, t0);
+  assert.equal(third.record.filedAt, later(7));
+});
+
+test('a record filed before filedAt existed keeps its window from firstSeen', () => {
+  const ledger = new IncidentLedger(mkdtempSync(path.join(tmpdir(), 'aidlc-incident-')));
+  const id = breachIdentity(breach);
+  ledger.write({ [id]: { identity: id, firstSeen: t0, lastSeen: t0, count: 1, intentFile: 'intent/x.md', disposition: 'open' } });
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(2)).file, false);
+  assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(7)).file, true);
+});
+
 test('intentFromBreach + writeIncidentIntent produce a parseable incident intent', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-intent-'));
   const intent = intentFromBreach(

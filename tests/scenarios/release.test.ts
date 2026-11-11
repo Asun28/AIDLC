@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, opsConfigured, opsNotConfigured, opsRunner, candidateShaFor, T0 } from './_harness.ts';
 import { ReleaseRunner } from '../../src/loop/release-runner.ts';
 import { ReleaseAttempt, HOUR_MS, MINUTE_MS, addMs, type HealthSignal, type ReleaseState } from '../../src/core/types.ts';
-import type { OpsLoad } from '../../src/delivery/ops.ts';
+import { DeliveryOpsConfig, type OpsLoad } from '../../src/delivery/ops.ts';
 
 type Fx = ReturnType<typeof makeFixture>;
 
@@ -152,6 +154,42 @@ test('Q17: a production goal presents the checkpoint packet for the production e
     r = runner.next(fx.goal(goalId), r.attempt);
     assert.equal(r.directive.kind, 'checkpoint');
     assert.equal(fx.ops.list({ goalId, kind: 'deploy' }).length, 1, 'only the staging deploy has been issued');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('the approval packet is read without advancing the attempt: no save, no journal event, no deploy, before and after the authority is recorded', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'production');
+    const runner = releaseRunner(fx, opsConfigured(), () => []);
+    let attempt = runner.setCandidate(fx.goal(goalId), fx.store.getRelease(attemptId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    stagingAuth(fx, goalId, 'c1');
+    // Before CHECKPOINT there is no packet, and asking for one issues nothing.
+    assert.equal(runner.checkpointPacket(fx.goal(goalId), attempt), undefined);
+    assert.equal(fx.ops.list({ goalId, kind: 'deploy' }).length, 0, 'asking for the packet in PREPARE deploys nothing');
+    let r = runner.next(fx.goal(goalId), attempt);
+    attempt = runner.reportStep(fx.goal(goalId), r.attempt, 'stage-verify', 'succeeded');
+    r = runner.next(fx.goal(goalId), attempt);
+    assert.equal(r.attempt.state, 'CHECKPOINT');
+    const observed = () => ({ events: fx.journal(goalId).readAll().length, deploys: fx.ops.list({ goalId, kind: 'deploy' }).length, attempt: JSON.stringify(fx.store.getRelease(attemptId)) });
+    const before = observed();
+    const waiting = runner.checkpointPacket(fx.goal(goalId), r.attempt);
+    assert.equal(waiting?.kind, 'checkpoint');
+    assert.equal(waiting?.packet['environment'], 'production');
+    assert.equal(waiting?.packet['candidateDigest'], 'c1');
+    assert.deepEqual(waiting, r.directive, 'the packet command prints the directive release next returned');
+    assert.deepEqual(observed(), before);
+    // With the matching authority recorded the packet is still only read: release next is the command that applies.
+    fx.controller.report({ goalId, generation: 0, result: 'approved', data: { kind: 'production', by: 'release-manager', candidateDigest: 'c1', environment: 'production', operations: ['deploy'] } });
+    const authorized = observed();
+    const ready = runner.checkpointPacket(fx.goal(goalId), fx.store.getRelease(attemptId)!);
+    assert.equal(ready?.kind, 'checkpoint');
+    assert.match(ready?.narration ?? '', /authority is recorded/);
+    assert.deepEqual(observed(), authorized);
+    assert.equal(fx.store.getRelease(attemptId)!.state, 'CHECKPOINT');
+    assert.equal(fx.ops.list({ goalId, kind: 'deploy' }).filter((o) => o.target === 'production').length, 0, 'reading the packet never deploys to production');
   } finally {
     fx.cleanup();
   }
@@ -353,3 +391,49 @@ for (const [label, steps] of [['no stage-verify step', []], ['a failed stage-ver
     }
   });
 }
+
+test('a release command refuses a --goal that does not own the attempt, and writes nothing', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'staging');
+    writeCard(fx, { id: 'T1-OTHER', title: 'another goal' });
+    const other = goalForCards(fx, ['T1-OTHER']);
+    const before = JSON.stringify(fx.store.getRelease(attemptId));
+    const cli = (...args: string[]) => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), ...args], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000 });
+    for (const args of [['release', 'next', attemptId], ['release', 'report', attemptId, '--step', 'stage-verify', '--status', 'succeeded'], ['release', 'candidate', attemptId, '--digest', 'c1', '--sha', 'a'.repeat(40)]]) {
+      const refused = cli(...args, '--goal', other.id);
+      assert.notEqual(refused.status, 0, args.join(' '));
+      assert.ok(refused.stderr.includes(`release attempt ${attemptId} belongs to goal ${goalId}, not ${other.id}`), refused.stderr);
+      assert.equal(JSON.stringify(fx.store.getRelease(attemptId)), before, args.join(' '));
+    }
+    // The owning goal, named or not, is accepted as before.
+    assert.equal(cli('release', 'candidate', attemptId, '--digest', 'c1', '--sha', 'a'.repeat(40), '--goal', goalId).status, 0);
+    assert.equal(fx.store.getRelease(attemptId)!.candidateDigest, 'c1');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a package attempt asks for its run proof by the command that records it', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO'], { target: 'package' });
+    driveCardToDone(fx, goal.id, 'T1-HELLO');
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+    const rep = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: {} });
+    const attemptId = rep.directive.kind === 'release' ? rep.directive.attemptId : '';
+    assert.ok(attemptId, JSON.stringify(rep.directive));
+    const packageOps: OpsLoad = { status: 'configured', file: 'memory', config: DeliveryOpsConfig.parse({ schemaVersion: 1, environments: {}, operations: [{ role: 'build', command: ['build-cmd'] }, { role: 'package', command: ['package-cmd'] }] }) };
+    const runner = releaseRunner(fx, packageOps);
+    const attempt = runner.setCandidate(fx.goal(goal.id), fx.store.getRelease(attemptId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    const r = runner.next(fx.goal(goal.id), attempt);
+    assert.equal(r.directive.kind, 'prepare');
+    const narration = r.directive.kind === 'prepare' ? r.directive.narration : '';
+    assert.ok(narration.includes(`aidlc release report ${attemptId} --step package-run-proof --status succeeded`), narration);
+    // The step and status the narration names are the ones that deliver the attempt.
+    assert.equal(runner.reportStep(fx.goal(goal.id), r.attempt, 'package-run-proof', 'succeeded').state, 'DONE');
+  } finally {
+    fx.cleanup();
+  }
+});

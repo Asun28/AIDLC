@@ -106,6 +106,26 @@ describe('GitHubShipPath', () => {
     assert.equal(new GitHubShipPath({ mainRoot: blocked.root, worktreeRoot: blocked.wtRoot, repository: 'o/r', runner: runnerWith(), sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'review-blocked');
   });
 
+  test('a pass verdict whose run_status is not success is no verdict: nothing is pushed or merged', () => {
+    for (const run_status of ['tool_error', 'timeout', 'no_output', 'malformed']) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD, run_status });
+      dirs.push(f.root);
+      const calls: string[] = [];
+      const base = runnerWith();
+      const runner: typeof base = (cmd, args, o) => {
+        calls.push([cmd, ...args].join(' '));
+        return base(cmd, args, o);
+      };
+      const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'review-no-verdict', `${run_status}: ${r.receipt.stdout}`);
+      assert.ok(r.receipt.stdout.includes(`run_status ${run_status}`), r.receipt.stdout);
+      assert.ok(!calls.some((c) => c.startsWith('git push') || c.startsWith('gh pr merge')), `${run_status}: ${calls.join('\n')}`);
+    }
+    const done = fixture({ verdict: 'pass', reasons: [], sha: HEAD, run_status: 'success' });
+    dirs.push(done.root);
+    assert.equal(new GitHubShipPath({ mainRoot: done.root, worktreeRoot: done.wtRoot, repository: 'o/r', runner: runnerWith(), sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merged');
+  });
+
   test('auth failure is auth-failed, never a silent local merge', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);
@@ -1048,6 +1068,17 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.equal(pushFail.prNumber, 8, 'the resolved open PR is the identity of the push failure');
     const noPr = pathFor(f, recording({ [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     assert.equal(noPr.prNumber, undefined, 'no PR resolved, no number');
+  });
+
+  test('a PR closed without a merge stops before any sync, push or CI wait, and the result names it', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const closed = recording({ 'gh pr list': { stdout: JSON.stringify([{ number: 3, state: 'CLOSED', headRefOid: HEAD, baseRefName: 'main' }]) } });
+    const r = pathFor(f, closed.runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'pr-failed', r.receipt.stdout);
+    assert.equal(r.prNumber, 3);
+    assert.ok(r.receipt.stdout.includes('[SHIP-PR-BASE-UNKNOWN] PR #3 for T1-A is closed without merge; not a new start'), r.receipt.stdout);
+    assert.ok(!closed.calls.some((c) => c.key.startsWith('git fetch') || c.key.startsWith('git merge') || c.key.startsWith('git push') || c.key.startsWith('gh pr merge') || c.key.startsWith('gh api repos')), closed.calls.map((c) => c.key).join('\n'));
   });
 
   test('R3 decision 1 (-2): a failed or malformed PR listing is [SHIP-PR-BASE-UNKNOWN] before any sync, never an exception', () => {

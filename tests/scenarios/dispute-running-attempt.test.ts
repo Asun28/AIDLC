@@ -177,6 +177,28 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a disputed R3 block settles the r
   }
 });
 
+test('a dispute accepted after the gate settled the repair reopens the episode: the repair gets an attempt and can be recorded', async () => {
+  const s = setup();
+  try {
+    let r = s.record(s.first.run, 'sha-1');
+    r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, r.run)).run);
+    s.r3.push(BLOCK);
+    r = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, r.run)).run);
+    r = s.runner.next(s.g(), s.card, s.runner.disputeFinding(s.g(), s.card, r.run, 'F1', 'src/t0-dra.test.ts covers the empty input at line 12'));
+    assert.equal(r.run.effort!.terminal, 'succeeded', 'the dispute settled the repair and the episode is succeeded again');
+    // The author now agrees with the finding: the block stands, so the repair needs an attempt of the same episode.
+    r = s.runner.next(s.g(), s.card, s.runner.acceptFinding(s.g(), s.card, r.run, 'F1'));
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.equal(r.run.effort!.terminal, undefined, 'the episode is open for the repair');
+    assert.equal(r.run.effort!.attempts.filter((a) => a.outcome === 'running').length, 1, 'card next opened the repair attempt');
+    const repaired = s.runner.recordAttempt(s.g(), s.card, r.run, { outcome: 'success', dodReceipt: 'dod:sha-2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(repaired.candidate?.sha, 'sha-2');
+    assert.equal(repaired.effort!.terminal, 'succeeded');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
 test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a kept receipt reused because the pre-review rounds are exhausted settles nothing: the repair stays running and nothing is journaled (R3 decision 1 F1) [R1]', async () => {
   const s = setup();
   try {

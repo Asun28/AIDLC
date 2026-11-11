@@ -134,4 +134,16 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
       assert.equal(OperationBinding.safeParse({ ...binding, [key]: ' state: done ' }).success, true, `${key}: a pattern with a non-blank character parses`);
     }
   });
+
+  it('a successPattern, failurePattern or operationIdPattern that is no regular expression is refused at its path, before any command can run', () => {
+    const binding = { role: 'deploy', command: ['deploy-tool', 'submit'] };
+    for (const key of ['successPattern', 'failurePattern', 'operationIdPattern']) {
+      for (const bad of ['[', 'operation=(\\S+', '*x']) {
+        const r = OperationBinding.safeParse({ ...binding, [key]: bad });
+        assert.equal(r.success, false, `${key}: ${bad}`);
+        assert.ok(r.error?.issues.some((i) => i.path.join('.') === key && /regular expression/.test(i.message)), `${key}: the issue names the key and the cause`);
+      }
+      assert.equal(OperationBinding.safeParse({ ...binding, [key]: '^operation=(\\S+)$' }).success, true, key);
+    }
+  });
 });

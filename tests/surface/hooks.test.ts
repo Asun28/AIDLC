@@ -159,6 +159,19 @@ test('secrets-guard: denies credential patterns and secret files, allows placeho
   assert.deepEqual(secretsGuard({ tool_input: { content: 'const x = 1;' } }), { exitCode: 0 });
 });
 
+test('secrets-guard: a placeholder match does not excuse a later real match, and every edit of a MultiEdit is read', () => {
+  // Built at run time so this file carries no literal the guard itself would deny.
+  const assign = (name: string, value: string) => `${name} = "${value}"`;
+  const placeholder = assign('api_key', 'placeholder-value-xxxx');
+  const real = assign('pass' + 'word', 'hunter2'.repeat(3));
+  assert.deepEqual(secretsGuard({ tool_input: { content: placeholder } }), { exitCode: 0 });
+  assert.equal(decision(secretsGuard({ tool_input: { content: `${placeholder}\n${real}\n` } })), 'deny', 'the second match of the same pattern is read');
+  assert.equal(decision(secretsGuard({ tool_input: { content: `${real}\n${placeholder}\n` } })), 'deny');
+  assert.deepEqual(secretsGuard({ tool_input: { content: `${placeholder}\n${assign('token', 'example-token-value')}\n` } }), { exitCode: 0 }, 'placeholders alone stay allowed');
+  assert.equal(decision(secretsGuard({ tool_input: { file_path: 'src/a.ts', edits: [{ old_string: 'a', new_string: 'const x = 1;' }, { old_string: 'b', new_string: real }] } })), 'deny', 'the second edit of a MultiEdit');
+  assert.deepEqual(secretsGuard({ tool_input: { file_path: 'src/a.ts', edits: [{ old_string: real, new_string: 'const x = 1;' }, 'not an edit', null] } }), { exitCode: 0 }, 'only the text an edit writes is read');
+});
+
 // BUG: the secret-file regex `(^|\/)\.env(\.|$)` also matches `.env.example`, so the hook blocks
 // the very placeholder file its own deny message tells the agent to use.
 test('secrets-guard allows writing .env.example placeholders', () => {

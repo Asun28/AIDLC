@@ -40,6 +40,11 @@ describe('resolveCardGoal (T0-CARD-GOAL-RESOLVE)', () => {
     }
   });
 
+  test('the command the no-goal refusal names carries the request text `aidlc goal new` requires', () => {
+    const error = refused(resolveCardGoal([], 'T0-X'));
+    assert.ok(error.includes('`aidlc goal new --card T0-X "<request>"`'), error);
+  });
+
   test('an explicit goal that projects the card is used, and one that does not but holds its run is used [R3]', () => {
     const goals = [goal('g-b', ['T0-Y']), goal('g-a', ['T0-X'])];
     assert.deepEqual(resolveCardGoal(goals, 'T0-X', { explicit: 'g-a', holdsRun: () => false }), { ok: true, goalId: 'g-a' });

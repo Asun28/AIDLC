@@ -71,6 +71,23 @@ test('open TODO fails but a closed [TBD: question] passes', () => {
   assert.equal(tbd.gates.find((g) => g.gateId === 3)?.verdict, 'pass');
 });
 
+test('a closed [TBD: question] exempts only itself: an open marker beside it still fails', () => {
+  const mixed = evaluatePlanReadiness(renderPlan({ ...base, risks: ['cache size [TBD: which cache backend?]', 'TODO decide the eviction rule'] }), { light: true });
+  const gate = mixed.gates.find((g) => g.gateId === 3);
+  assert.equal(gate?.verdict, 'fail');
+  assert.equal(gate?.finding, 'open marker "TODO"');
+  assert.equal(mixed.overall, 'needs-clarification');
+  const openTbd = evaluatePlanReadiness(renderPlan({ ...base, risks: ['cache size [TBD: which cache backend?]', 'eviction rule TBD'] }), { light: true });
+  assert.equal(openTbd.gates.find((g) => g.gateId === 3)?.finding, 'open marker "TBD"');
+});
+
+test('a ??? marker fails wherever it stands, beside a word or alone', () => {
+  for (const risk of ['the cache backend is ???', '??? which cache backend', 'cache backend??? unknown']) {
+    const r = evaluatePlanReadiness(renderPlan({ ...base, risks: [risk] }), { light: true });
+    assert.equal(r.gates.find((g) => g.gateId === 3)?.finding, 'open marker "???"', risk);
+  }
+});
+
 test('fileExists resolver flags missing existing files but not (new) ones', () => {
   const r = evaluatePlanReadiness(renderPlan(base), { light: true, fileExists: (p) => p !== 'claims-api/routes/status.py' });
   const g6 = r.gates.find((g) => g.gateId === 6)!;

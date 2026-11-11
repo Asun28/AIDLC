@@ -73,6 +73,16 @@ describe('delivery/worktree (safe start-or-attach, R14-R16)', () => {
     }
   });
 
+  it('stops with ownership when the branch is checked out in two worktrees, and never starts a third', () => {
+    const probe = probeWith(porcelain([{ path: MAIN, branch: 'main' }, { path: `${WT_ROOT}/T1-FOO`, branch: 'T1-FOO' }, { path: `${D}/elsewhere/T1-FOO`, branch: 'T1-FOO' }]));
+    const d = decideWorktree(probe, base);
+    assert.equal(d.action, 'stop');
+    if (d.action === 'stop') {
+      assert.equal(d.stopReason, 'ownership');
+      assert.match(d.reason, /checked out in 2 worktrees/);
+    }
+  });
+
   it('stops with ownership when the worktree belongs to a different repository', () => {
     const probe = new GitProbe(
       scriptedRunner({

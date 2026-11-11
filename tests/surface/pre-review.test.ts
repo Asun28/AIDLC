@@ -1841,3 +1841,29 @@ describe('the Surviving mutants section of the formal prompt (card T1-VERIFY-MUT
     assert.deepEqual(entries([sized(1, 2001), survivor(2, 'a'), survivor(3, 'b')]), ['- survivors left out by the byte cap: 3']);
   });
 });
+
+test('perspective names that differ only by case are refused: their log and verdict files are one file on a case-insensitive filesystem', () => {
+  assert.throws(() => inputs.validatePerspectives(['bugs', 'Bugs']), /duplicate perspective name "Bugs"/);
+  assert.throws(() => inputs.validatePerspectives(['ac-coverage', 'edge-cases', 'AC-COVERAGE']), /duplicate perspective name "AC-COVERAGE"/);
+  assert.doesNotThrow(() => inputs.validatePerspectives(['bugs', 'bugs2', 'Security']));
+});
+
+test('an object nested in a document that broke before it never stands in for that document as the verdict', () => {
+  const nested = '"standards":{"verdict":"pass","reasons":[]}';
+  const spec = (reason: string) => `{"verdict":"block","reasons":["[spec] 6"],"axes":{"spec":{"verdict":"block","reasons":["${reason}"]},${nested}}}`;
+  const broken: Array<[string, string]> = [
+    ['a bare word where a value belongs', `{"verdict":"block","reasons":[],"axes":{"spec":oops,${nested}}}`],
+    ['an invalid escape in a spec reason', spec(String.raw`src\gate.ts skips the check`)],
+    ['a regex escape in a spec reason', spec(String.raw`the pattern \d+ matches nothing`)],
+    ['a raw line break in a spec reason', spec('first line\nsecond line')],
+    ['an invalid escape, and the output cut after the nested axis', spec(String.raw`src\gate.ts`).slice(0, -2)],
+  ];
+  for (const [name, text] of broken) {
+    assert.throws(() => JSON.parse(text), name);
+    assert.equal(inputs.readVerdict(text).verdict, undefined, name);
+    assert.equal(inputs.readVerdict(`reasoning first\n${text}\n`).verdict, undefined, name);
+  }
+  // A complete document on its own after the broken one is the answer, and a quoted contract in prose still opens nothing.
+  assert.deepEqual(inputs.readVerdict(`${broken[0]![1]}\n{"verdict":"block","reasons":["[spec] final"]}`).verdict?.reasons, ['[spec] final']);
+  assert.equal(inputs.readVerdict('The contract is {"verdict": pass or block}.\n{"verdict":"pass","reasons":[]}').verdict?.verdict, 'pass');
+});
