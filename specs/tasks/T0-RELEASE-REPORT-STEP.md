@@ -219,4 +219,39 @@ The CLI tests write `aidlc.ops.json` inside `fx.tmp` only, so the same hook remo
 - DoD on `4d8b739e`, run exactly as the card gives it: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 38`, `# pass 38`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 8 tests of the new file are `ok 13` to `ok 20`).
 - Revert rows touched by the second repair: the 9 R4 and R5 rows and the new ownership row, run with the test file of `1bf9b726`; each fails a test (table above). The cleanup change alters no assertion.
 
+Third repair, after the Codex pre-review of `2be1b6fb` (docs only; no source or test change): each sentence of the three documents now carries its own state and condition. The package stop is stated for PREPARE of an attempt whose target is `package` (a staging attempt in PREPARE carrying a failed `package-run-proof` is not stopped, acc 4). The report-again and `UNKNOWN` sentences hold only while the step is still the one the attempt expects (a ready package attempt whose ops configuration is removed after an `UNKNOWN` report no longer expects the run proof, acc 3). The CLI sentence says only that the command exits 1 with the message: the `aidlc: ` prefix comes from the catch of src/cli/main.ts when that file is run directly, while `bin/aidlc.js` awaits `main` and Node reports the thrown error itself (bin/aidlc.js:14-17). Finality is stated for a step stored as `failed`, since a `failed` report whose save failed leaves the step expected (acc 5).
+
+Each added sentence and what pins it:
+
+| Document, sentence | Pin |
+|---|---|
+| OPERATIONS: `release report` records a manual step only when the state asks for it, with the three cases | acc 1 (every state and condition), acc 3 (each package prerequisite); R1 |
+| OPERATIONS: the name matches exactly, the status is exactly `succeeded`, `failed` or `UNKNOWN` | acc 1 (name variants), acc 2 (statuses); R1, R2 |
+| OPERATIONS: any other report is refused before anything is written and the command exits 1; once the attempt exists and any `--goal` names its goal, the message names the attempt, its state and the expected step or none | acc 1, 2, 3, 5 (unchanged attempt and journal, message), acc 3 and 7 (CLI exit 1, message, `--goal` message first), release.test.ts "a release command refuses a --goal that does not own the attempt, and writes nothing"; R3; through `bin/aidlc.js` the exit 1 and message come from Node's report of the rejected `main` (bin/aidlc.js:14-17) |
+| OPERATIONS: a step reported `succeeded` or `UNKNOWN` may be reported again while it is still the step the attempt expects | acc 5 (succeeded, succeeded, UNKNOWN, succeeded, failed before `next`), acc 6 (UNKNOWN again after `next`); R1 |
+| OPERATIONS: a step stored as `failed` is final, no longer expected, every later report refused | acc 5, including the lost-save block; R1, R3 |
+| OPERATIONS: after an `UNKNOWN` report the state does not change; once `next` reaches the case it asks for the step again while it is still expected | acc 6; R8 |
+| OPERATIONS: the three stops apply once `next` reaches the case of the state; reconciliation and ownership checks come first | acc 4b (environment owned by another session: `wait`, attempt unchanged; revert "R4 failed-verification STOP ahead of the reconcile and ownership checks"); R4, R5, R6 |
+| OPERATIONS: STAGE, stored failed `stage-verify`, `staging verification failed`, whatever the `stage-deploy` status | acc 4, acc 4b; R4, R7 |
+| OPERATIONS: RECOVER, stored failed `recover-verify`, `recovery verification failed`, whatever the `recover` status | acc 4, acc 4b; R5, R7 |
+| OPERATIONS: PREPARE of a `package` attempt, stored failed `package-run-proof`, `package install/run proof failed`, before the prerequisites are checked | acc 4 (ops unreadable after the report; zero reads of the ops configuration; a staging attempt carrying the step is not stopped); R6, R7 |
+| OPERATIONS: `aidlc release candidate` does not clear that step | acc 5 (CLI `release candidate --digest c2`); R6 |
+| ARCHITECTURE: the one sentence (steps and states, statuses, none once stored as `failed`, refusal before any write, the three stops once `next` reaches the case) | as the OPERATIONS rows above; R1 to R6, R11 |
+| ARCHITECTURE: edge label `PREPARE --> STOP: ... / failed run proof (release-health)` | acc 4; R6, R11 |
+| CHANGELOG: the steps, prerequisites and states (one helper with `next`) | acc 1, acc 3; revert "R1 package needs condition"; R1 |
+| CHANGELOG: exact name and status | acc 1, acc 2; R1, R2 |
+| CHANGELOG: refusal before any journal event or save, after the unchanged `--goal` refusal; exit 1 with the message | acc 1, 2, 3, 5, 7; release.test.ts `--goal` test; R3 |
+| CHANGELOG: an accepted report journals `EVIDENCE_RETAINED` before the save | acc 5 lost-save block; revert "R3 accepted report journals before the save"; R3 |
+| CHANGELOG: report again while expected; a step stored as `failed` is final | acc 5, acc 6; R1 |
+| CHANGELOG: `UNKNOWN` keeps the state; `next` asks again once it reaches the case while the step is expected | acc 6; R8 |
+| CHANGELOG: the three stops with their states and conditions; `release candidate` does not clear the run proof | acc 4, acc 4b, acc 5; R4 to R7 |
+| CHANGELOG: what main did (stored any schema status, replaced an operation step, appended `EVIDENCE_RETAINED` then failed validation on another status, delivered a package attempt without candidate or operation, never stopped on a failed verification) | RED receipts of `1d88c7a3` (acc 2 stored `pending`, acc 3 accepted the run proof without the prerequisites, acc 4 asked for the failed proof again, acc 7 stored `stage-deploy`); the card's `diagnosis` (probe case D for the invalid status) |
+| CHANGELOG: the help names the three steps and their states | acc 7; R10 |
+
+Final verification on ``f42d78f1`` (the last commit with code, tests or docs; the card commit after it changes only this file):
+
+- Doc-pin files: the 79 test files that name docs/ARCHITECTURE.md, docs/OPERATIONS.md, CHANGELOG.md or release.md, in one `node --test` call: 1870 tests, 1857 pass, 1 fail, 12 skipped. The failure is `tests/infra/exec.test.ts` "T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node sleeper) [R1] [R2] [R3] [R4]", the machine-load case the brief names: run alone on the same commit it passes 61 of 61, and this card changes no file it executes.
+- DoD, run exactly as the card gives it: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 38`, `# pass 38`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 8 tests of the new file are `ok 13` to `ok 20`).
+- No source or test file changed after `4d8b739e`, so the revert table above stands.
+
 Coordinator verification:
