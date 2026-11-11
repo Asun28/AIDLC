@@ -1,7 +1,7 @@
 ---
 id: T0-OPS-CWD
 title: An operation command and its status lookup run in the same directory, the binding's cwd resolved against the main checkout, by one rule stated in the docs, and a binding directory that does not exist stops the release before any operation is recorded
-status: todo
+status: merged
 branch: T0-OPS-CWD
 worktree: D:\wt\AIDLC\T0-OPS-CWD
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 40 source lines in src/delivery/ops.ts, src/loop/release-runner.ts and src/cli/main.ts; the rest is the path-form table for both platforms, the schema refusal rows, the same-directory rows, the runner and CLI scenarios (missing directory, linked worktree), the call-shape updates of two test files, docs and about 25 lines of attempt evidence; raised from 320 to 460 by the coordinator on the candidate 042d8cb7, which is 394 changed lines (56 of source, the rest tests, docs and attempt evidence), plus the template copy of the DELIVERY-OPS.md paragraph and its test"
