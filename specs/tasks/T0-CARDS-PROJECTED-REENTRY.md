@@ -1,7 +1,7 @@
 ---
 id: T0-CARDS-PROJECTED-REENTRY
 title: "After VERIFY_ARC a new card enters a goal only through the repair cycle or a recorded user revision, and arc-verified is refused while a listed card is not merged"
-status: todo
+status: merged
 branch: T0-CARDS-PROJECTED-REENTRY
 worktree: D:\wt\AIDLC\T0-CARDS-PROJECTED-REENTRY
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 45 source lines (src/loop/controller.ts about 42, src/core/goal-machine.ts 3); the rest is about 255 test lines (the merge-predicate table, the per-state refusals, the T2 re-approval, the run-driver regression), about 20 doc lines and about 25 lines of attempt evidence in this card; raised from 350 to 460 by the coordinator on the candidate 8639c3ff, which is 436 changed lines: 39 source lines, 331 lines of the acceptance tests and 45 lines of attempt evidence"
