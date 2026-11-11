@@ -2,15 +2,18 @@
 // every environment lease it claimed, deciding and writing in one lease section; one that leaves an unresolved operation
 // keeps them. A failed release is named with `aidlc release next <attemptId>`, which exits 0 on a stopped goal.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, opsConfigured, opsRunner, candidateShaFor, actorA, actorB, T0 } from './_harness.ts';
 import { ReleaseRunner, releaseOperationOf, type ReleaseDirective } from '../../src/loop/release-runner.ts';
 import { ReleaseAttempt, HOUR_MS, MINUTE_MS, addMs, type ActorIdentity, type HealthSignal, type Lease, type OperationStatus, type ReleaseState } from '../../src/core/types.ts';
 import { LeaseStore } from '../../src/coordination/lease.ts';
+import { OperationLedger } from '../../src/coordination/reconcile.ts';
+import type { StoreError } from '../../src/state/store.ts';
+import { cleanup } from '../infra/helpers.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import type { OpsLoad } from '../../src/delivery/ops.ts';
@@ -23,13 +26,11 @@ const PRODUCTION = 'env:production';
 const UNRESOLVED: OperationStatus[] = ['intended', 'issued', 'running', 'UNKNOWN'];
 const PAST = new Date('2020-01-01T00:00:00.000Z');
 
-function inFixture(body: (fx: Fx) => void): void {
+/** A fresh fixture whose temporary directory the test's after hook removes. */
+function inFixture(t: TestContext, body: (fx: Fx) => void): void {
   const fx = makeFixture();
-  try {
-    body(fx);
-  } finally {
-    fx.cleanup();
-  }
+  t.after(() => cleanup(fx.tmp));
+  body(fx);
 }
 
 function signal(observed: number, at: string): HealthSignal {
@@ -104,8 +105,8 @@ function assertRetryNamed(d: ReleaseDirective, attemptId: string, key: string, e
   assert.ok(d.narration.includes(`aidlc release next ${attemptId}`), d.narration);
 }
 
-test('a staging attempt that ends in DONE releases env:staging, and another session then acquires it', () => {
-  inFixture((fx) => {
+test('a staging attempt that ends in DONE releases env:staging, and another session then acquires it', (t) => {
+  inFixture(t, (fx) => {
     const release = releaseRunner(fx);
     const { goalId, attemptId } = delivering(fx, 'staging', release);
     const r = step(fx, release, goalId, attemptId);
@@ -117,8 +118,8 @@ test('a staging attempt that ends in DONE releases env:staging, and another sess
   });
 });
 
-test('a delivered production attempt releases the staging and the production lease it claimed', () => {
-  inFixture((fx) => {
+test('a delivered production attempt releases the staging and the production lease it claimed', (t) => {
+  inFixture(t, (fx) => {
     const release = releaseRunner(fx);
     const { goalId, attemptId } = delivering(fx, 'production', release);
     toCheckpoint(fx, release, goalId, attemptId);
@@ -136,15 +137,15 @@ test('a delivered production attempt releases the staging and the production lea
   });
 });
 
-test('every terminal path passes the one exit', () => {
-  inFixture((fx) => {
+test('every terminal path passes the one exit', (t) => {
+  inFixture(t, (fx) => {
     const release = releaseRunner(fx, { runner: scriptedRunner({ 'deploy-cmd': { stdout: 'FAILED', exitCode: 1 } }) });
     const { goalId, attemptId } = delivering(fx, 'staging', release);
     const r = step(fx, release, goalId, attemptId);
     assert.equal(r.attempt.stop?.reason, 'release-health', r.directive.narration);
     assert.equal(released(fx, STAGING), true, 'failed staging deploy');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const ops = opsConfigured();
     const publishing: OpsLoad = ops.status === 'configured' ? { ...ops, config: { ...ops.config, operations: ops.config.operations.map((o) => (o.role === 'deploy' ? { ...o, triggersPublication: true } : o)) } } : ops;
     const release = releaseRunner(fx, { opsLoad: publishing });
@@ -153,7 +154,7 @@ test('every terminal path passes the one exit', () => {
     assert.equal(r.attempt.stop?.reason, 'release-auth', r.directive.narration);
     assert.equal(released(fx, STAGING), true, 'publishing deploy without production authority');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const release = releaseRunner(fx);
     const { goalId, attemptId } = delivering(fx, 'production', release);
     toCheckpoint(fx, release, goalId, attemptId);
@@ -165,7 +166,7 @@ test('every terminal path passes the one exit', () => {
     assert.deepEqual(fx.leases.read(PRODUCTION), other, 'ownership stop at APPLY: the other session lease');
   });
   for (const state of ['STOP', 'DONE'] as const) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, state);
       hold(fx, 'staging', `release:${attempt.id}`);
       const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
@@ -173,7 +174,7 @@ test('every terminal path passes the one exit', () => {
       assert.equal(released(fx, STAGING), true, `attempt stored in ${state}`);
     });
   }
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     // T0-RELEASE-OP-REISSUE R6: a settled record of another kind under the step's key stops the attempt for audit in `issue`.
     const attempt = stored(fx, 'STAGE');
     record(fx, 1, { goalId: attempt.goalId, kind: 'rollback', idempotencyKey: `${attempt.id}:stage-deploy:c1`, status: 'succeeded' });
@@ -183,11 +184,11 @@ test('every terminal path passes the one exit', () => {
   });
 });
 
-test('an attempt with an unresolved operation keeps its leases', () => {
+test('an attempt with an unresolved operation keeps its leases', (t) => {
   for (const status of UNRESOLVED) {
     for (const association of ['releaseAttempt', 'key only', 'key of another attempt'] as const) {
       for (const state of ['STOP', 'DONE'] as const) {
-        inFixture((fx) => {
+        inFixture(t, (fx) => {
           const attempt = stored(fx, state);
           hold(fx, 'staging', `release:${attempt.id}`);
           const key = `${attempt.id}:stage-deploy:c1`;
@@ -198,7 +199,7 @@ test('an attempt with an unresolved operation keeps its leases', () => {
       }
     }
   }
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'STAGE', { deadline: addMs(T0, -10 * MINUTE_MS) });
     hold(fx, 'staging', `release:${attempt.id}`);
     record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, status: 'UNKNOWN' });
@@ -209,14 +210,14 @@ test('an attempt with an unresolved operation keeps its leases', () => {
     release.next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!);
     assert.equal(held(fx, STAGING), true, 'a further next on the STOP time attempt');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'STOP');
     hold(fx, 'staging', `release:${attempt.id}`);
     releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.equal(released(fx, STAGING), true, 'a terminal attempt with no ledger record');
   });
   for (const status of ['succeeded', 'failed', 'cancelled'] as const) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, 'STOP');
       hold(fx, 'staging', `release:${attempt.id}`);
       record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, status });
@@ -224,7 +225,7 @@ test('an attempt with an unresolved operation keeps its leases', () => {
       assert.equal(released(fx, STAGING), true, `a ${status} record of the attempt`);
     });
   }
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'STOP');
     hold(fx, 'staging', `release:${attempt.id}`);
     record(fx, 1, { goalId: attempt.goalId, releaseAttempt: 'rel-other', status: 'intended' });
@@ -233,7 +234,7 @@ test('an attempt with an unresolved operation keeps its leases', () => {
   });
 });
 
-test("only the attempt's own lease of this session and host is released", () => {
+test("only the attempt's own lease of this session and host is released", (t) => {
   const cases: { label: string; lease: (fx: Fx, attemptId: string) => Lease | undefined; released: boolean }[] = [
     { label: 'no operation', lease: (fx) => hold(fx, 'production', undefined), released: false },
     { label: 'another attempt', lease: (fx) => hold(fx, 'production', 'release:rel-other'), released: false },
@@ -253,7 +254,7 @@ test("only the attempt's own lease of this session and host is released", () => 
     { label: 'expired, of this session', lease: (fx, id) => hold(fx, 'production', `release:${id}`, { at: addMs(T0, -20 * MINUTE_MS) }), released: true },
   ];
   for (const c of cases) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, 'CLOSE', { target: 'production' });
       const before = c.lease(fx, attempt.id);
       // A lease left unchanged is not written either: its file keeps a modification time set in the past.
@@ -265,35 +266,35 @@ test("only the attempt's own lease of this session and host is released", () => 
       if (before && !c.released) assert.equal(statSync(file).mtimeMs, PAST.getTime(), `${c.label}: not written`);
     });
   }
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'DONE', { environment: 'Staging' });
     hold(fx, 'staging', `release:${attempt.id}`);
     releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.equal(released(fx, STAGING), true, 'environment Staging releases env:staging');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'DONE', { environment: 'Staging' });
     mkdirSync(fx.paths.leases, { recursive: true });
     writeFileSync(fx.leases.file(STAGING), '{not json');
     const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.ok(r.directive.narration.includes(`${STAGING} (`), `environment Staging is named by the key env:staging: ${r.directive.narration}`);
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'DONE', { target: 'production' });
     hold(fx, 'staging', `release:${attempt.id}`);
     record(fx, 1, { goalId: attempt.goalId, idempotencyKey: `${attempt.id}:stage-deploy:c1`, target: 'staging', status: 'succeeded' });
     releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.equal(released(fx, STAGING), true, 'the target of a record that belongs by its key');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'DONE', { environment: undefined });
     const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.equal(r.directive.narration, 'Release attempt delivered.', 'no environment and no record: nothing to release');
   });
 });
 
-test('a renewal for another attempt that lands before the cleanup takes the lock keeps the lease', () => {
-  inFixture((fx) => {
+test('a renewal for another attempt that lands before the cleanup takes the lock keeps the lease', (t) => {
+  inFixture(t, (fx) => {
     let attemptId = '';
     let renewal: Lease | undefined;
     let renewing = false;
@@ -320,8 +321,8 @@ test('a renewal for another attempt that lands before the cleanup takes the lock
   });
 });
 
-test('a lease cleanup that fails leaves the attempt terminal, releases the other leases and names the command that retries it', () => {
-  inFixture((fx) => {
+test('a lease cleanup that fails leaves the attempt terminal, releases the other leases and names the command that retries it', (t) => {
+  inFixture(t, (fx) => {
     let failures = 1;
     const leases = new (class extends LeaseStore {
       override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
@@ -347,7 +348,7 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
     release.next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!);
     assert.equal(released(fx, STAGING), true, 'the retry releases env:staging');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     // A STOP reached through a nested step (the failed deploy `issue` hands back to the step logic) is cleaned up once, at the exit.
     let attemptId = '';
     let failures = 1;
@@ -374,7 +375,7 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
     ['malformed', '{not json', /MALFORMED_JSON/],
     ['not a lease', JSON.stringify({ resourceKey: STAGING }), /SCHEMA_VIOLATION/],
   ] as const) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, 'DONE');
       mkdirSync(fx.paths.leases, { recursive: true });
       writeFileSync(fx.leases.file(STAGING), content);
@@ -384,7 +385,7 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
       assert.equal(fx.store.getRelease(attempt.id)?.state, 'DONE', label);
     });
   }
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'STOP');
     hold(fx, 'staging', `release:${attempt.id}`);
     const lock = `${fx.leases.file(STAGING)}.lock`;
@@ -397,7 +398,7 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
     releaseRunner(fx).next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!);
     assert.equal(released(fx, STAGING), true, 'the retry after the lock is freed releases it');
   });
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     const attempt = stored(fx, 'STOP');
     hold(fx, 'staging', `release:${attempt.id}`);
     writeFileSync(path.join(fx.paths.operations, 'op-unreadable.json'), '{');
@@ -408,13 +409,19 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
   });
 });
 
-test('aidlc release next run twice on a stopped attempt exits 0 both times', () => {
-  inFixture((fx) => {
+/** A child process environment: no inherited variable whose name starts with GIT_, and git stopped above the fixture. */
+function childEnv(fx: Fx, extra: Record<string, string>): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_')));
+  return { ...inherited, GIT_CEILING_DIRECTORIES: path.dirname(fx.tmp), ...extra };
+}
+
+test('aidlc release next run twice on a stopped attempt exits 0 both times', (t) => {
+  inFixture(t, (fx) => {
     const { goalId, attemptId } = delivering(fx, 'staging', releaseRunner(fx));
     fx.store.saveRelease(ReleaseAttempt.parse({ ...fx.store.getRelease(attemptId)!, environment: 'staging', state: 'STOP', stop: makeStop('release-health', 'staging deployment failed', 'diagnose', { at: T0, global: false }), disposition: 'failed' }));
     const session = 'release-lease-cli';
     hold(fx, 'staging', `release:${attemptId}`, { actor: { session, pid: 1, processStart: T0, host: os.hostname() } });
-    const run = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'release', 'next', attemptId], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: session }, encoding: 'utf8', timeout: 60_000 });
+    const run = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'release', 'next', attemptId], { cwd: fx.tmp, env: childEnv(fx, { AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: session }), encoding: 'utf8', timeout: 60_000 });
     const reports = () => fx.events(goalId).filter((e) => e.type === 'RELEASE_STATE' && e.data['state'] === 'STOP').length;
     const first = run();
     assert.equal(first.status, 0, first.stderr);
@@ -433,10 +440,10 @@ function assertNoUnresolvedWithoutLease(fx: Fx, attempt: ReleaseAttempt, key: st
   if (open.length) assert.equal(held(fx, key), true, `${open.map((o) => `${o.id} ${o.status}`).join(', ')} with ${key} released`);
 }
 
-test('an intent recorded around the cleanup is seen by its lease section or never recorded for a released lease', () => {
+test('an intent recorded around the cleanup is seen by its lease section or never recorded for a released lease', (t) => {
   // The intent lands after the cleanup's first ledger read and before its lease section takes the lock.
   for (const status of ['intended', 'running'] as const) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, 'STOP');
       hold(fx, 'staging', `release:${attempt.id}`);
       let recorded = '';
@@ -460,7 +467,7 @@ test('an intent recorded around the cleanup is seen by its lease section or neve
     ['removed', (fx) => rmSync(fx.leases.file(STAGING))],
   ];
   for (const [label, intervene] of interventions) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, 'STOP');
       let intervened = false;
       const leases = new (class extends LeaseStore {
@@ -488,7 +495,7 @@ test('an intent recorded around the cleanup is seen by its lease section or neve
     [PRODUCTION, [PRODUCTION, STAGING], []],
     [STAGING, [STAGING], [PRODUCTION]],
   ] as const) {
-    inFixture((fx) => {
+    inFixture(t, (fx) => {
       const attempt = stored(fx, 'DONE', { target: 'production' });
       record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'succeeded' });
       hold(fx, 'production', `release:${attempt.id}`);
@@ -510,7 +517,7 @@ test('an intent recorded around the cleanup is seen by its lease section or neve
       assert.deepEqual({ held: [PRODUCTION, STAGING].filter((k) => held(fx, k)), released: [PRODUCTION, STAGING].filter((k) => released(fx, k)) }, { held: kept, released: releasedKeys }, `broken at ${breakAt}`);
     });
   }
-  inFixture((fx) => {
+  inFixture(t, (fx) => {
     // A failed lease section before the ledger failure is named as well.
     const attempt = stored(fx, 'DONE', { target: 'production' });
     record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'succeeded' });
@@ -528,4 +535,171 @@ test('an intent recorded around the cleanup is seen by its lease section or neve
     assert.ok(r.directive.narration.includes(`environment leases ${STAGING} kept`), r.directive.narration);
     assert.deepEqual({ production: held(fx, PRODUCTION), staging: held(fx, STAGING) }, { production: true, staging: true });
   });
+});
+
+/** A production attempt stored in STOP holding env:production and env:staging, and a RECOVER copy of it as an older caller sees it. */
+function stoppedWithRecoverCopy(fx: Fx): { attempt: ReleaseAttempt; copy: ReleaseAttempt } {
+  const attempt = stored(fx, 'STOP', { target: 'production' });
+  record(fx, 2, { goalId: attempt.goalId, releaseAttempt: attempt.id, idempotencyKey: `${attempt.id}:stage-deploy:c1`, target: 'staging', status: 'succeeded' });
+  record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, idempotencyKey: `${attempt.id}:apply-deploy:c1`, target: 'production', status: 'failed' });
+  hold(fx, 'production', `release:${attempt.id}`);
+  hold(fx, 'staging', `release:${attempt.id}`);
+  return { attempt, copy: ReleaseAttempt.parse({ ...attempt, state: 'RECOVER', stop: undefined, disposition: 'pending' }) };
+}
+
+const rollbacks = (fx: Fx, attempt: ReleaseAttempt) => fx.ops.list({ goalId: attempt.goalId }).filter((o) => o.kind === 'rollback').length;
+
+test('the admission and the cleanup of one attempt never interleave across two environments', (t) => {
+  // The admission of a recovery reached while the cleanup holds the attempt section, after env:production, before env:staging.
+  inFixture(t, (fx) => {
+    const { attempt, copy } = stoppedWithRecoverCopy(fx);
+    let runs = 0;
+    const runner = scriptedRunner({ 'recover-cmd': () => (runs++, { stdout: 'ok', exitCode: 0 }) });
+    const admission = releaseRunner(fx, { runner, leases: new LeaseStore(fx.paths.leases, { timeoutMs: 50 }) });
+    let refused: unknown;
+    let during: { productionReleased: boolean; runs: number; rollbacks: number } | undefined;
+    const leases = new (class extends LeaseStore {
+      override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
+        if (key === STAGING && !during) {
+          const productionReleased = released(fx, PRODUCTION);
+          during = { productionReleased, runs, rollbacks: 0 };
+          try {
+            admission.next(fx.goal(attempt.goalId), copy);
+          } catch (err) {
+            refused = err;
+          }
+          during = { productionReleased, runs, rollbacks: rollbacks(fx, attempt) };
+        }
+        return super.update(key, change);
+      }
+    })(fx.paths.leases);
+    releaseRunner(fx, { leases }).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(during?.productionReleased, true, 'the cleanup had released env:production when the admission came');
+    assert.deepEqual({ runs: during?.runs, rollbacks: during?.rollbacks }, { runs: 0, rollbacks: 0 }, 'nothing admitted while the cleanup holds the attempt section');
+    assert.equal((refused as StoreError | undefined)?.code, 'LOCKED', String(refused));
+    // After the cleanup the admission rule applies: this caller's claim re-acquired env:production, so the step is recorded and run.
+    admission.next(fx.goal(attempt.goalId), copy);
+    assert.deepEqual({ runs, rollbacks: rollbacks(fx, attempt) }, { runs: 1, rollbacks: 1 });
+    assertNoUnresolvedWithoutLease(fx, attempt, PRODUCTION);
+  });
+  // The reverse order: the admission holds the attempt section, and the cleanup is refused as a failed section and releases nothing.
+  inFixture(t, (fx) => {
+    const { attempt, copy } = stoppedWithRecoverCopy(fx);
+    let cleanupResult: ReturnType<ReleaseRunner['next']> | undefined;
+    let leasesDuring: { production: boolean; staging: boolean } | undefined;
+    const ops = new (class extends OperationLedger {
+      override recordIntent(...args: Parameters<OperationLedger['recordIntent']>): ReturnType<OperationLedger['recordIntent']> {
+        if (!cleanupResult) {
+          cleanupResult = releaseRunner(fx, { leases: new LeaseStore(fx.paths.leases, { timeoutMs: 50 }) }).next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!);
+          leasesDuring = { production: held(fx, PRODUCTION), staging: held(fx, STAGING) };
+        }
+        return super.recordIntent(...args);
+      }
+    })(fx.paths.operations);
+    releaseRunner(fx, { ops }).next(fx.goal(attempt.goalId), copy);
+    assert.deepEqual(leasesDuring, { production: true, staging: true }, 'the refused cleanup released nothing');
+    assertRetryNamed(cleanupResult!.directive, attempt.id, `release-attempt:${attempt.id}`, /LOCKED/);
+  });
+});
+
+test("another attempt's unresolved operation on the environment keeps its lease", (t) => {
+  const failing = scriptedRunner({ 'deploy-cmd': { stdout: 'FAILED', exitCode: 1 } });
+  const cases: { label: string; status: OperationStatus; otherGoal: boolean }[] = [
+    ...(['running', 'intended', 'issued', 'UNKNOWN'] as const).map((status) => ({ label: status, status, otherGoal: false })),
+    { label: 'running, of another goal', status: 'running', otherGoal: true },
+  ];
+  for (const c of cases) {
+    inFixture(t, (fx) => {
+      // Attempt A of this session holds env:staging with an operation still open there; attempt B renews the lease, then fails.
+      const b = stored(fx, 'STAGE');
+      const aId = `${b.id}-A`;
+      hold(fx, 'staging', `release:${aId}`);
+      const opA = record(fx, 1, { goalId: c.otherGoal ? 'g-20260911000000-other' : b.goalId, releaseAttempt: aId, target: 'staging', status: c.status });
+      const r = releaseRunner(fx, { runner: failing }).next(fx.goal(b.goalId), b);
+      assert.equal(r.attempt.stop?.reason, 'release-health', r.directive.narration);
+      assert.equal(fx.leases.read(STAGING)?.operation, `release:${b.id}`, 'B renewed the lease');
+      assert.equal(held(fx, STAGING), true, `${c.label} with env:staging released`);
+      assert.ok(r.directive.narration.includes(`aidlc release next ${b.id}`), r.directive.narration);
+      if (c.label !== 'running') return;
+      fx.ops.markResult(opA, 'succeeded', {}, fx.now());
+      const a = ReleaseAttempt.parse({ ...b, id: aId, state: 'STOP', stop: makeStop('release-health', 'staging deployment failed', 'diagnose', { at: T0, global: false }), disposition: 'failed' });
+      fx.store.saveRelease(a);
+      const before = fx.leases.read(STAGING);
+      releaseRunner(fx).next(fx.goal(b.goalId), a);
+      assert.deepEqual(fx.leases.read(STAGING), before, "A's own cleanup leaves the lease that names B unchanged");
+      releaseRunner(fx).next(fx.goal(b.goalId), fx.store.getRelease(b.id)!);
+      assert.equal(released(fx, STAGING), true, 'release next <B> releases it once nothing on staging is unresolved');
+    });
+  }
+  inFixture(t, (fx) => {
+    const b = stored(fx, 'STAGE');
+    hold(fx, 'staging', `release:${b.id}-A`);
+    record(fx, 1, { goalId: b.goalId, releaseAttempt: `${b.id}-A`, target: 'production', status: 'running' });
+    releaseRunner(fx, { runner: failing }).next(fx.goal(b.goalId), b);
+    assert.equal(released(fx, STAGING), true, "another attempt's open operation on another environment does not keep env:staging");
+  });
+});
+
+test('a ledger entry that is listed and cannot be read keeps every lease', (t) => {
+  // Each planted entry is a file or link the test creates inside the fixture's operations directory.
+  const plants: [string, (dir: string) => void][] = [
+    ['an entry that is not JSON', (dir) => writeFileSync(path.join(dir, 'op-bad.json'), '{')],
+    ['an entry that fails the OperationRecord schema', (dir) => writeFileSync(path.join(dir, 'op-bad.json'), '{}')],
+    ['an entry whose link target is gone', (dir) => symlinkSync(path.join(dir, 'missing'), path.join(dir, 'op-gone.json'), 'junction')],
+    ['an operations path that is a regular file', (dir) => (renameSync(dir, `${dir}-moved`), writeFileSync(dir, ''))],
+  ];
+  for (const [label, plant] of plants) {
+    inFixture(t, (fx) => {
+      const attempt = stored(fx, 'DONE');
+      hold(fx, 'staging', `release:${attempt.id}`);
+      plant(fx.paths.operations);
+      const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+      assertRetryNamed(r.directive, attempt.id, 'operation ledger', 'every environment lease of the attempt kept');
+      assert.equal(held(fx, STAGING), true, label);
+    });
+  }
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+    inFixture(t, (fx) => {
+      // A directory with read and no search permission: it lists its entries, and `existsSync` answers false for each of them.
+      const attempt = stored(fx, 'DONE');
+      hold(fx, 'staging', `release:${attempt.id}`);
+      record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'running' });
+      chmodSync(fx.paths.operations, 0o600);
+      try {
+        const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+        assertRetryNamed(r.directive, attempt.id, 'operation ledger', 'every environment lease of the attempt kept');
+        assert.equal(held(fx, STAGING), true, 'a directory without search permission');
+      } finally {
+        chmodSync(fx.paths.operations, 0o755);
+      }
+    });
+  }
+  inFixture(t, (fx) => {
+    const attempt = stored(fx, 'DONE');
+    hold(fx, 'staging', `release:${attempt.id}`);
+    renameSync(fx.paths.operations, `${fx.paths.operations}-moved`);
+    releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(released(fx, STAGING), true, 'an operations directory that does not exist is an empty ledger');
+  });
+});
+
+test("an attempt without an environment is issued as on main, every time: next throws before any intent, a schema error on target for '' and a TypeError for an absent environment", (t) => {
+  for (const [label, environment] of [
+    ['empty', ''],
+    ['absent', undefined],
+  ] as const) {
+    inFixture(t, (fx) => {
+      const attempt = stored(fx, 'STAGE', { environment });
+      let runs = 0;
+      const runner = scriptedRunner({ 'deploy-cmd': () => (runs++, { stdout: 'ok id=dep1', exitCode: 0 }) });
+      for (let i = 0; i < 3; i++) {
+        assert.throws(
+          () => releaseRunner(fx, { runner }).next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!),
+          (err: Error) => (environment === '' ? err.name === 'ZodError' && err.message.includes('"target"') : err instanceof TypeError && err.message.includes('toLowerCase')),
+          `${label}, call ${i + 1}`,
+        );
+      }
+      assert.deepEqual({ runs, records: fx.ops.list().length, state: fx.store.getRelease(attempt.id)?.state }, { runs: 0, records: 0, state: 'STAGE' }, label);
+    });
+  }
 });
