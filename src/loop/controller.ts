@@ -412,7 +412,12 @@ export class GoalController {
     const repairLeft = MAX_INTEGRATION_REPAIR_CYCLES - goal.counters.integrationRepairCycles;
     const checks = goal.cards.length > 1 ? ['integrated acceptance on the final integrated SHA', 'cross-card user workflows', 'relevant E2E / evals'] : ['requested outcome verified on the integrated candidate'];
     void now;
-    return Directive.parse({ kind: 'verify-arc', ...base, cards: goal.cards, integratedChecks: checks, repairCyclesLeft: Math.max(0, repairLeft), narration: 'All required cards closed. Verify the whole goal on the final integrated artifact, then report arc-verified (with evidence) or arc-failed (with the coherent repair cards).' });
+    // A listed card that is not merged refuses arc-verified, so the narration names it (card T0-CARDS-PROJECTED-REENTRY R5).
+    const unmerged = this.unmergedCards(goal);
+    const narration = unmerged.length
+      ? `Listed card(s) not merged: ${unmerged.join(', ')}. arc-verified is refused until each card merges or a revision removes it (aidlc goal amend ${goal.id} --text "<request>" --cards <ids>).`
+      : 'All required cards closed. Verify the whole goal on the final integrated artifact, then report arc-verified (with evidence) or arc-failed (with the coherent repair cards).';
+    return Directive.parse({ kind: 'verify-arc', ...base, cards: goal.cards, integratedChecks: checks, repairCyclesLeft: Math.max(0, repairLeft), narration });
   }
 
   private nextInDeliver(goal: Goal, now: string): Directive {
@@ -533,6 +538,10 @@ export class GoalController {
         j.append({ type: 'PLAN_INVOKED', goalId: goal.id, generation: goal.generation, data: { failed: true, detail: d['detail'], invocationId: d['invocationId'] } });
         break;
       case 'cards-projected': {
+        // After VERIFY_ARC a new card enters only by the repair cycle or a recorded revision, decided before the registry is
+        // read (card T0-CARDS-PROJECTED-REENTRY R1).
+        if (goal.state === 'VERIFY_ARC') throw new Error(`cards-projected is refused in VERIFY_ARC: add the new cards with aidlc goal repair ${goal.id} --cards <new ids> (only the new cards; one repair cycle, a second failure is STOP/arc-verify) or record a revision with aidlc goal amend ${goal.id} --text "<request>" --cards <ids> (the whole revised list)`);
+        if (goal.state === 'DELIVER' || goal.state === 'CLOSE') throw new Error(`cards-projected is refused in ${goal.state}: run aidlc goal cancel ${goal.id}, then aidlc goal resume ${goal.id} --text "<request>" --cards <ids> (the whole revised list)`);
         const cards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : [];
         if (!cards.length) throw new Error('cards-projected requires data.cards (ids)');
         const registry = this.registryLoader();
@@ -542,7 +551,6 @@ export class GoalController {
         for (const id of cards) cardRevisions[id] = cardRevisions[id] ?? 0;
         goal = { ...goal, cards, cardRevisions, projectionRef: typeof d['projectionRef'] === 'string' ? d['projectionRef'] : goal.projectionRef };
         if (goal.state === 'PLAN') goal = transitionGoal(goal, 'CARDS', now, { intentAccepted: true });
-        if (goal.state === 'VERIFY_ARC' || goal.state === 'DELIVER') goal = transitionGoal(goal, 'CARDS', now, { repairCycleAvailable: true });
         j.append({ type: 'CARDS_PROJECTED', goalId: goal.id, generation: goal.generation, data: { cards, projectionRef: goal.projectionRef } });
         break;
       }
@@ -594,6 +602,8 @@ export class GoalController {
       }
       case 'arc-verified': {
         if (goal.state !== 'VERIFY_ARC') throw new GoalTransitionError(goal.state, 'CLOSE', 'arc-verified is only accepted in VERIFY_ARC');
+        const unmerged = this.unmergedCards(goal);
+        if (unmerged.length) throw new Error(`arc-verified is refused: ${unmerged.join(', ')} not merged (no registry status merged and no merge-verified run of this goal); run each card to DONE, or remove it by a revision (aidlc goal amend ${goal.id} --text "<request>" --cards <ids>)`);
         goal = { ...goal, stages: { ...goal.stages, development: 'pass' } };
         goal = goal.target === 'development' ? transitionGoal(goal, 'CLOSE', now, { integratedAcceptancePassed: true }) : transitionGoal(goal, 'DELIVER', now, { integratedAcceptancePassed: true });
         j.append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'VERIFY_ARC', to: goal.state, evidence: d['evidence'] } });
@@ -632,8 +642,16 @@ export class GoalController {
       }
       case 'revision': {
         const rev = this.computeRevision(goal, d, now);
+        // A revised list with a card that is not merged returns VERIFY_ARC to PLAN and is refused in DELIVER and CLOSE, where
+        // this generation cannot run it (card T0-CARDS-PROJECTED-REENTRY R6, R7).
+        const unmerged = goal.state === 'VERIFY_ARC' || goal.state === 'DELIVER' || goal.state === 'CLOSE' ? this.unmergedCards(rev.goal) : [];
+        if (unmerged.length && goal.state !== 'VERIFY_ARC') {
+          const why = goal.state === 'DELIVER' ? 'the release attempt of this generation would be continued or reused' : goal.target === 'development' ? 'a development goal in CLOSE has no release attempt, and CLOSE leads only to DONE or STOP' : 'the delivered release of this generation would close the goal';
+          throw new Error(`a revision in ${goal.state} that lists ${unmerged.join(', ')}, not merged, is refused: ${why}. Run aidlc goal cancel ${goal.id}, then aidlc goal resume ${goal.id} --text "<request>" --cards <ids> (the whole revised list) to run it in a new generation`);
+        }
         goal = rev.goal;
         if (goal.state === 'WAIT' || goal.state === 'RUN') goal = transitionGoal({ ...goal, state: 'WAIT' }, 'PLAN', now, { revisionAccepted: true });
+        else if (unmerged.length) goal = transitionGoal(goal, 'PLAN', now, { revisionAccepted: true });
         j.append({ type: 'GOAL_REVISED', goalId: goal.id, generation: goal.generation, data: { revision: rev.revision, mapping: rev.mapping, text: rev.text.slice(0, 300) } });
         break;
       }
@@ -763,6 +781,17 @@ export class GoalController {
       }
     }
     return next;
+  }
+
+  /**
+   * The listed cards that are not merged (card T0-CARDS-PROJECTED-REENTRY R3): a card is merged when the registry records it
+   * `merged` or this goal's run of it has `mergeVerified`, whatever the run state. Only `goal.cards` is read, so a card a
+   * revision superseded or removed, and its kept run, take no part.
+   */
+  private unmergedCards(goal: Goal): string[] {
+    const registry = this.registryLoader();
+    const runs = this.store.listCardRuns(goal.id);
+    return goal.cards.filter((id) => registry.cards.find((c) => c.card.id === id)?.card.status !== 'merged' && !runs.find((r) => r.cardId === id)?.mergeVerified);
   }
 
   /** The revised goal a requirement revision produces (versioned, superseded cards mapped); pure, so callers journal only after it succeeded. */

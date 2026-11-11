@@ -67,8 +67,9 @@ stateDiagram-v2
   VERIFY_ARC --> CLOSE: development target verified
   VERIFY_ARC --> DELIVER: package / staging / production requested
   VERIFY_ARC --> STOP: repair cycle exhausted
+  VERIFY_ARC --> PLAN: accepted revision that adds an unmerged card
   DELIVER --> WAIT
-  DELIVER --> CARDS: authorized repair
+  DELIVER --> CARDS: in GOAL_TRANSITIONS; no report result takes it
   DELIVER --> CLOSE: target verified
   DELIVER --> STOP
   CLOSE --> DONE: closure predicates hold
@@ -77,7 +78,7 @@ stateDiagram-v2
   STOP --> [*]
 ```
 
-Guards: `CARDS` from `PLAN` needs accepted intent; `RUN` needs an authorized projection (T2: a `plan-checkpoint` authorization for the current revision); `VERIFY_ARC` needs all required cards closed (an empty ready set with gaps is WAIT or STOP, never DONE); `DELIVER` is refused for a development-only goal; a non-development target must pass `DELIVER` before `CLOSE`; `DONE` needs complete closure; terminal goals refuse every transition until `resume` links a new generation.
+Guards: `CARDS` from `PLAN` needs accepted intent; `RUN` needs an authorized projection (T2: a `plan-checkpoint` authorization for the current revision); `VERIFY_ARC` needs all required cards closed (an empty ready set with gaps is WAIT or STOP, never DONE); `DELIVER` is refused for a development-only goal; a non-development target must pass `DELIVER` before `CLOSE`; `DONE` needs complete closure; `PLAN` from `WAIT` or `VERIFY_ARC` needs an accepted revision; `CARDS` from `VERIFY_ARC` needs the one repair cycle (`arc-failed`); `DELIVER --> CARDS` is in `GOAL_TRANSITIONS`, but no report result takes it; terminal goals refuse every transition until `resume` links a new generation.
 
 ## Release state machine
 
@@ -159,6 +160,18 @@ stateDiagram-v2
 | `stop` | stop record (reason, detail, nextAction, global, unresolved operations) | preserved partial effects and the precise next action |
 
 `ReportResult` values accepted by `aidlc report --result`: `intent-accepted`, `plan-produced`, `plan-failed`, `cards-projected`, `approved`, `rejected`, `card-result`, `arc-verified`, `arc-failed`, `release-result`, `revision`, `cancel`, `resume`. A report carrying a stale `generation` is refused.
+
+Report results by goal state (card T0-CARDS-PROJECTED-REENTRY). A listed card is merged when the card registry records it with status `merged` or this goal's run of it has `mergeVerified`; only the cards the goal lists now count.
+
+| Result | PLAN | CARDS | RUN, WAIT | VERIFY_ARC | DELIVER | CLOSE |
+|---|---|---|---|---|---|---|
+| `cards-projected` | accepted, to CARDS | accepted | accepted | refused | refused | refused |
+| `arc-verified` | refused | refused | refused | accepted only when every listed card is merged | refused | refused |
+| `arc-failed` | refused | refused | refused | accepted, one cycle | refused | refused |
+| `revision`, every listed card merged | accepted, stays | accepted, stays | accepted, to PLAN | accepted, stays | accepted, stays | accepted, stays |
+| `revision`, a listed card not merged | accepted, stays | accepted, stays | accepted, to PLAN | accepted, to PLAN | refused | refused |
+
+STOP and DONE accept `resume` only. A refusal throws before any journal entry or goal write. The `cards-projected` refusal comes before the registry is read and names the routes: in VERIFY_ARC `aidlc goal repair <goalId> --cards <new ids>` or `aidlc goal amend <goalId> --text "<request>" --cards <ids>`, in DELIVER and CLOSE `aidlc goal cancel <goalId>`, then `aidlc goal resume <goalId> --text "<request>" --cards <ids>`; the `revision` refusal names the same cancel and resume. While a listed card is not merged, the `verify-arc` narration names it. Before this card, `cards-projected` moved VERIFY_ARC and DELIVER to CARDS without spending the repair cycle, `arc-verified` read only the goal state, and a revision in VERIFY_ARC, DELIVER or CLOSE kept the state.
 
 ## Persisted state
 

@@ -74,6 +74,12 @@ describe('goal state machine (Q10 / Q15 / Q16)', () => {
     assert.equal(transitionGoal(w, 'PLAN', T0, { revisionAccepted: true }).state, 'PLAN');
   });
 
+  test('VERIFY_ARC -> PLAN only on an accepted revision', () => {
+    const v = goal({ state: 'VERIFY_ARC' });
+    assert.throws(() => assertGoalTransition(v, 'PLAN'), /no accepted revision/);
+    assert.equal(transitionGoal(v, 'PLAN', T0, { revisionAccepted: true }).state, 'PLAN');
+  });
+
   test('Q15: stagesForTarget marks disabled stages not_requested, never pass/fail', () => {
     const dev = stagesForTarget('development');
     assert.equal(dev.development, 'pending');
