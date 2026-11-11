@@ -95,3 +95,6 @@ Inputs the condition reads: goal state (9 values of `GoalState`) and stop reason
 Tests that surround R1 and stay green: the two Q25 tests of acceptance 2 (terminals through `nextEffortAction` at the top of the ladder and after a failed escalated attempt).
 
 Coordinator verification:
+- At 56103c46, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/deadline.test.ts): tests 8, pass 8, fail 0, skipped 0.
+- Windows, docpins: no document changed
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
