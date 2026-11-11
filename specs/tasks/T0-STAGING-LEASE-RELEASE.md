@@ -148,6 +148,98 @@ Doc-reading run (Windows): the 78 test files that `grep -rlE "ARCHITECTURE\.md|O
 
 DoD (`npm run typecheck && node --test tests/scenarios/release-lease.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/release-reissue.test.ts tests/infra/lease.test.ts`, Windows): exit 0; `tsc -p tsconfig.test.json --noEmit` clean; `# tests 49`, `# pass 49`, `# fail 0`, `# skipped 0` (8 tests in the new file, 41 in the four existing files).
 
+### Attempt 2 (repair of R3 decision 1)
+
+RED commit `9ae67885` adds the test "an intent recorded around the cleanup is seen by its lease section or never recorded for a released lease" alone; on the attempt-1 sources it fails at `op-... intended with env:staging released` (the forbid of the card), the other 8 tests pass.
+
+**F1 (stale-ledger-cleanup).** The cleanup decided on a ledger read made before it took the lease lock. Now each key's `LeaseStore.update` section checks ownership (`ownLease`, release-runner.ts:148) and reads the ledger again (:185) before it releases (:190); the first read (:173) only collects the keys and detects an unreadable ledger. `issue` records a step's intent in the section of the same key (T0-RELEASE-OP-REISSUE R4), and now only while `ownLease` holds for that lease (:415-416); otherwise it returns `wait` on `environment:<name>` with nothing recorded, journaled or run (:421). The two sections exclude each other on the one lock file of the key, so either `issue`'s section runs first (the intent is on disk and the cleanup's section sees it and keeps the lease) or the cleanup's runs first (the lease is released, and `issue`'s section finds no lease of the attempt and records nothing). Second-case answer: with the attempt-1 code the second case could leave an operation without a held lease (an `issue` whose `claim` came before the release; test 9 (b) fails there with `op-... running with env:staging released`); `issue` now cannot record an intent for a lease the attempt does not hold. A caller with an older copy of the attempt that claims again after the release re-acquires the lease (`claim` acquires a released lease) and records with that lease held, so the operation still has a held lease; that caller then saves its copy of the attempt over the terminal record, the attempt-record race of every stale caller (no attempt lock), which this card does not change.
+
+Regression (deterministic seams, no timer), test 9: (a) a lease store whose first `env:staging` section first records an `intended` (and, second case, `running`) record of the attempt: the section sees it and the lease stays held; (b) the reverse order: a caller with a STAGE copy of the attempt whose `claim` is followed, before its `issue`, by the cleanup of the stored STOP attempt (and, as further classes, by a renewal of this session for another attempt and by the removal of the lease file): `wait` on `environment:staging`, no ledger record, no command run; (c) a ledger that becomes unreadable at the first or the second section. Revert rows A1 (unresolved check on the first read, the asked-for revert), A1b, A2, A2b, A3, A4, A6 and M12 fail it.
+
+Class sweep, every read the cleanup makes before it takes a lock, and every place in `next` that decides on a ledger read and then writes a lease:
+
+| Read or site | Why it cannot go stale, or what changed |
+|---|---|
+| attempt record (`out.attempt`: id, goalId, environment, DONE or STOP) | It selects the keys and whether the exit runs; it is never a reason to release. Release needs `ownLease` and a ledger read inside the section, and `issue` records only under the same check, so a stale attempt record cannot release a lease under an operation. |
+| first ledger read (:173; R3 targets) | Collects keys only. A record recorded later carries the target of a lease its `issue` held in that key's section: a key missing from the set is not touched (lease kept), a key in the set is re-read in its section. A failed read keeps every lease (R5). |
+| lease record | Never read outside the section: no `read` before `update`; the CLOSE `read` + `release` is removed (R6). |
+| `currentActor()` | Cached for the process; not state another writer changes. |
+| step's `claim` (:232) after the ledger reads at :207, :224, :227 | `claim` only acquires or renews, never releases; a stale read can only leave the lease held. |
+| `issue` (:414-420) | Ledger read and intent in one section of the key (T0-RELEASE-OP-REISSUE), now also the ownership check. |
+| reconcile loop (:207-213), step sync, `settleStep` | Write the ledger or the attempt, never a lease. |
+| `grep -n "leases\." src/loop/release-runner.ts` | Three sites: the cleanup section (:182), `claim` (:232), `issue`'s section (:414). No other lease write. |
+
+**F2, F3 (ledger-failure-docs).** docs/OPERATIONS.md and CHANGELOG.md said an unreadable ledger lets the other leases go on and names a lease key. Rewritten as separate cases. The code: a failed first read keeps every lease and names `the operation ledger`, the store error, `every environment lease of the attempt kept` and the retry (test 7, last case); a failed read inside a section keeps that lease and every later key and names them (test 9 (c), both orders); a failed lease section lets the other keys go on and names the key, the error and the retry (test 7), and when both happen the narration names both (test 9, last case). Every sentence the card added to the three documents was checked against the code and a test:
+
+| Sentence (docs/OPERATIONS.md, Standalone release) | Code | Test |
+|---|---|---|
+| keys: environment and record targets; production releases `env:staging` too | :178 | 2, 5 (key-only target) |
+| one section per lease checks the lease and reads the ledger again; conditions | :182-190, :148-151 | 4, 5, 9 |
+| any other lease is left as it is and not written | :183, :185 return the record | 5 (modification time) |
+| unresolved record (STOP/time included) keeps the leases | :185 | 4 |
+| a step records its intent only while the attempt holds the lease, else `wait` on `environment:<name>` | :415-416, :421 | 9 (b) |
+| a failed lease section: other leases go on, narration key, error, retry | :191-194, finish | 7 |
+| ledger cannot be read: no further release; first read keeps every lease; in-section read keeps that one and later; narration | :172-176, :186-188, :195 | 7 (last case), 9 (c) |
+| `release-result` only for a goal that is not terminal | main.ts:1137 | 8 |
+| no command takes over another session's environment lease; STOP/ownership; only the owner session releases it | `claim` (lease.ts:74, unchanged), `ownLease` session and host | 3 (ownership case), 5 (another session) |
+| ARCHITECTURE.md: one exit; each lease in its own section that re-reads the ledger; `issue` records only while holding the lease | :144, :182-190, :415 | 1-3, 9 |
+| CHANGELOG.md: same facts plus R6 (CLOSE release removed) and R7 | as above, CLOSE case :345 | 5 (`no operation`), 8 |
+
+Clause table (amended card):
+
+| Clause | Code | Test that fails without it (revert row) |
+|---|---|---|
+| R1 one exit for every return | :144 | all 9 (M1) |
+| R1 nested calls go to the step logic | :265, :281, :295, :307, :365, :400, :446 | 7 nested STOP (M2) |
+| R1 exit acts on DONE or STOP only | :162 | 2 held at CHECKPOINT (M3) |
+| R1 every terminal path (release-health, release-auth, ownership, audit of `issue`, stored STOP, DONE) | :144 | 3 (M1) |
+| R2 no unresolved record (by `releaseOperationOf`) before release | :164, :185 | 4, 9 (A1, A1b) |
+| R3 keys from environment and record targets | :178 | 2, 3, 5, 7 (M7) |
+| R3 key built by `resourceKeys.environment` | :178 | 5 Staging narration (M7b) |
+| R3 decide and write in one `update` section; not `LeaseStore.release` | :182-190 | 6, 9 (M12) |
+| R3 not released / operation / session / host; expired included | :150 | 5, 6, 9 (M6a, M6b, M6c, M6d, A8) |
+| R3 otherwise unchanged, nothing written | :183, :185 | 5 (M6a) |
+| R4 unresolved record keeps every lease, STOP time included | :185 | 4 (A1b) |
+| R5 failed section: other keys go on, narration key, error, retry | :191-194, :166-170 | 5, 7, 9 (M8, M9) |
+| R5 unreadable ledger keeps the leases, nothing thrown, narration names it | :172-176, :186-188, :195 | 7, 9 (A3, A4, A5, A6) |
+| F1 `issue` records only while holding the lease | :415-416, :421 | 9 (b) (A2, A2b) |
+| R6 CLOSE release removed | :345 | 5 `no operation` (M10) |
+| R7 report only for a goal that is not terminal | main.ts:1137 | 8 (M11) |
+| R8 `reportStep` without a release | no code (unchanged) | release.test.ts package proof, unchanged |
+| R9 docs | docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md | doc-reading run; for the reviewer |
+
+Attempt 2 revert check (each hunk alone, `node --test tests/scenarios/release-lease.test.ts`, restored); 23 rows, every row red:
+
+| Hunk | Reverted to | First failing test and assertion |
+|---|---|---|
+| A1 in-section unresolved check | decided on the first read | 9 `op-... intended with env:staging released` |
+| A1b in-section unresolved check | removed | 4 `intended, releaseAttempt, STOP`; 9 |
+| A2 `issue` ownership check | `held = true` | 9 `op-... running with env:staging released` |
+| A2b `issue`'s not-held `wait` | removed | 9 `Cannot read properties of undefined (reading 'id')` |
+| A3 in-section ledger error caught | rethrown | 9 (narration names a lease failure, not the ledger) |
+| A4 loop stops at a ledger error | goes on | 9 (no ledger narration) |
+| A5 first ledger read caught | rethrown | 7 `MALFORMED_JSON` thrown |
+| A6 kept keys from the failing one | all keys | 9 (c) second order |
+| A8 cleanup ownership check | removed | 3 the other session lease; 5 `no operation`; 6 |
+| M1 exit | `return this.step(...)` | 9 of 9 |
+| M2 nested steps | through `next` | 7 `a nested STOP is cleaned up at the exit alone` |
+| M3 terminal check | removed | 2 `env:staging stays held while the attempt waits at CHECKPOINT` |
+| M6a not released | removed | 5 `released: not written`; 9 |
+| M6b operation | removed | 5 `no operation`; 6; 9 renewal for another attempt |
+| M6c session | removed | 5 `another session` |
+| M6d host | removed | 5 `this session on another host` |
+| M7 record targets | environment only | 2, 3, 5, 7, 9 |
+| M7b key builder | `` `env:${name}` `` | 5 Staging narration |
+| M8 per-key catch | rethrown | 5, 7, 9 |
+| M9 failure narration | removed | 5, 7, 9 |
+| M10 CLOSE release | restored | 5 `no operation` |
+| M11 R7 | condition removed | 8 `goal ... is terminal (STOP)` |
+| M12 read, then `LeaseStore.release` | variant | 6; 9 `intended with env:staging released` |
+
+Doc-reading run (Windows), on the final documents: the 78 test files that read docs/ARCHITECTURE.md, docs/OPERATIONS.md or CHANGELOG.md, in one `node --test` call: 1863 tests, 1851 pass, 0 fail, 12 skipped, exit 0.
+
+DoD (`dod_command` exactly, Windows): exit 0; typecheck clean; `# tests 50`, `# pass 50`, `# fail 0`, `# skipped 0` (9 tests in tests/scenarios/release-lease.test.ts, 41 in the four existing files).
+
 Coordinator verification:
 - At 5342036f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 8, pass 8, fail 0, skipped 0.
 - Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load

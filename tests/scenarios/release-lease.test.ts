@@ -87,9 +87,9 @@ const released = (fx: Fx, key: string) => fx.leases.read(key)?.released === true
 const held = (fx: Fx, key: string) => fx.leases.read(key)?.released === false;
 
 /** A fabricated ledger record at a distinct time `minute` minutes before T0, in the given status. */
-function record(fx: Fx, minute: number, fields: { goalId: string; releaseAttempt?: string; idempotencyKey?: string; target?: string; status: OperationStatus }): string {
+function record(fx: Fx, minute: number, fields: { goalId: string; kind?: 'deploy' | 'rollback'; releaseAttempt?: string; idempotencyKey?: string; target?: string; status: OperationStatus }): string {
   const at = addMs(T0, -minute * MINUTE_MS);
-  const rec = fx.ops.recordIntent({ kind: 'deploy', goalId: fields.goalId, releaseAttempt: fields.releaseAttempt, target: fields.target ?? 'staging', candidateDigest: 'c1', idempotencyKey: fields.idempotencyKey, ownerGeneration: 0, timeoutMs: 60_000 }, at);
+  const rec = fx.ops.recordIntent({ kind: fields.kind ?? 'deploy', goalId: fields.goalId, releaseAttempt: fields.releaseAttempt, target: fields.target ?? 'staging', candidateDigest: 'c1', idempotencyKey: fields.idempotencyKey, ownerGeneration: 0, timeoutMs: 60_000 }, at);
   if (fields.status === 'issued') fx.ops.markIssued(rec.id, undefined, at);
   else if (fields.status === 'running') fx.ops.markRunning(rec.id, at);
   else if (fields.status !== 'intended') fx.ops.markResult(rec.id, fields.status, {}, at);
@@ -173,6 +173,14 @@ test('every terminal path passes the one exit', () => {
       assert.equal(released(fx, STAGING), true, `attempt stored in ${state}`);
     });
   }
+  inFixture((fx) => {
+    // T0-RELEASE-OP-REISSUE R6: a settled record of another kind under the step's key stops the attempt for audit in `issue`.
+    const attempt = stored(fx, 'STAGE');
+    record(fx, 1, { goalId: attempt.goalId, kind: 'rollback', idempotencyKey: `${attempt.id}:stage-deploy:c1`, status: 'succeeded' });
+    const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(r.attempt.stop?.reason, 'audit', r.directive.narration);
+    assert.equal(released(fx, STAGING), true, 'STOP audit from issue');
+  });
 });
 
 test('an attempt with an unresolved operation keeps its leases', () => {
@@ -474,26 +482,50 @@ test('an intent recorded around the cleanup is seen by its lease section or neve
       assert.deepEqual({ kind: r.directive.kind, on: r.directive.kind === 'wait' ? r.directive.on : undefined, runs, records: fx.ops.list({ goalId: attempt.goalId }).length }, { kind: 'wait', on: 'environment:staging', runs: 0, records: 0 }, `${label}: ${r.directive.narration}`);
     });
   }
-  // A ledger that becomes unreadable after the first read keeps the lease whose section met it and every key after it.
+  // A ledger that becomes unreadable after the first read keeps the lease whose section met it and every key after it; the keys
+  // are the attempt's environment (production) first, then the record's target (staging).
+  for (const [breakAt, kept, releasedKeys] of [
+    [PRODUCTION, [PRODUCTION, STAGING], []],
+    [STAGING, [STAGING], [PRODUCTION]],
+  ] as const) {
+    inFixture((fx) => {
+      const attempt = stored(fx, 'DONE', { target: 'production' });
+      record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'succeeded' });
+      hold(fx, 'production', `release:${attempt.id}`);
+      hold(fx, 'staging', `release:${attempt.id}`);
+      let broken = false;
+      const leases = new (class extends LeaseStore {
+        override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
+          if (!broken && key === breakAt) {
+            broken = true;
+            writeFileSync(path.join(fx.paths.operations, 'op-unreadable.json'), '{');
+          }
+          return super.update(key, change);
+        }
+      })(fx.paths.leases);
+      const r = releaseRunner(fx, { leases }).next(fx.goal(attempt.goalId), attempt);
+      assert.equal(r.directive.kind, 'done');
+      assertRetryNamed(r.directive, attempt.id, 'operation ledger', /MALFORMED_JSON/);
+      assert.ok(r.directive.narration.includes(`environment leases ${kept.join(', ')} kept`), r.directive.narration);
+      assert.deepEqual({ held: [PRODUCTION, STAGING].filter((k) => held(fx, k)), released: [PRODUCTION, STAGING].filter((k) => released(fx, k)) }, { held: kept, released: releasedKeys }, `broken at ${breakAt}`);
+    });
+  }
   inFixture((fx) => {
+    // A failed lease section before the ledger failure is named as well.
     const attempt = stored(fx, 'DONE', { target: 'production' });
     record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'succeeded' });
     hold(fx, 'production', `release:${attempt.id}`);
     hold(fx, 'staging', `release:${attempt.id}`);
-    let broken = false;
     const leases = new (class extends LeaseStore {
       override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
-        if (!broken) {
-          broken = true;
-          writeFileSync(path.join(fx.paths.operations, 'op-unreadable.json'), '{');
-        }
+        if (key === PRODUCTION) throw new Error('lease section unavailable');
+        writeFileSync(path.join(fx.paths.operations, 'op-unreadable.json'), '{');
         return super.update(key, change);
       }
     })(fx.paths.leases);
     const r = releaseRunner(fx, { leases }).next(fx.goal(attempt.goalId), attempt);
-    assert.equal(r.directive.kind, 'done');
-    assertRetryNamed(r.directive, attempt.id, 'operation ledger', /MALFORMED_JSON/);
-    assert.ok(r.directive.narration.includes(`${PRODUCTION}, ${STAGING} kept`), r.directive.narration);
+    assertRetryNamed(r.directive, attempt.id, PRODUCTION, 'lease section unavailable');
+    assert.ok(r.directive.narration.includes(`environment leases ${STAGING} kept`), r.directive.narration);
     assert.deepEqual({ production: held(fx, PRODUCTION), staging: held(fx, STAGING) }, { production: true, staging: true });
   });
 });
