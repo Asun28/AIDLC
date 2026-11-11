@@ -82,4 +82,48 @@ Name rules run through `EvidenceStore.retain` on every platform: a refusal happe
 
 Reading of the card: the refusal text is `evidence id <id> has the file name <name>, refused: <reason>; choose another id`, with the reasons of R6 (`empty`, `ends with a dot`, `the reserved name review`, `the device name <stem>`, `the file of the id <other>`); the card fixes the reasons, not the sentence.
 
-Revert check (each hunk reverted alone, the eight tests run): empty rule removed: "every class of R2"; dot rule: that test and "order of the refusals"; `review` rule: the same two; `review` case-sensitive: "every class of R2"; device rule removed, stem from the last dot, stem the whole name: "every class of R2" and "order of the refusals"; device stem case-sensitive, list without `com0`/`lpt0`, list without `con`: "every class of R2"; other-id rule removed: tests 1, 4, 5, 6, 8; other-id comparison case-sensitive: test 1; other-id rule also against the same id: test 5; rule against the argument manifest, not the stored one: test 6; rules after the missing-source check: tests 1, 2, 4, 5, 6, 8. No hunk left the tests green.
+### Revert check
+
+Each of the 15 source mutations of `src/audit/manifest.ts` was applied alone, the eight tests of `tests/scenarios/evidence-id.test.ts` were run, and the file was restored before the next one; no mutation left the tests green.
+
+| Hunk reverted | Tests that fail | Result |
+|---|---|---|
+| (a) empty rule removed | 2 | caught |
+| (b) dot rule removed | 2, 4 | caught |
+| (c) `review` rule removed | 2, 4 | caught |
+| (c) `review` made case-sensitive | 2 | caught |
+| (d) device rule removed | 2, 4 | caught |
+| (d) stem taken from the last dot | 2, 4 | caught |
+| (d) stem taken as the whole name | 2, 4 | caught |
+| (d) stem case-sensitive | 2 | caught |
+| (d) list without `com0` and `lpt0` | 2 | caught |
+| (d) list without `con` | 2 | caught |
+| (e) other-id rule removed | 1, 4, 5, 6, 8 | caught |
+| (e) comparison case-sensitive | 1 | caught |
+| (e) also compares the same id | 5 | caught |
+| (e) against the argument manifest instead of the stored one | 6 | caught |
+| rules moved after the missing-source check | 1, 2, 4, 5, 6, 8 | caught |
+
+Test numbers are the acceptance items of the table above (1 collision, 2 every class, 3 manifest names, 4 order, 5 replacement and legacy, 6 interleave, 7 the loop's ids, 8 CLI).
+
+### Name classes of R2
+
+| Class | Test | Inputs |
+|---|---|---|
+| (a) empty | 2 | `''` |
+| (b) ends with a dot | 2 | `.`, `..`, `a.`, `x..` |
+| (b) before (c), (d) and the manifest names | 4 | `review.`, `nul.`, `manifest.json.` |
+| (c) `review` | 2 | `review`, `Review`, `REVIEW` |
+| (c) before (e) | 4 | `review` against a legacy entry of another id on that path |
+| (d) device names | 2 | each of the 24 stems bare, lower case, with `.txt`, mixed case and mixed case with `.Log`; also `nUl.Log` and `com1.tar.gz` |
+| (d) before (e) | 4 | `nul.txt` against a legacy entry of another id on that path |
+| near misses accepted | 2 | `a.nul`, `console`, `com10`, `lpt`, `reviews`, `review.json`, `.x`, `a.b`, `nul_x`, each retained under its own file name |
+| (e) another id's file | 1 | `a_b`, `a b`, `a//b`, `A/B`, `A_b` against `a/b`; `dod-x` against `Dod-X` |
+| (e) | 5, 6, 8 | legacy manifest with `p/q` and `p_q`; copy loaded before `a/b`; CLI `--id a_b` after `a/b` |
+| manifest names | 3 | `manifest.json`, `manifest.json.lock`, `manifest.json.tmp-1-abcdef12` |
+
+### Documents read by other tests
+
+`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md" tests --include=*.test.ts` gave 77 files, run in one `node --test` call: 1829 tests, 1815 pass, 3 fail, 11 skipped. The three failures are `tests/infra/exec.test.ts` (`T0-EXEC-TREE-KILL`), `tests/infra/exec-sync-tree.test.ts` (`T0-EXEC-SYNC-TREE-KILL`) and `tests/scenarios/review-release.test.ts` (acceptance 5); the three files pass when run alone, 116 of 116, so the failures are machine load. No pinned document sentence was displaced.
+
+Coordinator verification:
