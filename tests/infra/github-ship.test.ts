@@ -1547,3 +1547,122 @@ const EDGES_DOC_SENTENCES = [
 ];
 const EDGES_CHANGELOG_SENTENCE =
   '- Base-sync CHANGELOG edges, card T0-BASE-SYNC-CHANGELOG-EDGES (issue 60): a CHANGELOG merge the ship path committed but cannot read back ends with `[SHIP-BASE-SYNC-COMMITTED]` and a repair that records the worktree HEAD instead of resolving hunks; a failed listing, read or diff3 checkout names its error instead of posing as a conflict; a failed write says the file may be partly written and how to write the markers again; the resolver takes only entries and third-level subsection headings.';
+
+describe('GitHubShipPath subprocess timeouts and effects of unknown outcome (T0-SHIP-TIMEOUT)', () => {
+  const dirs: string[] = [];
+  after(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+  type Call = { key: string; timeoutMs?: number; killTree?: boolean };
+  /** One ship over the scripted defaults, every call recorded with the bounds it was given. */
+  const shipWith = (mode: 'local' | 'remote', overrides: Parameters<typeof runnerWith>[0] = {}, timeoutMs?: number) => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const calls: Call[] = [];
+    const scripted = runnerWith({ 'git merge --no-ff --no-edit T1-A': {}, ...overrides });
+    const runner: typeof scripted = (cmd, args, o) => {
+      calls.push({ key: [cmd, ...args].join(' '), timeoutMs: o?.timeoutMs, killTree: o?.killTree });
+      return scripted(cmd, args, o);
+    };
+    const shipPath = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} });
+    const r = shipPath.ship({ cardId: 'T1-A', base: 'main', mode, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
+    return { r, calls, token: shipPath.readMergeToken('T1-A') };
+  };
+  /** The seven direct calls of the ship and the bound of each (R1). */
+  const DIRECT: Array<[string, number]> = [
+    ['git add -A', 60_000],
+    ['git diff --cached --quiet', 60_000],
+    ['git commit -m', 60_000],
+    ['git merge --no-ff --no-edit T1-A', 60_000],
+    ['git push -u origin T1-A', 300_000],
+    ['gh pr create', 120_000],
+    ['gh pr merge', 120_000],
+  ];
+  const direct = (calls: Call[]) => calls.flatMap((c) => DIRECT.filter(([prefix]) => c.key.startsWith(prefix)).map(([prefix, bound]) => ({ prefix, bound, call: c })));
+
+  test('every subprocess call of the ship carries a timeout [R1]', () => {
+    const remote = shipWith('remote');
+    const local = shipWith('local');
+    assert.equal(remote.r.outcome, 'merged', remote.r.receipt.stdout);
+    assert.equal(local.r.outcome, 'merged', local.r.receipt.stdout);
+    for (const calls of [remote.calls, local.calls]) {
+      assert.deepEqual(calls.filter((c) => !(typeof c.timeoutMs === 'number' && c.timeoutMs > 0)).map((c) => c.key), [], 'no call without a positive timeoutMs');
+    }
+    const seen = [...direct(remote.calls), ...direct(local.calls)];
+    assert.deepEqual([...new Set(seen.map((d) => d.prefix))].sort(), DIRECT.map(([p]) => p).sort(), 'the remote and the local ship make all seven direct calls');
+    for (const d of seen) assert.deepEqual([d.call.timeoutMs, d.call.killTree], [d.bound, true], d.call.key);
+    // The request value caps each of the seven calls; a value that is not a whole number from 1 to 2147483647 leaves the bound.
+    for (const [request, cap] of [[1, 1], [5000, 5000], [2147483647, undefined], [0, undefined], [-1, undefined], [1.5, undefined], [Number.NaN, undefined], [2147483648, undefined]] as const) {
+      const got = direct([...shipWith('remote', {}, request).calls, ...shipWith('local', {}, request).calls]);
+      assert.equal(new Set(got.map((d) => d.prefix)).size, 7, `request ${request}`);
+      for (const d of got) assert.deepEqual([d.call.timeoutMs, d.call.killTree], [cap ?? d.bound, true], `request ${request}: ${d.call.key}`);
+    }
+  });
+
+  const OPEN_PR = { 'gh pr list': { stdout: JSON.stringify([{ number: 7, state: 'OPEN', headRefOid: HEAD, baseRefName: 'main' }]) } };
+  /** Each effect call, its mode, the scripted context that reaches it, the PR number known when it runs and its sentinel on main. */
+  const EFFECTS: Array<{ name: string; key: string; mode: 'local' | 'remote'; context: Parameters<typeof runnerWith>[0]; pr?: number; bound: number; sentinel: string }> = [
+    { name: 'git push', key: 'git push', mode: 'remote', context: OPEN_PR, pr: 7, bound: 300_000, sentinel: '[SHIP-PUSH-FAIL]' },
+    { name: 'gh pr create', key: 'gh pr create', mode: 'remote', context: {}, pr: undefined, bound: 120_000, sentinel: '[SHIP-PR-NUMBER-FAIL]' },
+    { name: 'gh pr merge', key: 'gh pr merge', mode: 'remote', context: {}, pr: 42, bound: 120_000, sentinel: '[SHIP-MERGE-FAIL]' },
+    { name: 'git merge', key: 'git merge --no-ff --no-edit T1-A', mode: 'local', context: {}, pr: undefined, bound: 60_000, sentinel: '[SHIP-LOCAL-MERGE-FAIL]' },
+  ];
+
+  test('a push, PR create or merge that timed out or ended without an exit code is an effect of unknown outcome [R2] [R4]', () => {
+    const unknown: Array<[string, Partial<ExecReceipt>]> = [
+      ['timed out, no exit code', { timedOut: true, exitCode: null }],
+      ['timed out, exit 1 (taskkill on Windows)', { timedOut: true, exitCode: 1, signal: null }],
+      ['no exit code after a signal', { timedOut: false, exitCode: null, signal: 'SIGTERM' }],
+      ['timed out, exit 0', { timedOut: true, exitCode: 0 }],
+    ];
+    for (const e of EFFECTS) {
+      for (const [label, receipt] of unknown) {
+        const what = `${e.name}, ${label}`;
+        const { r, calls, token } = shipWith(e.mode, { ...e.context, [e.key]: receipt });
+        assert.equal(r.outcome, 'effect-unknown', `${what}: ${r.receipt.stdout}`);
+        const line = r.receipt.stdout.split('\n').find((l) => l.startsWith('[SHIP-EFFECT-UNKNOWN] '));
+        assert.ok(line?.includes(e.name), `${what}: the line names the command: ${line}`);
+        assert.ok(line?.includes(receipt.timedOut ? `timed out after ${e.bound} ms; it may have taken effect` : 'ended without an exit code; it may have taken effect'), `${what}: ${line}`);
+        if (e.pr !== undefined) assert.ok(line?.includes(`PR #${e.pr}`), `${what}: the known PR: ${line}`);
+        assert.equal(r.detail, line, what);
+        assert.equal(r.prNumber, e.pr, what);
+        const at = calls.findIndex((c) => c.key.startsWith(e.key));
+        assert.deepEqual(calls.slice(at + 1).map((c) => c.key), [], `${what}: no later step`);
+        assert.equal(token, undefined, `${what}: no merge token`);
+      }
+      // Regression controls: a numeric failure, a spawn error included, keeps the sentinel of main.
+      for (const [label, receipt] of [['exit 1', { timedOut: false, exitCode: 1, stderr: 'refused' }], ['spawn error', { timedOut: false, exitCode: -4058, stderr: '[spawn error] spawnSync gh ENOENT' }]] as const) {
+        const { r } = shipWith(e.mode, { ...e.context, [e.key]: receipt });
+        assert.ok(r.sentinels.includes(e.sentinel) && !r.sentinels.includes('[SHIP-EFFECT-UNKNOWN]'), `${e.name}, ${label}: ${r.receipt.stdout}`);
+        assert.notEqual(r.outcome, 'effect-unknown', `${e.name}, ${label}`);
+      }
+    }
+  });
+
+  test('a staged-diff read that timed out or failed never commits [R3]', () => {
+    const unfinished: Array<[string, Partial<ExecReceipt>, string]> = [
+      ['timed out, no exit code', { timedOut: true, exitCode: null }, 'timed out after 60000 ms'],
+      ['timed out, exit 1', { timedOut: true, exitCode: 1, signal: null }, 'timed out after 60000 ms'],
+      ['no exit code', { exitCode: null }, 'ended without an exit code'],
+      ['timed out, exit 0', { timedOut: true, exitCode: 0 }, 'timed out after 60000 ms'],
+    ];
+    const rows: Array<[string, string, Partial<ExecReceipt>, string]> = [
+      ...['git add -A', 'git commit', 'git diff --cached --quiet'].flatMap((command) => unfinished.map(([label, receipt, clause]) => [command, label, receipt, clause] as [string, string, Partial<ExecReceipt>, string])),
+      ['git diff --cached --quiet', 'exit 128', { exitCode: 128, stderr: 'fatal: index file corrupt' }, 'exit 128'],
+    ];
+    for (const [command, label, receipt, clause] of rows) {
+      const what = `${command}, ${label}`;
+      const { r, calls } = shipWith('remote', { [command]: receipt });
+      const line = r.receipt.stdout.split('\n').find((l) => l.startsWith('[SHIP-COMMIT-FAIL] '));
+      assert.ok(line?.includes(command) && line.includes(clause), `${what}: ${r.receipt.stdout}`);
+      assert.equal(r.outcome, 'merge-failed', what);
+      assert.equal(calls.at(-1)?.key.startsWith(command), true, `${what}: nothing after the failed call: ${calls.map((c) => c.key).join(' | ')}`);
+      if (command === 'git diff --cached --quiet') assert.ok(!calls.some((c) => c.key.startsWith('git commit')), `${what}: no commit`);
+    }
+    // Regression controls: exit 1 of the diff commits, exit 0 does not, and both ship.
+    const changed = shipWith('remote', { 'git diff --cached --quiet': { exitCode: 1 } });
+    assert.ok(changed.calls.some((c) => c.key.startsWith('git commit')) && changed.r.outcome === 'merged', changed.r.receipt.stdout);
+    const clean = shipWith('remote', { 'git diff --cached --quiet': { exitCode: 0 } });
+    assert.ok(!clean.calls.some((c) => c.key.startsWith('git commit')) && clean.r.outcome === 'merged', clean.r.receipt.stdout);
+  });
+});

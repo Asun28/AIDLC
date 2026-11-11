@@ -2756,7 +2756,7 @@ export class CardRunner {
       });
       if (!history.superseded && !history.stopped) return then(saved);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
-      const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' ? 'UNKNOWN' : 'failed';
+      const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' || result.outcome === 'effect-unknown' ? 'UNKNOWN' : 'failed';
       this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
       this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status, outcome: result.outcome, superseded: history.superseded, stoppedMeanwhile: history.stopped } });
       const merged = status === 'UNKNOWN' ? ', and its merge is an unresolved operation to reconcile' : '';
@@ -2821,6 +2821,17 @@ export class CardRunner {
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
         this.deliverOwed(goal, card, next, { keys: [owedResult.key] });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: `Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE${noSha}.` } };
+      });
+    }
+
+    if (result.outcome === 'effect-unknown') {
+      // A push, PR create or merge that timed out may have taken effect (card T0-SHIP-TIMEOUT): the operation is UNKNOWN and counts
+      // no attempt. As for a merge, the result is owed in `finish`'s write and appended after `markResult`, while the ledger shows it.
+      const owedResult = this.owe(goal, 'OPERATION_RESULT', { operationId, status: 'UNKNOWN', outcome: result.outcome, detail: result.detail });
+      return finish((latest) => ({ state: 'WAIT', journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
+        this.ops.markResult(operationId, 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: result.detail }, now);
+        this.deliverOwed(goal, card, next, { keys: [owedResult.key] });
+        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `operation:${operationId}`, pollSeconds: 60, narration: `The ship stopped on an effect of unknown outcome: ${result.detail}. Look up whether it took effect and record it with \`aidlc ops reconcile ${operationId} --status succeeded|failed|cancelled\`, then run \`aidlc card next ${card.id}\`, which ships again under a new operation.` } };
       });
     }
 
