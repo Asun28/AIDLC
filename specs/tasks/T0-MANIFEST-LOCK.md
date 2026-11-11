@@ -1,7 +1,7 @@
 ---
 id: T0-MANIFEST-LOCK
 title: Evidence retain and audit seal change the goal manifest only under its lock file, so concurrent retains lose no entry, a retain or seal given an older copy keeps what others wrote, and no evidence id can overwrite the manifest, its lock or its temporary files
-status: todo
+status: merged
 branch: T0-MANIFEST-LOCK
 worktree: D:\wt\AIDLC\T0-MANIFEST-LOCK
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 60 source lines (src/audit/manifest.ts about 50, src/cli/main.ts about 10); the rest is about 210 lines of tests in one new file, about 10 lines of docs and about 25 lines of attempt evidence; raised from 305 to 500 by the coordinator on the candidate 1d6bc044, which is 478 changed lines: 110 source lines (99 in src/audit/manifest.ts, most of them the retain body moved into the locked section), 342 lines of the acceptance tests, the rest docs and attempt evidence"
