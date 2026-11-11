@@ -7,10 +7,10 @@
  * separate index and is never embedded into the digest it audits.
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { canonicalJson } from '../state/store.ts';
+import { canonicalJson, updateJson } from '../state/store.ts';
 
 export const ManifestEntry = z.object({
   id: z.string(),
@@ -50,6 +50,17 @@ export function fileSha256(file: string): string {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
+/** What a seal binds the manifest to. */
+type SealBinding = { journalHead: string; journalEvents: number; finalSha?: string; finalCandidateDigest?: string; now: string; host?: Manifest['host'] };
+
+/** The file `updateJson` keeps beside the manifest that a retained file name would take (ASCII case ignored), if any. */
+function reservedName(name: string): string | undefined {
+  const lower = name.toLowerCase();
+  if (lower === 'manifest.json' || lower === 'manifest.json.lock') return lower;
+  if (lower.startsWith('manifest.json.tmp-')) return 'manifest.json.tmp-';
+  return undefined;
+}
+
 export class EvidenceStore {
   readonly dir: string;
 
@@ -67,39 +78,39 @@ export class EvidenceStore {
     return { schemaVersion: 1, goalId, generation, revision, createdAt: now, entries: [], models: [] };
   }
 
-  save(manifest: Manifest): void {
-    mkdirSync(this.dir, { recursive: true });
-    writeFileSync(this.manifestFile(), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
-  }
-
-  /** Copy an artifact into the evidence tree (kept after worktree cleanup) and record it. */
+  /**
+   * Copy an artifact into the evidence tree (kept after worktree cleanup) and record it, inside the manifest's lock section
+   * (`updateJson`): the checks and the new entry apply to the stored manifest; `manifest` stands in only when no file exists.
+   */
   retain(manifest: Manifest, input: { id: string; kind: string; sourcePath?: string; content?: string; candidateDigest?: string; environment?: string; invocationId?: string; note?: string; cardId?: string }): Manifest {
-    if (manifest.seal) throw new Error('manifest is sealed; open a new generation for further evidence');
-    mkdirSync(this.dir, { recursive: true });
-    const name = `${input.id.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
-    const target = path.join(this.dir, name);
-    if (input.sourcePath) {
-      if (!existsSync(input.sourcePath)) throw new Error(`evidence source missing: ${input.sourcePath}`);
-      writeFileSync(target, readFileSync(input.sourcePath));
-    } else {
-      writeFileSync(target, input.content ?? '', 'utf8');
-    }
-    const entry: ManifestEntry = {
-      id: input.id,
-      kind: input.kind,
-      path: path.relative(this.dir, target).replace(/\\/g, '/'),
-      sha256: fileSha256(target),
-      bytes: statSync(target).size,
-      candidateDigest: input.candidateDigest,
-      environment: input.environment,
-      invocationId: input.invocationId,
-      note: input.note,
-      cardId: input.cardId,
-    };
-    const entries = manifest.entries.filter((e) => e.id !== input.id).concat(entry);
-    const next = { ...manifest, entries };
-    this.save(next);
-    return next;
+    const next = updateJson(this.manifestFile(), Manifest, (stored) => {
+      const current = stored ?? manifest;
+      if (current.seal) throw new Error('manifest is sealed; open a new generation for further evidence');
+      const name = `${input.id.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
+      const reserved = reservedName(name);
+      if (reserved) throw new Error(`evidence id ${input.id} has the file name ${name}, which is reserved for ${reserved} beside the manifest; choose another id`);
+      const target = path.join(this.dir, name);
+      if (input.sourcePath) {
+        if (!existsSync(input.sourcePath)) throw new Error(`evidence source missing: ${input.sourcePath}`);
+        writeFileSync(target, readFileSync(input.sourcePath));
+      } else {
+        writeFileSync(target, input.content ?? '', 'utf8');
+      }
+      const entry: ManifestEntry = {
+        id: input.id,
+        kind: input.kind,
+        path: path.relative(this.dir, target).replace(/\\/g, '/'),
+        sha256: fileSha256(target),
+        bytes: statSync(target).size,
+        candidateDigest: input.candidateDigest,
+        environment: input.environment,
+        invocationId: input.invocationId,
+        note: input.note,
+        cardId: input.cardId,
+      };
+      return { ...current, entries: current.entries.filter((e) => e.id !== input.id).concat(entry) };
+    });
+    return next!;
   }
 
   /** Whether the file of the entry exists with the digest the entry records, the test `verifyAudit` applies. */
@@ -111,12 +122,20 @@ export class EvidenceStore {
     }
   }
 
-  seal(manifest: Manifest, binding: { journalHead: string; journalEvents: number; finalSha?: string; finalCandidateDigest?: string; now: string; host?: Manifest['host'] }): Manifest {
-    const unsealed: Manifest = { ...manifest, sealedAt: binding.now, journalHead: binding.journalHead, journalEvents: binding.journalEvents, finalSha: binding.finalSha, finalCandidateDigest: binding.finalCandidateDigest, host: binding.host ?? manifest.host, seal: undefined };
-    const seal = createHash('sha256').update(canonicalJson({ ...unsealed, seal: undefined })).digest('hex');
-    const sealed = { ...unsealed, seal };
-    this.save(sealed);
-    return sealed;
+  /**
+   * Seal the stored manifest inside its lock section; `manifest` stands in only when no file exists, and its `models`, when it
+   * has the key, replace the stored ones. A binding given as a function receives the manifest being sealed, inside the section.
+   */
+  seal(manifest: Omit<Manifest, 'models'> & { models?: Manifest['models'] }, binding: SealBinding | ((sealing: Manifest) => SealBinding)): Manifest {
+    const sealed = updateJson(this.manifestFile(), Manifest, (stored) => {
+      const current: Manifest = stored ?? { ...manifest, models: manifest.models ?? [] };
+      const sealing: Manifest = { ...current, models: manifest.models ?? current.models };
+      const b = typeof binding === 'function' ? binding(sealing) : binding;
+      const unsealed: Manifest = { ...sealing, sealedAt: b.now, journalHead: b.journalHead, journalEvents: b.journalEvents, finalSha: b.finalSha, finalCandidateDigest: b.finalCandidateDigest, host: b.host ?? sealing.host, seal: undefined };
+      const seal = createHash('sha256').update(canonicalJson({ ...unsealed, seal: undefined })).digest('hex');
+      return { ...unsealed, seal };
+    });
+    return sealed!;
   }
 
   verifySeal(manifest: Manifest): boolean {
