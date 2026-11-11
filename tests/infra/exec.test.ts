@@ -1,12 +1,13 @@
-import { describe, it } from 'node:test';
+import { after, describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type SpawnSyncOptions } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRun, createRunSync, killProcessTree, ok, run, runSync, scriptedRunner, TIMEOUT_GRACE_MS, TREE_HELPER_BACKSTOP_MS, treeHelperPath } from '../../src/probes/exec.ts';
 import type { ExecOptions, ExecReceipt, ProcessKiller, SpawnSyncFn, SyncRunner } from '../../src/probes/exec.ts';
+import { cleanup, tmpDir } from './helpers.ts';
 
 describe('probes/exec (receipts: exit, output digest, timeout)', () => {
   it('runSync executes a real node process and records exit 0, output and a sha256 receipt', () => {
@@ -207,6 +208,88 @@ function readPid(file: string): number | undefined {
   const text = readFileSync(file, 'utf8');
   return /^\d+$/.test(text) ? Number(text) : undefined;
 }
+
+// ---------------------------------------------------------------------------------------------
+// T0-EXEC-TEST-LOAD: the calibrated scale of the process-tree tests.
+// ---------------------------------------------------------------------------------------------
+
+interface Bounds {
+  timeoutMs: number;
+  stayBoundMs: number;
+  exitCloseMs: number;
+  noKillBoundMs: number;
+  slowKillBoundMs: number;
+  goneWithinMs: number;
+  syncBoundMs: number;
+}
+
+/** Seam: the fixture's exit mode is not timed yet. */
+async function calibrate(_t: TestContext, _fixture = FIXTURE, _ended: number[] = []): Promise<number | undefined> {
+  return 0;
+}
+
+/** Seam: every measurement gives scale 1. */
+function scaleFor(_measured: number | undefined): number {
+  return 1;
+}
+
+/** Seam: main's literals at every scale. */
+function boundsAt(_scale: number): Bounds {
+  return { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000 };
+}
+
+/** Seam: the precondition always passes. */
+function assertSleeperExisted(_run: { sleeperWrittenMs: number | undefined; startedMs: number }, _timeoutMs: number, _scale: number): void {}
+
+/** Seam: the precondition always passes. */
+function assertRootGone(_aliveAtCall: boolean[], _scale: number): void {}
+
+/** Seam: the environment unchanged. */
+function fixtureEnv(_dir: string, from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...from };
+}
+
+describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
+  const dir = tmpDir('aidlc-exec-env-');
+  after(() => cleanup(dir));
+  const notReady = (scale: number, detail: string): { message: string } => ({ message: `fixture not ready before the timeout at scale ${scale}: the machine got slower after calibration (${detail})` });
+
+  it('the calibrated scale and the scaled bounds on each input class', () => {
+    for (const [measured, scale] of [[0, 1], [432, 1], [750, 1], [751, 2], [3969, 6], [4325, 6], [5250, 7], [5251, 8], [6000, 8], [6001, 8], [60_000, 8]] as const) {
+      assert.equal(scaleFor(measured), scale, `scaleFor(${measured})`);
+    }
+    for (const measured of [undefined, NaN, -1, Infinity, -Infinity]) {
+      assert.throws(() => scaleFor(measured), { message: `calibration failed: ${String(measured)}` }, `scaleFor(${String(measured)})`);
+    }
+    assert.deepEqual(boundsAt(1), { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000 });
+    assert.deepEqual(Object.values(boundsAt(4)), [6000, 24_000, 8000, 12_000, 13_500, 12_000, 23_000]);
+    assert.deepEqual(Object.values(boundsAt(8)), [12_000, 48_000, 14_000, 22_000, 23_500, 24_000, 29_000]);
+    assert.ok(boundsAt(8).stayBoundMs < 60_000);
+
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: undefined, startedMs: 1000 }, 3000, 2), notReady(2, 'no sleeper pid file'));
+    assertSleeperExisted({ sleeperWrittenMs: 4000, startedMs: 1000 }, 3000, 2);
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4001, startedMs: 1000 }, 3000, 2), notReady(2, "the sleeper's pid file was written 3001 ms after the call, the timeout was 3000 ms"));
+
+    for (const alive of [[], [false]]) assertRootGone(alive, 3);
+    for (const alive of [[true], [false, true]]) assert.throws(() => assertRootGone(alive, 3), notReady(3, 'the tree kill found the root still running'));
+
+    const from = { GIT_DIR: 'a', git_work_tree: 'b', Git_Config_Global: 'c', GIT_CEILING_DIRECTORIES: 'd', NODE_OPTIONS: 'e', node_options: 'f', AIDLC_STATE_DIR: 'g', aidlc_state_dir: 'h', PATH: 'p', KEEP: 'k' };
+    assert.deepEqual(fixtureEnv(dir, from), { PATH: 'p', KEEP: 'k', GIT_CEILING_DIRECTORIES: [dirname(dir), dirname(realpathSync.native(dir))].join(delimiter), AIDLC_STATE_DIR: join(dir, 'state') });
+  });
+
+  it('calibrate times the exit fixture and ends its sleeper, and returns undefined when the fixture cannot start', async (t) => {
+    const ended: number[] = [];
+    const measured = await calibrate(t, FIXTURE, ended);
+    assert.ok(typeof measured === 'number' && Number.isFinite(measured) && measured > 0, `calibrate returned ${String(measured)}`);
+    assert.equal(ended.length, 1);
+    assert.equal(probe(ended[0]!), 'ESRCH');
+    const missingDir = tmpDir('aidlc-exec-missing-');
+    t.after(() => cleanup(missingDir));
+    const missed = await calibrate(t, join(missingDir, 'missing.ts'));
+    assert.equal(missed, undefined);
+    assert.throws(() => scaleFor(missed), { message: 'calibration failed: undefined' });
+  });
+});
 
 interface FixtureRun {
   receipt: ExecReceipt | undefined;
