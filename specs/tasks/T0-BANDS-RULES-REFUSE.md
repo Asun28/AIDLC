@@ -70,3 +70,50 @@ npm run typecheck && node --test tests/surface/bands.test.ts tests/surface/incid
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the existing tests pass unchanged.
+
+## Attempt evidence
+
+RED, measured on f536d3af (tests only, source of main):
+- Acceptance 4: `npm run typecheck` fails: `tests/surface/bands.test.ts(178,9): error TS2322: Type '"threshold" | "western_electric"' is not assignable to type '"western_electric"'.`
+- Acceptance 1: "rules accepts only western_electric ..." not ok (assertion: threshold row parses).
+- Acceptance 2: "a refused rules value leaves the other issues ..." not ok (assertion: no issue at `rules`).
+- Acceptance 5: "aidlc monitor check refuses rules: threshold ..." not ok (expected exit 1, actual 0).
+- Acceptance 3: passes on main (pin). Acceptance 6: other tests pass (pin).
+
+Revert table (measured on 13f07df9, source restored after each, `git diff --stat` empty), 5 rows, 5 red:
+| Reverted piece | Red test |
+|---|---|
+| whole schema hunk back to the enum | acc 1, 2, 5 |
+| fixed message alone | acc 1, 2, 5 |
+| `.default('western_electric')` dropped (absent key) | acc 1 accepted rows, and 11 incident tests, bands.test.ts file |
+| `'threshold'` removed from `BandBreach.rule` | typecheck (1 error, acc 4) |
+| `z.literal` replaced by `z.string()` | acc 1, 2, 5 |
+
+DoD on 3939146e: `npm run typecheck` exit 0; node --test 4 files: tests 104, pass 101, fail 0 (3 skipped by existing platform skips); exit 0.
+
+Document sentences:
+| Sentence | Made true by | Test |
+|---|---|---|
+| OPERATIONS paragraph: one value, default when absent | `z.literal(...).default(...)` bands.ts:20 | acc 1 accepted rows |
+| refused incl. threshold, empty, case, quoted spaces, issue at `rules` | same | acc 1 |
+| exit 1, nothing on stdout, no ledger/intent/journal | throw at main.ts:1346 | acc 5 |
+| CHANGELOG: other errors kept, type narrows, BandBreach keeps threshold | unchanged code | acc 3, 4 |
+
+Changed lines: `git diff --shortstat 0274ca33...HEAD` before this section: 5 files, 145 insertions, 2 deletions, against budget 220.
+
+### Repair round (after the pre-review of fed24b5b), measured on d0b0e35b
+- New acceptance 1 rows (`""`, `Western_Electric`, `" western_electric"`): red on main source by assertion (zod's generic message in place of the fixed one), green now.
+- Acceptance 5 row (e) (no `data.json`, no `--file-intent`): main source fails on the missing data file (`aidlc: ENOENT ... data.json`, probed by hand), so the rules-message assertion is red there; green now. The helper removes every `NODE_OPTIONS` spelling from the child environment; `childEnv` and `monitor` unchanged.
+- CHANGELOG: the two conditions are worded as in R4; the OPERATIONS paragraph is unchanged and matches R4.
+- Revert table, 6 rows, 6 red, source restored (`git diff --stat src` empty): schema hunk back to the enum (acc 1, 2, 5); fixed message alone (acc 1, 2, 5); `.default` dropped (bands.test.ts and 11 incident tests); `'threshold'` out of `BandBreach.rule` (typecheck error); `z.literal` to `z.string()` (acc 1, 2, 5); new row: trim and lower-case before comparing (acc 1 red).
+- DoD: typecheck exit 0; 4 files: tests 104, pass 101, fail 0, skipped 3.
+- Changed lines, `git diff --shortstat origin/main...HEAD` before this subsection: 184 insertions, 2 deletions, budget 220.
+
+### After the second pre-review of 03f73cc0 (coordinator edit, CHANGELOG only)
+
+A second Codex pre-review of 03f73cc0 found the three test gaps of the first one closed, the implementation and docs/OPERATIONS.md correct, and the two CHANGELOG sentences about main still too wide: "it exited 0 and ran the Western Electric rules" does not hold with data `{}` (the evaluation throws) or with a ledger directory that refuses the write. The planner changed R4 on main and the coordinator changed the entry to what always held: the value was accepted and `aidlc monitor check` went on as for `western_electric`. No source or test changes.
+
+Coordinator verification:
+- At 5fc4db39, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/bands.test.ts, tests/surface/incident.test.ts): tests 55, pass 55, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1871 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
