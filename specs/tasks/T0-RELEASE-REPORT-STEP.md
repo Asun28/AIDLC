@@ -4,7 +4,7 @@ title: aidlc release report records only the manual step the attempt's state ask
 status: todo
 branch: T0-RELEASE-REPORT-STEP
 worktree: D:\wt\AIDLC\T0-RELEASE-REPORT-STEP
-size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 240 to 400 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 60 source lines in two files, the rest the state table, finality, needs and CLI tests the rulings require, docs and attempt evidence; raised from 400 to 600 by the coordinator on the candidate d7081674, which is 556 changed lines: 60 source lines in two files, 377 lines of the seven acceptance tests, 8 lines of docs and 123 lines of attempt evidence (a revert table of 35 rows); raised from 600 to 700 by the coordinator on the repaired candidate d3d2ea65, which is 628 changed lines: 60 of source, 428 of tests, 132 of attempt evidence (a revert table of 39 rows), 8 of docs"
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 240 to 400 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 60 source lines in two files, the rest the state table, finality, needs and CLI tests the rulings require, docs and attempt evidence; raised from 400 to 600 by the coordinator on the candidate d7081674, which is 556 changed lines: 60 source lines in two files, 377 lines of the seven acceptance tests, 8 lines of docs and 123 lines of attempt evidence (a revert table of 35 rows); raised from 600 to 700 by the coordinator on the repaired candidate d3d2ea65, which is 628 changed lines: 60 of source, 428 of tests, 132 of attempt evidence (a revert table of 39 rows), 8 of docs; raised from 700 to 760 by the coordinator on the candidate 9a2450e8, which is 707 changed lines after the docs were restated sentence by sentence (source 60 lines, unchanged since d3d2ea65)"
 allow_paths:
   - src/loop/release-runner.ts
   - src/cli/main.ts
@@ -38,7 +38,7 @@ acceptance:
   - 8. `tests/scenarios/release.test.ts` passes unchanged: each of its `stage-verify`, `recover-verify` and `package-run-proof` reports is made in the state that expects it, and its `--goal` refusal test still sees the goal message first; `tests/scenarios/release-publication.test.ts` and `tests/scenarios/release-reissue.test.ts` pass unchanged. [R1] [R3] [R9] [dod arm 1]
   - 9. docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md state the facts R11 names (reviewer-verified against the diff). [R11]
 depends_on: [T0-RELEASE-OP-REISSUE]
-budget: 700
+budget: 760
 tdd: true
 diagnosis:
   root_cause: "`reportStep` (release-runner.ts:333-343 at 92796d4f) stores whatever name and status it is given, replacing any step of that name (an operation step and its `operationId` included), appends `EVIDENCE_RETAINED` before the status is checked, and moves a package attempt to DONE on `package-run-proof` with only the run-proof guard (release-machine.ts:110-113), never the PREPARE needs that `next` checks before asking for the proof. `next` reads `stage-verify` and `recover-verify` only for `succeeded`, so a `failed` one is asked for again with no end."
