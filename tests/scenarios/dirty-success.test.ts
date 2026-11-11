@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import fs, { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { goalForCards, makeFixture, writeCard, type Fixture } from './_harness.ts';
@@ -229,6 +229,26 @@ describe('T0-DIRTY-SUCCESS: a success on a dirty card worktree is refused before
 });
 
 describe('T0-DIRTY-SUCCESS: the refusals before it keep their order and messages [R3]', () => {
+  // R9: only ENOTDIR reads as no marker. A .review directory with mode 0o000 makes the marker lstat fail with EACCES on POSIX;
+  // Windows has no such mode bits and root bypasses them, so the test runs only as a non-root POSIX user.
+  const noEacces = process.platform === 'win32' ? 'Windows has no POSIX mode bits, so lstat cannot fail with EACCES' : process.getuid?.() === 0 ? 'root bypasses directory permissions, so lstat cannot fail with EACCES' : false;
+  it('a marker check that fails with EACCES propagates the error, records nothing and probes nothing [acceptance 9] [R9]', { skip: noEacces }, () =>
+    withCtx(
+      () => atBuild(),
+      (c) => {
+        c.git.status = ' M src/a.ts\n';
+        const review = path.dirname(mutantsMarkerPath(c.worktree, CARD));
+        mkdirSync(review, { recursive: true });
+        chmodSync(review, 0o000);
+        try {
+          refused(c, () => attempt(c), (e) => (e as NodeJS.ErrnoException).code === 'EACCES');
+          assert.equal(c.git.probes, 0);
+        } finally {
+          chmodSync(review, 0o755);
+        }
+      },
+    ));
+
   it('a mutant marker is refused first and nothing is probed [acceptance 3]', () =>
     withCtx(
       () => atBuild(),

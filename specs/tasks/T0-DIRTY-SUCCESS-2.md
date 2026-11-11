@@ -70,7 +70,7 @@ npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/sce
 ## Attempt evidence
 History, carried from T0-DIRTY-SUCCESS (610d4640): RED 0b334620:1; R3 passed at decision 1 and the second pass; PR 261 failed on Ubuntu in acceptance 4's file-path case.
 
-DoD (attempt 1 of this card): exit 0, 221 tests, 221 pass, 0 fail (Windows).
+DoD (attempt 1 of this card): exit 0, 222 tests, 221 pass, 0 fail, 1 skipped (Windows; the EACCES test is POSIX-only).
 
 | Item | Test or command | Result |
 |---|---|---|
@@ -83,3 +83,4 @@ DoD (attempt 1 of this card): exit 0, 221 tests, 221 pass, 0 fail (Windows).
 | 7 | fault-points.test.ts (28/28), journal-owed.test.ts, t0-flow.test.ts, no pin added or changed | pass |
 | 8 | docs/OPERATIONS.md (`aidlc card attempt` paragraph), CHANGELOG.md entry above T0-BOARD-OWNER-WAIT | written; reviewer to verify |
 | 9 | dirty-success.test.ts `a worktree path that is a file is probed, the probe fails and the success is recorded with no candidate`; `a mutant marker is refused first and nothing is probed` | pass on Windows before and after (Windows reports no entry); the ENOTDIR branch runs only on POSIX, so the proof is the Ubuntu checks of this card's PR |
+| 9 (propagation clause of R9) | dirty-success.test.ts `a marker check that fails with EACCES propagates the error, records nothing and probes nothing` (skipped on Windows and as root) | proven on Linux only: WSL, uid 1000, node 24.3.0, file 34/34 pass; a mutant that swallows every lstat error fails it; with R9 reverted the file-path test fails with ENOTDIR as in PR 261 |
