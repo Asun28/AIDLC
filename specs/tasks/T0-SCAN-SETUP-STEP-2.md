@@ -1,7 +1,7 @@
 ---
 id: T0-SCAN-SETUP-STEP-2
 title: "A red secret-scan check whose failed step is a listed scanner setup step is classified by its other evidence, not as a security finding, only when every gate line of the output is exactly what the GitHub ship path prints, so a scanner download outage stops as `ci`, not `risk`"
-status: todo
+status: merged
 branch: T0-SCAN-SETUP-STEP-2
 worktree: D:\wt\AIDLC\T0-SCAN-SETUP-STEP-2
 allow_paths:
