@@ -153,6 +153,7 @@ export class GoalController {
         grantedBy: options.grantedBy ?? request.source,
         grantedAt: now,
         goalRevision: 0,
+        goalGeneration: 0,
         operations: [],
         migrations: [],
         evidenceRefs: [],
@@ -161,7 +162,7 @@ export class GoalController {
     ];
     if (target === 'staging' || target === 'production') {
       // LC6: staging actions run automatically only within the already requested staging scope.
-      authorizations.push({ id: `auth-staging-${id}`, kind: 'staging', grantedBy: options.grantedBy ?? request.source, grantedAt: now, goalRevision: 0, operations: [], migrations: [], evidenceRefs: [], ref: 'explicit online-testing/staging (or production) request authorises the staging scope only; production needs its own bound approval' });
+      authorizations.push({ id: `auth-staging-${id}`, kind: 'staging', grantedBy: options.grantedBy ?? request.source, grantedAt: now, goalRevision: 0, goalGeneration: 0, operations: [], migrations: [], evidenceRefs: [], ref: 'explicit online-testing/staging (or production) request authorises the staging scope only; production needs its own bound approval' });
     }
     const goal: Goal = Goal.parse({
       schemaVersion: 1,
@@ -574,6 +575,7 @@ export class GoalController {
           grantedAt: now,
           ref: typeof d['ref'] === 'string' ? d['ref'] : undefined,
           goalRevision: goal.revision,
+          goalGeneration: goal.generation,
           candidateDigest: typeof d['candidateDigest'] === 'string' ? d['candidateDigest'] : undefined,
           sourceSha: typeof d['sourceSha'] === 'string' ? d['sourceSha'] : undefined,
           configDigest: typeof d['configDigest'] === 'string' ? d['configDigest'] : undefined,

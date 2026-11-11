@@ -11,8 +11,11 @@
  *
  * Two passes (card T0-HOOK-CLASSIFIER-3): every guard first decides in order with the Bash command
  * classification before that card, so wherever that dispatch blocked, the same guard blocks with the
- * same result; only when none blocked do `production-gate` and `protect-paths` decide again with the
- * card's forms, which can add a block and never replace another guard's.
+ * same result, except that `production-gate` now denies in the first pass a command whose approval
+ * names an authorization of a goal that is terminal, DONE or STOP, or of an earlier generation of its
+ * goal, where a later guard's denial was returned before (card T0-PROD-GATE-GENERATION); only when
+ * none blocked do `production-gate` and `protect-paths` decide again with the card's forms, which can
+ * add a block and never replace another guard's.
  *
  * Every guard runs as the session of the event (`hookSession` in `./index.ts`): the Stop guard asks
  * only about the cards this session owns.

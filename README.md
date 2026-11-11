@@ -98,7 +98,7 @@ The hook entries start one process per event, which runs the guards below and re
 
 | Guard | Event | Reads | Blocks when |
 |---|---|---|---|
-| `production-gate` | `PreToolUse`: Bash, PowerShell | the command, `hooks.productionPatterns`, `RELEASE_APPROVAL` or `AIDLC_RELEASE_APPROVAL`, the production authorizations on goals | a command that writes matches a production pattern and the approval reference matches no recorded production authorization; with no `.aidlc/goals` directory any approval reference passes |
+| `production-gate` | `PreToolUse`: Bash, PowerShell | the command, `hooks.productionPatterns`, `RELEASE_APPROVAL` or `AIDLC_RELEASE_APPROVAL`, the production authorizations on goals with each goal's state and generation | a command that writes matches a production pattern and no goal that is not terminal and not in `DONE` or `STOP` has, as its first current-generation record whose id or ref equals the approval reference, a production authorization that has not expired; with no `goals/` directory in the resolved state directory, any non-empty selected approval reference passes this lookup |
 | `protect-paths` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, the command, `hooks.frozenPaths` | a file path matches a frozen path, or a command that names one writes files |
 | `protect-tests` | `PreToolUse`: Edit, Write, MultiEdit | the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns` | a fix task is active and the file path matches a test pattern |
 | `secrets-guard` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, `content`, `new_string`, `command` | the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern |

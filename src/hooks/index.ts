@@ -433,21 +433,24 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   // The segments main tested come first, in main's order and classified as main classified them, so every match and every
   // pattern error main reached is reached first and the gate decides as main did wherever main denied or threw; then the
   // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used
-  // and the first pass of `dispatchHook`, tests main's segments alone, so it decides exactly as main did.
+  // and the first pass of `dispatchHook`, tests main's segments alone, classified as main classified them.
   const main = mainSegments(cmd).filter(mainMutating);
   const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd), ...(event.tool_name === 'PowerShell' ? powerShellSegments(cmd).filter(isMutating) : [])])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).
   const approvalRef = env['RELEASE_APPROVAL'] ?? env['AIDLC_RELEASE_APPROVAL'];
-  // 2. A matching production authorization record on an active goal.
+  // 2. A matching production authorization record of the current generation on an active goal.
   let matched = false;
   if (approvalRef) {
     try {
       const paths = resolveStatePaths(cwd, env);
       const store = new (lazy.goalStore().GoalStore)(paths);
       for (const goal of store.listGoals()) {
-        const records = goal.authorizations.map((a) => AuthorizationRecord.parse(a));
+        // A finished goal grants nothing (card T0-PROD-GATE-GENERATION); the same three conditions as `GoalController.next`.
+        if (goal.terminal || goal.state === 'DONE' || goal.state === 'STOP') continue;
+        // Only the records of the goal's current generation count, an absent `goalGeneration` as 0, before the first match.
+        const records = goal.authorizations.map((a) => AuthorizationRecord.parse(a)).filter((r) => (r.goalGeneration ?? 0) === goal.generation);
         const hitRecord = records.find((r) => r.id === approvalRef || r.ref === approvalRef);
         if (hitRecord) {
           const decision = requireAuthority([hitRecord], 'production', { environment: hitRecord.environment, candidateDigest: hitRecord.candidateDigest, operations: hitRecord.operations }, new Date().toISOString());
