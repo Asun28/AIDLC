@@ -376,7 +376,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         const role = op.kind === 'deploy' ? 'deploy' : op.kind === 'rollback' ? 'recover' : op.kind === 'migrate' ? 'migration-apply' : undefined;
         const binding = load.status === 'configured' && role ? load.config.operations.find((b) => b.role === role) : undefined;
         if (binding && op.providerOperationId) {
-          const looked = lookupOperation(binding, op.providerOperationId);
+          const looked = lookupOperation(binding, op.providerOperationId, c.repo.mainRoot);
           const rec = ledger.reconcile(op.id, () => (looked.status === 'UNKNOWN' ? { status: 'UNKNOWN', detail: looked.detail } : { status: looked.status, providerOperationId: op.providerOperationId }));
           Journal.forGoal(c.paths.journal, id).append({ type: 'OPERATION_RECONCILED', goalId: id, cardId: op.cardId, data: { operationId: op.id, status: rec.status } });
           return { id: op.id, kind: op.kind, status: rec.status, via: 'provider lookup' };
