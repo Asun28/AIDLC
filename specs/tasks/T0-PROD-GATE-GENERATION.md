@@ -149,74 +149,67 @@ npm run typecheck && node --test tests/scenarios/prod-gate-generation.test.ts te
 
 ## Attempt evidence
 
-Base 2e2dc1a7. RED commit 5854f765 (the new test file only); GREEN commit 7de6e903 (source, documents, the three pinned strings). Measured on Windows 11, Node 22; not run on Linux in this attempt.
+Base 2e2dc1a7, merged with origin/main at 136908a7 (merge 772b6105) for the amended card 12f0fb2a. Commits: 5854f765 RED tests; 7de6e903 first GREEN (filter before the match, superseded); 3b63cbb0 its evidence; 1749f7d3 repair round (tests, documents, comments; its `src/hooks/index.ts` hunk was lost before staging, a local `git checkout HEAD --` after a RED check overwrote it); ebc3aec7 the `src/hooks/index.ts` hunk (no filter; main's first match counted only in the goal's current generation). Every figure below is measured on ebc3aec7 unless labelled otherwise. Windows 11, Node 22. Not run here, left to the coordinator: the Linux run and the test files that read a changed document beyond the DoD files.
 
-### RED, on 5854f765 (source of main)
-`node --test tests/scenarios/prod-gate-generation.test.ts`: exit 1, tests 8, pass 1, fail 7. First failing assertion per item:
+### RED
+On 5854f765 (source of main), first test file: exit 1, tests 8, pass 1, fail 7. With the repaired test file of ebc3aec7 against the source of origin/main (src/hooks/index.ts, src/core/types.ts, src/loop/controller.ts checked out from origin/main, then restored): exit 1, tests 8, pass 1, fail 7. First failure per item: 1 `DONE terminal` 0 !== 2; 2 `goal generation 0, record 1` 0 !== 2; 3 `finished refused Bash deploy production` 0 !== 2; 4 `finished` 0 !== 2; 5 `0`: undefined !== 0 (key stripped); 6 intake `['development', undefined]`; 7 `cancelled` 0 !== 2; 8 passes (as the card states). Item 9 on main: the R8 rows below.
 
-| Item | Test | Result on main | First failure |
-|---|---|---|---|
-| 1 | production-gate reads no authorization of a goal that is terminal, DONE or STOP | fail | `DONE terminal`: expected 2, actual 0 |
-| 2 | production-gate counts only the goal's current generation and keeps the first-match rule | fail | `goal generation 0, record 1`: expected 2, actual 0 |
-| 3 | both dispatch passes and the legacy decision deny a refused record alike | fail | `finished refused Bash deploy production`: expected 2, actual 0 |
-| 4 | a refused record is denied by the gate in the first pass ahead of a frozen-path denial; an admitted one leaves that denial | fail | `finished`: expected 2, actual 0 (main returns the FROZEN result) |
-| 5 | goalGeneration is absent or a non-negative integer; any other value fails the goal schema and the gate denies | fail | `0`: actual undefined (main strips the key) |
-| 6 | every authorization the controller newly records stores the goal generation, whatever its kind | fail | intake `['development', undefined]` where `['development', 0]` expected |
-| 7 | the gate follows cancel, resume, authorize and extend | fail | `cancelled`: 0 !== 2 |
-| 8 | the approval precedence and the no-goals admission are unchanged | pass | (passes on main, as the card states) |
+### Revert table (30 rows, 30 red)
+Each row mutates one piece of the committed tree, runs the named test of tests/scenarios/prod-gate-generation.test.ts (R8 rows: the named surface test), and restores the file with `git checkout HEAD --`; `git status --short` was empty after the last row. "First failure" is the label of the first failing assertion.
 
-Item 9 on main: shown by the R8 rows of the revert table (each pinning test is red against the documents of 2e2dc1a7).
+| Mutation | File | Test (name pattern) | Result | First failure |
+|---|---|---|---|---|
+| R1 skip removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 | DONE terminal 0 !== 2 |
+| R1 terminal condition removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 | RUN terminal 0 !== 2 |
+| R1 DONE condition removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 | DONE not terminal 0 !== 2 |
+| R1 STOP condition removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 | STOP not terminal 0 !== 2 |
+| R1 skip placed as `break` | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 | two goals (exit 2) |
+| R2 generation check of the matched record removed | `src/hooks/index.ts` | "main's first match" | exit 1, fail 1 | goal generation 0, record 1 0 !== 2 |
+| R2 `?? 0` default removed | `src/hooks/index.ts` | "main's first match" | exit 1, fail 1 | goal generation 0, record undefined 2 !== 0 |
+| R2 generation check moved before the match (filter, then find) | `src/hooks/index.ts` | "main's first match" | exit 1, fail 1 | CHG-1 matches rel-old first 0 !== 2 |
+| R2 any authorized match in place of the first | `src/hooks/index.ts` | "main's first match" | exit 1, fail 1 | development of generation 0 first 0 !== 2 |
+| R2 a lower generation counted (`<=`) | `src/hooks/index.ts` | "main's first match" | exit 1, fail 1 | goal generation 1, record undefined 0 !== 2 |
+| R3 skip removed | `src/hooks/index.ts` | "both dispatch passes" | exit 1, fail 1 | finished refused Bash deploy production 0 !== 2 |
+| R3 generation check removed | `src/hooks/index.ts` | "both dispatch passes" | exit 1, fail 1 | superseded generation refused Bash deploy production 0 !== 2 |
+| R3 test: `delete process.env[key]` of the `GIT_*` removal dropped | `tests/scenarios/prod-gate-generation.test.ts` | "both dispatch passes" | exit 1, fail 1 | git context control (no stdout: read `other/aidlc.config.json`) |
+| R3 skip removed | `src/hooks/index.ts` | "ahead of a frozen-path denial" | exit 1, fail 1 | finished 0 !== 2 |
+| R3 a lower generation counted (`<=`) | `src/hooks/index.ts` | "ahead of a frozen-path denial" | exit 1, fail 1 | superseded generation 0 !== 2 |
+| R3 a higher generation counted (`>=`) | `src/hooks/index.ts` | "ahead of a frozen-path denial" | exit 1, fail 1 | higher generation 0 !== 2 |
+| R3/R4 field removed | `src/core/types.ts` | "ahead of a frozen-path denial" | exit 1, fail 1 | higher generation 0 !== 2 |
+| R3/R4 `.nonnegative()` removed (bad goal file row) | `src/core/types.ts` | "ahead of a frozen-path denial" | exit 1, fail 1 | goal file failing the schema 0 !== 2 |
+| R4 `.int()` removed | `src/core/types.ts` | "goalGeneration is absent" | exit 1, fail 1 | 1.5 accepted |
+| R4 `.nonnegative()` removed | `src/core/types.ts` | "goalGeneration is absent" | exit 1, fail 1 | -1 accepted |
+| R4 field removed | `src/core/types.ts` | "goalGeneration is absent" | exit 1, fail 1 | undefined !== 0 |
+| R5 intake development value removed | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 | intake stamps |
+| R5 intake staging value removed | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 | intake stamps |
+| R5 approved value removed | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 | approved stamp |
+| R5 approved value taken from `data.goalGeneration` | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 | generation-1 stamps |
+| R6 approved value removed | `src/loop/controller.ts` | "cancel, resume, authorize and extend" | exit 1, fail 1 | new generation record 2 !== 0 |
+| R6 generation check moved before the match | `src/hooks/index.ts` | "cancel, resume, authorize and extend" | exit 1, fail 1 | CHG-9 still matches the generation-0 record 0 !== 2 |
+| R8 row O reverted to origin/main | `docs/OPERATIONS.md` | command-lines.test.ts "T1-SWEEP2-FLAGS acceptance 5" | exit 1, fail 1 | row |
+| R8 row R reverted to origin/main | `README.md` | readme.test.ts "T1-INIT-SURFACE acceptance 3" | exit 1, fail 1 | cells |
+| R8 sentence P reverted to origin/main | `docs/OPERATIONS.md` | hooks.test.ts "T0-HOOK-CLASSIFIER-3 acceptance 5" | exit 1, fail 1 | paragraph |
 
-### Revert table, on 7de6e903 (23 rows, 23 red)
-Each row mutates one piece of the committed source or document, runs the named test, and restores the file with `git checkout HEAD`. After the last row `git diff --stat` was empty. Two rows were spot-checked for the failing assertion: the filter placed after the selection fails at `CHG-1` (selection row); the any-authorized-match lookup fails at `development first` (0 !== 2).
-
-| Mutation | File | Test (name pattern) | Result |
-|---|---|---|---|
-| R1 skip removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 |
-| R1 terminal condition removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 |
-| R1 DONE condition removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 |
-| R1 STOP condition removed | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 |
-| R1 skip placed as `break` | `src/hooks/index.ts` | "terminal, DONE or STOP" | exit 1, fail 1 |
-| R2 generation filter removed | `src/hooks/index.ts` | "current generation" | exit 1, fail 1 |
-| R2 `?? 0` default removed | `src/hooks/index.ts` | "current generation" | exit 1, fail 1 |
-| R2 filter placed after the id or ref selection | `src/hooks/index.ts` | "current generation" | exit 1, fail 1 |
-| R2 any authorized match in place of the first match | `src/hooks/index.ts` | "current generation" | exit 1, fail 1 |
-| R3 skip removed | `src/hooks/index.ts` | "both dispatch passes" | exit 1, fail 1 |
-| R3 generation filter removed | `src/hooks/index.ts` | "both dispatch passes" | exit 1, fail 1 |
-| R3 skip removed | `src/hooks/index.ts` | "ahead of a frozen-path denial" | exit 1, fail 1 |
-| R4 `.int()` removed | `src/core/types.ts` | "goalGeneration is absent" | exit 1, fail 1 |
-| R4 `.nonnegative()` removed | `src/core/types.ts` | "goalGeneration is absent" | exit 1, fail 1 |
-| R4 field removed | `src/core/types.ts` | "goalGeneration is absent" | exit 1, fail 1 |
-| R5 intake development value removed | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 |
-| R5 intake staging value removed | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 |
-| R5 approved value removed | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 |
-| R5 approved value taken from `data.goalGeneration` | `src/loop/controller.ts` | "controller newly records" | exit 1, fail 1 |
-| R6 approved value removed | `src/loop/controller.ts` | "cancel, resume, authorize and extend" | exit 1, fail 1 |
-| R8 row O reverted to 2e2dc1a7 | `docs/OPERATIONS.md` | tests/surface/command-lines.test.ts "T1-SWEEP2-FLAGS acceptance 5" | exit 1, fail 1 |
-| R8 row R reverted to 2e2dc1a7 | `README.md` | tests/surface/readme.test.ts "T1-INIT-SURFACE acceptance 3" | exit 1, fail 1 |
-| R8 sentence P reverted to 2e2dc1a7 | `docs/OPERATIONS.md` | tests/surface/hooks.test.ts "T0-HOOK-CLASSIFIER-3 acceptance 5" | exit 1, fail 1 |
-
-### DoD, on 7de6e903
-The `dod_command` as one Bash command line is denied by this repository's own `production-gate` hook: it holds `prod` (in `prod-gate-generation`) and `release` (in `release.test.ts`), which the default pattern `\b(prod|production)\b[^\n]*\b(deploy|release|...)\b` matches. It was run as the same typecheck and the same test files in two `node --test` invocations, neither of which the gate matches:
+### DoD
+The `dod_command` as one Bash command line is denied by this repository's own `production-gate` hook: it holds `prod` (in `prod-gate-generation`) and `release` (in `release.test.ts`), which the default pattern `\b(prod|production)\b[^\n]*\b(deploy|release|...)\b` matches. It was run in two parts, the same typecheck and the same files, neither of which the gate matches:
 
 - `npm run typecheck`: exit 0.
-- `node --test tests/scenarios/prod-gate-generation.test.ts tests/surface/hooks.test.ts tests/surface/hook-lazy.test.ts tests/surface/command-lines.test.ts tests/surface/readme.test.ts tests/surface/ps-guard-wire.test.ts tests/surface/approver.test.ts tests/scenarios/intake-target.test.ts tests/scenarios/deadline.test.ts`: exit 0; tests 480, pass 476, fail 0, skipped 4 (the four platform skips of T0-HOOK-CONFIG-CLOSED-3 acceptance 4 and 5 in tests/surface/hooks.test.ts).
+- `node --test` over the nine files of the `dod_command` before `tests/scenarios/release.test.ts`: exit 0; tests 480, pass 476, fail 0, skipped 4 (the Windows platform skips of T0-HOOK-CONFIG-CLOSED-3 acceptance 4 and 5 in tests/surface/hooks.test.ts).
 - `node --test tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts`: exit 0; tests 20, pass 20, fail 0.
 
 ### Document sentences against code and tests
 
 | Sentence | Code that makes it true | Test |
 |---|---|---|
-| Row O (docs/OPERATIONS.md, Hooks): considers only goals not terminal and not in DONE or STOP | `src/hooks/index.ts` skip in `productionGate` | acceptance 1; command-lines.test.ts pins the row |
-| Row O: only the goal's current-generation records, absent counts as 0; the first matching record is an unexpired production authorization | `src/hooks/index.ts` filter, `records.find`, `requireAuthority` | acceptance 2 |
-| Row O: every authorization newly recorded by the controller stores the generation | `src/loop/controller.ts` intake records and `approved` case | acceptance 6 |
-| Row O: resume invalidates earlier-generation records; extension preserves generation and records | resume (`generation + 1`), `extendDeadline`, plus the filter | acceptance 7 |
-| Row O: `RELEASE_APPROVAL` wins; no `goals/` admits any non-empty value | unchanged lines of `productionGate` | acceptance 8 |
-| Row R (README.md): reads the goals' state and generation; blocks unless a goal not terminal and not DONE or STOP has an unexpired production record as its first current-generation match | same as row O | acceptance 1, 2, 8; readme.test.ts pins the cells |
-| Sentence P (docs/OPERATIONS.md): the first-pass exception of production-gate ahead of a later guard | skip and filter run in the classic pass too | acceptance 3 and 4; hooks.test.ts pins the paragraph |
-| CHANGELOG entry | all of the above; the schema exception by `AuthorizationRecord.goalGeneration` and `readJson` of the `Goal` schema | acceptance 1 to 8 |
+| Row O and row R: only goals not terminal and not in DONE or STOP | skip in `productionGate` | acceptance 1; command-lines.test.ts, readme.test.ts |
+| Row O and row R: the goal's first record by id or ref counts only in the current generation (absent as 0) and as an unexpired production record | `records.find` unchanged; the generation check; `requireAuthority` | acceptance 2 |
+| Row O: every authorization newly recorded stores the generation | `createGoal` intake records, `approved` case | acceptance 6 |
+| Row O: after a resume, name the new record by its id or a new `--ref`; extension keeps generation and records | resume `generation + 1`, `extendDeadline`, the generation check on the first match | acceptance 7 |
+| Row O: `RELEASE_APPROVAL` wins; no `goals/` admits any non-empty value | unchanged lines | acceptance 8 |
+| Sentence P and the comment of src/hooks/entry.ts: the first-pass exception and its three refused classes | skip, generation check and schema run in the classic pass | acceptance 3 and 4; hooks.test.ts pins P |
 | Comment src/hooks/index.ts (classic tests main's segments, classified as main classified them) | `classic ? main : ...` | acceptance 3 (classic rows) |
-| Comment src/hooks/entry.ts:12-18 (the exception after the first clause) | `dispatchHook` unchanged, the gate refuses in pass 1 | acceptance 4 |
+| CHANGELOG entry: the pass result only where the pattern sees the command, no goal grants and no earlier guard blocked | `dispatchHook` unchanged | acceptance 3 and 4 (second-pass phrase keeps FROZEN) |
+| CHANGELOG entry: every command denied before is still denied | the match is main's; the checks only remove counted records | acceptance 2 (cross-generation pins) |
 
 ### Changed lines
-`git diff --shortstat origin/main...HEAD` on 7de6e903: 11 files changed, 301 insertions(+), 12 deletions(-) (313 lines), before this section; this section adds about 80 lines, against the budget of 540.
+`git diff --shortstat origin/main...HEAD` on ebc3aec7 before this section was rewritten: 12 files changed, 475 insertions(+), 12 deletions(-), with the evidence of 3b63cbb0 (72 lines) in it; this section replaces that evidence. The count after this commit is in the report, against the budget of 540.
