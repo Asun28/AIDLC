@@ -117,39 +117,31 @@ export class Journal {
   }
 
   head(): { seq: number; hash: string } {
-    const { seq, hash } = this.headEvent();
-    return { seq, hash };
-  }
-
-  /** The last event's `seq`, `hash` and `ts` (no `ts` on an empty journal). */
-  private headEvent(): { seq: number; hash: string; ts?: string } {
     const lines = this.readRawLines();
     const last = lines[lines.length - 1];
     if (!last) return { seq: -1, hash: GENESIS_HASH };
     const parsed = JournalEvent.parse(JSON.parse(last));
-    return { seq: parsed.seq, hash: parsed.hash, ts: parsed.ts };
+    return { seq: parsed.seq, hash: parsed.hash };
   }
 
   /**
    * Read the head and append one event in one section of the journal lock (`<file>.append.lock`, through `updateJson` on the
    * record path `<file>.append`, which is never written), so appenders in separate processes keep one chain. The actor is
-   * resolved before the lock (it may write `session-default`) and `ts` inside it, never earlier than the head event's
-   * unless the caller passes `input.ts`, which is recorded as given. The journal lock is the innermost lock: a
-   * caller takes any other lock first, and an append reached from inside another append waits and is refused with `LOCKED`.
-   * A held lock refuses with `LOCKED` after the 2 s deadline and nothing is appended; an error of the head read or the
-   * append releases the lock and is rethrown.
+   * resolved before the lock (it may write `session-default`); `ts` is the clock as read inside the section, recorded as
+   * read even when the clock moved back, and an `input.ts` the caller passes is recorded as given. The journal lock is the
+   * innermost lock: a caller takes any other lock first, and an append reached from inside another append waits and is
+   * refused with `LOCKED`. A held lock refuses after the 2 s deadline and nothing is appended; an error of the head read or
+   * the append is rethrown. A lock file left behind for any reason refuses later appends until an operator removes it.
    */
   append(input: AppendInput): JournalEvent {
     mkdirSync(path.dirname(this.file), { recursive: true });
     const actor = input.actor ?? currentActor();
     let event: JournalEvent | undefined;
     updateJson(`${this.file}.append`, z.unknown(), (current) => {
-      const { seq, hash: prevHash, ts: headTs } = this.headEvent();
-      // A clock that reads earlier than the head event (the system clock moved back) gives the head's ts.
-      const read = nowIso();
+      const { seq, hash: prevHash } = this.head();
       const body = {
         seq: seq + 1,
-        ts: input.ts ?? (headTs !== undefined && Date.parse(read) < Date.parse(headTs) ? headTs : read),
+        ts: input.ts ?? nowIso(),
         type: input.type,
         goalId: input.goalId,
         cardId: input.cardId,

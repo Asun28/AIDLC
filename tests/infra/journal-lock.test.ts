@@ -46,6 +46,21 @@ function settle<T>(body: () => T): { value?: T; error?: unknown } {
   }
 }
 
+/** Run `body` counting the lock waits (`Atomics.wait`, the 10 ms sleep between two exclusive creates of `updateJson`). */
+function countingWaits<T>(body: () => T): { result: { value?: T; error?: unknown }; waits: number } {
+  const real = Atomics.wait;
+  let waits = 0;
+  Atomics.wait = ((...args: Parameters<typeof Atomics.wait>) => {
+    waits++;
+    return real(...args);
+  }) as typeof Atomics.wait;
+  try {
+    return { result: settle(body), waits };
+  } finally {
+    Atomics.wait = real;
+  }
+}
+
 const eperm = (): Error => Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM', syscall: 'open' });
 const errno = (code: string): Error => Object.assign(new Error(`${code}: simulated`), { code });
 const isLocked = (err: unknown): boolean => err instanceof StoreError && err.code === 'LOCKED';
@@ -149,14 +164,28 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     const before = readFileSync(j.file, 'utf8');
     const live = `pid=${process.pid} at=${AT} nonce=0badc0de`;
     writeFileSync(lockOf(j), live, 'utf8');
-    const started = Date.now();
-    const refused = settle(() => j.append({ type: 'NOTE', actor: ME }));
-    const waited = Date.now() - started;
+    // The clock is the boundary: Date is mocked and each exclusive create of the lock moves it 100 ms on, so the deadline is
+    // reached by counted attempts, not by elapsed time.
+    const T = Date.parse('2026-11-11T12:00:00.000Z');
+    let creates = 0;
+    const attempt = () => {
+      creates = 0;
+      mock.timers.enable({ apis: ['Date'], now: T });
+      try {
+        return settle(() => throughFs('openSync', (real, args) => {
+          if (String(args[0]) === lockOf(j) && args[1] === 'wx') mock.timers.setTime(T + ++creates * 100);
+          return real(...args);
+        }, () => j.append({ type: 'NOTE', actor: ME })));
+      } finally {
+        mock.timers.reset();
+      }
+    };
+    const refused = attempt();
     assert.ok(isLocked(refused.error), `LOCKED: ${String(refused.error)}`);
+    assert.equal(creates, 20, 'retried until the clock reached the 2 s deadline (20 creates of 100 ms), and not refused before');
     const message = (refused.error as Error).message;
     assert.ok(message.includes(`locked by another writer (${live}); run the command again`), message);
     assert.ok(message.includes(`(${recordOf(j)})`), `the record path is named: ${message}`);
-    assert.ok(waited >= 1_900, `refused at the 2 s deadline, not before (${waited} ms)`);
     assert.equal(readFileSync(j.file, 'utf8'), before, 'the journal is byte for byte unchanged');
     assert.equal(textOf(lockOf(j)), live, 'the live lock keeps its text');
     // R7: the readers take no lock, so they answer while it is held.
@@ -164,8 +193,9 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
 
     const dead = `pid=${DEAD_PID} at=${AT} nonce=dead`;
     writeFileSync(lockOf(j), dead, 'utf8');
-    const crashed = settle(() => j.append({ type: 'NOTE', actor: ME }));
+    const crashed = attempt();
     assert.ok(isLocked(crashed.error), `LOCKED: ${String(crashed.error)}`);
+    assert.equal(creates, 20, 'a dead owner is waited out to the same deadline');
     const lock = lockOf(j);
     assert.ok((crashed.error as Error).message.includes(`${lock} is locked by pid ${DEAD_PID}, which is no longer running; delete ${lock} only once pid ${DEAD_PID} is confirmed dead, then run the command again`), (crashed.error as Error).message);
     assert.equal(textOf(lock), dead, "the dead owner's lock stays until the operator deletes it");
@@ -179,25 +209,31 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     // Another writer's lock is being deleted: its path exists until the deletion completes after the second refusal.
     writeFileSync(lock, `pid=${process.pid} at=${AT} nonce=deleting`, 'utf8');
     let failures = 2;
-    const appended = throughFs('openSync', (real, args) => {
+    let creates = 0;
+    const present = countingWaits(() => throughFs('openSync', (real, args) => {
       if (String(args[0]) === lock && args[1] === 'wx') {
+        creates++;
         if (failures-- > 0) throw eperm();
         if (existsSync(lock)) unlinkSync(lock);
       }
       return real(...args);
-    }, () => j.append({ type: 'NOTE', actor: ME }));
-    assert.equal(failures, -1, 'the create was retried after each EPERM');
-    assert.equal(appended.seq, 1, 'then the lock was taken and the event appended');
+    }, () => j.append({ type: 'NOTE', actor: ME })));
+    assert.equal(present.result.value?.seq, 1, `then the lock was taken and the event appended: ${String(present.result.error)}`);
+    assert.deepEqual({ creates, waits: present.waits }, { creates: 3, waits: 2 }, 'the create was retried after each EPERM, with a wait before each retry');
     assert.equal(existsSync(lock), false);
 
+    // Absent path: counted calls, not elapsed time, show that it propagates at once.
     const before = readFileSync(j.file, 'utf8');
-    const started = Date.now();
-    const absent = settle(() => throughFs('openSync', (real, args) => {
-      if (String(args[0]) === lock && args[1] === 'wx') throw eperm();
+    creates = 0;
+    const absent = countingWaits(() => throughFs('openSync', (real, args) => {
+      if (String(args[0]) === lock && args[1] === 'wx') {
+        creates++;
+        throw eperm();
+      }
       return real(...args);
     }, () => j.append({ type: 'NOTE', actor: ME })));
-    assert.equal((absent.error as NodeJS.ErrnoException | undefined)?.code, 'EPERM', `the EPERM propagates: ${String(absent.error)}`);
-    assert.ok(Date.now() - started < 1_000, 'without waiting for the deadline');
+    assert.equal((absent.result.error as NodeJS.ErrnoException | undefined)?.code, 'EPERM', `the EPERM propagates: ${String(absent.result.error)}`);
+    assert.deepEqual({ creates, waits: absent.waits }, { creates: 1, waits: 0 }, 'one create, no retry and no wait for the deadline');
     assert.equal(readFileSync(j.file, 'utf8'), before, 'the journal is unchanged');
     assert.equal(existsSync(lock), false);
   });
@@ -274,37 +310,38 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     }
     assert.deepEqual(order, ['session-default', 'lock'], 'session-default is written before the lock file is created');
     assert.equal(existsSync(recordOf(j)), false);
-    for (let i = 0; i < 10; i++) {
-      j.append({ type: 'NOTE', actor: ME, data: { i } });
-      assert.equal(existsSync(recordOf(j)), false, `after append ${i + 1} no record file exists`);
-    }
-    const ts = j.readAll().map((e) => Date.parse(e.ts));
-    assert.equal(ts.length, 11);
-    for (let i = 1; i < ts.length; i++) assert.ok(ts[i]! >= ts[i - 1]!, `ts is non-decreasing along seq at seq ${i}`);
-
-    // An append that has started and not yet taken the lock while another append lands after the clock has moved on: its
-    // ts is read once it holds the lock, so it is no earlier than the event that landed first.
-    const k = journalWith(1);
-    let landed: { seq: number; ts: string } | undefined;
-    let entered = false;
-    const waiting = throughFs('openSync', (real, args) => {
-      if (!entered && String(args[0]) === lockOf(k) && args[1] === 'wx') {
-        entered = true;
-        const from = Date.now();
-        while (Date.now() < from + 2) {
-          /* the clock moves past the waiting append's start */
-        }
-        landed = k.append({ type: 'NOTE', actor: ME, data: { first: true } });
+    // The clock is the boundary: Date is mocked, so each append reads the time the test sets.
+    mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-11T12:00:00.000Z') });
+    try {
+      for (let i = 0; i < 10; i++) {
+        mock.timers.setTime(Date.parse('2026-11-11T12:00:00.000Z') + i * 1_000);
+        j.append({ type: 'NOTE', actor: ME, data: { i } });
+        assert.equal(existsSync(recordOf(j)), false, `after append ${i + 1} no record file exists`);
       }
-      return real(...args);
-    }, () => k.append({ type: 'NOTE', actor: ME, data: { waiting: true } }));
-    assert.ok(landed, 'the other append landed while this one waited for the lock');
-    assert.equal(waiting.seq, landed.seq + 1);
-    assert.ok(Date.parse(waiting.ts) >= Date.parse(landed.ts), `the waiting append's ts ${waiting.ts} is no earlier than ${landed.ts}`);
-    assert.equal(k.verify().ok, true);
+      const ts = j.readAll().slice(1).map((e) => e.ts);
+      assert.deepEqual(ts, Array.from({ length: 10 }, (_, i) => new Date(Date.parse('2026-11-11T12:00:00.000Z') + i * 1_000).toISOString()), 'ten appends without ts carry the readings in the order of seq');
+
+      // ts is read after the lock is taken: the clock advances when the lock file's exclusive create succeeds, and the
+      // event carries the reading taken after that advance.
+      const k = journalWith(1);
+      mock.timers.setTime(Date.parse('2026-11-11T13:00:00.000Z'));
+      let acquired = false;
+      const event = throughFs('openSync', (real, args) => {
+        const fd = real(...args);
+        if (!acquired && String(args[0]) === lockOf(k) && args[1] === 'wx') {
+          acquired = true;
+          mock.timers.setTime(Date.parse('2026-11-11T13:00:05.000Z'));
+        }
+        return fd;
+      }, () => k.append({ type: 'NOTE', actor: ME }));
+      assert.ok(acquired, 'the lock was taken');
+      assert.equal(event.ts, '2026-11-11T13:00:05.000Z', 'the ts is the reading after the lock was taken');
+    } finally {
+      mock.timers.reset();
+    }
   });
 
-  it('an implicit ts never moves back with the clock, and an explicit ts is recorded as given [R1]', () => {
+  it('an implicit ts is the clock as read, earlier than the head included, and an explicit ts is recorded as given [R1]', () => {
     const j = new Journal(path.join(dir, 'clock.jsonl'));
     // The clock is the boundary: Date is mocked, so each append reads the time the test sets.
     mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-11T12:00:00.000Z') });
@@ -313,18 +350,17 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
       return j.append({ type: 'NOTE', actor: ME, data, ...(ts ? { ts } : {}) }).ts;
     };
     try {
-      assert.equal(at('2026-11-11T12:00:00.000Z', { c: 'no head' }), '2026-11-11T12:00:00.000Z', 'no head: the first event takes the clock reading');
-      assert.equal(at('2026-11-11T11:59:00.000Z', { c: 'clock earlier' }), '2026-11-11T12:00:00.000Z', "the clock reads earlier than the head: the head's ts is used");
-      assert.equal(at('2026-11-11T12:05:00.000Z', { c: 'clock later' }), '2026-11-11T12:05:00.000Z', 'the clock reads later: used as read');
-      assert.equal(at('2026-11-11T12:05:00.000Z', { c: 'equal' }), '2026-11-11T12:05:00.000Z', 'equal readings: the same ts');
-      assert.equal(at('2026-11-11T12:06:00.000Z', { c: 'explicit earlier' }, '2026-11-11T11:00:00.000Z'), '2026-11-11T11:00:00.000Z', 'an explicit ts is recorded as given, earlier than the head included');
-      assert.equal(at('2026-11-11T11:30:00.000Z', { c: 'after explicit' }), '2026-11-11T11:30:00.000Z', 'the clock is compared with the head event only');
+      assert.equal(at('2026-11-11T12:00:00.000Z', { c: 'no head' }), '2026-11-11T12:00:00.000Z', 'no head: the first event takes the reading');
+      assert.equal(at('2026-11-11T12:05:00.000Z', { c: 'clock later' }), '2026-11-11T12:05:00.000Z', 'the clock reads later than the head: recorded as read');
+      assert.equal(at('2026-11-11T11:59:00.000Z', { c: 'clock earlier' }), '2026-11-11T11:59:00.000Z', 'the clock reads earlier than the head: recorded as read, with no adjustment');
+      assert.equal(at('2026-11-11T11:59:00.000Z', { c: 'equal' }), '2026-11-11T11:59:00.000Z', 'equal readings: the same ts');
+      assert.equal(at('2026-11-11T12:06:00.000Z', { c: 'explicit' }, '2026-11-11T11:00:00.000Z'), '2026-11-11T11:00:00.000Z', 'an explicit ts is recorded as given');
     } finally {
       mock.timers.reset();
     }
-    // verify() checks seq, prevHash and hashes, not ts order: the chain with the explicit earlier ts verifies.
+    // verify() checks seq, prevHash and the hashes, not the order of ts: this chain, whose ts decreases twice, verifies.
     const v = j.verify();
     assert.deepEqual(v.problems, []);
-    assert.equal(v.events, 6);
+    assert.equal(v.events, 5);
   });
 });
