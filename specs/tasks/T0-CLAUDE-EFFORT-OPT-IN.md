@@ -1,7 +1,7 @@
 ---
 id: T0-CLAUDE-EFFORT-OPT-IN
 title: With claudeCode.forwardEffort true the claude-code provider passes the request's effort as --effort after the model and refuses the call while CLAUDE_CODE_EFFORT_LEVEL is in its launch environment; the key is off by default and the argv is then unchanged
-status: todo
+status: merged
 branch: T0-CLAUDE-EFFORT-OPT-IN
 worktree: D:\wt\AIDLC\T0-CLAUDE-EFFORT-OPT-IN
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: about 14 changed lines in src/providers/claude-code.ts (the option, the launch-environment check, the refusal result and the two arguments), 1 in src/config.ts (the claudeCode object), about 6 in src/cli/main.ts (the export and runner argument of providerFor, the third argument of runProviderFor, the aidlc run call); about 240 in tests/surface/providers.test.ts (seven tests: the five levels in both modes, the off rows, the environment refusal rows with per-row isolation, the two constructions, the call-site check and the twelve rows of the acceptance 7 table; the fixed receipt time and the imports); about 40 in tests/surface/config.test.ts (schema rows and loader rows); about 8 in docs/OPERATIONS.md, 2 in docs/ARCHITECTURE.md and 2 in CHANGELOG.md; about 110 lines of attempt evidence; about 423 in all"
