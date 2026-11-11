@@ -238,6 +238,8 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     const clauses = [
       'refuses, on every platform, a `cwd` that is not a string',
       'and one that holds a NUL character (U+0000)',
+      'so that one form is refused everywhere',
+      'Other forms that resolve differently by platform are not refused: a fully qualified Windows form such as `C:\\ops` is that path on Windows and a relative name under the main checkout on POSIX.',
       'the role is bound, the step has no ledger record yet and the publication check passes',
       'it stops with `release-config` before the intent is recorded',
       'A step that already has a ledger record is settled, an unbound role stops NOT CONFIGURED and an unauthorized publication stops `release-auth`, as before',
@@ -249,7 +251,7 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     const start = changelog.indexOf('## Unreleased');
     assert.ok(start >= 0, 'CHANGELOG.md has an Unreleased section');
     const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
-    for (const clause of ['and one that holds a NUL character (U+0000)', 'the role is bound, the step has no ledger record yet and the publication check passes', 'an unauthorized publication stops `release-auth`, as before']) assert.ok(unreleased.includes(clause), `CHANGELOG.md holds: ${clause}`);
+    for (const clause of ['and one that holds a NUL character (U+0000)', 'so that one form is refused everywhere', 'the role is bound, the step has no ledger record yet and the publication check passes', 'an unauthorized publication stops `release-auth`, as before']) assert.ok(unreleased.includes(clause), `CHANGELOG.md holds: ${clause}`);
   });
 
   it('the command and the status lookup of one binding run in one directory', () => {
