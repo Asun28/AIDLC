@@ -91,3 +91,14 @@ DoD on 13e45a36: typecheck exit 0; `node --test` 4 files: tests 96, pass 96, fai
 Acceptance 3 (gitleaks 8.30.1 over the branch history, both counts): the coordinator adds it.
 
 Changed lines: see the final report (`git diff --shortstat origin/main...HEAD`).
+
+### Acceptance 3 (coordinator): the scan over the history of the candidate
+
+gitleaks 8.30.1 for linux x64 (the version and the SHA-256 the workflow pins, 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb, checked on download), run in WSL on 2026-11-12 over the history reachable from the candidate 54977cea9c2b149e4d1cc0b1baec7a4898132652 with the workflow's options (`gitleaks git --redact --no-banner --log-opts=<candidate> .`):
+
+| Ignore file | Commits scanned | Result |
+|---|---|---|
+| the candidate's `.gitleaksignore` | 1118 | no leaks found, exit 0 |
+| an empty ignore file | 1118 | 1 leak, fingerprint `7265d10642001a051fa36ac3f9c061a72a4540b3:docs/LESSONS.md:generic-api-key:153` |
+
+The same scan over main at 43a919f6 before this card gave the same single finding, and the Gitleaks check of PR 285 (run 43120762701) reported it. The candidate's own commits add no finding. The second row is the entry of R1 and nothing else.
