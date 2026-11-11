@@ -146,6 +146,7 @@ export const ProjectConfig = z.object({
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
   github: GitHubShipConfig.prefault({}),
+  claudeCode: z.object({ forwardEffort: z.boolean().default(false) }).prefault({}),
   /**
    * CI failure classes: the job steps whose failure is infrastructure, the structured evidence for the one rerun (card
    * T0-CI-RERUN-STRUCTURED), and the steps of a scan job that install its scanner, a failure there being no security finding
