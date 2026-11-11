@@ -63,3 +63,47 @@ npm run typecheck && node --test tests/core/ci-policy.test.ts tests/scenarios/ci
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+Attempt 1 (effort medium), on the branch line of T0-SCAN-SETUP-STEP at 8f13ddb merged with main. RED receipt `c57654b`: acceptance 3 failed with all eight forms exempt (class `unknown` with the `scan-setup:` note): the repeated `check` key moving a Gitleaks step line to `build`, the same line with a null conclusion, a raw `[` in a listed step name, a `%5b` check, a red line with a repeated `name`, a legacy red line, a timeout line, a second step line at the same listed step; the other 154 DoD tests passed. The fix is `0969cf6`. The five red-line and percent-sign cases added to acceptance 2 after it fail at 8f13ddb too (run against the 8f13ddb sources in a scratch checkout: the first, a raw bracket in another check's red line, gives `unknown`).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/ci-policy.test.ts` "acceptance 1: a scan check red at its listed install step is no security finding and says why" | pass |
+| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (31 gate cases, 3 direct-record cases, 11 step-line forms under two configurations, the escaped-slash pair) | pass |
+| 3 | `tests/core/ci-policy.test.ts` "acceptance 3: one gate line in another form than the ship path prints denies every exemption; names in the printed encoding are exempt" | pass |
+| 4 | `tests/core/ci-policy.test.ts` "acceptance 4: the exempt check takes the class its other evidence gives, and ci classify reads the configured list" | pass |
+| 5 | `tests/scenarios/ci-rerun.test.ts` "T0-SCAN-SETUP-STEP-2 acceptance 5" and the R7 security tests unchanged | pass |
+| 6 | `tests/surface/templates.test.ts` "T0-SCAN-SETUP-STEP-2 acceptance 6" | pass |
+| 7 | `tests/infra/github-ship.test.ts` "T0-SCAN-SETUP-STEP-2 acceptance 7" (the receipt GitHubShipPath prints for `Gitleaks [x] 100% /runs` at `Install [gitleaks] 100% /tmp`) | pass |
+| 8 | docs/OPERATIONS.md (the scan setup paragraph), docs/ARCHITECTURE.md (outcome map security clause), CHANGELOG.md Unreleased | reviewer |
+
+DoD: `npm run typecheck` exit 0; `node --test tests/core/ci-policy.test.ts tests/scenarios/ci-rerun.test.ts tests/surface/templates.test.ts tests/infra/github-ship.test.ts` exit 0, 155 tests, 155 pass. Mutation sweep (`aidlc card mutants`, advisory): 29 of 30 mutants killed, mutant 30 not run (the run was stopped at its time limit and the file restored).
+
+Rule against main (lesson T0-EXIT-ZERO-NOT-MERGED-3): main counts every red scan check as `security`; this change only removes such hits, under R1, so an input main classifies as `code-defect`, `transient` or `unknown` keeps its class and its evidence, and an input main classifies as `security` stays `security` unless every red and step gate line of it is in the printed form, it has no timeout line, and the check meets the rest of R1. `foreignGate` is read only by the exemption: the transient path, the red records and the log text are read as on main.
+
+Same class (each push into `securityHits`, each reader of a check identity from a gate line, and the callers):
+- a failed independent job named for a scan: covered by R1 (acceptance 1, the job passed in directly).
+- a red gate check named for a scan: covered by R1 (acceptance 1, 3, 7).
+- an unparsed red gate line naming a scan: kept by R3, no check is attached to the hit (acceptance 2).
+- raw gitleaks output (`leaks found`, `RuleID:`): kept by R3 (acceptance 2).
+- `readStepCheck`: removed; a malformed step line no longer names a check for the exemption, it sets `foreignGate`.
+- `readStep` and the red records of `readGate`: read for the exemption only when every red and step line is in the printed form (acceptance 3); `readStep` still feeds the transient path as on main.
+- `aidlc ci classify --log` (src/cli/main.ts) and the card runner's CI gate (src/loop/card-runner.ts): both pass `ci.scanSetupSteps` (acceptance 4 and 5).
+
+Input forms and failure paths of the new hunks, each with its test (`tests/core/ci-policy.test.ts` unless named):
+- `[CI-GATE-TIMEOUT]` line: `foreignGate` (acceptance 3, a timeout line).
+- `[CI-GATE-RED]` line not in the printed form: legacy pairs, a repeated `name`, another key, other spacing, `status: completed`, a raw bracket in a name (acceptance 2 and 3); an object payload is unresolved as before (acceptance 2, an unresolved red line).
+- `[CI-GATE-STEP]` line not in the printed form: a repeated `check` key, parsed or with a null conclusion, a raw `[` in a step name, a `%5b` check, a lone `%` in a step name (acceptance 2 and 3), and the eleven forms of attempt 3 of T0-SCAN-SETUP-STEP (acceptance 2).
+- names in the printed encoding (`%5B`, `%5D`, `%25`, `\/`): exempt (acceptance 3, built with `encodeUntrusted`; acceptance 7, printed by `GitHubShipPath`).
+- two step lines of the check, both at the listed step: denied by the exactly-one rule (acceptance 3).
+
+Attempt 2 (effort medium), repair of R3 decision 1 (empty-status-gate-exemption at src/core/ci-policy.ts:206): `isPrintedRed` kept an explicit `status: ""`, which `checksJson` omits. The card's R2, R3 and acceptance 3 were amended on main (26bad32) and merged. RED receipt `51e6de7`: six cases of acceptance 3 exempt the Gitleaks check at 671a969 (its red element with `status` `""`, with and without the setup step on `transientSteps`, where it became `transient`; with `status` `queued`; another check's red element with `status` `""`; its step line with the conclusion `FAILURE`, with and without the transient list). Repair `bd5bf0d`: a printed red element is `name` and `conclusion` alone, and a printed step has the conclusion `failure`.
+
+Class sweep of the repair (every field of `checksJson` and `gateStepLine` against what the gate passes them, src/delivery/github-ship.ts:208-218 and :353-356): the red line holds only completed runs that did not pass (`failed`), so no element has a `status` and none concludes `success` (`green` reads the conclusion in lower case), and the array is never empty; `gateStepLine` names the first step whose conclusion is `failure`; `job` is the check run id the details URL must match (`String(r.id)`), so it has no leading zero; names go through `encodeUntrusted`. The card was amended for the three forms the sweep found (e740c78). RED receipt `ac34be4`: another check's red element with the conclusion `success` and the check's step line with the job `0128690143221` exempt at bd5bf0d; an empty red line already denied as an unresolved red line. Fix `308c131`. Where this check is stricter than the printer (a blank name, a non-integer step number, a non-string conclusion), the exemption is denied: the text stays `security`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 3 | `tests/core/ci-policy.test.ts` "acceptance 3: one gate line in another form than the ship path prints denies every exemption; names in the printed encoding are exempt" (17 denial cases, the printed-encoding exemption) | pass |
+| 1, 2, 4 to 8 | as attempt 1 | pass, 8 reviewer |

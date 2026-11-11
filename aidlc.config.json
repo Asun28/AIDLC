@@ -25,6 +25,11 @@
     ],
     "requireVerdict": true
   },
+  "ci": {
+    "scanSetupSteps": [
+      "Install gitleaks (pinned version, checksum verified)"
+    ]
+  },
   "hooks": {
     "frozenPaths": [],
     "testPathPatterns": [

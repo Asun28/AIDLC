@@ -85,6 +85,21 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(!live.includes('continue-on-error'), 'the gitleaks step must block the job');
   });
 
+  test('T0-SCAN-SETUP-STEP-2 acceptance 6: each default scan setup step is a step of the shipped scanner workflow before its scan, and both configs carry the default [R4]', () => {
+    const lines = readFileSync(path.join(tpl, 'github', 'workflows', 'security-scanners.yml'), 'utf8').split(/\r?\n/);
+    const scanAt = lines.findIndex((l) => l.trim().startsWith('run: gitleaks git '));
+    assert.ok(scanAt > 0, 'the scan step runs gitleaks git');
+    const defaults = (ProjectConfig.parse({}).ci as { scanSetupSteps?: string[] }).scanSetupSteps ?? [];
+    assert.deepEqual(defaults, ['Install gitleaks (pinned version, checksum verified)']);
+    for (const step of defaults) {
+      const at = lines.findIndex((l) => l.trim() === `- name: ${step}`);
+      assert.ok(at >= 0 && at < scanAt, `${step} is a step before the scan`);
+    }
+    for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
+      assert.deepEqual((JSON.parse(readFileSync(file, 'utf8')) as { ci?: { scanSetupSteps?: unknown } }).ci?.scanSetupSteps, defaults, file);
+    }
+  });
+
   test('the CI gate docs state the security class, the github config block and the changelog entry (T1-LOOP-GATES-2 acceptance 6)', () => {
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
     assert.ok(architecture.includes('the `security` class, keyed off a failing check-run name that matches a secret or security scan or off raw gitleaks output, is STOP/risk and never reruns'), 'outcome map names the security class');

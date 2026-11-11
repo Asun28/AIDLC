@@ -60,3 +60,48 @@ npm run typecheck && node --test tests/core/ci-policy.test.ts tests/scenarios/ci
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+Attempt 1 (effort medium). RED receipt `3db5358`: acceptance 1, 3, 4 and 5 failed on their assertions (`security` where `unknown` or `transient` was expected, STOP/risk where STOP/ci was expected, no `ci.scanSetupSteps` default); acceptance 2 passed, since it pins main's behaviour.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/ci-policy.test.ts` "acceptance 1: a scan check red at its listed install step is no security finding and says why" | pass |
+| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (26 gate cases, 3 direct-record cases, 11 step-line forms under two configurations, the note only on the two raw-output cases) | pass |
+| 3 | `tests/core/ci-policy.test.ts` "acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list" (also: another check with disagreeing records, a second red scan check keeping the note) | pass |
+| 4 | `tests/scenarios/ci-rerun.test.ts` "T0-SCAN-SETUP-STEP acceptance 4" and the R7 security tests unchanged | pass |
+| 5 | `tests/surface/templates.test.ts` "T0-SCAN-SETUP-STEP acceptance 5" | pass |
+| 6 | docs/OPERATIONS.md (paragraph after the gitleaks gate), docs/ARCHITECTURE.md (outcome map security clause), CHANGELOG.md Unreleased | reviewer |
+
+Rule against main (lesson T0-EXIT-ZERO-NOT-MERGED-3): the change only removes hits from the security list, so an input main classifies as `code-defect`, `transient` or `unknown` keeps its class and its evidence. An input main classifies as `security` stays `security` unless every R1 condition holds for each check-name hit and no other hit remains; it then gets the class main gives the same input with that check's name not read as a scan, plus the `scan-setup` evidence line. When another hit remains, the class stays `security`, the exempt check's `security:` line is dropped and its `scan-setup:` line is added, so the STOP/risk detail names the remaining hit.
+
+Same class (`securityHits` pushes in `classifyCiFailure`, and the callers):
+- a failed independent job named for a scan: covered by R1 (acceptance 1, the job passed in directly).
+- a red gate check named for a scan: covered by R1 (acceptance 1).
+- an unparsed red gate line naming a scan: kept by R2, no check is attached to the hit (acceptance 2).
+- raw gitleaks output (`leaks found`, `RuleID:`): kept by R2 (acceptance 2).
+- `aidlc ci classify --log` (src/cli/main.ts) and the card runner's CI gate (src/loop/card-runner.ts): both pass `ci.scanSetupSteps` (acceptance 3 and 4); no other caller of `classifyCiFailure` or reader of `SECURITY_CHECK_NAME` exists in `src/`.
+
+`tests/infra/github-ship.test.ts` changes only its `ci` config builder, which now spreads the fixture's `ci` so the new required field is present; its 58 tests pass.
+
+Attempt 2 (effort medium), repair of R3 decision 1 (F1 to F5). The card's R1, R2, R5 and acceptance 2 and 3 were amended on main at d793fe5 to state the rules the block read, and merged into the branch. Regression RED before the repair: acceptance 2 (no note on raw gitleaks output) and acceptance 3 (`security` where `code-defect` was expected beside another check's disagreeing records) failed on their assertions.
+
+Input forms and failure paths of the repair hunks, each with its test (`tests/core/ci-policy.test.ts`):
+- a step line whose payload is not JSON: no readable check, every exemption denied (acceptance 2, "a malformed step line naming no readable check"). F1.
+- a step line of valid JSON with no `check`, or a `check` that is not a string: no readable check, every exemption denied (acceptance 2, the two cases after it). F1.
+- a step line naming the check with a malformed step (`conclusion` null): the check's exemption denied, also with the setup step on `transientSteps` (acceptance 2, two cases). F1.
+- two job records of the check beside one gate record: denied, counted before matching (acceptance 2, direct case 1); one job record and one gate record that agree: exempt (acceptance 2, last assertion). F2.
+- a job record and a gate record of the check that disagree: denied (acceptance 2, direct case 2). F3.
+- another check whose records disagree: no effect on the scan check, class `code-defect` (acceptance 3). F3.
+- an aggregate wrapper named for a scan: its hit is never exempt (acceptance 2, direct case 3).
+- an exempt check beside another red scan check: class `security`, evidence starts with the other hit and ends with the note (acceptance 3). F4.
+- the docs: docs/ARCHITECTURE.md outcome map clause and docs/OPERATIONS.md paragraph state every R1 condition, the default list and the two readers (acceptance 6). F5.
+
+Attempt 3 (effort medium), repair of R3 decision 2 (F1, re:F1 of decision 1): a step line whose `check` is blank or whitespace was read as naming the check `""`, so a malformed one did not deny the exemption. `readStep` now refuses a blank check and `readStepCheck` maps it to null, so such a line, malformed or not, names no readable check and denies every exemption. Regression RED before the repair: acceptance 2 returned `unknown` for "a malformed step line with the blank check \"\"".
+
+Input forms of the repair hunks, each with its test (acceptance 2 in `tests/core/ci-policy.test.ts`): a malformed step line with check `""` or `"  "` (null conclusion), with the default lists and with the install step on `transientSteps`; a well-formed step line with check `""` or `"  "` naming the scan step, under the same two configurations. Each stays `security` with no `scan-setup:` line. A blank check was never transient evidence, since a red check with a blank name is never evidenced (test "successor R3: unnamed independent failures cannot earn a rerun", unchanged and passing).
+
+Attempt 4 (effort medium), repair of R3 decision 3 (F1, re:F1 of decisions 1 and 2): `readStep` read a step line with `job` or `step.number` absent or mistyped as evidence. Rather than add one field per round (lesson T0-CARD-TAKEOVER-2), a step line now counts toward the exemption only when it is byte for byte the line `gateStepLine` in src/delivery/github-ship.ts prints (`isShipStepPayload`): the JSON is rebuilt from its validated fields in the printed order with the printed escapes and compared with the payload. `readStep` and the transient evidence are unchanged, so nothing main reads as transient changes. R1 was amended on main at 4c8c07d to define a malformed step line this way. Regression RED before the repair: acceptance 2 returned `unknown` for "no job and no number".
+
+Input forms of the repair hunk, each in acceptance 2 of `tests/core/ci-policy.test.ts`, each under the default lists and with the install step on `transientSteps`, each `security` with no `scan-setup:` line: `job` and `step.number` absent; `job` null and `number` a string; a numeric `job`; a `job` that is not digits; `number` 0; `number` 3.5; another top-level key; another step key; a repeated key; another key order; other spacing inside the JSON and two spaces after the sentinel. Positive form: a step name holding `/` printed as `\/` is exempt under a list naming it, and the same line with a bare `/` is not. A non-JSON payload, an array, and a step that is not an object are refused by the same function before the comparison. Limit: a change to the form `gateStepLine` prints makes every red scan check `security` again until `isShipStepPayload` follows it, which fails closed.
