@@ -66,3 +66,21 @@ npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+History, carried from T0-DIRTY-SUCCESS (610d4640): RED 0b334620:1; R3 passed at decision 1 and the second pass; PR 261 failed on Ubuntu in acceptance 4's file-path case.
+
+DoD (attempt 1 of this card): exit 0, 222 tests, 221 pass, 0 fail, 1 skipped (Windows; the EACCES test is POSIX-only).
+
+| Item | Test or command | Result |
+|---|---|---|
+| 1 | dirty-success.test.ts, 16 tests `github:` / `scaffold:` `a success with <entry list> is refused ... [acceptance 1]` (carried) | pass |
+| 2 | dirty-success.test.ts `after a recorded fail, a dirty success opens no attempt ...` and `a dirty success delivers the ATTEMPT_FINISHED ...` (carried) | pass |
+| 3 | dirty-success.test.ts, five tests of `the refusals before it keep their order and messages [R3]` (carried) | pass |
+| 4 | dirty-success.test.ts, ten tests of `every case outside R1 is recorded as before [R4] [R5]` (carried) | pass on Windows; the file-path case on Linux is item 9 |
+| 5 | dirty-success.test.ts `gets build from card next, and review pre and review r3 refuse it as dirty [acceptance 5]` (carried) | pass |
+| 6 | tests/infra/git.test.ts `candidate digest binds HEAD to the working-tree status and input manifest` (carried) | pass |
+| 7 | fault-points.test.ts (28/28), journal-owed.test.ts, t0-flow.test.ts, no pin added or changed | pass |
+| 8 | docs/OPERATIONS.md (`aidlc card attempt` paragraph), CHANGELOG.md entry above T0-BOARD-OWNER-WAIT | written; reviewer to verify |
+| 9 | dirty-success.test.ts `a worktree path that is a file is probed, the probe fails and the success is recorded with no candidate`; `a mutant marker is refused first and nothing is probed` | pass on Windows before and after (Windows reports no entry); the ENOTDIR branch runs only on POSIX, so the proof is the Ubuntu checks of this card's PR |
+| 9 (propagation clause of R9) | dirty-success.test.ts `a marker check that fails with EACCES propagates the error, records nothing and probes nothing` (skipped on Windows and as root) | proven on Linux only: WSL, uid 1000, node 24.3.0, file 34/34 pass; a mutant that swallows every lstat error fails it; with R9 reverted the file-path test fails with ENOTDIR as in PR 261 |
