@@ -419,6 +419,47 @@ Runs at the commit that adds this section (parent `b1b466d5`):
 - The 80 test files that read docs/ARCHITECTURE.md, docs/OPERATIONS.md or CHANGELOG.md, with tests/scenarios/release-report-step.test.ts, tests/scenarios/ops-cwd.test.ts and tests/infra/ops.test.ts (the files of PR 276 and PR 275), one `node --test` call, Windows: 1895 tests, 1883 pass, 0 fail, 12 skipped, exit 0.
 - Diff against the merge base with main (a7ea9bc6): 1341 changed lines (+1317 / -24), within the budget of 1420: tests/scenarios/release-lease.test.ts 801, the card 347, src/loop/release-runner.ts 176, docs/OPERATIONS.md 10, src/cli/main.ts 3, docs/ARCHITECTURE.md 2, CHANGELOG.md 2.
 
+### Attempt 5 (repair of the pre-review of 4f117f50; acceptance 17)
+
+Merge `adb50c4a` (origin/main with the card amendment 877af98f, card text only). RED commit `d9d5173a` adds acceptance 17 alone (with the `NODE_OPTIONS` and named-subtest changes); at its sources (those of 4f117f50) 17 (b) fails at `B's cleanup keeps the lease under A's running operation on ops\prod` (`true !== false`), and (a), (c), (d), (e) pass: they are coverage proofs, each red under the revert row named below.
+
+**Point 1, lease identity (R12).** The in-section check now compares lease files: a record's target names the section's environment when `this.leases.file(resourceKeys.environment(target))` equals `this.leases.file(key)` (`leaseOf`, release-runner.ts in `releaseLeases`). The key list had the same defect: `new Set` of key strings gave `env:ops\prod` and `env:ops/prod` as two keys of one lease file, so that lease was decided twice and a failed or kept lease was named twice; the keys are now collected by lease file, first name kept (17 (b), second case: one `LOCKED` failure for the one lease; row C2b). `issue` needs no change: its one key comes from the attempt's environment, `LeaseStore.update` locks and reads by lease file, and `ownLease` reads the record's owner and operation, not its key string, so the admission and the step's `claim` already act on the lease file whatever the spelling.
+
+**Points 2, 3, 5.** Acceptance 17 (a) to (e) as the card states them, each with its revert row (C1 to C5). R13's entry rule is the code's (`.json` names, as `listJsonFiles` selects); 17 (e) pins it. The CLI child drops `NODE_OPTIONS` beside every `GIT_*` name; the three POSIX permission cases of test 14 are named subtests with `skip` set to `POSIX permission bits do not apply on Windows` or `root reads and lists regardless of permission bits`, so a skip is reported with its reason.
+
+**Point 4, documents.** Rewritten to what the merged code does, each sentence with the state in which it holds: docs/OPERATIONS.md (the opening paragraph: leases still the attempt's own and kept by nothing unresolved; one lease per lease file; the attempt section only when the attempt names an environment; a cleanup run by another session releases nothing. The admission bullet: for an attempt that names an environment. The environment-less bullet: no attempt section and no ownership check; an empty environment still takes the section of `env:`, where a held lock fails first; the error before any intent; the cleanup still takes its records' targets' lease sections. The failed-section bullet: the attempt section only for an attempt that names an environment. The strict-read bullet: the entry rule. The takeover bullet: no record of that attempt and none on that environment unresolved). docs/ARCHITECTURE.md: the ownership conditions of R3 and the lease-file identity. CHANGELOG.md: the lease-file identity, the environment-less case and the entry rule.
+
+| Sentence (state in which it holds) | Code | Test |
+|---|---|---|
+| OPERATIONS: leases given back only when still the attempt's own and kept by nothing unresolved; production covers `env:staging` | `ownLease`, in-section check, key list | 2, 4, 5, 13 |
+| OPERATIONS: two names of one lease file are one lease, decided once | `leaseOf`, `byFile` | 17 (b) |
+| OPERATIONS: attempt section when the attempt names an environment, then one lease section at a time; conditions; other leases not written; another session releases nothing | `attemptSection`, key loop, `ownLease` | 5, 12, 13 |
+| OPERATIONS: admission inside both sections for an attempt that names an environment; wait; lock error while the cleanup holds the attempt section | `issue` | 11, 12, 17 (c) |
+| OPERATIONS: no environment: no attempt section, no ownership check; `env:` section for an empty one; error before any intent; cleanup still takes its records' targets' sections | `issue` environment skip, `releaseLeases` environment skip | 15, 12 (environment-less case) |
+| OPERATIONS: failed lease section continues; held attempt section releases nothing | key loop catch, attempt section catch | 7, 12 |
+| OPERATIONS: entry rule; unreadable entry; missing directory; no further release | `strictLedger`, first read, in-section read | 14, 11, 17 (e) |
+| ARCHITECTURE: one exit; attempt section when named; releases a lease still this session's whose operation names the attempt; same lease file; `issue` under both sections | `next`, `releaseLeases`, `issue` | 1 to 5, 12, 17 (b) |
+| CHANGELOG: as above, plus R6 and R7 | CLOSE, main.ts | 5, 8 |
+
+Revert check on the head of this attempt (each hunk alone, `node --test tests/scenarios/release-lease.test.ts`, Windows, restored; both source files compared byte for byte with their copies afterwards): 45 rows, every row red, none green. The 39 rows of attempt 4 (B4, B4b and M7b rewritten to the new lines: B4 removes the lease-file comparison, B4b compares `` `env:${target}` `` with the key, M7b builds the key as `` `env:${name}` ``) and six rows for acceptance 17:
+
+| Row | Reverted to | First failing test and assertion |
+|---|---|---|
+| C1 (17 a) | `releaseOperationOf(o, attempt) \|\|` removed from the in-section check, the target comparison kept | 17 (a) `a running production record of the attempt by releaseAttempt` |
+| C2 (17 b) | target compared by key string (`resourceKeys.environment(o.target) === key`) | 17 (b) `B's cleanup keeps the lease under A's running operation on ops\prod` |
+| C2b (17 b) | keys collected by key string | 17 (b) `one failed section for the one lease` (two `LOCKED` failures) |
+| C3 (17 c) | the refused admission appends a `NOTE` event | 17 (c) `the refused admission appends no journal event` |
+| C4 (17 d) | the attempt section's change returns a record | 17 (d) `no release-attempt record after a cleanup` |
+| C5 (17 e) | every listed name read as an entry | 17 (e) `op-x.json.tmp-1-abcdef12 is not a ledger entry` |
+
+Rows whose count of failing tests changed since attempt 4: B4 and B4b (2: 13 and 17 (b)), B6d (4), A1 (3), A1b (5), A2 (3: 11, 12, 17 (c)), A2b (3), A5 (3), A8 (4), M1 (18 of 20), M3 (2), M6a and M6b (4), M7 (7), M8 (3), M9 (5), M12 (3), M13 (16 of 20).
+
+Runs at the commit that adds this section (parent `d9d5173a`):
+- DoD (`dod_command` exactly, Windows): exit 0; typecheck clean; `# tests 64`, `# suites 1`, `# pass 61`, `# fail 0`, `# cancelled 0`, `# skipped 3`, `# todo 0` (20 tests and 3 POSIX subtests in tests/scenarios/release-lease.test.ts, the 3 subtests skipped on Windows with their reason; 41 in the four existing files).
+- Linux (WSL, Node v22.23.1, uid 1000), tests/scenarios/release-lease.test.ts: tests 23, pass 23, fail 0, skipped 0 (the three permission subtests run).
+- The 80 test files that read docs/ARCHITECTURE.md, docs/OPERATIONS.md or CHANGELOG.md, one `node --test` call, Windows: 1883 tests, 1871 pass, 0 fail, 12 skipped, exit 0.
+- Diff against the merge base with main (877af98f): 1474 changed lines (+1450 / -24), within the budget of 1560: tests/scenarios/release-lease.test.ts 886, the card 388, src/loop/release-runner.ts 183, docs/OPERATIONS.md 10, src/cli/main.ts 3, docs/ARCHITECTURE.md 2, CHANGELOG.md 2.
+
 Coordinator verification:
 - At 5342036f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 8, pass 8, fail 0, skipped 0.
 - Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load

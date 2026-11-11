@@ -236,7 +236,14 @@ export class ReleaseRunner {
       return finish();
     }
     // The keys come from this read; a record recorded later carries the key of a lease its `issue` held, which this loop leaves alone.
-    const keys = [...new Set([attempt.environment, ...records.map((o) => o.target)].filter((e): e is string => Boolean(e)).map((e) => resourceKeys.environment(e)))];
+    // Two names of one lease file (letter case, `\` against `/`) are one lease, decided once under the first name.
+    const leaseOf = (key: string) => this.leases.file(key);
+    const byFile = new Map<string, string>();
+    for (const name of [attempt.environment, ...records.map((o) => o.target)]) {
+      const key = name ? resourceKeys.environment(name) : undefined;
+      if (key && !byFile.has(leaseOf(key))) byFile.set(leaseOf(key), key);
+    }
+    const keys = [...byFile.values()];
     const releaseEach = (): void => {
       for (const [i, key] of keys.entries()) {
         let ledgerError: unknown;
@@ -245,7 +252,7 @@ export class ReleaseRunner {
           this.leases.update(key, (lease) => {
             if (!this.ownLease(lease, attempt)) return lease;
             try {
-              open = this.strictLedger().filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status) && (releaseOperationOf(o, attempt) || resourceKeys.environment(o.target) === key));
+              open = this.strictLedger().filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status) && (releaseOperationOf(o, attempt) || leaseOf(resourceKeys.environment(o.target)) === leaseOf(key)));
             } catch (err) {
               ledgerError = err;
               return lease;
