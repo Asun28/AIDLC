@@ -460,6 +460,14 @@ Runs at the commit that adds this section (parent `d9d5173a`):
 - The 80 test files that read docs/ARCHITECTURE.md, docs/OPERATIONS.md or CHANGELOG.md, one `node --test` call, Windows: 1883 tests, 1871 pass, 0 fail, 12 skipped, exit 0.
 - Diff against the merge base with main (877af98f): 1474 changed lines (+1450 / -24), within the budget of 1560: tests/scenarios/release-lease.test.ts 886, the card 388, src/loop/release-runner.ts 183, docs/OPERATIONS.md 10, src/cli/main.ts 3, docs/ARCHITECTURE.md 2, CHANGELOG.md 2.
 
+### After the third pre-review of e40e45ed (coordinator edits, documents only)
+
+A third Codex pre-review of e40e45ed found the four earlier points closed, the lock order and the lease-file comparison correct, the two cases of acceptance 17 (a) each failing on its own under the revert C1, and three sentences to correct; the coordinator edited them. No source or test changes.
+
+1. docs/OPERATIONS.md, the paragraph that opens the section: "each ledger record that belongs to the attempt" now reads "each ledger record of the attempt's goal that belongs to the attempt". `releaseOperationOf` (src/loop/release-runner.ts:76) returns false for a record of another goal, so a record of another goal that names the attempt as its `releaseAttempt` does not belong (acceptance 4).
+2. docs/OPERATIONS.md, first item of the list, and CHANGELOG.md: the narration names a kept lease, and the command that releases it, only for a lease that is this session's own for the attempt and that an unresolved record keeps. A lease that fails the ownership check (src/loop/release-runner.ts:253, another session's lease or one whose operation names another attempt) is returned unchanged before the unresolved check and is not named; the earlier sentences promised the narration for every kept lease.
+3. docs/OPERATIONS.md and CHANGELOG.md: "only while the goal is not terminal" now reads "as that command loaded it" (src/cli/main.ts:1137 checks the goal record the command loaded; a goal another command stops in between is not seen, R7).
+
 Coordinator verification:
 - At 5342036f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 8, pass 8, fail 0, skipped 0.
 - Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
