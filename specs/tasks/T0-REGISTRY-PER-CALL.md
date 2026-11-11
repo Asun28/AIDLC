@@ -211,3 +211,8 @@ Revert table rerun on ad9d8bba: 20 rows, 20 red, `git status` clean after each r
 DoD on ad9d8bba (`dod_command`, no pipe): typecheck clean, exit 0, tests 68, pass 68, fail 0, skipped 0.
 
 Changed lines: `git diff --shortstat origin/main...HEAD` on ad9d8bba: 7 files, 476 insertions, 11 deletions (487) against the budget of 540; this subsection adds about 15.
+
+Coordinator verification:
+- At 409dd712, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/registry-per-call.test.ts): tests 18, pass 18, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 3 changed documents: # tests 1888 # pass 1875 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
