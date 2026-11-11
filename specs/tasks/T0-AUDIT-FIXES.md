@@ -96,3 +96,42 @@ npm run typecheck && node --test tests/surface/pre-review.test.ts tests/infra/gi
 - Assertion: every acceptance test above passes.
 
 ## Attempt evidence
+
+Attempt 1 (effort medium). The fixes were written in the audit worktree and carried over as tests first. RED receipt `2f0a93e4` (tests only, sources of main): 17 tests failed, the ones named in acceptance 1 to 14 except "a record filed before filedAt existed keeps its window from firstSeen", which passes on main as the card states; the other 301 passed. Fix `ef448402`. The sweep then found a fourth message of the R14 class, the staging-verify narration without the attempt id; the card was amended on main (f241becb), RED receipt `9a0a5cc2` (that test failed, quoting the old narration), fix `df13b70b`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/pre-review.test.ts` "an object nested in a document that broke before it never stands in for that document as the verdict" | pass |
+| 2 | `tests/infra/github-ship.test.ts` "a pass verdict whose run_status is not success is no verdict: nothing is pushed or merged" | pass |
+| 3 | `tests/infra/github-ship.test.ts` "a PR closed without a merge stops before any sync, push or CI wait, and the result names it" | pass |
+| 4 | `tests/scenarios/dispute-running-attempt.test.ts` "a dispute accepted after the gate settled the repair reopens the episode: the repair gets an attempt and can be recorded"; `tests/scenarios/fault-points.test.ts` | pass |
+| 5 | `tests/scenarios/release.test.ts` "the approval packet is read without advancing the attempt: no save, no journal event, no deploy, before and after the authority is recorded" | pass |
+| 6 | `tests/scenarios/release.test.ts` "a release command refuses a --goal that does not own the attempt, and writes nothing" | pass |
+| 7 | `tests/surface/hooks.test.ts` "secrets-guard: a placeholder match does not excuse a later real match, and every edit of a MultiEdit is read" | pass |
+| 8 | `tests/infra/ops.test.ts` "a successPattern, failurePattern or operationIdPattern that is no regular expression is refused at its path, before any command can run" | pass |
+| 9 | `tests/surface/card.test.ts` "registry: a card id carried by two files is a block on the active card, and no card overwrites the findings of another"; `aidlc cards validate` in the worktree: 272 cards, 0 blocking | pass |
+| 10 | `tests/surface/plan.test.ts` "a closed [TBD: question] exempts only itself: an open marker beside it still fails" and "a ??? marker fails wherever it stands, beside a word or alone" | pass |
+| 11 | `tests/infra/worktree.test.ts` "stops with ownership when the branch is checked out in two worktrees, and never starts a third" | pass |
+| 12 | `tests/surface/incident.test.ts` "the dedupe window starts at each filing: a breach refiled after the window is deduped again until the next window ends" and "a record filed before filedAt existed keeps its window from firstSeen" | pass |
+| 13 | `tests/surface/pre-review.test.ts` "perspective names that differ only by case are refused: their log and verdict files are one file on a case-insensitive filesystem" | pass |
+| 14 | `tests/scenarios/release.test.ts` "a package attempt asks for its run proof by the command that records it" and "a staged attempt asks for its verification by the command that records it"; `tests/core/release-machine.test.ts` "the staging release-config stop names the file that binds operations and the command that lists them"; `tests/core/card-goal.test.ts` "the command the no-goal refusal names carries the request text `aidlc goal new` requires" | pass |
+| 15 | README.md (directive list, layout, tests line), docs/OPERATIONS.md (verdict extraction sentence), CHANGELOG.md Unreleased | reviewer |
+
+Rule against main, per fix: R1 removes a verdict only for a document that follows a refuted opener and is a container member; every complete top-level document main reads as the verdict is still read (the earlier tests of the file pass unchanged). R2 and R3 only add stops before a remote effect. R4 reopens only an episode whose terminal is `succeeded` in REVIEW_FIX; an open episode is passed on as before. R5: `ReleaseRunner.next` at CHECKPOINT calls the same code through `checkpoint()`, so its directive is the one main returns. R6 refuses only a `--goal` that differs from the attempt's goal; main loaded that other goal. R8 refuses only a pattern that would have thrown when the output was read. R9, R10, R11 and R13 add findings or refusals where main had none. R12 changes when a refiled breach is deduplicated; a record without `filedAt` keeps the window of main.
+
+Same class (the sibling sites of each cause):
+- R1: `topLevelDocuments` has one caller, `readVerdict`; `readVerdict` has one caller, `finalizeReview`, which reads every reviewer output (R2 and R3, their fallbacks, the second pass, the base-sync reviewer): covered. `ShipPath.readVerdict(cardId)` parses the verdict file aidlc wrote, not reviewer output: not affected.
+- R2: `run_status` is read by `classifyVerdict` (core/review-policy.ts) and `classify` (review/pre-review.ts), which already treat a value other than `success` as no verdict, and now by the GitHub ship gate: covered. The scaffold ship path leaves its gate to the scaffold script, and the dry-run path reads no verdict file: not affected.
+- R3: `resolved.problem` has two readers in `GitHubShipPath.ship`; both stop now, the second with the PR number: covered.
+- R4: `reopenAfterReviewBlock` has four other calls (the pre-review block paths and the two R3 block paths); each reopens whenever an episode exists: not affected.
+- R5, R6: `releaseCtx` has four callers; `next`, `report` and `candidate` pass `--goal`, `packet` has none and loads the attempt's goal; `release start` and `release ops` take no attempt: covered. `checkpointPacket` has one caller.
+- R7: the hook matcher sends Bash, PowerShell, Edit, Write and MultiEdit; their text fields are `command`, `new_string`, `content` and `edits[].new_string`, all read: covered. NotebookEdit is not sent to the hook: not affected.
+- R8: the three pattern fields are the only ones the five `new RegExp` sites of `src/delivery/ops.ts` compile: covered.
+- R9: `validateRegistry` has one `out.set`: covered.
+- R10: the eight word markers keep their word boundary; `???` is the only alternative without word characters: covered.
+- R11: `decideWorktree` returns the probe failure first as on main, then the mismatch, then the missing entry: covered.
+- R12: `firstSeen` is read by `shouldFile` only; `attachIntent` has one caller, `aidlc monitor check --file-intent`, which passes the time: covered.
+- R13: `validatePerspectives` is called once, in `runPanel`, before any perspective file is written; `ProjectConfig` accepts any non-blank names: covered at the reader.
+- R14: every `aidlc` command named in `src/core/release-machine.ts`, `src/core/card-goal.ts` and `src/loop/release-runner.ts` was run with `--help` (exit 0 each): `goal new`, `goal extend`, `goal resume`, `release ops`, `release candidate`, `release report`, `release next`, `release packet`, `authorize`. The staging-verify narration lacked the attempt id `release report` requires: fixed here. The checkpoint narration's `aidlc authorize` line gives the kind, environment, candidate and operations and leaves `--goal` to the default of that command: not changed.
+
+DoD: `npm run typecheck` exit 0; the `node --test` arm exit 0. Mutation sweep (`aidlc card mutants`): not run.
