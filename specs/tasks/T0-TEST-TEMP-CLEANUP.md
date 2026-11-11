@@ -1,7 +1,7 @@
 ---
 id: T0-TEST-TEMP-CLEANUP
 title: The test helper tmpDir registers each directory at creation for removal at process exit, and the fixtures that left 91 percent of the leaked temporary directories use it
-status: todo
+status: merged
 branch: T0-TEST-TEMP-CLEANUP
 worktree: D:\wt\AIDLC\T0-TEST-TEMP-CLEANUP
 allow_paths:
