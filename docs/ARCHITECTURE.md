@@ -69,8 +69,9 @@ stateDiagram-v2
   VERIFY_ARC --> CLOSE: development target verified
   VERIFY_ARC --> DELIVER: package / staging / production requested
   VERIFY_ARC --> STOP: repair cycle exhausted
+  VERIFY_ARC --> PLAN: accepted revision that adds an unmerged card
   DELIVER --> WAIT
-  DELIVER --> CARDS: authorized repair
+  DELIVER --> CARDS: in GOAL_TRANSITIONS; no report result takes it
   DELIVER --> CLOSE: target verified
   DELIVER --> STOP
   CLOSE --> DONE: closure predicates hold
@@ -79,7 +80,7 @@ stateDiagram-v2
   STOP --> [*]
 ```
 
-Guards: `CARDS` from `PLAN` needs accepted intent; `RUN` needs an authorized projection (T2: a `plan-checkpoint` authorization for the current revision); `VERIFY_ARC` needs all required cards closed (an empty ready set with gaps is WAIT or STOP, never DONE); `DELIVER` is refused for a development-only goal; a non-development target must pass `DELIVER` before `CLOSE`; `DONE` needs complete closure; terminal goals refuse every transition until `resume` links a new generation.
+Guards: `CARDS` from `PLAN` needs accepted intent; `RUN` needs an authorized projection (T2: a `plan-checkpoint` authorization for the current revision); `VERIFY_ARC` needs all required cards closed (an empty ready set with gaps is WAIT or STOP, never DONE); `DELIVER` is refused for a development-only goal; a non-development target must pass `DELIVER` before `CLOSE`; `DONE` needs complete closure; `PLAN` from `WAIT` or `VERIFY_ARC` needs an accepted revision; `CARDS` from `VERIFY_ARC` needs the one repair cycle (`arc-failed`); `DELIVER --> CARDS` is in `GOAL_TRANSITIONS`, but no report result takes it; terminal goals refuse every transition until `resume` links a new generation.
 
 ## Release state machine
 
@@ -162,6 +163,18 @@ stateDiagram-v2
 
 `ReportResult` values accepted by `aidlc report --result`: `intent-accepted`, `plan-produced`, `plan-failed`, `cards-projected`, `approved`, `rejected`, `card-result`, `arc-verified`, `arc-failed`, `release-result`, `revision`, `cancel`, `resume`. A report carrying a stale `generation` is refused.
 
+Report results by goal state (card T0-CARDS-PROJECTED-REENTRY). A listed card is merged when the card registry records it with status `merged` or this goal's run of it has `mergeVerified`; only the cards the goal lists now count.
+
+| Result | PLAN | CARDS | RUN, WAIT | VERIFY_ARC | DELIVER | CLOSE |
+|---|---|---|---|---|---|---|
+| `cards-projected` | accepted, to CARDS | accepted | accepted | refused | refused | refused |
+| `arc-verified` | refused | refused | refused | accepted only when every listed card is merged | refused | refused |
+| `arc-failed` | refused | refused | refused | accepted, one cycle | refused | refused |
+| `revision`, every listed card merged | accepted, stays | accepted, stays | accepted, to PLAN | accepted, stays | accepted, stays | accepted, stays |
+| `revision`, a listed card not merged | accepted, stays | accepted, stays | accepted, to PLAN | accepted, to PLAN | refused | refused |
+
+STOP and DONE accept `resume` only. A refusal throws before any journal entry or goal write. The `cards-projected` refusal comes before the registry is read and names the routes: in VERIFY_ARC `aidlc goal repair <goalId> --cards <new ids>` or `aidlc goal amend <goalId> --text "<request>" --cards <ids>`, in DELIVER and CLOSE `aidlc goal cancel <goalId>`, then `aidlc goal resume <goalId> --text "<request>" --cards <ids>`; the `revision` refusal names the same cancel and resume. While a listed card is not merged, the `verify-arc` narration names it. Before this card, `cards-projected` moved VERIFY_ARC and DELIVER to CARDS without spending the repair cycle, `arc-verified` read only the goal state, and a revision in VERIFY_ARC, DELIVER or CLOSE kept the state.
+
 ## Persisted state
 
 Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all linked worktrees):
@@ -187,7 +200,7 @@ Two records live in git instead, as local refs: `refs/aidlc/candidates/<sha>` ke
 ## Evidence and audit chain
 
 1. Every controller, card runner and release runner action appends a `JournalEvent`; each event hashes its canonical JSON plus the previous hash. `Journal.verify()` detects malformed lines, sequence gaps, prev-hash mismatches and altered events. `GoalController.ensureCardRun` saves a new run with `CARD_DISPATCHED` owed and appends it in the lock section of that save, so the next `aidlc card next` or `aidlc card attempt` recovers a lost append with `completed` true (card T0-SIDE-WRITE-FAULTS). A failed board write beside a goal stop journals a NOTE with `boardError` and keeps the stop, since the board is a view. The card runner appends an attempt, R2, R3 or merge-result event only after the card-run write that commits its decision, which records the event as owed (`CardRun.journalOwed`); an append that did not land is made by the next card-run command on the card, so each such event reaches the journal once and never ahead of its record (card T0-JOURNAL-FAULT-EVENTS).
-2. `EvidenceStore.retain` copies artifacts into `evidence/<goalId>/` and records sha256, size, candidate digest, environment and invocation id. `seal` binds the manifest to the journal head hash, event count, final SHA/digest, models and host, and computes a digest over the canonical manifest.
+2. `EvidenceStore.retain` copies artifacts into `evidence/<goalId>/` and records sha256, size, candidate digest, environment and invocation id. `seal` binds the manifest to the journal head hash, event count, final SHA/digest, models and host, and computes a digest over the canonical manifest. Both write `manifest.json` only inside an `updateJson` section (lock file `manifest.json.lock`, written through a temporary file and a rename with keys sorted), and `EvidenceStore.save` no longer exists (card T0-MANIFEST-LOCK). `seal` seals the manifest its section reads, so entries retained after the caller's load are sealed too; the argument stands in only when no file exists, its `models` replace the stored ones when it has the key, and the binding's `host`, when given, replaces the stored one; a sealed manifest is sealed again from its stored content. A binding passed as a function runs inside the section with the manifest being sealed: `aidlc audit seal` appends `MANIFEST_SEALED` there with that manifest's entry count and binds the seal to the event `Journal.append` returns (`journalHead` its hash, `journalEvents` its seq plus one), with no second read of the journal head. Lock order: the manifest lock is taken with no aidlc lock held, and while it is held the only lock taken is the journal lock of `Journal.append`, which takes none.
 3. `verifyAudit` reports a level: `none` (no events), `recorded` (events exist), `traceable` (chain intact, every operation intent has a result or explicit UNKNOWN, delegated work carries invocation ids, no work after a terminal event), `independently-verified` (additionally the seal verifies, artifacts match their digests and evidence is bound to the final candidate). Non-mutating events after the seal (closure bookkeeping) are a `MANIFEST_TRAILING` warning; a mutation after the seal makes it `MANIFEST_STALE`. A "fully audited" claim is `verified` only at that level with a host capture boundary asserted; otherwise `BLOCKED/capability` with the prerequisite named.
 4. The merge result of a card shipped on the GitHub path carries `ShippedFacts` (`src/core/types.ts`: `headSha`, `mergeSha`, `tree`, `pr`), which the card runner reads from `gh pr view` and `git rev-parse <mergeSha>^{tree}` when it verifies the merge; `verifyAudit` takes injected git and gh probes (`aidlc audit verify` passes real ones) and re-derives each fact with `git cat-file -t`, `git rev-parse <mergeSha>^{tree}`, `git merge-base --is-ancestor <mergeSha> <base>` and `gh pr view <pr>`. A disagreement is a `FACT_MISMATCH` block, a fact that cannot be re-derived is a `FACT_UNVERIFIED` warning, no check reads a narration or free-text field, and a "fully audited" claim also needs at least one re-derived fact for every shipped card. The facts ride in the one merge result only when they can all be read; a shipped card whose merge result carries none is a `FACT_MISSING` warning and blocks a "fully audited" claim.
 

@@ -42,6 +42,9 @@ extension is explicit and recorded (`aidlc goal extend`).
   generation/revision dispatch is revalidated before any mutation. A fresh
   continuation after a terminal generation links it and keeps exhausted
   limits unless the user explicitly changes them.
+- After VERIFY-ARC a new card enters only by `aidlc goal repair` or a
+  user revision (back to PLAN); in DELIVER or CLOSE, cancel, then resume
+  with it.
 
 ## VERIFY-ARC (every multi-card goal)
 Green cards are not a delivered goal. Run integrated acceptance on the final

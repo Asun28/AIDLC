@@ -1,7 +1,7 @@
 ---
 id: T0-CARDS-PROJECTED-REENTRY
 title: "After VERIFY_ARC a new card enters a goal only through the repair cycle or a recorded user revision, and arc-verified is refused while a listed card is not merged"
-status: todo
+status: merged
 branch: T0-CARDS-PROJECTED-REENTRY
 worktree: D:\wt\AIDLC\T0-CARDS-PROJECTED-REENTRY
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 45 source lines (src/loop/controller.ts about 42, src/core/goal-machine.ts 3); the rest is about 255 test lines (the merge-predicate table, the per-state refusals, the T2 re-approval, the run-driver regression), about 20 doc lines and about 25 lines of attempt evidence in this card; raised from 350 to 460 by the coordinator on the candidate 8639c3ff, which is 436 changed lines: 39 source lines, 331 lines of the acceptance tests and 45 lines of attempt evidence"
@@ -76,3 +76,48 @@ npm run typecheck && node --test tests/scenarios/arc-reentry.test.ts tests/core/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the tests of acceptance 1 to 4 fail on main.
+
+## Attempt evidence
+Attempt 1 at effort high. RED commit e2653750 (tests only): on the main sources each test of acceptance 1 to 5 and the goal-machine test failed at its first assertion for the stated reason (cards-projected accepted in VERIFY_ARC, the goal then in RUN; arc-verified accepted with T1-NOENTRY-NORUN not merged; the VERIFY_ARC revision left the state VERIFY_ARC; the DELIVER revision accepted at revision 1; the provider's arc-verified not refused; VERIFY_ARC -> PLAN "not in the accepted state diagram").
+
+| Item | Test or command | Result |
+|---|---|---|
+| 1 | arc-reentry.test.ts "cards-projected is refused in VERIFY_ARC, DELIVER and CLOSE before the registry is loaded, whatever data.cards holds" | pass; failed on main |
+| 2 | arc-reentry.test.ts "arc-verified is decided by the merge predicate over the listed cards" (9-row table, all rows on one goal, all merged, empty list, removed card with an open kept run) | pass; failed on main |
+| 3 | arc-reentry.test.ts "a revision in VERIFY_ARC that adds a card returns the goal to PLAN, and the card runs before the arc is verified again" (T1 and T2) | pass; failed on main |
+| 4 | arc-reentry.test.ts "a revision in DELIVER or CLOSE that adds a card is refused before any write; cancel, then resume with it, runs the card in a new generation" (DELIVER, CLOSE staging, CLOSE development; text-only revision in DELIVER; the same revision accepted in PLAN and CARDS) | pass; failed on main |
+| 5 | arc-reentry.test.ts "aidlc run ends without a delivery when the provider reports arc-verified for a goal whose listed card is not merged" | pass; failed on main |
+| 6 | goal-machine.test.ts "VERIFY_ARC -> PLAN only on an accepted revision"; the other ten tests unchanged | pass; failed on main |
+| 7 | amendment, audit, goal-close-stages, intake-target, release, release-publication, run-driver, t0-flow, two-windows, t1-arc (unchanged) | pass (DoD) |
+| 8 | tests/surface/templates.test.ts; both arc.md copies identical, ASCII, 4439 bytes (4285 + 154) | pass |
+| 9 | docs/ARCHITECTURE.md (table after the ReportResult sentence, VERIFY_ARC --> PLAN edge, DELIVER --> CARDS relabelled, Guards), docs/OPERATIONS.md (T1 feature paragraph, T2 system sentence), CHANGELOG.md entry above T0-PREPARE-WORKTREE | reviewer-verified |
+
+Same class (diagnosis.same_class):
+| Site | Disposition |
+|---|---|
+| `cards-projected` (controller report) | covered: R1, acceptance 1; PLAN, CARDS and RUN acceptance 3 and 7 |
+| `arc-failed` | not affected: t1-arc Q10 and amendment "a resume that retains a repair card added by arc-failed ..." pass |
+| `revision` | covered: acceptance 2, 3, 4 (VERIFY_ARC, DELIVER, CLOSE, PLAN, CARDS); RUN in amendment Q5 and T0-REMOVED-CARD-RUNS |
+| carried revision of `resume` | not affected: acceptance 4 (cancel, then resume, generation 1, run-card) and the amendment R2 resume tests |
+| writes of CARDS or PLAN: `cards-projected`, `arc-failed`, `resume`, `extendDeadline`, `revision` | `cards-projected` and `revision` covered as above; `arc-failed`, `resume` and `extendDeadline` (STOP for time to CARDS) not affected |
+| `cardOutcomes` and `selectArc` (RUN -> VERIFY_ARC) | not affected: acceptance 3 shows the added card dispatched and driven to DONE before `verify-arc` |
+| `nextInClose` reading `mergeVerified` | not affected: same field as the R3 predicate |
+| R3 predicate (`unmergedCards`) | covered: acceptance 2; used by R4 (arc-verified), R5 (narration), R6 and R7 (revision) |
+
+Revert check (each source hunk reverted alone, then arc-reentry, goal-machine, amendment and t1-arc run):
+| Hunk | Failing test | Result |
+|---|---|---|
+| goal-machine.ts: PLAN in GOAL_TRANSITIONS.VERIFY_ARC | goal-machine "VERIFY_ARC -> PLAN ...", acceptance 3 | red |
+| goal-machine.ts: PLAN guard extended to VERIFY_ARC | goal-machine "VERIFY_ARC -> PLAN ..." | red |
+| controller.ts: verify-arc narration | acceptance 2 | red |
+| controller.ts: cards-projected refusal in VERIFY_ARC | acceptance 1 | red |
+| controller.ts: cards-projected refusal in DELIVER and CLOSE (and CLOSE alone) | acceptance 1 | red |
+| controller.ts: removed `VERIFY_ARC or DELIVER -> CARDS` line restored | none | green: unreachable after the R1 refusals |
+| controller.ts: arc-verified refusal | acceptance 2, 5 | red |
+| controller.ts: revision refusal in DELIVER and CLOSE (and CLOSE alone, and extended to VERIFY_ARC, and the CLOSE reasons swapped) | acceptance 4 (acceptance 3 for the VERIFY_ARC case) | red |
+| controller.ts: revision in VERIFY_ARC to PLAN | acceptance 3 | red |
+| controller.ts: revision predicate also in PLAN and CARDS | acceptance 4 | red |
+| controller.ts: revision predicate on the old cards | acceptance 2, 3, 4 | red |
+| controller.ts: predicate without the registry `merged` clause | acceptance 2 | red |
+| controller.ts: predicate without the `mergeVerified` clause | acceptance 1 to 4, amendment R2 | red |
+| controller.ts: predicate reading runs of removed cards | acceptance 2 | red |
