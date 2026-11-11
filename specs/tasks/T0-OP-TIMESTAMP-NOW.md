@@ -61,3 +61,70 @@ npm run typecheck && node --test tests/scenarios/op-clock.test.ts tests/scenario
 Since this card was written, the cards it follows have merged: T0-RELEASE-OP-REISSUE (PR 263), T0-RELEASE-REPORT-STEP (PR 276), T0-OPS-CWD (PR 275) and T0-STAGING-LEASE-RELEASE as its replacement T0-STAGING-LEASE-RELEASE-2 (PR 282), which created tests/scenarios/release-lease.test.ts and moved the release intent into the attempt and environment lease sections. The line numbers of R1 and R2 are those of main at 92796d4f: find each call by content. The count of calls may differ now: R1 holds for every call of the five ledger methods in src/loop as it is on main today, the scan of acceptance 2 is the completeness check, and the Attempt evidence lists each call found with its file and line. If a ledger call exists today that no branch test of acceptance 1 can reach with the fixtures the card names, stop and report it before writing a test for it.
 
 At CLOSE the coordinator moves both references of the sync commit in .claude/skills/verify-card-run-writes/SKILL.md to the merge commit; the implementer does not edit that file. Fixtures follow the rules of the current cards: temporary directories from tests/infra/helpers.ts or the scenario harness, removed with `cleanup` in an `after` hook; no new `mkdtempSync`; fixed times only.
+
+## Attempt evidence
+
+Commits: RED `18c22766` (op-clock.test.ts only, on base 93ca9a7d), GREEN `a239a530`, merge of origin/main `933988f1` (card amendment dfa08700), third fixture line `6cfc93e0`.
+
+### Ledger calls in src/loop (17; `git grep` and the scan of acceptance 2 agree)
+| Call | Time on main | Now |
+|---|---|---|
+| card-runner.ts:1205 `recordIntent` (merge) | none | `now` |
+| card-runner.ts:1235 `markResult` cancelled (joined) | none | `now` |
+| card-runner.ts:1242 `markResult` cancelled (not admitted) | none | `now` |
+| card-runner.ts:1270 `markResult` cancelled (arming read throws) | none | `now` |
+| card-runner.ts:1292 `markResult` cancelled (drift) | none | `now` |
+| card-runner.ts:1313 `markIssued` | `now` | unchanged |
+| card-runner.ts:1343 `markResult` UNKNOWN (`settleThrownShip`) | none | `this.clock()` |
+| card-runner.ts:2760 `markResult` (in flight) | none | `now` |
+| card-runner.ts:2812 `markResult` failed (merge-unconfirmed) | none | `now` |
+| card-runner.ts:2821 `markResult` succeeded / UNKNOWN | none | `now` |
+| card-runner.ts:2832 `markResult` UNKNOWN (effect-unknown) | `now` | unchanged |
+| card-runner.ts:2838 `markResult` failed | none | `now` |
+| release-runner.ts:295 `reconcile` | `now` | unchanged |
+| release-runner.ts:507 `recordIntent` (deploy/recovery) | none | `now` |
+| release-runner.ts:543 `markIssued` | `now` | unchanged |
+| release-runner.ts:550 `markRunning` | `now` | unchanged |
+| release-runner.ts:551 `markResult` | `now` | unchanged |
+
+R2: no other line of src/loop changed (`git diff 93ca9a7d -- src/loop` is the 11 lines above).
+
+### RED (on 18c22766: 13 tests, 0 pass, 13 fail)
+Each acceptance 1 test failed on its time assertion, the wall clock (2026-11-11T22:45Z) against the fixture time: merge intent (`intentRecordedAt` and `op-20261111224509-` against `op-20260911000100-`), joined, not admitted, arming read throws, drift, ship throws, in flight, merge-unconfirmed not merged, merged succeeded, merged UNKNOWN, dod-failed (each `finishedAt`), release deploy (`intentRecordedAt` and `op-20261111224511-` against `op-20260911001200-`). Acceptance 2 failed listing the 11 calls marked "none" above.
+
+### Revert table (on 6cfc93e0; 15 rows, 15 red; each piece reverted alone, then restored, `git status` clean afterwards)
+| Reverted | Branch test | Scan (acceptance 2) |
+|---|---|---|
+| card-runner.ts:1205 time argument | merge intent: red | red |
+| :1235 | joined: red | red |
+| :1242 | not admitted: red | red |
+| :1270 | arming read throws: red | red |
+| :1292 | drift: red | red |
+| :1343 | ship throws: red | red |
+| :2760 | in flight: red | red |
+| :2812 | merge-unconfirmed not merged: red | red |
+| :2821 | merged succeeded: red | red |
+| :2821 | merged UNKNOWN: red | red |
+| :2838 | dod-failed: red | red |
+| release-runner.ts:507 | release deploy: red | red |
+| review-admit-foreign.test.ts `c.fx.advance(1)` removed | acceptance 4: red in 4 of 8 runs | n/a |
+| ship-throw.test.ts `fx.advance(1)` removed | acceptance 4: red in 6 of 8 runs | n/a |
+| ship-effect-unknown.test.ts `fx.advance(1)` removed | "after a reconcile...": red in 8 of 8 runs | n/a |
+
+ship-effect-unknown "after a reconcile the card ships again" alone, 8 runs each: R1 without the line 6 fail (before the amendment), base source 0 fail, R1 with the line 0 fail.
+
+### Full suite (`npm test` on 6cfc93e0)
+Exit 0: 3321 tests, 3299 pass, 0 fail, 22 skipped. No other test depends on ledger order. tests/infra/exec.test.ts passed in this run and alone (61/61); in an earlier full run (before the third line) its acceptance 4 failed once on load timing.
+
+### DoD (on 6cfc93e0)
+`dod_command` exit 0: typecheck clean; 172 tests, 169 pass, 0 fail, 3 skipped; fault-points.test.ts unchanged and passing, no new pin.
+
+### Document sentences
+| CHANGELOG sentence | Made true by |
+|---|---|
+| every ledger write of the card runner and release runner passes the injected clock; times and id prefix come from `now` | the 11 lines above; op-clock.test.ts acceptance 1 and 2 |
+| before, eleven calls left the time out | the RED run listing 11 calls |
+| a fixture's fixed clock decides times, ids and ledger order; three tests advance 1 ms, no assertion changed | the three `advance(1)` lines; revert rows 13-15 |
+
+### Size
+`git diff --shortstat origin/main...HEAD` before this section: 7 files, 235 insertions, 11 deletions (246) against the budget of 400; this section adds about 70.
