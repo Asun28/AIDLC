@@ -538,7 +538,7 @@ The card runner journals `ATTEMPT_STARTED`, `ATTEMPT_FINISHED`, `PRE_REVIEW_DECI
 A refused append leaves the writes its command made before it as they are, exactly as an append that fails with `EIO` does: the lock adds a cause of a failed append and changes no caller's handling of one. Three cases (tests/scenarios/journal-lock-refusal.test.ts):
 - An owed event after `card attempt`: the attempt is recorded, `ATTEMPT_FINISHED` stays owed on the run, and the next `aidlc card next` appends it once, marked `completed: true`.
 - The ship's `OPERATION_ISSUED`: the merge operation is `issued`, the pool request `running` and no ship ran; the next `aidlc card next` waits attached to the running operation and ships nothing. Run `aidlc ops reconcile <opId> --status cancelled`, then, once the process that shipped has exited, `aidlc review release <key> --reason <text>`; the next `aidlc card next` ships once.
-- The staging deploy step's `OPERATION_INTENT` (`stage-deploy`): the deploy operation is `intended` and the deploy command did not run; `aidlc release next <attemptId>` waits, naming `aidlc ops reconcile <opId> --status <s>`, and runs nothing; `aidlc ops reconcile <opId> --status <s>` records the outcome, and the next `aidlc release next <attemptId>` settles the step from it.
+- The staging deploy step's `OPERATION_INTENT` (`stage-deploy`): the deploy operation is `intended` and the deploy command did not run; `aidlc release next <attemptId>` waits, naming `aidlc ops reconcile <opId> --status <s>`, and runs nothing; `aidlc ops reconcile <opId> --status cancelled` records that outcome, and the next `aidlc release next <attemptId>` settles the step from it.
 
 ## Ship gates (GitHub ship path)
 
