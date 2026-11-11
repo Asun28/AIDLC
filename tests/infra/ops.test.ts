@@ -233,7 +233,8 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     const read = (file: string) => readFileSync(path.resolve(file), 'utf8').replace(/\r\n/g, '\n');
     const [repository, template] = [read('docs/DELIVERY-OPS.md'), read('templates/docs/DELIVERY-OPS.md')];
     assert.equal(template, repository);
-    for (const [name, text] of [['docs/DELIVERY-OPS.md', repository], ['templates/docs/DELIVERY-OPS.md', template]]) {
+    const copies: [string, string][] = [['docs/DELIVERY-OPS.md', repository], ['templates/docs/DELIVERY-OPS.md', template]];
+    for (const [name, text] of copies) {
       for (const clause of ['- `cwd` (optional): the directory the command and its status lookup run in, both the same one.', 'refuses, on every platform, a `cwd` that is not a string', 'stops with `release-config` before the intent is recorded']) assert.ok(text.includes(clause), `${name} holds: ${clause}`);
     }
   });
