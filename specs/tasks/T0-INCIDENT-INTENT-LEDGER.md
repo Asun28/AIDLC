@@ -1,7 +1,7 @@
 ---
 id: T0-INCIDENT-INTENT-LEDGER
 title: An incident intent never overwrites an existing intent file, and an incident ledger that does not parse stops the command before any write
-status: todo
+status: merged
 branch: T0-INCIDENT-INTENT-LEDGER
 worktree: D:\wt\AIDLC\T0-INCIDENT-INTENT-LEDGER
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 55 source lines in src/maintain/incident.ts, src/core/types.ts and src/cli/main.ts; the rest is the schema table test, the read-class rows, the write-boundary rows, the intent naming rows, the CLI rows, docs and about 25 lines of attempt evidence; raised from 360 to 820 by the coordinator on the candidate 111aecf8, which is 728 changed lines: 76 source lines in three files, 487 lines of tests, 159 lines of attempt evidence with the clause, revert, schema and file-system tables the review reads, the rest docs; the repair of the pre-review findings follows; raised from 820 to 1260 by the coordinator on the candidate b841528e, which is 1197 changed lines: 123 of source in three files, 788 of tests (the input classes of R2 through four methods and the CLI, on two platforms), 280 of attempt evidence, 7 of docs, after two pre-reviews before the first review decision; raised from 1260 to 1360 by the coordinator on the candidate 46176516, which is 1305 changed lines after the repair of the third pre-review (the array walk and the fixture beneath a repository, with their tests)"
