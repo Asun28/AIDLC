@@ -125,3 +125,50 @@ Evidence, not a test, recorded in the Attempt evidence: five runs of `node --tes
 The CHANGELOG entry, one line, directly above `- T0-BOARD-OWNER-WAIT` (or above the T0-UNRESOLVED-NARRATION entry when that card merged first, hygiene):
 
 "- T0-EXEC-TEST-LOAD (tests, audit item H6): the six process-tree tests of `tests/infra/exec.test.ts` that time out the fixture (T0-EXEC-TREE-KILL acceptance 3, both cases of acceptance 4 and both cases of acceptance 5 but the runner-handle test, and T0-EXEC-SYNC-TREE-KILL-2 acceptance 1) first time the fixture's root in exit mode from its spawn to its exit and take a scale of that time in units of 750 ms, rounded up, from 1 to 8; a calibration that fails fails the test. The fixture timeout and each test's bounds are main's values times the scale, while `TIMEOUT_GRACE_MS`, the tree helper's backstop, the slow tree kill's 1500 ms and the slow-kill lower bound stay as they were; at scale 1 every value is main's, and the `runSync` bound is never above the helper's backstop. When the fixture was not ready before the timeout could fire, the test fails first with `fixture not ready before the timeout at scale <n>`: the exit case when the tree kill found the root still running, acceptance 3, the no-kill case and the `runSync` case when the sleeper's pid file was not written by then. Before, the timeout was a fixed 1500 ms, which the fixture's start under CPU load outlasted: with 24 CPU-bound processes on 16 logical CPUs the exit-mode root exited 4.0 to 4.3 s after its spawn (0.39 to 0.43 s without load), so the exit test saw the tree kill called with the root's pid and the `runSync` test returned after 6.2 to 7.8 s, past its 6000 ms bound; that load gives scale 6."
+
+## Attempt evidence
+
+Seam commit 2d2b9ece (tests only), candidate code 76b15d02 (feat). Measured on Windows 11 with other verifications running on the machine (no load script was started). Linux run and the loaded runs (3 on main, 3 on the candidate under `load.sh 24 150`): pending (coordinator).
+
+### RED (seam 2d2b9ece, `node --test --test-name-pattern "T0-EXEC-TEST-LOAD|calibrat" tests/infra/exec.test.ts`: 2 tests, 0 pass, 2 fail)
+- Acceptance 1 fails at `scaleFor(751)`: `AssertionError expected: 2 actual: 1`.
+- Acceptance 2 fails at the row asking for a number above 0: `expected: true actual: false` (calibrate returned 0).
+
+### Scale 1 against main (7ebc37ad), asserted by `deepEqual(boundsAt(1), ...)` in acceptance 1
+| Bound | main literal (line) | `boundsAt(1)` |
+|---|---|---|
+| timeoutMs | 1500 (`TIMEOUT_MS`, :229) | 1500 |
+| stayBoundMs | 6000 (:286, :297, :307) | 6000 |
+| exitCloseMs | `TIMEOUT_MS + 2000` = 3500 (:314) | 3500 |
+| noKillBoundMs | `TIMEOUT_MS + 2000 + 1000` = 4500 (:323) | 4500 |
+| slowKillBoundMs | `TIMEOUT_MS + 1500 + 2000 + 1000` = 6000 (:348) | 6000 |
+| goneWithinMs | 3000 (:291, :452) | 3000 |
+| syncBoundMs | 6000 (:444) | 6000 |
+
+### Revert table (on 76b15d02, tests of acceptance 1 and 2, each mutation restored, `git diff --stat` empty after): 27 of 28 red
+| Mutation | Rows | Result |
+|---|---|---|
+| scaleFor: `floor`; `round`; no lower clamp; no cap; cap 9; default 1 for a failed measurement; NaN/Infinity accepted; negative accepted | 8 | red x8 |
+| boundsAt: grace scaled; backstop scaled; slow-kill duration scaled; sync `min` removed; timeout, stay bound, goneWithin, no-kill slack not scaled | 8 | red x8 |
+| preconditions: sleeper `>=` for `>`; missing pid file passes; root `every` for `some` | 3 | red x3 |
+| fixtureEnv: case-sensitive filter; GIT_ kept; NODE_OPTIONS kept; ceiling without the realpath parent; state dir unset | 5 | red x5 |
+| calibrate: sleeper not ended; ended not recorded; returns 0 for the measure | 3 | red x3 |
+| calibrate: exit code not checked | 1 | GREEN: the missing-fixture row has no pid file either, which returns undefined by itself; no card row isolates the exit code |
+The wiring of the six tests to `boundsAt` is not revert-tested: at scale 1 their numbers equal main's, so only a loaded run shows it.
+
+### Runs alone (`node --test tests/infra/exec.test.ts`)
+| Version | Run | tests / pass / fail | Failing title | Scales |
+|---|---|---|---|---|
+| main 7ebc37ad | 1, 2, 4, 5 | 61 / 61 / 0 | none | none |
+| main 7ebc37ad | 3 | 61 / 60 / 1 | acceptance 4: in exit mode (the root gone, the sleeper holding its output) ... | none |
+| candidate 76b15d02 | 1-5 | 63 / 63 / 0 each | none | all 6 diagnostics at scale 1 (221-512 ms) |
+| candidate 76b15d02 (the DoD run, machine busy) | DoD | 63 / 63 / 0 | none | 4180 ms scale 6; 1132 ms scale 2; 1228 ms scale 2; 2695 ms scale 4; 2586 ms scale 4; 1226 ms scale 2 |
+
+### DoD (`npm run typecheck && node --test tests/infra/exec.test.ts` on 76b15d02): exit 0, tests 63, suites 14, pass 63, fail 0, cancelled 0, skipped 0.
+
+### CHANGELOG sentence against the code
+| Sentence | Code and test |
+|---|---|
+| scale in units of 750 ms, rounded up, 1 to 8; a failed calibration fails the test | `scaleFor`, acceptance 1 rows |
+| timeout and bounds main's times the scale; grace, backstop, 1500 ms kill, lower bound unchanged; sync bound never above the backstop | `boundsAt`, acceptance 1 `boundsAt(1)`, `(4)`, `(8)` |
+| `fixture not ready before the timeout at scale <n>` for exit (root alive at the kill call) and for acceptance 3, no-kill, runSync (sleeper pid file late) | `assertRootGone`, `assertSleeperExisted`, acceptance 1 message rows |
