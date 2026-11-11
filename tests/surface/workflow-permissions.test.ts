@@ -9,7 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const workflows = path.join(root, '.github', 'workflows');
 
 function isMapping(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
+  return typeof v === 'object' && v !== null && Object.getPrototypeOf(v) === Object.prototype;
 }
 function render(v: unknown): string {
   return v === undefined ? 'absent' : JSON.stringify(v);
@@ -85,6 +85,7 @@ describe('T0-CI-PERMISSIONS workflow permissions [R1] [R2] [R3]', () => {
       [J + '    permissions: read-all\n', []],
       [J + '    permissions:\n      contents: read\n      checks: none\n', []],
       [J + '    permissions: {}\n', []],
+      ['permissions:\n  contents: read\n  actions: read\n', []],
       ['name: x\n', [P]],
       ['permissions:\n', [P]],
       ['permissions: read-all\n', [P]],
@@ -94,6 +95,14 @@ describe('T0-CI-PERMISSIONS workflow permissions [R1] [R2] [R3]', () => {
       ['permissions: 1\n', [P]],
       ['permissions: ""\n', [P]],
       ['- a\n', [P]],
+      ['permissions: !!omap [{contents: read}]\n', [P]],
+      ['permissions: !!set {contents: null}\n', [P]],
+      [OK + 'jobs: !!omap [{a: {permissions: write-all}}]\n', ['jobs is not a mapping of jobs']],
+      [OK + 'jobs: !!set {a: null}\n', ['jobs is not a mapping of jobs']],
+      [OK + 'jobs:\n  a: !!omap [{x: 1}]\n', ['job a is not a mapping']],
+      [OK + 'jobs:\n  a: !!set {x: null}\n', ['job a is not a mapping']],
+      [J + '    permissions: !!omap [{contents: read}]\n', [JP('{}')]],
+      [J + '    permissions: !!set {contents: null}\n', [JP('{}')]],
       ['permissions: {}\n', ['top-level contents is absent']],
       ['permissions:\n  contents: write\n', ['top-level contents is "write"']],
       ['permissions:\n  contents: Read\n', ['top-level contents is "Read"']],
@@ -134,6 +143,10 @@ describe('T0-CI-PERMISSIONS workflow permissions [R1] [R2] [R3]', () => {
     assert.equal(ciPermissionsExact(J + '    permissions: {}\n'), false);
     assert.equal(ciPermissionsExact(J + '    permissions:\n      contents: read\n'), false);
     assert.equal(ciPermissionsExact('name: x\n'), false);
+    for (const v of ['write', 'none', 'Read']) {
+      assert.equal(ciPermissionsExact('permissions:\n  contents: ' + v + '\n'), false, v);
+    }
+    assert.equal(ciPermissionsExact(J + '    permissions:\n'), false);
   });
 
   test('every workflow under .github/workflows has no permission problem and ci.yml is exact', () => {
