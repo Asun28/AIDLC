@@ -449,10 +449,10 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
       for (const goal of store.listGoals()) {
         // A finished goal grants nothing (card T0-PROD-GATE-GENERATION); the same three conditions as `GoalController.next`.
         if (goal.terminal || goal.state === 'DONE' || goal.state === 'STOP') continue;
-        // Only the records of the goal's current generation count, an absent `goalGeneration` as 0, before the first match.
-        const records = goal.authorizations.map((a) => AuthorizationRecord.parse(a)).filter((r) => (r.goalGeneration ?? 0) === goal.generation);
+        const records = goal.authorizations.map((a) => AuthorizationRecord.parse(a));
         const hitRecord = records.find((r) => r.id === approvalRef || r.ref === approvalRef);
-        if (hitRecord) {
+        // Main's first match counts only when it was granted in the goal's current generation, an absent `goalGeneration` as 0.
+        if (hitRecord && (hitRecord.goalGeneration ?? 0) === goal.generation) {
           const decision = requireAuthority([hitRecord], 'production', { environment: hitRecord.environment, candidateDigest: hitRecord.candidateDigest, operations: hitRecord.operations }, new Date().toISOString());
           matched = decision.status === 'authorized';
           if (matched) break;
