@@ -22,7 +22,7 @@ import type { LeaseStore } from '../coordination/lease.ts';
 import { settleRepoIdentity } from '../state/paths.ts';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
-/** A PowerShell command is read as a Bash command until card T1-PS-GUARD-READ adds the PowerShell shapes. */
+/** Bash and PowerShell commands run the same guards; in the second pass production-gate and protect-paths also read a PowerShell command's own segments and write forms (card T1-PS-GUARD-READ). */
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
 /** The guards whose Bash command classification card T0-HOOK-CLASSIFIER-3 changed: they decide again in the second pass. */
