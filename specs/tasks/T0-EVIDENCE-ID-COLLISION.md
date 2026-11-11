@@ -4,6 +4,7 @@ title: Evidence retain refuses, before any write, an id whose file name is anoth
 status: todo
 branch: T0-EVIDENCE-ID-COLLISION
 worktree: D:\wt\AIDLC\T0-EVIDENCE-ID-COLLISION
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 210 to 320 on the candidate 86f869ea, which is 294 changed lines; 21 source lines in src/audit/manifest.ts, 244 lines of the acceptance tests for the name classes of R2, the rest docs and attempt evidence"
 allow_paths:
   - src/audit/manifest.ts
   - tests/scenarios/evidence-id.test.ts
@@ -35,7 +36,7 @@ acceptance:
   - 9. `tests/scenarios/manifest-lock.test.ts`, `tests/surface/manifest.test.ts`, `tests/surface/verifier.test.ts`, `tests/scenarios/audit.test.ts`, `tests/scenarios/card-close-cleanup.test.ts` and `tests/scenarios/worktree-reclaim.test.ts` pass unchanged (they retain `dod-receipt`, `dod`, `verdict`, `verdict.json`, `bound`, `free`, `a`, `b` and `x`). [R5] [R8] [dod arm 1]
   - 10. `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and the CHANGELOG state what R9 assigns to each (reviewer-verified against the diff). [R9]
 depends_on: [T0-MANIFEST-LOCK]
-budget: 210
+budget: 320
 tdd: true
 diagnosis:
   root_cause: "`EvidenceStore.retain` (src/audit/manifest.ts:79-80 at 92796d4f) maps an id to a file name by replacing characters outside `A-Za-z0-9._-` and writes the artifact there without checking which other id, directory or device that name already denotes. Entries are keyed by id while files are keyed by name, so two ids can share one file; `.` and `..` name directories, `review` is the copy directory of card close, and device names and trailing dots give files other Windows tools cannot handle."
