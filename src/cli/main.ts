@@ -179,17 +179,17 @@ function cardOf(c: Ctx, cardId: string): ParsedCard {
   return hit;
 }
 
-function providerFor(name: string | undefined, config: ProjectConfig): ModelProvider {
+export function providerFor(name: string | undefined, config: ProjectConfig, runner?: Runner): ModelProvider {
   const p = name ?? config.provider;
   if (p === 'mock') return new MockProvider();
-  if (p === 'claude-code') return new ClaudeCodeProvider();
+  if (p === 'claude-code') return new ClaudeCodeProvider({ forwardEffort: config.claudeCode.forwardEffort, ...(runner ? { runner } : {}) });
   return new ClaudeApiProvider();
 }
 
 /** Bind the worker to the resolved state root and disable native shipping commands. */
-export function runProviderFor(stateRoot: string, runner: Runner = run): ClaudeCodeProvider {
+export function runProviderFor(stateRoot: string, runner: Runner = run, forwardEffort = false): ClaudeCodeProvider {
   const session = currentActor().session;
-  return new ClaudeCodeProvider({ runner: (command, args, options) => runner(command, args, { ...options, env: { ...process.env, ...options?.env, AIDLC_STATE_DIR: path.resolve(stateRoot), AIDLC_RUN_NO_SHIP: '1', AIDLC_SESSION: session } }) });
+  return new ClaudeCodeProvider({ forwardEffort, runner: (command, args, options) => runner(command, args, { ...options, env: { ...process.env, ...options?.env, AIDLC_STATE_DIR: path.resolve(stateRoot), AIDLC_RUN_NO_SHIP: '1', AIDLC_SESSION: session } }) });
 }
 
 /** The acceptance coverage line of a pre-review round: what the angles accounted for, and the items left over. Absent when the round asked for no coverage. */
@@ -423,7 +423,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       if (c.config.provider !== 'claude-code') fail(`aidlc run needs a command-capable provider (claude-code); configured ${c.config.provider}`);
       let failure: string | undefined;
-      const directive = await runGoal(o.goal, maxSteps, { controller: c.controller, store: c.store, queue: new ReviewQueue(c.paths.reviewQueue), provider: runProviderFor(c.paths.root), cwd: c.root, onFailure: (reason) => { failure = reason; } });
+      const directive = await runGoal(o.goal, maxSteps, { controller: c.controller, store: c.store, queue: new ReviewQueue(c.paths.reviewQueue), provider: runProviderFor(c.paths.root, run, c.config.claudeCode.forwardEffort), cwd: c.root, onFailure: (reason) => { failure = reason; } });
       out(c, directive, () => `[${directive.kind}] goal=${directive.goalId} gen=${directive.generation} state=${directive.goalState} deadline=${directive.deadline}\n${directive.narration}`);
       if (failure) {
         process.stderr.write(`aidlc run: ${failure}\n`);
