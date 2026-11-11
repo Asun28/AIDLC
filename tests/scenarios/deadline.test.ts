@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, driveCardToDone, T0 } from './_harness.ts';
 import { GoalController } from '../../src/loop/controller.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { HOUR_MS, MINUTE_MS, addMs } from '../../src/core/types.ts';
@@ -224,5 +224,55 @@ test('R1: a T2 goal extended after a time stop passes the plan checkpoint again 
     assert.ok(after.kind === 'wait' || after.kind === 'run-card', `after the approval the re-admitted card continues: ${after.kind}`);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('T0-DEAD-BRANCHES: a goal stopped for time and resumed without a revision is derived again from its runs, never read as terminal', () => {
+  // Characterization: passes before and after the card's cleanup of the carried state of `resume`.
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO');
+    fx.store.saveCardRun({ ...run, state: 'STOP', stop: makeStop('time', 'card deadline passed', 'extend the deadline', { at: fx.now(), global: false }) });
+    const stopped = fx.controller.next(goal.id);
+    assert.equal(stopped.kind, 'stop');
+    if (stopped.kind === 'stop') assert.equal(stopped.stop.reason, 'time');
+    assert.equal(fx.goal(goal.id).terminal, true);
+    assert.equal(fx.goal(goal.id).stop?.reason, 'time');
+
+    const resumed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
+    assert.equal(resumed.directive.kind, 'stop', resumed.directive.narration);
+    if (resumed.directive.kind === 'stop') assert.equal(resumed.directive.stop.reason, 'time');
+    assert.notEqual(resumed.directive.narration, 'Goal is terminal. Late wakeups do no new work.');
+    const g = fx.goal(goal.id);
+    assert.equal(g.generation, 1);
+    assert.equal(g.terminal, true);
+    assert.equal(g.stop?.reason, 'time');
+  } finally {
+    fx.cleanup();
+  }
+
+  // Second case, the `time` disjunct outside STOP: a hand-written terminal record in DELIVER with a time stop. The loop never
+  // writes that record; the carried state is WAIT, so the arc is verified again and not released.
+  const fx2 = makeFixture();
+  try {
+    const fx = fx2;
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO'], { target: 'staging' });
+    driveCardToDone(fx, goal.id, 'T1-HELLO');
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: {} });
+    const delivering = fx.goal(goal.id);
+    assert.equal(delivering.state, 'DELIVER');
+    fx.store.saveGoal({ ...delivering, terminal: true, stop: makeStop('time', 'goal deadline passed', 'extend the deadline', { at: fx.now() }) });
+
+    const resumed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
+    assert.equal(resumed.directive.kind, 'verify-arc', resumed.directive.narration);
+    const g = fx.goal(goal.id);
+    assert.equal(g.state, 'VERIFY_ARC');
+    assert.equal(g.generation, 1);
+  } finally {
+    fx2.cleanup();
   }
 });
