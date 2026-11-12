@@ -219,7 +219,7 @@ test('the CLI refuses under a held lock and journals nothing', () => {
   const retain = cli('evidence', 'retain', '--id', 'b', '--kind', 'artifact', '--content', 'b');
   assert.notEqual(retain.status, 0);
   assert.match(retain.stderr, /LOCKED/);
-  const seal = cli('audit', 'seal');
+  const seal = cli('audit', 'seal', '--final-digest', 'cand-final');
   assert.notEqual(seal.status, 0);
   assert.match(seal.stderr, /LOCKED/);
   assert.equal(journal(), events);
@@ -243,7 +243,7 @@ test('a manifest that does not parse or fails the schema', () => {
     const retain = cli('evidence', 'retain', '--id', 'b', '--kind', 'artifact', '--content', 'b');
     assert.notEqual(retain.status, 0, text);
     assert.ok(retain.stderr.includes(loadError), retain.stderr);
-    const seal = cli('audit', 'seal');
+    const seal = cli('audit', 'seal', '--final-digest', 'cand-final');
     assert.notEqual(seal.status, 0, text);
     assert.ok(seal.stderr.includes(loadError), seal.stderr);
     assert.equal(journal(), events, text);
@@ -266,7 +266,7 @@ test('the seal event and the seal bind one manifest', () => {
     const r = cli('evidence', 'retain', '--id', id, '--kind', 'artifact', '--content', id);
     assert.equal(r.status, 0, r.stderr);
   }
-  const seal = cli('audit', 'seal');
+  const seal = cli('audit', 'seal', '--final-digest', 'cand-final');
   assert.equal(seal.status, 0, seal.stderr);
   const event = fx.events(goal.id).at(-1)!;
   assert.equal(event.type, 'MANIFEST_SEALED');

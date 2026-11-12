@@ -46,6 +46,9 @@ export const Manifest = z.object({
 });
 export type Manifest = z.infer<typeof Manifest>;
 
+/** The evidence kinds bound to a candidate, matched as exact whole strings (card T0-AUDIT-BINDING). */
+export const CANDIDATE_BOUND_KINDS: readonly string[] = ['dod-receipt', 'review-verdict', 'ci-run', 'test-output', 'health'];
+
 export function fileSha256(file: string): string {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
