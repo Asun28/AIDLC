@@ -261,3 +261,10 @@ Loaded runs on 789d7fcc under `load.sh 24 150` (same machine and load), each 70 
 | 1 | 5939 ms | 6, 7, 6, 6, 5, 7, 5 (3174-4637) |
 | 2 | 5543 ms | 7, 5, 6, 6, 6, 6, 6 (3391-4773) |
 | 3 | 5609 ms | 6, 6, 6, 5, 8, 6, 6 (3656-5302) |
+
+### Late-sleeper row without node-start timing (code 88d3a83a)
+The row takes `writeAt = Date.now() + limitMs + 1000` before the call and the detached sleeper waits `Math.max(0, writeAt - Date.now())` before writing its pid file, so the write lands about 1000 ms after the limit whatever the node starts took. Margins (also in the row's comment): the write is after the limit while the two starts take under 7000 ms together (limit 6000 + 1000), and inside the 5000 ms wait unless they take over 11 000 ms (limit + 5000). This replaces the earlier timing caveat of the row (a sleeper-relative 6500 ms delay).
+- Revert "late pid wait removed": the row is red (`not ok 4 - a root whose detached sleeper writes the pid file 1000 ms after the limit`).
+- DoD alone on 88d3a83a: exit 0, tests 70, pass 70, fail 0; the row printed `pid file written 1012.6 ms after the limit`.
+- The row alone, three runs in sequence under one `load.sh 24 150`: 1 / 1 / 0 each; pid file written 1125.0, 1148.8 and 1153.1 ms after the limit.
+
