@@ -599,5 +599,11 @@ describe('T0-ATTEMPT-NUMBER: the ladder number of an attempt', () => {
     ] };
     assert.deepEqual(repairAction(gapped, JUSTIFIED), { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'repairAction, stored n not following positions');
     assert.deepEqual(afterShipFailure(gapped, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'afterShipFailure with nothing settled, stored n not following positions');
+    const gappedRepair: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), finishedAt: at(2), outcome: 'success', progress: false, checksGained: [], checksLost: [] },
+      { n: 2, effort: 'medium', startedAt: at(3), finishedAt: at(4), outcome: 'not-counted', notCountedReason: 'quota', progress: false, checksGained: [], checksLost: [] },
+      { n: 7, effort: 'medium', startedAt: at(5), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(afterShipFailure(gappedRepair, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'afterShipFailure with a running repair, stored n not following positions');
   });
 });
