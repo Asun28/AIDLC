@@ -291,10 +291,10 @@ Each row: one mutation applied in the worktree, `node --test tests/scenarios/hea
 | 15 | R2 last non-blank line | first non-blank line | 1-8, 11 | PASS rows |
 | 16 | R2 last non-blank line | last line that parses as JSON | 3 | row `report then a line done` |
 | 17 | R2 blank is `trim()` empty | blank is the empty string only | 3 | control `two blank lines after the report` |
-| 18 | R2 the line trimmed | no `trim()` of the chosen line | none | not detected: `JSON.parse` skips the space, tab, CR and LF around a value, and no row pads the line with other whitespace |
+| 18 | R2 the line trimmed | no `trim()` of the chosen line | 12 (repair) | at 92ffb803 not detected (`JSON.parse` skips ASCII whitespace); now red: `a line that begins with U+FEFF` (repair row R2) |
 | 19 | R2 parse throw is no report | no `try` | 3 | `"done" is not valid JSON` thrown |
-| 20 | R2 environment min 1 | `z.string()` | none | not detected: the lease check rejects the empty name first (`env:` is another lease file) |
-| 21 | R2 candidate min 1 | `z.string()` | none | not detected: the candidate comparison rejects the empty string first |
+| 20 | R2 environment min 1 | `z.string()` | 12 (repair) | at 92ffb803 masked by the lease check; now red on the direct `HealthReport.safeParse` row (repair row R7) |
+| 21 | R2 candidate min 1 | `z.string()` | 12 (repair) | at 92ffb803 masked by the candidate comparison; now red on the direct `HealthReport.safeParse` row (repair row R8) |
 | 22 | R2 samples integer | drop `.int()` | 3 | row `samples 1.5` |
 | 23 | R2 samples safe | integer check without the safe range | 3 | row `samples 9007199254740992` |
 | 24 | R2 samples 0 or more | drop `.nonnegative()` | 3 | row `samples -1` |
@@ -319,7 +319,7 @@ Each row: one mutation applied in the worktree, `node --test tests/scenarios/hea
 | 43 | R3 threshold from the list | schema and mapper read `threshold` | 6 | (g) threshold row |
 | 44 | R3 minSamples from the list | schema and mapper read `minSamples` | 6 | (g) minSamples row |
 | 45 | R3 staleness from the list | schema and mapper read `maxStalenessMs` | 6 | (g) staleness row |
-| 46 | R3 name as the same string | case and padding ignored together | none | not detected: row (e) holds `A` and ` a`, which then both match, and the exactly-one rule makes `a` unavailable; rows 47 and 48 revert each part alone |
+| 46 | R3 name as the same string | case and padding ignored together | 12 (repair) | at 92ffb803 masked by the exactly-one rule in row 6(e); now red on the single entry `a` for a declared `A` (repair row R11) |
 | 47 | R3 name as the same string | letter case ignored | 6 | (e) `probeAvailable` |
 | 48 | R3 name as the same string | padding ignored | 6 | (e) `probeAvailable` |
 | 49 | R3 unavailable signal | `probeAvailable` true | 6 | (c) deep-equal |
@@ -333,7 +333,7 @@ Each row: one mutation applied in the worktree, `node --test tests/scenarios/hea
 | 57 | R1 default source | `() => []` (main) | 1-9, 11 | every behavioural row |
 | D1 | R8 template copy | H1 removed from templates/docs/DELIVERY-OPS.md only | ops.test.ts | "the template copy of DELIVERY-OPS.md is the repository's" |
 
-Red 53 of 57 source rows; rows 18, 20, 21 and 46 are listed with the reason no row detects them. D1 (actual run) is the only document row a test reads; the other texts of R8 are reviewer-verified against the diff.
+At 92ffb803: red 53 of 57 source rows. After the repair round all four rows that were not detected (18, 20, 21, 46) are red; see the repair section. D1 (actual run) is the only document row a test reads; the other texts of R8 are reviewer-verified against the diff.
 
 ### DoD (`dod_command` on 92ffb803, worktree clean)
 `npm run typecheck`: exit 0. `node --test` of the eleven files: tests 119, pass 116, fail 0, skipped 3 (tests/scenarios/release-lease.test.ts, POSIX permission rows, skipped on Windows); exit 0.
@@ -358,3 +358,29 @@ Other runs on 92ffb803: tests/scenarios/health-op.test.ts on Linux (WSL Ubuntu, 
 
 ### Size
 `git diff --shortstat origin/main...HEAD` on 92ffb803: 8 files, 649 insertions, 12 deletions (661 changed lines). With this section the count is given in the coordinator report; budget 820.
+
+### Repair round after the pre-review of 9e9eecb2
+Commits: merge of origin/main `3dd7f9f7` (conflict in this card only), RED `a1e8f0f9` (tests only), GREEN `50b027db` (R9, the backward scan of `healthReportOf`, the H2 sentence in both DELIVERY-OPS.md copies, the entry C sentence).
+
+RED on a1e8f0f9 (sources of 3dd7f9f7), test "the staleness of a sample is judged when the health command has returned", each assertion run on its own in a scratch copy of the test file (removed): R9 (a) result FAIL (PASS at the old time); the STOP row FAIL (the attempt closed instead) and its `stop.at` FAIL; the rows that the window, the directive window and the event data keep the step's time: pass already; R9 (b) PASS row: passes already; U+FEFF and U+00A0 rows, 200 000 blank lines, `a` / ` A` / ` A ` for a declared `A`, both `safeParse` rows: pass already (they pin behaviour the old source has). Row (f): the test of acceptance 7 now unsets `AIDLC_TARGET_ENV` for its calls and restores it in a `finally`; observation: the 9e9eecb2 version of that test fails with `AIDLC_TARGET_ENV=staging` (`target: 'staging'`), the new one passes with it set.
+
+Revert rows, actual runs on the 50b027db sources (`git diff --stat` empty after the last):
+| # | Mutation | Red | Assertion |
+|---|---|---|---|
+| R1 | `now` in place of the clock read after the source returned (R9) | 12 | R9 (a) result deep-equal |
+| R2 | chosen line not trimmed (blank test still by `trim()`) | 12 | `a line that begins with U+FEFF` (the U+00A0 row is after it; `JSON.parse` throws on both padded lines, checked with `node -e`) |
+| R3 | blank means the empty string (chosen line still trimmed) | 3 | control `two blank lines after the report` |
+| R4 | first non-blank line in place of the backward scan | 1-9, 11, 12 | every PASS row |
+| R5 | last line that parses as JSON | 3 | row `report then a line done` |
+| R6 | no `try` around `JSON.parse` | 3 | `"done" is not valid JSON` thrown |
+| R7 | `environment` without `min(1)` | 12 | `HealthReport.safeParse` empty environment |
+| R8 | `candidate` without `min(1)` | 12 | `HealthReport.safeParse` empty candidate |
+| R9 | letter case ignored alone (both sides lower-cased) | 6, 12 | 6(e); entry `a` |
+| R10 | padding ignored alone (both sides trimmed) | 6, 12 | 6(e); entry ` A` |
+| R11 | case and padding ignored together (old row 46) | 12 | entry `a` |
+
+Red 11 of 11. DoD on 50b027db, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; tests/scenarios/op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail.
+
+Document text added: H2 `The staleness of a sample is judged against the time at which the command returned.` and the entry C sentence: code `evaluateHealth(signals, window, this.clock(), ...)` in the OBSERVE case; test 12, R9 (a) and (b); revert R1.
+
+Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 825 insertions, 13 deletions; the count with it is in the coordinator report; budget 900.
