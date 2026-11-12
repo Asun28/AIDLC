@@ -47,8 +47,12 @@ function scanSource(file: string, text: string): Site[] {
     if (ts.isParenthesizedExpression(node)) return isFsObject(node.expression);
     if (ts.isIdentifier(node)) return fsObjects.has(node.text);
     if (memberName(node) === 'promises') return isFsObject((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression);
+    if (ts.isAwaitExpression(node)) return isImportOfFs(node.expression);
     return isRequireOfFs(node);
   };
+  /** `import('<fs module>')`, read as `require` is when awaited. */
+  const isImportOfFs = (node: ts.Node): boolean =>
+    ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length >= 1 && FS_MODULES.has(stringValue(node.arguments[0]!) ?? '');
   /** The fs function an expression resolves to, else undefined. */
   const target = (node: ts.Node): string | undefined => {
     if (ts.isIdentifier(node)) return bound.get(node.text);
@@ -59,22 +63,27 @@ function scanSource(file: string, text: string): Site[] {
     if (TARGETS.has(imported)) bound.set(local, imported);
     else if (imported === 'promises') fsObjects.add(local);
   };
+  /** Binds the names a destructuring of an fs object declares; a nested pattern under `promises` destructures an fs object too. */
+  const bindPattern = (pattern: ts.ObjectBindingPattern): void => {
+    for (const el of pattern.elements) {
+      const prop = el.propertyName ?? el.name;
+      const member = ts.isIdentifier(prop) || ts.isStringLiteral(prop) ? prop.text : ts.isComputedPropertyName(prop) ? stringValue(prop.expression) : undefined;
+      if (member === undefined) continue;
+      if (ts.isIdentifier(el.name)) bindName(el.name.text, member);
+      else if (ts.isObjectBindingPattern(el.name) && member === 'promises') bindPattern(el.name);
+    }
+  };
   const collect = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && FS_MODULES.has(stringValue(node.moduleSpecifier) ?? '') && node.importClause) {
+    if (ts.isImportDeclaration(node) && FS_MODULES.has(stringValue(node.moduleSpecifier) ?? '') && node.importClause && !node.importClause.isTypeOnly) {
       const { name, namedBindings } = node.importClause;
       if (name) fsObjects.add(name.text);
       if (namedBindings && ts.isNamespaceImport(namedBindings)) fsObjects.add(namedBindings.name.text);
-      if (namedBindings && ts.isNamedImports(namedBindings)) for (const el of namedBindings.elements) bindName(el.name.text, (el.propertyName ?? el.name).text);
+      if (namedBindings && ts.isNamedImports(namedBindings)) for (const el of namedBindings.elements) if (!el.isTypeOnly) bindName(el.name.text, (el.propertyName ?? el.name).text);
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && FS_MODULES.has(stringValue(node.moduleReference.expression) ?? '')) {
       fsObjects.add(node.name.text);
     } else if (ts.isVariableDeclaration(node) && node.initializer && isFsObject(node.initializer)) {
       if (ts.isIdentifier(node.name)) fsObjects.add(node.name.text);
-      else if (ts.isObjectBindingPattern(node.name)) {
-        for (const el of node.name.elements) {
-          const prop = el.propertyName ?? el.name;
-          if (ts.isIdentifier(el.name) && (ts.isIdentifier(prop) || ts.isStringLiteral(prop))) bindName(el.name.text, prop.text);
-        }
-      }
+      else if (ts.isObjectBindingPattern(node.name)) bindPattern(node.name);
     }
     ts.forEachChild(node, collect);
   };
@@ -85,14 +94,18 @@ function scanSource(file: string, text: string): Site[] {
   /** An identifier that names a binding rather than reading one. */
   const declares = (id: ts.Identifier): boolean => {
     const p = id.parent;
-    return ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p) || ts.isBindingElement(p)
+    return ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p)
+      || (ts.isBindingElement(p) && (p.name === id || p.propertyName === id))
       || ((ts.isVariableDeclaration(p) || ts.isFunctionDeclaration(p) || ts.isParameter(p) || ts.isPropertyAssignment(p) || ts.isPropertyAccessExpression(p)) && p.name === id);
   };
   const sites: Site[] = [];
   const visit = (node: ts.Node): void => {
     const name = ts.isIdentifier(node) && declares(node) ? undefined : target(node);
     if (name !== undefined) {
-      const called = ts.isCallExpression(node.parent) && node.parent.expression === node;
+      // Parentheses and a non-null assertion around the callee are looked through: `(f)(x)` and `f!(x)` call f.
+      let callee: ts.Node = node;
+      while (ts.isParenthesizedExpression(callee.parent) || ts.isNonNullExpression(callee.parent)) callee = callee.parent;
+      const called = ts.isCallExpression(callee.parent) && callee.parent.expression === callee;
       let fn: ts.Node | undefined = node.parent;
       while (fn && !isFunctionLike(fn)) fn = fn.parent;
       const exempt = called && fn !== undefined && ts.isFunctionDeclaration(fn) && fn.parent === sf && ALLOWED.has(`${file}#${fn.name?.text}`);
