@@ -52,7 +52,7 @@ acceptance:
   - 12. tests/scenarios/manifest-lock.test.ts and tests/scenarios/lesson-dup.test.ts pass with the edits of R11 and no other changed line. Detail: body section Acceptance detail, item 12. [R11] [dod arm 1]
   - 13. verifier.test.ts, manifest.test.ts, templates, command-lines, mirror and prose (tests/surface) and audit, evidence-id and journal-owed (tests/scenarios) pass unchanged. Passes on main and with this card. Detail: body section Acceptance detail, item 13. [R1] [R8] [R9] [R10] [dod arm 1]
   - 14. `tests/scenarios/fault-points.test.ts` passes unchanged. Passes on main and with this card. Detail: body section Acceptance detail, item 14. [R9] [dod arm 1]
-  - 15. verifier-binding.test.ts "T0-AUDIT-BINDING: docs/OPERATIONS.md and the CHANGELOG state the warnings, the comparison and the seal" holds each pinned sentence; ARCHITECTURE, the JSDoc and the skill at CLOSE are reviewer-verified. Fails on main. Detail: body section Acceptance detail, item 15. [R10] [dod arm 1]
+  - 15. verifier-binding.test.ts "T0-AUDIT-BINDING: docs/OPERATIONS.md and the CHANGELOG state the warnings, the comparison and the seal" holds each pinned sentence; ARCHITECTURE and the JSDoc are reviewer-verified; the skill file is not in the reviewed diff (hygiene). Fails on main. Detail: body section Acceptance detail, item 15. [R10] [dod arm 1]
 depends_on: [T0-OP-TIMESTAMP-NOW-2, T0-LOCK-EPERM-RETRY, T0-DOD-RECEIPT-REQUIRED]
 budget: 850
 tdd: true
@@ -174,7 +174,7 @@ These pass unchanged: tests/surface/verifier.test.ts (its seals carry a final di
 `tests/scenarios/fault-points.test.ts` passes unchanged: the change adds, removes and reorders no write, and the check compares directive kinds, stored records and journal events, not the close narration.
 
 ### 15
-tests/surface/verifier-binding.test.ts "T0-AUDIT-BINDING: docs/OPERATIONS.md and the CHANGELOG state the warnings, the comparison and the seal" passes and fails on main: the Audit section of docs/OPERATIONS.md holds the warnings list of Document text (a) and each sentence of (b) and (c), and the CHANGELOG Unreleased section holds each sentence of the entry, each read with line endings normalised. docs/ARCHITECTURE.md item 3, the JSDoc of verifier.ts and, at CLOSE, the skill file state what R10 names (reviewer-verified against the diff).
+tests/surface/verifier-binding.test.ts "T0-AUDIT-BINDING: docs/OPERATIONS.md and the CHANGELOG state the warnings, the comparison and the seal" passes and fails on main: the Audit section of docs/OPERATIONS.md holds the warnings list of Document text (a) and each sentence of (b) and (c), and the CHANGELOG Unreleased section holds each sentence of the entry, each read with line endings normalised. docs/ARCHITECTURE.md item 3 and the JSDoc of verifier.ts state what R10 names (reviewer-verified against the diff). The skill file is not part of the reviewed diff: the candidate leaves it unchanged, and the coordinator moves its two sync-commit references on main at CLOSE, after the merge, so no review of this card can or need check it (ruling of 2026-11-12, after a review of T0-CI-PERMISSIONS blocked on evidence that could not exist before the merge).
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
