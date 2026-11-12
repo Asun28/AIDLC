@@ -267,19 +267,19 @@ async function calibrate(
   const [file, args] = command(pidFile);
   const child = spawn(file, args, { stdio: 'ignore', windowsHide: true, env: fixtureEnv(dir) });
   let limit: NodeJS.Timeout | undefined;
-  let limited = false;
+  let lateDeadline: number | undefined;
   const measured = await new Promise<number | undefined>((resolve) => {
     child.once('error', () => resolve(undefined));
     child.once('exit', (code, signal) => resolve(code === 0 && signal === null && readPid(pidFile) !== undefined ? Date.now() - startedAt : undefined));
     limit = setTimeout(() => {
-      limited = true;
       end(child.pid);
+      lateDeadline = Date.now() + CALIBRATION_LATE_PID_MS;
       resolve(undefined);
     }, limitMs);
   });
   clearTimeout(limit);
-  // A sleeper the root had started may publish its pid after the limit: wait for it, at most CALIBRATION_LATE_PID_MS.
-  for (let waited = 0; limited && readPid(pidFile) === undefined && waited < CALIBRATION_LATE_PID_MS; waited += 50) await new Promise((r) => setTimeout(r, 50));
+  // A sleeper the root had started may publish its pid after the limit: wait for it until the deadline taken when the root was ended.
+  while (lateDeadline !== undefined && readPid(pidFile) === undefined && Date.now() < lateDeadline) await new Promise((r) => setTimeout(r, 50));
   const sleeper = readPid(pidFile);
   if (sleeper !== undefined) {
     end(sleeper);
@@ -397,6 +397,12 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
       assert.equal(await calibrate(t, FIXTURE, ended, inline("process.kill(process.pid, 'SIGKILL')")), undefined);
       assert.equal(ended.length, 1);
     });
+    // Ends the processes a time-limit row records in its own files, and waits for each to be gone, so a red row leaves none.
+    const endRecorded = async (...files: string[]): Promise<void> => {
+      const pids = files.map(readPid);
+      pids.forEach(end);
+      for (const pid of pids) if (pid !== undefined) await assertGoneWithin(pid, 3000);
+    };
     it('a child that writes its own pid to <pidFile>.root and no pid file, with a limit of 5 s: undefined, the root gone, nothing ended', async (t) => {
       const ended: number[] = [];
       let pidFile = '';
@@ -404,32 +410,35 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
         pidFile = file;
         return [process.execPath, ['-e', "require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); setTimeout(() => {}, 30_000)", file]];
       };
-      assert.equal(await calibrate(t, FIXTURE, ended, command, 5000), undefined);
-      const root = readPid(`${pidFile}.root`);
-      assert.ok(root !== undefined, 'the child wrote its pid before the limit');
-      await assertGoneWithin(root, 3000);
-      assert.deepEqual(ended, []);
+      try {
+        assert.equal(await calibrate(t, FIXTURE, ended, command, 5000), undefined);
+        const root = readPid(`${pidFile}.root`);
+        assert.ok(root !== undefined, 'the child wrote its pid before the limit');
+        await assertGoneWithin(root, 3000);
+        assert.deepEqual(ended, []);
+      } finally {
+        await endRecorded(`${pidFile}.root`);
+      }
     });
-    it('a root whose detached sleeper writes the pid file 1000 ms after the limit: undefined, the late sleeper ended', async (t) => {
+    it('a root whose detached sleeper writes the pid file 1000 ms after it saw the root gone: undefined, the late sleeper ended', async (t) => {
       const ended: number[] = [];
       let pidFile = '';
-      const limitMs = 6000;
-      // The sleeper writes at an absolute time, 1000 ms after the limit counted from this line, whatever the two node starts take.
-      // Margins: the write is after the limit while the two starts take under limit + 1000 ms (7 s) together, and inside the
-      // CALIBRATION_LATE_PID_MS wait (5000 ms) unless they take over limit + 5000 ms (11 s) together.
-      const callMs = Date.now();
-      const writeAt = callMs + limitMs + 1000;
-      const sleeper = `setTimeout(() => require('fs').writeFileSync(process.argv[1], String(process.pid)), Math.max(0, ${writeAt} - Date.now())); setTimeout(() => {}, 30_000)`;
+      // The sleeper records its own pid in <pidFile>.late at its start, polls the root with signal 0 until ESRCH (the root was ended at
+      // the limit), waits 1000 ms and writes the pid file. The write follows the time-limit callback however late that ran, and
+      // the wait lasts 5000 ms from the callback, so it holds unless the write is delayed by more than about 4000 ms.
+      const sleeper = "const fs = require('fs'); fs.writeFileSync(process.argv[1] + '.late', String(process.pid)); const poll = setInterval(() => { try { process.kill(Number(process.argv[2]), 0); } catch { clearInterval(poll); setTimeout(() => fs.writeFileSync(process.argv[1], String(process.pid)), 1000); } }, 50); setTimeout(() => process.exit(), 30_000)";
       const command = (file: string): [string, string[]] => {
         pidFile = file;
-        const root = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}, process.argv[1]], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => {}, 30_000)`;
+        const root = `require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}, process.argv[1], String(process.pid)], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => {}, 30_000)`;
         return [process.execPath, ['-e', root, file]];
       };
-      t.after(() => end(readPid(pidFile)));
-      assert.equal(await calibrate(t, FIXTURE, ended, command, limitMs), undefined);
-      t.diagnostic(`pid file written ${String((writtenMs(pidFile) ?? NaN) - callMs - limitMs)} ms after the limit`);
-      assert.equal(ended.length, 1);
-      assert.equal(probe(ended[0]!), 'ESRCH');
+      try {
+        assert.equal(await calibrate(t, FIXTURE, ended, command, 6000), undefined);
+        assert.equal(ended.length, 1);
+        assert.equal(probe(ended[0]!), 'ESRCH');
+      } finally {
+        await endRecorded(`${pidFile}.root`, `${pidFile}.late`);
+      }
     });
     it('a child that exits 0 without writing the pid file', async (t) => {
       const ended: number[] = [];
