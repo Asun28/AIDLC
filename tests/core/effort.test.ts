@@ -592,5 +592,12 @@ describe('T0-ATTEMPT-NUMBER: the ladder number of an attempt', () => {
     const step = afterShipFailure(ep, 'ship dod-failed: c', JUSTIFIED);
     assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 4, escalated: true });
     assert.deepEqual(step.promoted, { n: 5, from: 'medium', effort: 'high' }, 'the promotion carries the stored n');
+    // Stored numbers that do not follow their positions: the index comes from the array (1), never from the stored n (4).
+    const gapped: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), finishedAt: at(2), outcome: 'not-counted', notCountedReason: 'tool-outage', progress: false, checksGained: [], checksLost: [] },
+      { n: 5, effort: 'medium', startedAt: at(3), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(repairAction(gapped, JUSTIFIED), { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'repairAction, stored n not following positions');
+    assert.deepEqual(afterShipFailure(gapped, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'afterShipFailure with nothing settled, stored n not following positions');
   });
 });

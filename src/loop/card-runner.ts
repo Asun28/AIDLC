@@ -793,7 +793,7 @@ export class CardRunner {
             redReceipt: run.redReceipt,
             dodCommand: card.dod_command,
             effort: running?.effort ?? episode?.baseline ?? 'medium',
-            attempt: running && episode ? ladderNumber(episode, episode.attempts.indexOf(running)) : 1,
+            attempt: running && episode ? ladderNumber(episode, episode.attempts.indexOf(running)) : episode ? episode.attempts.length : 1,
             skills: this.buildSkills(goal, card),
             narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
           },
