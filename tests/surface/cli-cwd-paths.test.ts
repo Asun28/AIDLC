@@ -31,11 +31,11 @@ const CEILING = realpathSync.native(tmpdir());
 
 /**
  * The environment of every child the tests start: no inherited variable whose upper-cased name starts with GIT_ or AIDLC_, no
- * session variable, and GIT_CEILING_DIRECTORIES at the fixtures' parent.
+ * session variable, and GIT_CEILING_DIRECTORIES at the fixtures' parent. `source` is the inherited environment, so a row can check it.
  */
-function childEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+function childEnv(extra: NodeJS.ProcessEnv = {}, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(process.env)) {
+  for (const [k, v] of Object.entries(source)) {
     const upper = k.toUpperCase();
     if (upper.startsWith('GIT_') || upper.startsWith('AIDLC_') || upper === 'CLAUDE_CODE_SESSION_ID') continue;
     env[k] = v;
@@ -174,7 +174,7 @@ function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
 }
 
 /** A use of `chdir`, `process` or `process.env` that acceptance 13 does not allow, by its rule and line. */
-interface EnvViolation { rule: 'a' | 'b' | 'c'; line: number; text: string }
+interface EnvViolation { rule: 'a' | 'b' | 'c' | 'd'; line: number; text: string }
 
 /** The operators of the second shape of rule (c): a read of the environment compared or defaulted. */
 const ENV_READ_OPERATORS = new Set<ts.SyntaxKind>([ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken]);
@@ -267,6 +267,12 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     assert.equal((JSON.parse(without.stdout) as { repository: string }).repository, outer, without.stderr);
     const capped = doctor({ GIT_CEILING_DIRECTORIES: outer });
     assert.equal((JSON.parse(capped.stdout) as { repository: string }).repository, `${caller} (not a git repository)`, capped.stderr);
+  });
+
+  test('every child starts without NODE_OPTIONS of the test process, in any letter case', () => {
+    // A --require of a relative path in NODE_OPTIONS fails a child started in another directory (pre-review of f9b50cf1).
+    const source = { NODE_OPTIONS: 'a', node_options: 'b', GIT_DIR: 'c', AIDLC_SESSION: 'd', CLAUDE_CODE_SESSION_ID: 'e', PATH: 'p' };
+    assert.deepEqual(childEnv({}, source), { PATH: 'p', GIT_CEILING_DIRECTORIES: CEILING });
   });
 
   test('the path function by input class [R3]', () => {
@@ -698,12 +704,20 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       'process.exitCode = 1',
       'process.argv.slice(2)',
       'process.cwd()',
+      // Each of the ten properties of rule (b) in the form main.ts uses it.
+      "process.once('SIGINT', () => stop.abort())",
+      'process.version',
+      'process.platform',
+      'process.stderr.write(s)',
+      'process.stdout.write(s)',
+      'process.exit(1)',
       '// process.env.X = v',
       "const m = 'run process.chdir here'",
     ];
     for (const text of passing) assert.deepEqual(envViolations(text), [], JSON.stringify(text));
     const failing: Array<[string, Array<EnvViolation['rule']>]> = [
-      ['process.chdir(at)', ['a']],
+      // chdir is not one of the ten properties of rule (b), so the call breaks (a) and (b).
+      ['process.chdir(at)', ['a', 'b']],
       ["process['chdir'](at)", ['a', 'b']],
       ['process.env.X = v', ['c']],
       ['process.env.X\n  = v', ['c']],
@@ -723,7 +737,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ['Object.assign (process.env, x)', ['c']],
       ["Object.defineProperty(process.env, 'X', d)", ['c']],
       ["Object.defineProperty (process.env, 'X', d)", ['c']],
-      ["Reflect.set(process.env, 'X', v)", ['c']],
+      ["Reflect.set(process.env, 'X', v)", ['c', 'd']],
       ['fn(process.env)', ['c']],
       ['const e = process.env', ['c']],
       ['function f() { return process.env }', ['c']],
@@ -731,10 +745,22 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ["process['env'].X = v", ['b']],
       ['const { env } = process', ['b']],
       ['const p = process', ['b']],
-      ['globalThis.process.env.X = v', ['b']],
+      ['globalThis.process.env.X = v', ['b', 'd']],
       ['fn(process)', ['b']],
       ["import p from 'node:process'", ['b']],
       ["require('process')", ['b']],
+      // Rulings after the pre-review of f9b50cf1: a property outside the ten, and the names of rule (d).
+      ['const p = process.valueOf()', ['b']],
+      ['process.valueOf().env.X = v', ['b']],
+      ['process.mainModule', ['b']],
+      ["process.binding('fs')", ['b']],
+      ["process.emit('x')", ['b']],
+      ["process.once('exit', function () { this.env.X = v; })", ['d']],
+      ["eval('process.env.X = 1')", ['d']],
+      ["new Function('return process')()", ['d']],
+      ['globalThis.process', ['b', 'd']],
+      ['global.process', ['b', 'd']],
+      ['Reflect.get(o, k)', ['d']],
     ];
     for (const [text, rules] of failing) assert.deepEqual([...new Set(envViolations(text).map((v) => v.rule))].sort(), rules, JSON.stringify(text));
   });
