@@ -221,6 +221,7 @@ interface Bounds {
   slowKillBoundMs: number;
   goneWithinMs: number;
   syncBoundMs: number;
+  runnerExitBoundMs: number;
 }
 
 const CALIBRATION_BASE_MS = 750;
@@ -297,6 +298,7 @@ function boundsAt(scale: number): Bounds {
     slowKillBoundMs: (1500 + 1000) * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
     goneWithinMs: 3000 * scale,
     syncBoundMs: Math.min(6000 * scale, timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
+    runnerExitBoundMs: 0, // seam
   };
 }
 
@@ -332,10 +334,11 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     for (const measured of [undefined, NaN, -1, Infinity, -Infinity]) {
       assert.throws(() => scaleFor(measured), { message: `calibration failed: ${String(measured)}` }, `scaleFor(${String(measured)})`);
     }
-    assert.deepEqual(boundsAt(1), { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000 });
-    assert.deepEqual(Object.values(boundsAt(4)), [6000, 24_000, 8000, 12_000, 13_500, 12_000, 23_000]);
-    assert.deepEqual(Object.values(boundsAt(8)), [12_000, 48_000, 14_000, 22_000, 23_500, 24_000, 29_000]);
+    assert.deepEqual(boundsAt(1), { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000, runnerExitBoundMs: 6500 });
+    assert.deepEqual(Object.values(boundsAt(4)), [6000, 24_000, 8000, 12_000, 13_500, 12_000, 23_000, 15_500]);
+    assert.deepEqual(Object.values(boundsAt(8)), [12_000, 48_000, 14_000, 22_000, 23_500, 24_000, 29_000, 27_500]);
     assert.ok(boundsAt(8).stayBoundMs < 60_000);
+    assert.ok(boundsAt(8).runnerExitBoundMs < 60_000);
 
     assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: undefined, startedMs: 1000 }, 3000, 2), notReadyMessage(2, 'no sleeper pid file'));
     assertSleeperExisted({ sleeperWrittenMs: 4000, startedMs: 1000 }, 3000, 2);
