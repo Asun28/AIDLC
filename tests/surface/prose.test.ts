@@ -406,3 +406,43 @@ describe('the takeover revalidates before its run update (T1-STORE-CAS R3 decisi
     );
   });
 });
+
+describe('goal lease and unresolved operations in the documents (T0-UNRESOLVED-NARRATION)', () => {
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  /** The Sessions section of docs/OPERATIONS.md, from its heading to the next one. */
+  const sessions = (): string => {
+    const ops = lf(read('docs', 'OPERATIONS.md'));
+    const at = ops.indexOf('\n## Sessions\n') + 1;
+    return ops.slice(at, ops.indexOf('\n## ', at) + 1);
+  };
+  const occurrences = (text: string, part: string): number => text.split(part).length - 1;
+  /** The first sentence of the second-window bullet of Sessions. */
+  const LEASE =
+    'The goal lease is claimed at intake and never renewed; the ownership step of `aidlc next` waits (owner, expiry) only while another session holds it unreleased and not past `expiresAt`, and `aidlc report` checks generation and terminality, not the lease.';
+  /** The paragraph of Running a goal that states the wait on unresolved operations. */
+  const N =
+    'While a goal that is not terminal, `DONE` or `STOP` has an operation that is `intended`, `issued`, `running` or `UNKNOWN`, `aidlc next` admits no new mutation: it returns `wait` on `reconcile:<ids>` until the reconciliation grace after the current goal deadline ends, and a call at or after that end stops the goal for time, listing them (card T0-UNRESOLVED-NARRATION). The narration of that `wait` names each such operation, in the order `aidlc ops list --goal <id>` prints them, with its kind, its status and its card when it has one, says that an `issued` or `running` one may still be running and that an `intended` or `UNKNOWN` one has no recorded outcome, and asks to check the issuing command and the provider before recording the current outcome with `aidlc ops reconcile <id> --status <succeeded|failed|running|cancelled|UNKNOWN>`.';
+  /** The CHANGELOG entry. */
+  const ENTRY =
+    '- T0-UNRESOLVED-NARRATION (audit items F16 and F14): while an operation of a goal that is not terminal, `DONE` or `STOP` is `intended`, `issued`, `running` or `UNKNOWN`, the `wait` of `aidlc next` names each such operation, in the order `aidlc ops list --goal <id>` prints them, with its id, kind, status and card when it has one: an `issued` or `running` one may still be running, an `intended` or `UNKNOWN` one has no recorded outcome, and for each the narration asks to check the issuing command and the provider before recording its current outcome with `aidlc ops reconcile <id> --status <succeeded|failed|running|cancelled|UNKNOWN>`. The class comes from the stored status alone. Before this card that narration called every such operation one of unknown outcome and named `aidlc ops reconcile` without an id, also for a merge whose ship command was still running. What `aidlc next` decides is unchanged: it waits on `reconcile:<ids>` until the reconciliation grace after the current goal deadline ends, a call at or after that end stops the goal for time, and no new mutation is admitted meanwhile. The header and ownership-step comments of `src/loop/controller.ts` now say what the code does, which this card does not change: the goal lease is claimed at intake and never renewed, the ownership step of `aidlc next` waits on it only while another session holds it unreleased and not past `expiresAt`, `aidlc goal takeover` and the closing session may take it over and the closing session releases it, report admission checks the goal generation and terminality without a goal-lease fence and then calls `next`, goal records stay last-writer-wins, and a live card lease stops another session\'s `card next` on its card. In docs/OPERATIONS.md (Sessions) the first sentence of the second-window bullet now says when the goal lease is claimed, that it is never renewed, when the ownership step waits on it and that `aidlc report` checks generation and terminality, not the lease.';
+
+  test('the Sessions section says when the goal lease is claimed and what the ownership step and aidlc report do with it', () => {
+    assert.equal(LEASE.split(SENTENCE_BREAK).length, 1, 'sentence L is one sentence');
+    const text = sessions();
+    assert.equal(occurrences(text, LEASE), 1, 'Sessions states sentence L once');
+    assert.ok(!text.includes('A second window that runs `aidlc next` on a goal owned by another live session'), 'the old sentence is gone');
+  });
+
+  test('Running a goal states the wait on unresolved operations, and the CHANGELOG entry sits above T0-BOARD-OWNER-WAIT', () => {
+    const ops = lf(read('docs', 'OPERATIONS.md'));
+    const narration = ops.split('\n').find((line) => line.startsWith('Narration (card T0-NARRATION-QUOTE).'));
+    assert.ok(narration, 'the Narration paragraph is present');
+    assert.ok(ops.includes(`${narration}\n\n${N}\n\n`), 'paragraph N is its own paragraph directly after the Narration paragraph');
+    assert.equal(occurrences(ops, N), 1, 'paragraph N occurs once');
+    const changelog = lf(read('CHANGELOG.md'));
+    const board = changelog.split('\n').find((line) => line.startsWith('- T0-BOARD-OWNER-WAIT'));
+    assert.ok(board, 'the T0-BOARD-OWNER-WAIT entry is present');
+    assert.ok(changelog.includes(`${ENTRY}\n\n${board}`), 'the entry sits directly above T0-BOARD-OWNER-WAIT');
+    assert.equal(occurrences(changelog, ENTRY), 1, 'the entry occurs once');
+  });
+});
