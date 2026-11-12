@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-TEST-LOAD
 title: The process-tree tests of tests/infra/exec.test.ts calibrate a scale from the fixture's start-up and multiply main's timeout and bounds by it, equal to main at scale 1, and fail with a named precondition when the fixture was not ready before the timeout
-status: todo
+status: merged
 branch: T0-EXEC-TEST-LOAD
 worktree: D:\wt\AIDLC\T0-EXEC-TEST-LOAD
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: the planner's redesign of 2026-11-12 (a calibrated scale in place of the retry design of the first draft, which reached about 1100 lines); about 225 changed lines in tests/infra/exec.test.ts (about 105 of the calibration, scale, bounds, preconditions and child environment, 70 of the six changed tests and their titles, 50 of the two new tests), 2 in CHANGELOG.md and about 60 of attempt evidence: about 290; raised from 290 to 370 by the coordinator on 2026-11-12: the candidate cbf6c338 is 288 changed lines before the loaded-run evidence, the coordinator's verification block and the rows the planner asked for after the build report (calibrate's exit-code, signal, spawn-error and time-limit clauses each get a row through optional parameters of calibrate); raised from 370 to 430 by the coordinator on 2026-11-12 with R9: the candidate e5d8a151 is 345 changed lines, and the runner-handle test, its bound in `boundsAt`, three rows and the second set of loaded runs add about 60; raised from 430 to 500 by the coordinator on 2026-11-12 with R10 to R12: the candidate 2094b0eb is 370 changed lines, and the natural-end check with its rows, the helper-error assertion, the late pid wait, the root row of the time-limit test and their evidence add about 70 to 110; raised from 500 to 520 by the coordinator on 2026-11-12: the candidate 163a6305 is 485 changed lines after three repair rounds on the rows of R12, and the cleanup order of the fourth round and the coordinator's verification block add about 25; raised from 520 to 540 by the coordinator on 2026-11-12: the candidate 7be36d50 is 508 changed lines after the repair of R3 decision 1 (the runner-handle diagnostic removed, a section of evidence added), and the coordinator's second verification block adds about 10"
@@ -197,3 +197,131 @@ The fourth Codex pre-review confirmed the CHANGELOG entry against each of the se
 Cleanup order, as ruled. `end` never throws (it catches). (1) `end(sleeperPid)`: no file is read first. (2) `let rootPid: number | undefined; try { rootPid = readPid(rootFile); } catch { rootPid = undefined; }` then `end(rootPid)`. (3) `try { if (sleeperPid !== undefined) await assertGoneWithin(sleeperPid, 3000); } finally { if (rootPid !== undefined) await assertGoneWithin(rootPid, 3000); }`. A root whose pid file cannot be read cannot be ended by the row; it ends by itself after its 30 s, which the row states in a comment.
 
 This is the last pre-review round on R12. Four rounds found 5, 4, 2 and 2 points, each set narrower than the last and all in test rows the repairs added, none in the calibration or the seven tests; the next step is the coordinator's verification and the formal review.
+
+## Attempt evidence
+
+Seam commit 2d2b9ece (tests only), candidate code 76388b27 (feat 76b15d02, then 92430066 and 76388b27 for the calibrate failure rows; merged origin/main at f1cf1347). Measured on Windows 11 with other verifications running on the machine (no load script was started). Linux run: pending (coordinator).
+
+### RED (seam 2d2b9ece, `node --test --test-name-pattern "T0-EXEC-TEST-LOAD|calibrat" tests/infra/exec.test.ts`: 2 tests, 0 pass, 2 fail)
+- Acceptance 1 fails at `scaleFor(751)`: `AssertionError expected: 2 actual: 1`.
+- Acceptance 2 fails at the row asking for a number above 0: `expected: true actual: false` (calibrate returned 0).
+
+### Scale 1 against main (7ebc37ad), asserted by `deepEqual(boundsAt(1), ...)` in acceptance 1
+| Bound | main literal (line) | `boundsAt(1)` |
+|---|---|---|
+| timeoutMs | 1500 (`TIMEOUT_MS`, :229) | 1500 |
+| stayBoundMs | 6000 (:286, :297, :307) | 6000 |
+| exitCloseMs | `TIMEOUT_MS + 2000` = 3500 (:314) | 3500 |
+| noKillBoundMs | `TIMEOUT_MS + 2000 + 1000` = 4500 (:323) | 4500 |
+| slowKillBoundMs | `TIMEOUT_MS + 1500 + 2000 + 1000` = 6000 (:348) | 6000 |
+| goneWithinMs | 3000 (:291, :452) | 3000 |
+| syncBoundMs | 6000 (:444) | 6000 |
+
+### Revert table (acceptance 1 and 2 tests and the calibrate failure rows, code SHA 76388b27, each mutation restored, `git diff --stat` empty after): 32 of 35 red
+| Mutation | Rows | Result |
+|---|---|---|
+| scaleFor: `floor`; `round`; no lower clamp; no cap; cap 9; default 1 for a failed measurement; NaN/Infinity accepted; negative accepted | 8 | red x8 |
+| boundsAt: grace scaled; backstop scaled; slow-kill duration scaled; sync `min` removed; timeout, stay bound, goneWithin, no-kill slack not scaled | 8 | red x8 |
+| preconditions: sleeper `>=` for `>`; missing pid file passes; root `every` for `some` | 3 | red x3 |
+| fixtureEnv: case-sensitive filter; GIT_ kept; NODE_OPTIONS kept; ceiling without the realpath parent; state dir unset | 5 | red x5 |
+| calibrate: exit code not checked (row: exits 3); exit code and signal both unchecked (rows: exits 3, kills itself); pid file not required (row: exits 0 without it); spawn error not handled (row: no such command); time limit ignored (row: limit 5 s); sleeper not ended; ended not recorded; returns 0 for the measure | 8 | red x8 |
+| calibrate: signal unchecked alone | 1 | GREEN, by logic: `code === 0` already implies no signal (a child ended by a signal reports a null code) |
+| calibrate: the limit does not resolve | 1 | GREEN: the root ended at the limit then exits non-zero, which gives undefined |
+| calibrate: the root not ended at the limit | 1 | GREEN: the inline child's pid file holds the child's own pid, so ending the sleeper ends it |
+The wiring of the six tests to `boundsAt` stays reviewer-verified. The DoD run on a busy machine (SHA 92430066 run: scales 2, 2, 2, 3, 3, 2; an earlier run on 76b15d02: 6, 2, 2, 4, 4, 2, all 63 tests passing) exercised it above scale 1.
+Platform results of the failure rows (Windows 11, Node 22): a child ending itself with `process.kill(process.pid, 'SIGKILL')` reports exit code 1 and signal null; the child exiting 3 reports code 3; the missing command emits `error` (ENOENT); calibrate returned undefined in every row. Row (d) uses a 5 s limit and a 30 s sleep, not 200 ms: at 200 ms a loaded machine had not yet started the child, so no pid file existed to verify (one DoD run failed on `ended.length`).
+
+### Runs alone (`node --test tests/infra/exec.test.ts`)
+| Version | Run | tests / pass / fail | Failing title | Scales |
+|---|---|---|---|---|
+| main 7ebc37ad | 1, 2, 4, 5 | 61 / 61 / 0 | none | none |
+| main 7ebc37ad | 3 | 61 / 60 / 1 | acceptance 4: in exit mode (the root gone, the sleeper holding its output) ... | none |
+| candidate 76b15d02 | 1-5 | 63 / 63 / 0 each | none | all 6 diagnostics at scale 1 (221-512 ms) |
+| candidate 76b15d02 (the DoD run, machine busy) | DoD | 63 / 63 / 0 | none | 4180 ms scale 6; 1132 ms scale 2; 1228 ms scale 2; 2695 ms scale 4; 2586 ms scale 4; 1226 ms scale 2 |
+
+### Loaded runs (head df510671; load: `load.sh 24 150`, 24 node processes looping on `Date.now()` for 150 s, started with each run; 16 logical CPUs; machine about 35% busy before, one remote review running)
+| Version | Run | tests / pass / fail | Failing rows | Scales |
+|---|---|---|---|---|
+| main 7ebc37ad | 1 | 61 / 58 / 3 | acceptance 3 (sleeper pid not written before the timeout); exit case of acceptance 4; runSync acceptance 1 (returned after 9715 ms, past 6000) | none |
+| main 7ebc37ad | 2 | 61 / 59 / 2 | exit case of acceptance 4 (receipt after 6138 ms, past 6000); runSync (7967 ms) | none |
+| main 7ebc37ad | 3 | 61 / 57 / 4 | acceptance 3; exit case of acceptance 4 (receipt after 6778 ms); no-kill case of acceptance 5; runSync (8188 ms) | none |
+| candidate | 1 | 68 / 67 / 1 | runner-handle test only (non-goal, unchanged): `the runner process is still running 6514 ms after its start` | 7, 7, 6, 7, 7, 7 (4372-5231 ms) |
+| candidate | 2 | 68 / 67 / 1 | runner-handle test only: 6650 ms | 6, 5, 7, 6, 6, 6 (3727-4710 ms) |
+| candidate | 3 | 68 / 67 / 1 | runner-handle test only: 7532 ms | 6, 7, 6, 6, 7, 7 (3893-5090 ms) |
+The six calibrated tests passed in 3 of 3 loaded candidate runs; on main each loaded run failed 2 to 4 of them. The runner-handle test (T0-EXEC-TREE-KILL acceptance 5, 6500 ms counted from the start of its runner process, fixed 1500 ms fixture timeout) is the card's non-goal and unchanged; it passed in the 3 loaded main runs and failed in the 3 loaded candidate runs. No bound was widened.
+
+### DoD (`npm run typecheck && node --test tests/infra/exec.test.ts` on 76388b27): exit 0, tests 68, suites 15, pass 68, fail 0, cancelled 0, skipped 0; diagnostics 269, 299, 680, 348, 318, 439 ms, scale 1. The runs alone above were measured on 76b15d02 (63 tests).
+
+### CHANGELOG sentence against the code
+| Sentence | Code and test |
+|---|---|
+| scale in units of 750 ms, rounded up, 1 to 8; a failed calibration fails the test | `scaleFor`, acceptance 1 rows |
+| timeout and bounds main's times the scale; grace, backstop, 1500 ms kill, lower bound unchanged; sync bound never above the backstop | `boundsAt`, acceptance 1 `boundsAt(1)`, `(4)`, `(8)` |
+| `fixture not ready before the timeout at scale <n>` for exit (root alive at the kill call) and for acceptance 3, no-kill, runSync (sleeper pid file late) | `assertRootGone`, `assertSleeperExisted`, acceptance 1 message rows |
+
+### R9: the runner-handle test calibrates (RED 562cfa8d, code 2704ab12; merged origin/main at 1ab4fc22)
+RED (562cfa8d): acceptance 1 fails on `runnerExitBoundMs`: actual 0, expected 6500. Revert rows on 2704ab12, acceptance 1 red in each: the slack not scaled; the runner's 1500 ms replaced by the scaled `timeoutMs`; `TIMEOUT_GRACE_MS` scaled (3 of 3 red). DoD on 2704ab12 alone, `npm run typecheck && node --test tests/infra/exec.test.ts`: exit 0, tests 68, pass 68, fail 0, runner exited after 3647 ms at scale 1. The test also prints `runner exited after <n> ms` as a diagnostic, an addition to the card's list. The fixture's runner mode starts `stay`, whose root and sleeper live 60 000 ms (exec-tree.child.ts:24), above the 27 500 ms cap.
+
+Loaded runs on 2704ab12 under `load.sh 24 150` (same load and machine as above), after the table of e5d8a151:
+| Run | tests / pass / fail | Runner exited after (ms) | Runner test scale |
+|---|---|---|---|
+| file 1 | 68 / 68 / 0 | 6234 | 7 (4521 ms) |
+| file 2 | 68 / 68 / 0 | 6842 | 7 (4782 ms) |
+| file 3 | 68 / 68 / 0 | 5762 | 5 (3745 ms) |
+| runner test alone 1 | 1 / 1 / 0 | 5932 | 8 (5504 ms) |
+| runner test alone 2 | 1 / 1 / 0 | 6457 | 4 (2899 ms) |
+| runner test alone 3 | 1 / 1 / 0 | 5628 | 8 (5851 ms) |
+Bounds at those scales: 24 500 (scale 7), 18 500 (5), 27 500 (8), 15 500 (4); main's 6500 would have failed file 2 (6842 ms). The six other calibrated tests passed in all three file runs (scales 5 to 8).
+
+### Repair round after the pre-review of 2094b0eb (merged origin/main at 76db37f6; RED bc5e9419, code 789d7fcc)
+RED (bc5e9419, `calibrated scale and the scaled|each failure of the spawned`: 8 tests, 6 pass, 2 fail): acceptance 1 fails on the `assertKilledBeforeNaturalEnd` rows (the seam passes everything); the late-sleeper row of acceptance 2 fails (`ended` empty). The own-pid root row passes on the code of 2094b0eb, as it should: it fails only under the revert of `end(child.pid)` (row below).
+
+Revert rows on scratch copies (`tests/infra/exec.scratch.test.ts`, deleted after; the worktree never mutated):
+| Revert | Row that fails |
+|---|---|
+| `>` for `>=` in `assertKilledBeforeNaturalEnd` | acceptance 1, the 60 000 row: red |
+| the 1000 ms margin removed | acceptance 1: red |
+| `end(child.pid)` removed from the time-limit path | acceptance 2, own-pid root row: red |
+| the late pid wait removed | acceptance 2, late-sleeper row: red |
+| `assertKilledBeforeNaturalEnd` call removed from acceptance 3 | scratch copy where acceptance 3 uses `createRun(() => {})` (kills nothing) and the death poll is 70 000 ms: with the call the test fails with `the sleeper was gone 60025 ms after it wrote its pid file, within 1000 ms of its natural end after 60000 ms: the death check cannot tell a kill from that end`; without it the test passes: red with the call, green without, so the call is what catches it |
+| the same call removed from the runSync test | NOT SHOWN: the helper ends the sleeper there, and a run where the sleeper ends by itself needs a change to src/ or the fixture |
+| the stderr assertion of R11 removed | scratch copy where the receipt is replaced by one with stderr `[tree helper error] exit null (backstop)` (fabricated, not a real backstop run): with the assertion `runSync returned the helper's backstop receipt: ...` fails; without it the test passes |
+| `assertRootGone` moved back below the receipt assertions in the exit case | NOT SHOWN: at scale 1 the receipt assertions pass first, so no run distinguishes the order |
+
+DoD on 789d7fcc alone: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, suites 15, pass 70, fail 0, cancelled 0, skipped 0.
+
+Loaded runs on 789d7fcc under `load.sh 24 150` (same machine and load), each 70 / 70 / 0:
+| Run | Runner exited after | Scales of the seven calibrated tests, in file order (calibration ms) |
+|---|---|---|
+| 1 | 5939 ms | 6, 7, 6, 6, 5, 7, 5 (3174-4637) |
+| 2 | 5543 ms | 7, 5, 6, 6, 6, 6, 6 (3391-4773) |
+| 3 | 5609 ms | 6, 6, 6, 5, 8, 6, 6 (3656-5302) |
+
+### Repair round after the fourth pre-review (of 163a6305; merged origin/main at 366e60ec; code 64447fcd)
+- Late-sleeper row: its own spawn of the sleeper has `child.once('error', (e) => (spawnError = e))`, and the row asserts `spawnError === undefined` first after `calibrate` returned, inside the `try`.
+- Cleanup in both time-limit rows in the ruled order: `end(sleeperPid)` first with no file read before it (late-sleeper row only); then the root pid read in its own `try`/`catch` and `end(rootPid)`; then the waits, the root's in a nested `finally` so it runs when the sleeper's wait throws. A comment states that a root whose pid file cannot be read ends by itself after its 30 s. The earlier helper `endRecorded` is gone.
+- Reverts on scratch copies, recorded pids probed with `process.kill(pid, 0)` afterwards: "late pid wait removed": red (late-sleeper row), pids 80324, 95032, 101164, none alive; "end(child.pid) removed": red (own-pid root row and late-sleeper row), pids 45520, 93040, 75176, none alive; the root's pid read made unreadable in the late-sleeper row's `finally`: the row still passes and its sleeper (86832) is gone (the other recorded pid, 94396, is the own-pid root row's, also gone); the root of that row stays up to its 30 s, as the comment says.
+- DoD alone on 64447fcd: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, suites 15, pass 70, fail 0, cancelled 0, skipped 0. No loaded run this round: the timing of the rows is unchanged (the loaded runs of ef959e5e stand for the timing).
+
+Coordinator verification:
+- At 80124911, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/exec.test.ts): tests 70, pass 70, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1814 # pass 1803 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+### Repair after R3 decision 1 (code fd323493)
+Finding: `t.diagnostic('runner exited after <n> ms')` in the runner-handle test is an edit beyond R9. Removed; nothing fed only that call (`elapsedMs` is used by the two assertions that follow). The test now differs from main in what R9 names: `async (t)`, `calibratedBounds(t)`, `b.runnerExitBoundMs` in place of `boundMs`, and the comment above the bound. `git diff origin/main` has no hunk inside the doc test (main :415-428), the overflow test or the timeout refusal tests (main :663-730); the hunks end at main line 455. The "runner exited after" figures in the earlier tables were printed by that diagnostic at the commits named there (2704ab12 to 64447fcd) and are kept as measured; the final code prints no such line. DoD on fd323493: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, pass 70, fail 0.
+
+Coordinator verification:
+- At 468549fd, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/exec.test.ts): tests 70, pass 70, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1814 # pass 1803 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+The review record of this card, for the reader of the audit: four Codex pre-review rounds before the first formal decision (5, 4, 2 and 2 points, all ruled above: R9 to R12 and the cleanup order), then R3 decision 1, which blocked on one finding, and decision 2 with the second pass, which passed.
+
+The block of decision 1 was the planner's omission. The implementer had added one `t.diagnostic` line to the runner-handle test to print the elapsed time for the loaded-run evidence, disclosed it in its report and asked whether to remove it; the planner did not rule before the review, and the card forbids an edit of that test beyond R9. The repair removed the line. Since then the coordinator rules on every disclosed deviation in the card before a formal review (first done for T0-HEALTH-OP-SIGNALS).
+
+During the repair rounds the implementer ended every node.exe process on the machine once, while removing its own load processes, which ended the ship of another card during its CI wait (closing note of T0-OP-TIMESTAMP-NOW-2). The implementer brief now forbids ending processes by name or image.
+
+What the loaded runs showed, in one place: with 24 CPU-bound processes on 16 logical CPUs, main failed 2 to 4 tests of this file in each of three runs; the candidate passed all 70 in three runs at scales 5 to 8.
