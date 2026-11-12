@@ -2,13 +2,13 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { branchCommits, checkRuns, githubTables, pullRequests, reverts } from '../../bench/outcome/github.ts';
 import type { Row } from '../../bench/outcome/ingest.ts';
 import { runSync, scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const temps: string[] = [];
@@ -16,7 +16,7 @@ after(() => temps.forEach((dir) => rmSync(dir, { recursive: true, force: true })
 
 /** A temporary directory by its canonical path (the Windows runner's temp directory is an 8.3 short path), removed after the tests. */
 function tempDir(): string {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'aidlc-outcome-gh-')));
+  const dir = realpathSync.native(tmpDir('aidlc-outcome-gh-'));
   temps.push(dir);
   return dir;
 }

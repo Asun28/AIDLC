@@ -1,10 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Journal } from '../../src/state/journal.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 // Card T0-APPROVER-IDENTITY: an approval recorded without --by names the git identity of the repository.
 const root = path.resolve(import.meta.dirname, '..', '..');
@@ -31,7 +31,7 @@ interface Fixture {
  * global config pointed at an empty file and the system config switched off.
  */
 function fixture(): Fixture {
-  const tmp = mkdtempSync(path.join(tmpdir(), 'aidlc-approver-'));
+  const tmp = tmpDir('aidlc-approver-');
   const repo = path.join(tmp, 'repo');
   const stateDir = path.join(tmp, 'state');
   const emptyGlobal = path.join(tmp, 'empty.gitconfig');

@@ -1,12 +1,12 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { mkdirSync, writeFileSync, symlinkSync, mkdtempSync, rmSync } from 'node:fs';
+import fs, { mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import childProcess, { execFileSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { loadContextPack } from '../../src/loop/context-pack.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 test('a Windows short-name repository root reads the same plan as its long path', { skip: process.platform !== 'win32' }, (t) => {
   const fx = makeFixture();
@@ -45,7 +45,7 @@ test('run-card carries the referenced plan section and matching lessons as JSON 
 
 test('missing plan files, anchors and lesson files are explicit and outside references are refused', () => {
   const fx = makeFixture();
-  const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-pack-outside-'));
+  const outside = tmpDir('aidlc-pack-outside-');
   try {
     writeCard(fx, { id: 'T1-PACK', title: 'project context' });
     const card = { ...fx.card('T1-PACK'), plan_ref: 'plans/missing.md#section' };
@@ -103,7 +103,7 @@ test('controller reports missing source data and refuses an outside plan referen
 
 test('a symlinked root works and a source-link swap after resolution never redirects the read', () => {
   const fx = makeFixture();
-  const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-pack-swap-'));
+  const outside = tmpDir('aidlc-pack-swap-');
   const linkType = process.platform === 'win32' ? 'junction' : 'dir';
   try {
     writeCard(fx, { id: 'T1-PACK', title: 'project context' });
@@ -195,7 +195,7 @@ test('Windows helper failures retain safe diagnostics without subprocess output'
 test('a parent-directory swap after resolution is refused before outside content is read', () => {
   for (const source of ['plans/plan.md', 'docs/LESSONS.md']) {
     const fx = makeFixture();
-    const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-pack-parent-swap-'));
+    const outside = tmpDir('aidlc-pack-parent-swap-');
     try {
       writeCard(fx, { id: 'T1-PACK', title: 'project context' });
       const parent = path.join(fx.tmp, path.dirname(source));

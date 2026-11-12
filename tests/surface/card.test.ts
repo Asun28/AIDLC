@@ -1,9 +1,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { computeTier, loadCardRegistry, MAX_CODE_CARD_BUDGET, parseCardText, renderCard, validateRegistry, type CardFinding } from '../../src/artifacts/card.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 function templateCard(overrides: Partial<Record<string, string>> = {}, extraFm = ''): string {
   const fm: Record<string, string> = {
@@ -164,7 +164,7 @@ test('computeTier: S wins, all Tier-0 => 0, else 1, empty TierS list => S, froze
 });
 
 test('registry: dangling depends_on, parallel overlap, computed tier and declared-lower', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const dir = tmpDir('aidlc-cards-');
   const tasks = path.join(dir, 'tasks');
   const archive = path.join(dir, 'archive');
   mkdirSync(tasks);
@@ -195,7 +195,7 @@ test('registry: dangling depends_on, parallel overlap, computed tier and declare
 });
 
 test('registry: a card id carried by two files is a block on the active card, and no card overwrites the findings of another', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const dir = tmpDir('aidlc-cards-');
   const tasks = path.join(dir, 'tasks');
   const archive = path.join(dir, 'archive');
   mkdirSync(tasks);
@@ -451,7 +451,7 @@ describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
 });
 
 test('R3 decision 3: a card is archived by the directory it was read from, never by a path prefix, so a duplicate id blocks in every directory layout', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const root = tmpDir('aidlc-cards-');
   const card = (dir: string, extra: Record<string, string> = {}) => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', ...extra }), 'utf8');
@@ -477,7 +477,7 @@ test('R3 decision 3: a card is archived by the directory it was read from, never
 });
 
 test('T0-AUDIT-FIXES: a registry without the archive record reads a card as archived only when its file lies inside the archive directory', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const root = tmpDir('aidlc-cards-');
   const tasks = path.join(root, 'specs', 'tasks-active');
   const archive = path.join(root, 'specs', 'tasks');
   for (const [dir, extra] of [[tasks, { depends_on: '\n  - T1-MISSING' }], [archive, { status: 'merged' }]] as Array<[string, Record<string, string>]>) {

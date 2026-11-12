@@ -1,11 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
+import { readFileSync, rmSync } from 'node:fs';
 import { hookNamesFor } from '../../src/hooks/entry.ts';
 import { HOOK_NAMES, type HookName } from '../../src/hooks/index.ts';
 import { initProject } from '../../src/scaffold/init.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const sentence = 'aidlc is not an implementation of the AWS AI-DLC methodology; it is a driver-agnostic bounded-autonomy control plane for coding agents.';
@@ -58,7 +57,7 @@ const SETUP_SENTENCE = '`--no-hooks` writes the same files and the same `permiss
 const CHANGELOG_ENTRY = '- T1-INIT-SURFACE: `aidlc init --no-hooks` writes the same files and the same `permissions.deny` list, merges no hook entry into `.claude/settings.json` and leaves a hook already in the file as it is. The README section `What aidlc init writes` lists every path init writes and, for each guard, the event, what it reads and when it blocks. `production-gate`, `protect-tests` and `secrets-guard` print the approval reference, the fix task marker and the file path as JSON strings.';
 
 test('T1-INIT-SURFACE acceptance 2: the README lists every path aidlc init writes and no other [R2]', () => {
-  const target = mkdtempSync(path.join(tmpdir(), 'aidlc-readme-'));
+  const target = tmpDir('aidlc-readme-');
   try {
     const report = initProject({ target });
     const listed = initSection().split('```text\n')[1]?.split('\n```')[0]?.split('\n') ?? [];

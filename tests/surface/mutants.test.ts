@@ -3,14 +3,14 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MUTATION_OPERATORS, MutantPending, MutantReport, type MutantResult } from '../../src/core/types.ts';
 import { runSync, scriptedRunner, type ExecOptions, type ExecReceipt, type Runner, type SyncRunner } from '../../src/probes/exec.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, mutantsMarkerPath, mutantsReportPath, restoreMutants, runMutants, type MutantsDeps, type RunMutantsInput } from '../../src/review/mutants.ts';
 import { goalForCards, makeFixture, writeCard } from '../scenarios/_harness.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -64,7 +64,7 @@ function buildTemplate(dir: string): void {
 
 let template = '';
 before(() => {
-  template = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-mutants-template-')));
+  template = realpathSync.native(tmpDir('aidlc-mutants-template-'));
   buildTemplate(template);
 });
 after(() => rmSync(template, { recursive: true, force: true }));
@@ -81,7 +81,7 @@ interface Repo {
 }
 
 function repo(): Repo {
-  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-mutants-')));
+  const dir = realpathSync.native(tmpDir('aidlc-mutants-'));
   const worktree = path.join(dir, 'wt');
   cpSync(template, worktree, { recursive: true });
   return {
@@ -166,7 +166,7 @@ function interrupted(r: Repo): string {
 }
 
 const SYMLINK_OK = (() => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-link-'));
+  const dir = tmpDir('aidlc-link-');
   try {
     symlinkSync(path.join(dir, 'x'), path.join(dir, 'y'));
     return true;
@@ -925,7 +925,7 @@ describe('aidlc card mutants through the CLI (card T1-VERIFY-MUTANTS)', () => {
   /** The harness fixture as the main checkout, a goal whose card run records a temp git repository as its worktree. */
   function cliFixture() {
     const fx = makeFixture();
-    const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-mutants-cli-')));
+    const dir = realpathSync.native(tmpDir('aidlc-mutants-cli-'));
     git(dir, 'init', '-q', '-b', 'main');
     git(dir, 'config', 'core.autocrlf', 'false');
     write(dir, '.gitignore', '.review/\n');

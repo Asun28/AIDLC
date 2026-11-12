@@ -7,9 +7,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { mock, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,7 +16,7 @@ import { ReviewBenchCase, ReviewFinding, ReviewLedger, type CardRun } from '../.
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { exportBenchCases, formatBenchExport, loadBenchCases, type BenchExportOptions } from '../../src/review/bench.ts';
 import { createExclusive } from '../../src/state/store.ts';
-import { makeCardRun, makeGoal } from '../infra/helpers.ts';
+import { makeCardRun, makeGoal, tmpDir } from '../infra/helpers.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -58,7 +57,7 @@ interface Repo {
 }
 
 function repo(): Repo {
-  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-bench-export-')));
+  const dir = realpathSync.native(tmpDir('aidlc-bench-export-'));
   const root = path.join(dir, 'repo');
   mkdirSync(path.join(root, 'src'), { recursive: true });
   git(root, ['init', '-q', '-b', 'main']);

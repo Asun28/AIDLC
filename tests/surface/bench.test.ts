@@ -2,13 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import YAML from 'yaml';
 import { compare, GATED, median, ratchet, type Baseline, type Measured, type Metric } from '../../bench/ratchet.ts';
 import { benchEnv, JOURNEYS, runJourney, timeJourney } from '../../bench/journeys.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const counterUrl = pathToFileURL(path.join(root, 'bench', 'counter.ts')).href;
@@ -26,7 +26,7 @@ function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
 }
 
 function withTemp<T>(fn: (dir: string) => T): T {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'aidlc-bench-test-'));
+  const dir = tmpDir('aidlc-bench-test-');
   try {
     return fn(dir);
   } finally {

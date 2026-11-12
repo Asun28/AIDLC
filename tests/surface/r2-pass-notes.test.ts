@@ -1,11 +1,11 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import { tmpdir } from 'node:os';
 import type { Card } from '../../src/core/types.ts';
 import { PERSPECTIVES, buildReviewPrompt, finalizeReview } from '../../src/review/pre-review.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 /** The advisory-tag line every review prompt already carries; the two lines of this card follow it. */
@@ -30,7 +30,7 @@ const RETAINED: readonly string[] = [
 
 /** One angle's stdout (a reasoning section, the marker, the answer) read by the unchanged reader. */
 function readAnswer(answer: string) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-pass-notes-'));
+  const dir = tmpDir('aidlc-pass-notes-');
   try {
     const stdout = `=== reasoning ===\nThe review.\n${MARKER}\n${answer}\n`;
     const at = '2026-09-26T00:00:00.000Z';

@@ -3,14 +3,14 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
-import os from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 import { resolveRepoIdentity } from '../../src/state/paths.ts';
 import { writeTables, type Row } from '../../bench/outcome/ingest.ts';
 import { attribute, claudeUsage, codexUsage, priceOf, reviewLogUsage, type Prices } from '../../bench/outcome/usage.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const X = 'x-private-text';
@@ -18,7 +18,7 @@ const temps: string[] = [];
 after(() => temps.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
 function tempDir(): string {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'aidlc-usage-')));
+  const dir = realpathSync.native(tmpDir('aidlc-usage-'));
   temps.push(dir);
   return dir;
 }

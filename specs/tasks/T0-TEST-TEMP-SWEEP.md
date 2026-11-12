@@ -224,3 +224,310 @@ The sixth Codex pre-review, aimed at robustness, ran the 45 rows, 39 further syn
 Ruling: accepted. The walk keeps its own stack of nodes and calls no function per level, and the reports are ordered by file and position afterwards so that their order is the source order as before. The nearest enclosing function is found through parent pointers, which is a loop already. One row: the deep expression with one occurrence after it is scanned and reports that occurrence at its line. The sentence of acceptance 2 is narrowed to what is tested: the syntax forms of the robustness row and depth. A file too large to hold in memory is not a case of tests/.
 
 Revert that must fail the row: the recursive walk (it throws `RangeError` on the deep row). The order of the reports is covered by the rows that hold more than one occurrence.
+
+## Attempt evidence
+
+Implementer attempt on branch T0-TEST-TEMP-SWEEP from ebd2892b. Commits: 3d3e9d31 (RED: tests/surface/test-temp.test.ts alone), 733a8434 (R1: the 85 sites), a2b45c16 (the scan counts lines by LF; see RED), 928b23c9 (a local of the scan renamed from `key` to `prop`), 676fca5d (evidence), cc2a1aa3 (merge of origin/main at a087161e; conflict in this card only, main's rulings placed above this section), 61a51d81 (the two rows of the planner rulings), then this evidence commit, which changes only this card.
+
+Sweep after the merge (cc2a1aa3, actual run): acceptance 1 passes (pass 2, fail 0 for the file), and `git grep -n "mkdtemp[A-Za-z]*(" -- tests` outside the four helpers and tests/surface/test-temp.test.ts finds 0 lines: no site came in with main.
+
+Sweep before any edit (ebd2892b, actual run): `git grep -n "mkdtemp[A-Za-z]*(" -- tests` gives 90 lines; minus the four helpers of R2 and the string at tests/surface/eval-test-temp.test.ts:56, 85 calls in 47 files, as the planner note says. After 928b23c9 (actual run): the same grep finds only the four helpers, that string and the table strings of tests/surface/test-temp.test.ts. `git grep -c "mkdtemp" -- tests` names five files: the files of the four helpers (their own calls, imports, test names and the string above) and tests/surface/test-temp.test.ts, where every occurrence is inside a string literal; 0 occurrences elsewhere.
+
+### RED (3d3e9d31, actual run, `node --test tests/surface/test-temp.test.ts`)
+- Acceptance 1: fails (exit 1, pass 1, fail 1) with the AssertionError message `85 sites outside the four helpers:` followed by one line per site, `<file>:<line> [<enclosing function>] call of mkdtempSync`.
+- The RED scan counted lines as the compiler does, which also ends a line at U+2028 and U+2029; tests/infra/github-ship.test.ts:533 holds both in a string, so its second site was reported as :1393 where git grep shows :1391. a2b45c16 counts lines by LF. Actual run on 928b23c9 with the 47 files restored to 3d3e9d31: 85 sites, and their file:line list equals the git grep list of the sweep line for line.
+- Acceptance 2: passes on 3d3e9d31 (the scan exists in the RED commit; the card lets it pass on its own rows). Its rows are shown to bite by the revert table.
+
+### Migrated sites (928b23c9, current line, enclosing function): 85 in 47 files
+- tests/core/ci-policy.test.ts: 241 [callback of test], 257 [callback of test], 271 [callback of test], 607 [callback of test]
+- tests/core/journal-event-types.test.ts: 25 [written]
+- tests/infra/base-sync.test.ts: 34 [cloneOfOrigin], 214 [promisorClone]
+- tests/infra/exec.test.ts: 518 [raceFixture], 664 [callback of it], 742 [callback of it], 975 [callback of it], 1013 [callback of it]
+- tests/infra/git.test.ts: 155 [callback of it]
+- tests/infra/github-ship-merge-refused.test.ts: 35 [refusedShip]
+- tests/infra/github-ship.test.ts: 33 [fixture], 1391 [callback of test]
+- tests/infra/init.test.ts: 25 [callback of test], 53 [callback of test], 78 [callback of test], 94 [upgrade], 129 [callback of test], 217 [tempTarget]
+- tests/scenarios/board-watch.test.ts: 43 [fixture]
+- tests/scenarios/candidate-withdraw.test.ts: 385 [callback of test]
+- tests/scenarios/context-pack.test.ts: 48 [callback of test], 106 [callback of test], 198 [callback of test]
+- tests/scenarios/evidence-id.test.ts: 26 [tempDir]
+- tests/scenarios/manifest-lock.test.ts: 29 [tempDir]
+- tests/scenarios/mutants-review.test.ts: 178 [callback of withSetup], 191 [callback of withSetup], 280 [callback of withSetup], 296 [callback of withSetup]
+- tests/scenarios/pre-existing.test.ts: 97 [callback of test]
+- tests/scenarios/t1-plan.test.ts: 118 [callback of test]
+- tests/surface/approver.test.ts: 34 [fixture]
+- tests/surface/bench.test.ts: 29 [withTemp]
+- tests/surface/bounds.test.ts: 42 [callback of test]
+- tests/surface/card.test.ts: 167 [callback of test], 198 [callback of test], 454 [callback of test], 480 [callback of test]
+- tests/surface/config.test.ts: 310 [callback of test], 349 [inCheckout]
+- tests/surface/fix-task-clear.test.ts: 22 [repo]
+- tests/surface/hook-git-prefetch.test.ts: 27 [withTemp]
+- tests/surface/hook-lazy.test.ts: 34 [withTemp]
+- tests/surface/hook-name.test.ts: 17 [tempDir]
+- tests/surface/incident.test.ts: 52 [callback of test], 75 [callback of test], 92 [callback of test], 100 [callback of test]
+- tests/surface/init-base-ci.test.ts: 27 [tempDir]
+- tests/surface/init-no-package.test.ts: 31 [tempDir]
+- tests/surface/lease-heartbeat.test.ts: 31 [withState]
+- tests/surface/lesson-match.test.ts: 16 [withFile], 96 [repo], 218 [callback of test]
+- tests/surface/lessons.test.ts: 16 [dir], 158 [repoAtClose]
+- tests/surface/manifest.test.ts: 11 [callback of test], 36 [callback of test]
+- tests/surface/mutants.test.ts: 67 [callback of before], 84 [repo], 169 [SYMLINK_OK (immediately invoked)], 928 [cliFixture]
+- tests/surface/ops-intent.test.ts: 19 [repo]
+- tests/surface/outcome-github.test.ts: 19 [tempDir]
+- tests/surface/outcome-ingest.test.ts: 17 [tempDir]
+- tests/surface/outcome-usage.test.ts: 21 [tempDir]
+- tests/surface/ps-guard-read.test.ts: 27 [context]
+- tests/surface/ps-guard-wire.test.ts: 26 [tempDir]
+- tests/surface/r2-pass-notes.test.ts: 33 [readAnswer]
+- tests/surface/readme.test.ts: 60 [callback of test]
+- tests/surface/review-bench-export.test.ts: 60 [repo]
+- tests/surface/review-bench.test.ts: 42 [fixture], 148 [callback of test], 158 [callback of test], 425 [callback of test], 774 [callback of test]
+- tests/surface/reviewer-env.child.ts: 22 [tempDir]
+- tests/surface/reviewer-env.test.ts: 16 [tempDir]
+- tests/surface/security-check.test.ts: 20 [callback of test]
+- tests/surface/stats.test.ts: 451 [callback of test], 578 [callback of test]
+
+Lines move by -1, 0 or +1 against 3d3e9d31, from the import lines removed (`node:os`, and `path` in readme.test.ts) and the helpers import line added.
+`callback of <name>` is a function passed to that call; `SYMLINK_OK (immediately invoked)` is the module-scope IIFE the sweep field calls [module scope].
+
+### Revert table of the resolving scan (superseded)
+The 40-row revert table of the scan that resolved bindings (S1-S19, P1-P6, B1-B2, D1-D8 and the 5 migration rows) is in this card at 5f43098d. Its scan rows no longer apply: the code they mutated is gone (section "The scan by name"). The 5 migration rows stay valid and are carried into the table of that section. The `finally` order of tests/infra/exec.test.ts (processes ended before `rmSync` of their directory, the `finally` blocks at :682, :763, :993, :1020) has no revert row: no test observes that order, and 733a8434 changes only the `mkdtempSync` line of each of those tests (`git diff 3d3e9d31 733a8434 -- tests/infra/exec.test.ts`: 6 lines, the import and the 5 sites).
+
+### Acceptance 3
+`git diff -U0 3d3e9d31 733a8434`, every changed line outside tests/surface/test-temp.test.ts is an import line or a site line (checked by filtering the diff: no other `+`/`-` line). No assertion, test name or test call changes, so no test count changes.
+
+### DoD (actual runs, the card's `dod_command` from the worktree root)
+- 61a51d81 (final test code): `npm run typecheck` exit 0, then `node --test` over the 48 files: tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0.
+- 733a8434, a2b45c16 and 928b23c9: the same counts, exit 0. The two ruling rows are inside the existing acceptance 2 test, so the test count stays 1013.
+- Temporary directory (`os.tmpdir()`, entries starting `aidlc-`), each run: 72480 before, 72480 after, 0 new and 0 gone entries (`comm` of the two listings); no `could not remove` line in either output.
+
+### Full suite, R3 / acceptance 4 (733a8434, actual run, `npm test`, nothing else started beside it)
+tests 3462, suites 247, pass 3440, fail 0, cancelled 0, skipped 22, duration_ms 380702, exit 0. No file failed, so no file was rerun alone. Raw output kept by the implementer outside the repository (4019 lines). This full run of R3 was on 733a8434, before the two scan commits (a2b45c16, 928b23c9), the merge of main (cc2a1aa3) and the two rows (61a51d81); it was not rerun. Changed since 733a8434: tests/surface/test-temp.test.ts, this card, and main's files of the merge (.claude/skills/verify-card-run-writes/SKILL.md, CHANGELOG.md, docs/ARCHITECTURE.md, docs/LESSONS.md, docs/OPERATIONS.md, specs/tasks/T0-ATTEMPT-NUMBER.md, specs/tasks/T0-AUDIT-BINDING.md, src/core/effort.ts, src/loop/card-runner.ts, tests/core/effort.test.ts, tests/scenarios/dispute-running-attempt.test.ts). The DoD on 61a51d81 runs tests/surface/test-temp.test.ts.
+
+### Repair round after the pre-review of 0b22f3d1
+Commits: 869c7e76 (merge of origin/main at 99fbde2d; conflict in this card only, main's rulings placed above this section), 290cffcc (RED: nine rows), c51ad6fd (GREEN: the scan), af94e449 (the nested-helper row corrected, below), then this evidence commit, which changes only this card. R1 and the 47 files are unchanged in this round.
+
+The table test now writes each row in a directory of its own and compares the reports in row order, so a helper's file can appear in more than one row; the expectations of the earlier rows are unchanged.
+
+RED (290cffcc, actual run, `node --test tests/surface/test-temp.test.ts`: acceptance 1 pass, acceptance 2 fail):
+
+The rows of this round and whether each failed before its fix: the table in this card at 5f43098d. Superseded by the table of acceptance 2 as restated (section "The scan by name").
+
+GREEN (c51ad6fd): a binding element's initializer is read (only its name and property name declare); destructuring of an fs object resolves a computed name given as a string and follows a nested pattern under `promises`; `await import('<fs module>')` is an fs object as `require` is; parentheses and non-null assertions around a callee are looked through; a type-only import declaration or specifier binds nothing. No data flow and no scope analysis were added (the non-goals).
+
+Correction (af94e449): the RED commit named the nested function `tmpDir`, which is not the helper allowed at command-lines.test.ts, so the revert of `fn.parent === sf` left the table green (actual run on c51ad6fd: exit 0, fail 0). The row now names it `tempDir`, the helper of that file; the revert below is red.
+
+Reverts of this round: in the superseded table (this card at 5f43098d); see "The scan by name".
+
+The 85 pairs (c51ad6fd, actual run): a scratch copy of `tests/` and `src/` at c51ad6fd under the gitignored `_local/`, with the 47 files restored to 3d3e9d31, gives 85 sites in acceptance 1, the same 85 file and line pairs as the `git grep` sweep and the same report lines as the scan of 928b23c9. Acceptance 1 passes on the real tree.
+
+DoD (af94e449, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69479 before, 69290 after; 0 new entries, 189 gone, which the DoD does not remove (another process cleaned the temporary directory during the run).
+
+Full suite: not run in this round; the coordinator runs it on the final head.
+
+### Repair after R3 decision 1
+Commits: bf2a0d91 (merge of origin/main at bf5c5909), d08846a3 (RED), 155cfcc9 (GREEN and two rows for contract lines), 4a9aa4e0 (a row for an initializer under an assertion), 9c21f6d6 (merge of origin/main at ce4d4054), d554af8b (the rulings during the repair: the local outer-expression function, the type-only exclusion removed), then this evidence commit, which changes only this card. Every merge conflicted in this card only. The 47 files of R1 are unchanged.
+
+RED (d08846a3, actual run): acceptance 1 pass, acceptance 2 fail. Rows of the rulings and whether each failed before the fix:
+
+The rows of the rulings and whether each failed before the fix: the table in this card at 5f43098d. Superseded, as below.
+
+Rows added for lines of the closed contract that had none, and whether each failed on the scan of d08846a3 (the last three measured on a scratch copy that runs the scan of d08846a3 against the final rows):
+
+The rows added for lines of the closed contract and whether each failed before: the table in this card at 5f43098d. The closed contract is superseded by R2 as restated.
+
+GREEN (155cfcc9, then d554af8b): a local function removes parentheses, `as`, angle-bracket and non-null assertions and `satisfies` through `ts.isParenthesizedExpression`, `ts.isAsExpression`, `ts.isTypeAssertionExpression`, `ts.isNonNullExpression` and `ts.isSatisfiesExpression`, at the object of a property or element access, at the operand of `await`, at an initializer and at a callee; `default` of an fs module object is the module at the import specifier, in a binding pattern (also nested) and as `.default` or `['default']`; `import x = require(m)` binds the module, as before; an identifier for which `ts.isPartOfTypeNode` is true, or inside a type query, is skipped. The exclusion of type-only imports is removed (redundant with the type-position rule, by the rulings during the repair). 155cfcc9 called `ts.skipOuterExpressions` through a cast; d554af8b replaces it.
+
+Public API: every `ts.` name the scan uses at d554af8b is declared in node_modules/typescript/lib/typescript.d.ts (checked name by name). The remaining `as` casts narrow to public types only: `fn as ts.Expression`, `node as ts.PropertyAccessExpression | ts.ElementAccessExpression` (three, after `memberName` has matched one of the two), `fn as ts.SignatureDeclaration`, and `readdirSync(...) as string[]`.
+
+The 85 pairs (d554af8b, actual run): on a scratch copy of `tests/` and `src/` under the gitignored `_local/`, with the 47 files at 3d3e9d31, acceptance 1 reports 85 sites with the same file and line pairs as the `git grep` sweep and the same report lines as the scan of 928b23c9. Acceptance 1 passes on the real tree.
+
+DoD (d554af8b, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Reverts of this round: in the superseded table (this card at 5f43098d); see "The scan by name".
+
+### The scan by name
+Commits: f2ae95fd (merge of origin/main at f7b82925; conflict in this card only), 26272aaa (RED: the table of acceptance 2 as restated), 15857cdf (GREEN: the scan by name), then this evidence commit, which changes only this card. The 47 files of R1 are unchanged.
+
+RED (26272aaa, actual run): acceptance 1 pass, acceptance 2 fail. Row by row on the scan of 26272aaa (a scratch copy under the gitignored `_local/` that runs that scan against the rows): 15 of 31 rows red before, namely named, aliased, default (only its function label: `callback of test` became `<anonymous>`), fs-promises, destructure, destructure-rename, disposable, reference, wrappers, escape, local, members, type-query, elsewhere and separators; the other 16 pass on both scans.
+
+GREEN (15857cdf): one walk over every node of each file. An identifier whose text (after escapes) is one of the three names, or a string or substitution-free template literal equal to one, is an occurrence. It is exempt when its nearest enclosing function is one of the four helpers declared at the top level of its file, or when it is the specifier of an import declaration at the top level of one of those four files. The name of a function belongs to the scope around it. No binding table and no resolution remain; the three names are built from parts, and the last row asserts that the scan reports nothing for tests/surface/test-temp.test.ts itself. Public compiler API only, no cast to a function absent from typescript.d.ts. The line-feed line count and the report format stay; `call` marks an occurrence that is the callee of a call, directly or as the member name of the callee, and `reference` any other occurrence.
+
+Function names follow R2 as restated: a function's own name (for a function expression or arrow function, also the variable or property it initializes); `<constant> (immediately invoked)` when the function, inside the one pair of parentheses an arrow function needs and no other wrapper, is the callee of the call that initializes a `const`; `<anonymous>` otherwise. A callback passed to a call, which the earlier scan named `callback of <callee>`, is now `<anonymous>`.
+
+Size of the scan (the lines of tests/surface/test-temp.test.ts before the acceptance 1 test): 149 at 26272aaa, 76 at 15857cdf.
+
+Real tree (15857cdf, actual run): acceptance 1 passes, zero reports. Scratch copy of `tests/` and `src/` under `_local/` with the 47 files at 3d3e9d31 (actual run): 132 reports, against the 85 call sites of the resolving scan. All 85 earlier file and line pairs are among them; the other 47 are the import specifier of `mkdtempSync` in each of the 47 files (each `[module scope] reference of mkdtempSync`).
+
+Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). The 19 single mutations and the reverts of the earlier rounds no longer apply: the code they mutated (binding tables, resolution, outer-expression handling) is gone.
+
+The table of N1-N14 as run on 15857cdf (19/19 with the 5 migration rows) is in this card at 8b0ec20e; N1-N14 are rerun on the final scan in the table of the next section.
+
+DoD (15857cdf, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Full suite: not run by the implementer in this round; the coordinator runs it on the final head.
+
+### After the pre-review of the scan by name
+Commits: 8397f744 (merge of origin/main at e8e21bd4; conflict in this card only), 3f0dbd3a (RED: the rows of the rulings), 125527cc (GREEN), then this evidence commit, which changes only this card. The 47 files of R1 are unchanged.
+
+RED (3f0dbd3a, actual run): acceptance 1 pass, acceptance 2 fail.
+
+| Row | Red before |
+|---|---|
+| a private name `#mkdtempSync`, and one written with an escape | yes: no report |
+| the name of a function expression inside `tmpDir` of helpers.ts | yes: no report |
+| in helpers.ts, a function `tmpDir` nested in another function | no: reported already |
+| in evals.test.ts, a module-scope binding pattern | no: reported already |
+| in command-lines.test.ts, an export specifier | no: reported already |
+| methods with a private name, a string-literal computed name and a numeric name | yes: reported under `<anonymous>` |
+
+GREEN (125527cc): a private identifier is an occurrence when its text without the `#` is one of the names (its text has its escapes resolved); only the name of a function declaration belongs to the scope around it, so the name of a function expression is reported under that function; the name of a function is the text of its name node when that is an identifier, a private name (with its `#`), a string or numeric literal, or a computed name holding such a literal.
+
+Real tree (125527cc, actual run): acceptance 1 passes, zero reports. Scratch copy under the gitignored `_local/` with the 47 files at 3d3e9d31 (actual run): 132 reports, the same lines as on 15857cdf; all 85 earlier file and line pairs are among them.
+
+Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). N1-N14 are rerun because their code moved (N1-N3, N8 and N12 change the line that decides an occurrence, which 125527cc rewrote); M1-M6 are the reverts of these rulings, the three method-name forms in three runs.
+
+The table as run on 125527cc (27/27) is in this card at 34a23c14; every row is rerun on the final scan in the table of the next section.
+
+DoD (125527cc, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Full suite: not run by the implementer; the coordinator runs it on the final head.
+
+### After the fourth pre-review
+Commits: d8779f51 (merge of origin/main at 1efea23c; conflict in this card only), 5c447e6e (RED: three rows), a3085711 (GREEN: the label of the enclosing function), then this evidence commit, which changes only this card. The 47 files of R1 are unchanged.
+
+RED (5c447e6e, actual run): acceptance 1 pass, acceptance 2 fail; all three rows red before: the method `[label]() {}` reported under `label`, the arrow function of `const f = () => ...` under `f`, the immediately invoked initializer of `await using probe = (() => {...})()` under `probe (immediately invoked)`.
+
+GREEN (a3085711): `functionName` follows the restated sentence of R2 clause by clause. Its own name: the name node when it is an identifier, a private name (with its `#`), a string or numeric literal, or a computed name whose expression is a string or numeric literal; a computed name of any other expression is no name. Without a name of its own: `<constant> (immediately invoked)` when the function, inside at most the one pair of parentheses the call needs, is the callee of the call that initializes a variable whose declaration list, masked with `ts.NodeFlags.BlockScoped`, equals `ts.NodeFlags.Const` (so not `let`, `var`, `using` or `await using`); otherwise `<anonymous>`. No name is inferred from a variable or a property.
+
+Real tree (a3085711, actual run): acceptance 1 passes, zero reports. Scratch copy under the gitignored `_local/` with the 47 files at 3d3e9d31 (actual run): 132 reports with the same 132 file and line pairs in the same order as on 125527cc, all 85 earlier pairs among them. Two labels changed, both from an inferred name to `<anonymous>`: tests/surface/config.test.ts:350 `[inCheckout]` and tests/surface/lessons.test.ts:16 `[dir]`, each an arrow function assigned to a constant.
+
+Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). Every row of the previous table is rerun on a3085711: N14 and M3a-M3c because their code moved, the others with it; L1-L3 are the reverts of these rulings.
+
+The table as run on a3085711 (30/30) is in this card at dbadabd3; every row is rerun on the final scan in the table of the next section.
+
+DoD (a3085711, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Full suite: not run by the implementer; the coordinator runs it on the final head.
+
+### After the fifth pre-review
+Commits: 163a3e53 (merge of origin/main at c1181679; conflict in this card only), db03e43d (RED: the rows), 47d2032e (GREEN), then this evidence commit, which changes only this card. The 47 files of R1 are unchanged.
+
+RED (db03e43d, actual run): acceptance 1 pass; acceptance 2 fails with `TypeError: Cannot read properties of undefined (reading 'kind')`, thrown for `export default function () { ... }`. Row by row on the scan of db03e43d (a scratch copy under the gitignored `_local/` that catches a throw per row): only the default-export row is red before (it throws); the binding-pattern row and the robustness rows pass on that scan.
+
+Robustness rows (my choice of sources, each must return its expected reports and not throw): an empty file (none); a file of comments only, one of each comment kind holding each name (none); and one file holding an anonymous default-exported class with a method `build` (reported under `build`), a class with a static block (under `module scope`: a static block is not a function), an object literal with a getter `g` and a setter `s` (under `g` and `s`), a labelled statement named `mkdtempSync` with a `break` to it (both identifiers reported, `module scope`), and an enum member named `mkdtemp` (reported, `module scope`).
+
+GREEN (47d2032e): after its own name is checked, a function that is not a function expression or an arrow function is `<anonymous>`; only those two kinds are looked at for the immediately invoked form, so a function declaration whose parent is the source file no longer reaches the parent lookup. The binding-pattern row already passed: the form requires the declaration's name to be an identifier.
+
+Real tree (47d2032e, actual run): acceptance 1 passes, zero reports. Scratch copy with the 47 files at 3d3e9d31 (actual run): 132 reports, identical line for line to those of a3085711 (same file and line pairs, same labels); all 85 earlier pairs among them.
+
+Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). Every row of the previous table is rerun on 47d2032e (the label reverts N14, M3a-M3c and L1-L3 because their code moved); F1 and F2 are the reverts of these rulings. F2 accepts a binding pattern as the constant and labels the function by the pattern's source text, `{ x } (immediately invoked)`.
+
+The table as run on 47d2032e (32/32) is in this card at 0f6307da; every row is rerun on the final scan in the table of the next section.
+
+DoD (47d2032e, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Full suite: not run by the implementer; the coordinator runs it on the final head.
+
+### After the sixth pre-review
+Commits: db49ad0c (merge of origin/main at e7741c78; conflict in this card only), 5288596c (RED: the row of depth), 3ef384b9 (GREEN: the walk with its own stack), then this evidence commit, which changes only this card. The 47 files of R1 are unchanged.
+
+RED (5288596c, actual run): acceptance 1 pass; acceptance 2 fails with `RangeError: Maximum call stack size exceeded`, its stack in `visit` of the scan through `ts.forEachChild` (`forEachChildInBinaryExpression`), on the row whose source, built in the test at run time, is `export const x = 0 + 0 + ...` with 10 000 terms followed by `export const y = mkdtempSync;`.
+
+GREEN (3ef384b9): the walk keeps its own stack of nodes: it pops a node, decides on it, collects its children with `ts.forEachChild` into a list and pushes them in reverse order, one push per child (a spread of a long list would pass each child as a call argument). No function is called per level of depth. The reports carry the start position of their node and are sorted by it at the end, so their order is the source order. The rest of the scan has no recursion per node: the nearest enclosing function and the exemption follow parent pointers in a loop or a fixed chain, `functionName` reads the function node and at most three parents, and the line count slices the text.
+
+Real tree (3ef384b9, actual run): acceptance 1 passes, zero reports. Scratch copy under the gitignored `_local/` with the 47 files at 3d3e9d31 (actual run): 132 reports, identical line for line to those of 47d2032e (same file and line pairs, same labels, same order); all 85 earlier pairs among them.
+
+Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). Every row is rerun on 3ef384b9, since every row passes through the walk. W1 puts back the recursive `scanSource` of 47d2032e in place of the walk with its own stack.
+
+| Reverted or mutated | Run on | Test run | Result | |
+|---|---|---|---|---|
+| W1 the recursive walk (47d2032e) in place of the walk with its own stack | 3ef384b9 | acceptance 2 | exit 1, fail 1: throws 'Maximum call stack size exceeded' | red |
+| N1 identifiers in type positions skipped | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/type-query.ts:2 [module scope] reference of mkdtempSync' | red |
+| N2 property names skipped | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/namespace.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/default.ts:3 [<anonymous>] call of mkdtempSync'; and 23 more | red |
+| N3 binding names skipped | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/destructure.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/destructure-rename.ts:2 [module scope] reference of mkdtempSync'; and 1 more | red |
+| N4 import specifiers reported in a helper file | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/infra/helpers.ts:1 [module scope] reference of mkdtempSync'; + 'tests/infra/helpers.ts:1 [module scope] reference of mkdtempSync'; and 5 more | red |
+| N5 import specifiers not reported in another file | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/named.ts:1 [module scope] reference of mkdtempSync'; - 'tests/forms/aliased.ts:1 [module scope] reference of mkdtempSync'; and 6 more | red |
+| N6 string literals not read | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/escape.ts:2 [module scope] reference of mkdtempSync'; and 1 more | red |
+| N7 substitution-free templates not read | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:3 [module scope] call of mkdtempSync' | red |
+| N8 text compared before escapes | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/escape.ts:1 [module scope] reference of mkdtempSync' | red |
+| N9 the exemption widened to any ancestor function | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:4 [inner] call of mkdtempSync'; + 'tests/infra/helpers.ts:3 [outer] call of mkdtempSync'; and 2 more | red |
+| N10 the exemption widened to a function of the same name in another file | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/elsewhere.ts:3 [tmpDir] call of mkdtempSync' | red |
+| N11 a comment read as code | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/comment.ts:1 [module scope] call of mkdtempSync'; + 'tests/forms/comment.ts:2 [module scope] call of mkdtemp'; and 3 more | red |
+| N12 a string holding a name among other characters reported | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/text.ts:1 [module scope] reference of mkdtempSync'; + 'tests/surface/test-temp.test.ts:84 [module scope] reference of mkdtemp'; and 41 more | red |
+| N13 line counting by the compiler line map | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/separators.ts:5 [module scope] call of mkdtempSync'; - 'tests/forms/separators.ts:3 [module scope] call of mkdtempSync' | red |
+| N14 the immediately invoked naming | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/iife.ts:3 [<anonymous>] call of mkdtempSync'; - 'tests/forms/iife.ts:3 [probe (immediately invoked)] call of mkdtempSync' | red |
+| M1 private names not read | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/forms/private.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/private.ts:3 [module scope] reference of mkdtemp' | red |
+| M2 the name of a function expression given the scope around it | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:2 [mkdtempSync] reference of mkdtempSync' | red |
+| M3a a method with a private name reported as <anonymous> | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:4 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:4 [#make] call of mkdtempSync' | red |
+| M3b a method with a string-literal computed name reported as <anonymous> | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:7 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:7 [build] call of mkdtempSync' | red |
+| M3c a method with a numeric name reported as <anonymous> | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:10 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:10 [42] call of mkdtempSync' | red |
+| L1 a computed name of any expression taken as the name | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/computed-identifier.ts:5 [label] call of mkdtempSync'; - 'tests/forms/computed-identifier.ts:5 [<anonymous>] call of mkdtempSync' | red |
+| L2 the declaration kind tested by its const bit | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/await-using.ts:3 [probe (immediately invoked)] call of mkdtempSync'; - 'tests/forms/await-using.ts:3 [<anonymous>] call of mkdtempSync' | red |
+| L3 the name of the variable inferred for an assigned function | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/assigned-arrow.ts:2 [f] call of mkdtempSync'; - 'tests/forms/assigned-arrow.ts:2 [<anonymous>] call of mkdtempSync' | red |
+| F1 the immediately invoked check before the kind of the function is known (the old order) | 3ef384b9 | acceptance 2 | exit 1, fail 1: throws "Cannot read properties of undefined (reading 'kind')" | red |
+| F2 a binding pattern accepted as the constant (labelled by its source text) | 3ef384b9 | acceptance 2 | exit 1, fail 1: + 'tests/forms/iife-pattern.ts:3 [{ x } (immediately invoked)] call of mkdtempSync'; - 'tests/forms/iife-pattern.ts:3 [<anonymous>] call of mkdtempSync' | red |
+| M4 the top-level requirement dropped | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:3 [tmpDir] call of mkdtempSync' | red |
+| M5 module-scope occurrences of a helper file exempt | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/surface/evals.test.ts:2 [module scope] reference of mkdtempSync'; - 'tests/surface/command-lines.test.ts:2 [module scope] reference of mkdtempSync' | red |
+| M6 export specifiers exempt in a helper file | 3ef384b9 | acceptance 2 | exit 1, fail 1: - 'tests/surface/command-lines.test.ts:2 [module scope] reference of mkdtempSync' | red |
+| R1: tests/surface/review-bench.test.ts:158 back to `mkdtempSync(path.join(dir, 'bad-'))` | 928b23c9 | acceptance 1 | exit 1, fail 1, names `tests/surface/review-bench.test.ts:158 [callback of test]` | red |
+| R1: tests/surface/reviewer-env.child.ts as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, names `tests/surface/reviewer-env.child.ts:22 [tempDir]` | red |
+| R1: tests/surface/review-bench.test.ts as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, names its 5 sites | red |
+| R1: all 47 files as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, `85 sites outside the four helpers` | red |
+| R1 imports: an unused `import { tmpdir } from 'node:os'` left in tests/surface/stats.test.ts | 928b23c9 | `npm run typecheck` | exit 2, TS6133 'tmpdir' is declared but its value is never read | red |
+
+Rows red: 33/33 (W1, N1-N14, M1-M6, L1-L3 and F1-F2 on 3ef384b9; the 5 migration rows on 928b23c9, the 47 files unchanged since 733a8434).
+
+DoD (3ef384b9, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Full suite: not run by the implementer; the coordinator runs it on the final head.
+
+### Size
+`git diff --shortstat origin/main...HEAD` at 3ef384b9 (origin/main e7741c78): 49 files changed, 616 insertions(+), 181 deletions(-), 797 lines; with this evidence commit: 49 files changed, 634 insertions(+), 181 deletions(-), 815 lines, against the budget of 880 (attempt evidence counted).
+
+## Planner rulings on the points disclosed in the repair rounds (coordinator, before R3)
+
+The points of the first build report are ruled in the section "Planner rulings of 2026-11-12 after the build report". These are the points the implementer disclosed in the repair rounds after it; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| The table test writes each row to a directory of its own and compares the reports in row order, so that the file of an allowed helper can appear in more than one row; the expected results of the earlier rows are unchanged | Accepted. The rows on a stored reference and on a nested function need a file at a helper's path each |
+| One of the implementer's own new rows named its nested function `tmpDir` where the helper allowed in tests/surface/command-lines.test.ts is `tempDir`, so the revert of `fn.parent === sf` first stayed green; a later commit corrects the name and the revert is red | Accepted. A correction of a new row before any review, found by running the revert |
+| The 19 mutations of the first round were written against the scan as it was then; they were run again against the final scan, two with their text updated to the code that replaced what they changed | Accepted. The one revert table of the evidence names the commit each group ran on |
+| The merge commits of main into the branch carry messages amended once before anything was built on them | Noted. They were unpushed, and the ship squashes them |
+| The count of `aidlc-*` entries in the system temporary directory fell by 189 during one DoD run while this card's run added and removed none | Noted. Another process removed entries; the card's own figure is 0 new entries per DoD run |
+
+## The full suite on the candidate (acceptance 4, coordinator)
+
+R3 and acceptance 4 ask for one `npm test` on the candidate with exit 0 before the first review.
+
+| Run | Commit | Tests | Pass | Fail | Skipped | Exit |
+|---|---|---|---|---|---|---|
+| implementer, 2026-11-12 | 733a8434 (the migration, before the later scan commits) | 3462 | 3440 | 0 | 22 | 0 |
+| coordinator, 2026-11-12T04:26Z | 0b22f3d1 (the head the pre-review read) | 3476 | 3454 | 0 | 22 | 0 |
+| coordinator, 2026-11-12T04:45Z | a82d8f18 (the candidate of R3 decision 1, with main merged at 99fbde2d) | 3476 | 3454 | 0 | 22 | 0 |
+| coordinator, 2026-11-12T06:19Z | 0f6307da (the scan by name, before the iterative walk) | 3476 | 3454 | 0 | 22 | 0 |
+| coordinator, 2026-11-12T06:34Z | d502eccf (the final test code: the scan by name with the iterative walk, main merged at e7741c78) | 3476 | 3454 | 0 | 22 | 0 |
+
+The run on a82d8f18 took 370 s and the run on d502eccf 434 s; no file failed in any run, so none was run again alone. After a82d8f18 the scan of tests/surface/test-temp.test.ts was rewritten (R3 decision 1 and the rulings after it), which is why the suite was run again; the 47 migrated files have not changed since 733a8434. The commits after d502eccf change this card file only (this section and the coordinator's Linux and document-reader runs below). The number of tests is the same before and after the rewrite because the rows of the scan are inside one test. The raw output of each run is kept in the coordinator's scratchpad (`sweep-npm-test.txt`, `sweep-npm-test-final.txt`, `sweep-npm-test-final2.txt`, `sweep-npm-test-final3.txt`, `sweep-npm-test-final4.txt`); its last lines are the counts above.
+
+Coordinator verification:
+- At 523ae7c6, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/ci-policy.test.ts, tests/core/journal-event-types.test.ts, tests/infra/base-sync.test.ts, tests/infra/exec.test.ts, tests/infra/git.test.ts, tests/infra/github-ship-merge-refused.test.ts, tests/infra/github-ship.test.ts, tests/infra/init.test.ts, tests/scenarios/board-watch.test.ts, tests/scenarios/candidate-withdraw.test.ts, tests/scenarios/context-pack.test.ts, tests/scenarios/evidence-id.test.ts, tests/scenarios/manifest-lock.test.ts, tests/scenarios/mutants-review.test.ts, tests/scenarios/pre-existing.test.ts, tests/scenarios/t1-plan.test.ts, tests/surface/approver.test.ts, tests/surface/bench.test.ts, tests/surface/bounds.test.ts, tests/surface/card.test.ts, tests/surface/config.test.ts, tests/surface/fix-task-clear.test.ts, tests/surface/hook-git-prefetch.test.ts, tests/surface/hook-lazy.test.ts, tests/surface/hook-name.test.ts, tests/surface/incident.test.ts, tests/surface/init-base-ci.test.ts, tests/surface/init-no-package.test.ts, tests/surface/lease-heartbeat.test.ts, tests/surface/lesson-match.test.ts, tests/surface/lessons.test.ts, tests/surface/manifest.test.ts, tests/surface/mutants.test.ts, tests/surface/ops-intent.test.ts, tests/surface/outcome-github.test.ts, tests/surface/outcome-ingest.test.ts, tests/surface/outcome-usage.test.ts, tests/surface/ps-guard-read.test.ts, tests/surface/ps-guard-wire.test.ts, tests/surface/r2-pass-notes.test.ts, tests/surface/readme.test.ts, tests/surface/review-bench-export.test.ts, tests/surface/review-bench.test.ts, tests/surface/reviewer-env.test.ts, tests/surface/security-check.test.ts, tests/surface/stats.test.ts, tests/surface/test-temp.test.ts): tests 1000, pass 989, fail 0, skipped 11.
+- Windows, docpins: no document changed
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Planner rulings on the points disclosed for the scan by name (coordinator, before R3 decision 2)
+
+The implementer disclosed four points where it read the restated R2 by its letter. The planner rules on each before the formal review.
+
+| Disclosed point | Ruling |
+|---|---|
+| A callback without a name is reported as `<anonymous>`; the earlier scan said `callback of <callee>` | Accepted. R2 lists four forms for the enclosing function and that label is not one of them |
+| For the immediately invoked form, the one pair of parentheses that an arrow function or function expression needs in order to be called is not counted as a wrapper (`const X = (() => { ... })()` is `X (immediately invoked)`); any further wrapper (a second pair of parentheses, an assertion, a non-null assertion) gives `<anonymous>`; the name is given only when the call initializes a `const` | Accepted. This is what "with no wrapper between" means in R2: without that pair the form cannot be written with an arrow function, and tests/surface/mutants.test.ts:169 is written so |
+| Each report also says whether the occurrence is the callee of a call (the name itself, or the member name of the callee) or another reference; no wrapper is looked through for this label | Accepted. The label adds to the report and decides nothing: every occurrence is reported whichever it is |
+| The name of a function declaration belongs to the scope around the function, so a top-level `function mkdtempSync` is reported at `module scope` | Accepted. The nearest enclosing function of a declaration's name is the one that holds the declaration |
+
+Coordinator verification:
+- At 1fcb3a32, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/ci-policy.test.ts, tests/core/journal-event-types.test.ts, tests/infra/base-sync.test.ts, tests/infra/exec.test.ts, tests/infra/git.test.ts, tests/infra/github-ship-merge-refused.test.ts, tests/infra/github-ship.test.ts, tests/infra/init.test.ts, tests/scenarios/board-watch.test.ts, tests/scenarios/candidate-withdraw.test.ts, tests/scenarios/context-pack.test.ts, tests/scenarios/evidence-id.test.ts, tests/scenarios/manifest-lock.test.ts, tests/scenarios/mutants-review.test.ts, tests/scenarios/pre-existing.test.ts, tests/scenarios/t1-plan.test.ts, tests/surface/approver.test.ts, tests/surface/bench.test.ts, tests/surface/bounds.test.ts, tests/surface/card.test.ts, tests/surface/config.test.ts, tests/surface/fix-task-clear.test.ts, tests/surface/hook-git-prefetch.test.ts, tests/surface/hook-lazy.test.ts, tests/surface/hook-name.test.ts, tests/surface/incident.test.ts, tests/surface/init-base-ci.test.ts, tests/surface/init-no-package.test.ts, tests/surface/lease-heartbeat.test.ts, tests/surface/lesson-match.test.ts, tests/surface/lessons.test.ts, tests/surface/manifest.test.ts, tests/surface/mutants.test.ts, tests/surface/ops-intent.test.ts, tests/surface/outcome-github.test.ts, tests/surface/outcome-ingest.test.ts, tests/surface/outcome-usage.test.ts, tests/surface/ps-guard-read.test.ts, tests/surface/ps-guard-wire.test.ts, tests/surface/r2-pass-notes.test.ts, tests/surface/readme.test.ts, tests/surface/review-bench-export.test.ts, tests/surface/review-bench.test.ts, tests/surface/reviewer-env.test.ts, tests/surface/security-check.test.ts, tests/surface/stats.test.ts, tests/surface/test-temp.test.ts): tests 1000, pass 989, fail 0, skipped 11.
+- Windows, docpins: no document changed
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, candidateShaFor } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -9,6 +8,7 @@ import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { ReviewInvocation, type Verdict } from '../../src/core/types.ts';
 import { changedLineRanges, runReviewPanel } from '../../src/review/pre-review.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 // The [pre-existing] tag on the command path and the ship path (card T1-REVIEW-PRE-EXISTING).
 
@@ -94,7 +94,7 @@ test('acceptance 6: on the command path a [pre-existing] block on an unchanged l
 });
 
 test('R4: runReviewPanel hands the changed lines to every angle of a panel and to an angle rerun on the fallback', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-pe-panel-'));
+  const dir = tmpDir('aidlc-pe-panel-');
   const reviewDir = path.join(dir, '.review');
   const file = 'src/t1-pe.ts';
   const outside = tagged(file, 40);

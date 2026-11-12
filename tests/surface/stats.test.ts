@@ -1,7 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -9,6 +8,7 @@ import { CardRun, addMs } from '../../src/core/types.ts';
 import { goal } from '../core/_fixtures.ts';
 // Namespace import: the summary is new, so each test fails at its first call rather than at link time.
 import * as stats from '../../src/review/stats.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -448,7 +448,7 @@ describe('review statistics (R11, R12)', () => {
   });
 
   test('aidlc review stats prints the summary as JSON when stdout is not a TTY and one line per card with --no-json', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-stats-'));
+    const dir = tmpDir('aidlc-stats-');
     mkdirSync(path.join(dir, 'cards', 'g-stats-cli'), { recursive: true });
     mkdirSync(path.join(dir, 'goals'), { recursive: true });
     const writeGoal = (id: string) => writeFileSync(path.join(dir, 'goals', `${id}.json`), JSON.stringify(goal({ id }), null, 2), 'utf8');
@@ -575,7 +575,7 @@ describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-
     assert.equal(line, 'T1-PE  R2 2 rounds, 1 block (r2 1), 2m 00s | R3 1 decision, 0s | findings 1: 1 pre, 1 open; responses: 1 open; pre-existing advisory 3 | coverage: not requested | wall 20m 00s');
     const quiet = stats.formatReviewStats(stats.summarizeReviews([preExistingRun({ findings: [] })], []));
     assert.ok(quiet.includes('| findings 0; pre-existing advisory 3 |'), quiet);
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-stats-pe-'));
+    const dir = tmpDir('aidlc-stats-pe-');
     mkdirSync(path.join(dir, 'cards', 'g-stats-pe'), { recursive: true });
     mkdirSync(path.join(dir, 'goals'), { recursive: true });
     writeFileSync(path.join(dir, 'goals', 'g-stats-pe.json'), JSON.stringify(goal({ id: 'g-stats-pe' }), null, 2), 'utf8');

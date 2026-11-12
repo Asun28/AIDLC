@@ -1,19 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reviewerEnv, runReviewPanel } from '../../src/review/pre-review.ts';
 import { runPreReview } from './_review-once.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const OURS = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
 const PASS = '{"verdict":"pass","reasons":[]}\n';
 
 function tempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-reviewer-env-'));
+  const dir = tmpDir('aidlc-reviewer-env-');
   mkdirSync(path.join(dir, '.review'), { recursive: true });
   return dir;
 }

@@ -2,11 +2,11 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ingestState, writeTables, type Row, type Tables } from '../../bench/outcome/ingest.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const temps: string[] = [];
@@ -14,7 +14,7 @@ after(() => temps.forEach((dir) => rmSync(dir, { recursive: true, force: true })
 
 /** A temporary directory by its canonical path (the Windows runner's temp directory is an 8.3 short path), removed after the tests. */
 function tempDir(): string {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'aidlc-outcome-')));
+  const dir = realpathSync.native(tmpDir('aidlc-outcome-'));
   temps.push(dir);
   return dir;
 }

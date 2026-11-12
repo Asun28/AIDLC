@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ReviewBenchCase } from '../../src/core/types.ts';
 import { formatBenchReport, loadBenchCases, runReviewBench, type ReviewBenchOptions } from '../../src/review/bench.ts';
 import { loadEvals } from '../../src/evals/runner.ts';
 import { renderCard } from '../../src/artifacts/card.ts';
 import { runSync, scriptedRunner, type ExecReceipt, type Runner } from '../../src/probes/exec.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -39,7 +39,7 @@ interface Fixture {
 
 /** One base commit and four candidates, each changing one line of src/calc.ts and adding the card file. */
 function fixture(): Fixture {
-  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-rbench-')));
+  const dir = realpathSync.native(tmpDir('aidlc-rbench-'));
   const root = path.join(dir, 'repo');
   const tmpRoot = path.join(dir, 'tmp');
   mkdirSync(path.join(root, 'src'), { recursive: true });
@@ -145,7 +145,7 @@ test('T1-REVIEW-BENCH acceptance 1: ReviewBenchCase accepts a bug case with two 
 });
 
 test('T1-REVIEW-BENCH acceptance 2: loadBenchCases reads the JSON files of the directory in name order and names a file it refuses [R2]', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-rbench-load-'));
+  const dir = tmpDir('aidlc-rbench-load-');
   try {
     const one = (id: string) => ({ kind: 'clean', id, candidate: SHA('a'), base: SHA('b'), card, confirmed: false, origin: 'hand' });
     writeFileSync(path.join(dir, 'b.json'), JSON.stringify(one('b')));
@@ -155,7 +155,7 @@ test('T1-REVIEW-BENCH acceptance 2: loadBenchCases reads the JSON files of the d
     writeFileSync(path.join(dir, 'sub', 'c.json'), JSON.stringify(one('c')));
     assert.deepEqual(loadBenchCases(dir).map((c) => c.id), ['a', 'b']);
     for (const [name, text] of [['notjson.json', '{'], ['schema.json', JSON.stringify({ ...one('schema'), kind: 'other' })], ['a.json', JSON.stringify(one('b'))]] as const) {
-      const bad = mkdtempSync(path.join(dir, 'bad-'));
+      const bad = tmpDir('bad-', dir);
       writeFileSync(path.join(bad, name), text);
       assert.throws(() => loadBenchCases(bad), (err: Error) => err.message.includes(name), name);
     }
@@ -422,7 +422,7 @@ test('T1-REVIEW-BENCH acceptance 7: no workflow names the reviewer bench, and on
 });
 
 test('T1-REVIEW-BENCH acceptance 8: loadEvals reads only the JSON files directly inside the evals directory [R10]', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-rbench-evals-'));
+  const dir = tmpDir('aidlc-rbench-evals-');
   try {
     writeFileSync(path.join(dir, 'a.json'), JSON.stringify({ ...JSON.parse(read('evals/example-regression.json')), id: 'a' }));
     mkdirSync(path.join(dir, 'review'));
@@ -771,7 +771,7 @@ test('T1-BENCH-TRIALS-2 acceptance 3: a --trials 1 report keeps every field and 
 });
 
 test('T1-BENCH-TRIALS-2 acceptance 4: bench compare prints the verdict of two saved reports, and a missing file or a JSON file that is not a report exits 1 [R6]', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-rbench-compare-'));
+  const dir = tmpDir('aidlc-rbench-compare-');
   try {
     // A saved report of three trials of two bug cases, each trial with `hits` hits.
     const saved = (name: string, hits: number) => {

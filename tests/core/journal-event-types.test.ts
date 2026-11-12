@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { JournalEvent, JournalEventType } from '../../src/core/types.ts';
 import { Journal } from '../../src/state/journal.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 // Card T0-UNWRITTEN-EVENT-TYPES (issue 101, plan finding F4): the journal declares only event types some code writes.
 
@@ -22,7 +22,7 @@ const DECLARED = [
 
 /** A temp journal with one NOTE, and the event as written. */
 function written(): { dir: string; event: JournalEvent } {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-jet-'));
+  const dir = tmpDir('aidlc-jet-');
   const event = Journal.forGoal(dir, 'g-1').append({ type: 'NOTE', goalId: 'g-1', data: { text: 'x' } });
   return { dir, event };
 }
