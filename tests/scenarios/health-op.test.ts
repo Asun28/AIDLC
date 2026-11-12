@@ -593,6 +593,21 @@ test('the staleness of a sample is judged when the health command has returned',
     assert.deepEqual(evaluations(own.fx, own.goalId, attempt.id), [{ result: 'BREACH', signals: ['http_5xx_rate=BREACH'] }]);
     assert.deepEqual([r.directive.kind, r.attempt.state], ['recover', 'RECOVER'], r.directive.narration);
   }
+  // A clock set back 2 s while the command runs: a sample 301 s old at the start (bound 300 s) is 299 s old when it returns.
+  // The worse of the two evaluations is kept; the fixture clock is set forward again after each row.
+  for (const [observed, result] of [[0.1, 'INSUFFICIENT_DATA'], [7.5, 'BREACH']] as const) {
+    const started = fx.now();
+    const attempt = observing(fx, goalId, { healthWindow: undefined });
+    const backward = (): Receipt => {
+      const sampled = addMs(fx.now(), -301000);
+      fx.clock.now = addMs(fx.now(), -2000);
+      return { exitCode: 0, stdout: printed(body(fx, {}, [entry(fx, 'http_5xx_rate', observed, { lastSampleAt: sampled })])) };
+    };
+    const r = releaseRunner(fx, healthOps({ health: declared }), recording(fx, backward).runner).next(fx.goal(goalId), attempt);
+    fx.clock.now = started;
+    assert.deepEqual(evaluations(fx, goalId, attempt.id), [{ result, signals: [`http_5xx_rate=${result}`] }], `observed ${observed}`);
+    if (result === 'INSUFFICIENT_DATA') assert.deepEqual([r.directive.kind, r.attempt.state], ['observe', 'OBSERVE']);
+  }
 
   // A report line padded with a byte order mark or no-break spaces is read.
   const padded = (before: string, after: string) => (fx: Fx): Receipt => ({ exitCode: 0, stdout: `probe start\n${before}${JSON.stringify(body(fx))}${after}\n` });
