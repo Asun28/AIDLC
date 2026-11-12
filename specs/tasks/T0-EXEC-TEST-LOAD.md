@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-TEST-LOAD
 title: The process-tree tests of tests/infra/exec.test.ts calibrate a scale from the fixture's start-up and multiply main's timeout and bounds by it, equal to main at scale 1, and fail with a named precondition when the fixture was not ready before the timeout
-status: todo
+status: merged
 branch: T0-EXEC-TEST-LOAD
 worktree: D:\wt\AIDLC\T0-EXEC-TEST-LOAD
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: the planner's redesign of 2026-11-12 (a calibrated scale in place of the retry design of the first draft, which reached about 1100 lines); about 225 changed lines in tests/infra/exec.test.ts (about 105 of the calibration, scale, bounds, preconditions and child environment, 70 of the six changed tests and their titles, 50 of the two new tests), 2 in CHANGELOG.md and about 60 of attempt evidence: about 290; raised from 290 to 370 by the coordinator on 2026-11-12: the candidate cbf6c338 is 288 changed lines before the loaded-run evidence, the coordinator's verification block and the rows the planner asked for after the build report (calibrate's exit-code, signal, spawn-error and time-limit clauses each get a row through optional parameters of calibrate); raised from 370 to 430 by the coordinator on 2026-11-12 with R9: the candidate e5d8a151 is 345 changed lines, and the runner-handle test, its bound in `boundsAt`, three rows and the second set of loaded runs add about 60; raised from 430 to 500 by the coordinator on 2026-11-12 with R10 to R12: the candidate 2094b0eb is 370 changed lines, and the natural-end check with its rows, the helper-error assertion, the late pid wait, the root row of the time-limit test and their evidence add about 70 to 110; raised from 500 to 520 by the coordinator on 2026-11-12: the candidate 163a6305 is 485 changed lines after three repair rounds on the rows of R12, and the cleanup order of the fourth round and the coordinator's verification block add about 25; raised from 520 to 540 by the coordinator on 2026-11-12: the candidate 7be36d50 is 508 changed lines after the repair of R3 decision 1 (the runner-handle diagnostic removed, a section of evidence added), and the coordinator's second verification block adds about 10"
@@ -315,3 +315,13 @@ Coordinator verification:
 - At 468549fd, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/exec.test.ts): tests 70, pass 70, fail 0, skipped 0.
 - Windows, docpins: 73 test files reading 1 changed documents: # tests 1814 # pass 1803 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+The review record of this card, for the reader of the audit: four Codex pre-review rounds before the first formal decision (5, 4, 2 and 2 points, all ruled above: R9 to R12 and the cleanup order), then R3 decision 1, which blocked on one finding, and decision 2 with the second pass, which passed.
+
+The block of decision 1 was the planner's omission. The implementer had added one `t.diagnostic` line to the runner-handle test to print the elapsed time for the loaded-run evidence, disclosed it in its report and asked whether to remove it; the planner did not rule before the review, and the card forbids an edit of that test beyond R9. The repair removed the line. Since then the coordinator rules on every disclosed deviation in the card before a formal review (first done for T0-HEALTH-OP-SIGNALS).
+
+During the repair rounds the implementer ended every node.exe process on the machine once, while removing its own load processes, which ended the ship of another card during its CI wait (closing note of T0-OP-TIMESTAMP-NOW-2). The implementer brief now forbids ending processes by name or image.
+
+What the loaded runs showed, in one place: with 24 CPU-bound processes on 16 logical CPUs, main failed 2 to 4 tests of this file in each of three runs; the candidate passed all 70 in three runs at scales 5 to 8.
