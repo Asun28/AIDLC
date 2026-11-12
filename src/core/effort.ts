@@ -32,6 +32,10 @@ function nextAttemptNumber(episode: EffortEpisode): number {
   return episode.attempts.filter((a) => a.outcome !== 'not-counted').length + 1;
 }
 
+export function ladderNumber(_episode: EffortEpisode, index: number): number {
+  return index + 1;
+}
+
 /** A review block (R2 or R3) reopens a succeeded episode: the blocked attempt keeps its success and its evidence notes the block; the repair is the next attempt at the same effort. */
 export function reopenAfterReviewBlock(episode: EffortEpisode, reason: string): EffortEpisode {
   const idx = episode.attempts.length - 1;
