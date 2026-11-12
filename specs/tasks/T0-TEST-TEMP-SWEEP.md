@@ -368,44 +368,64 @@ Real tree (125527cc, actual run): acceptance 1 passes, zero reports. Scratch cop
 
 Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). N1-N14 are rerun because their code moved (N1-N3, N8 and N12 change the line that decides an occurrence, which 125527cc rewrote); M1-M6 are the reverts of these rulings, the three method-name forms in three runs.
 
+The table as run on 125527cc (27/27) is in this card at 34a23c14; every row is rerun on the final scan in the table of the next section.
+
+DoD (125527cc, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Full suite: not run by the implementer; the coordinator runs it on the final head.
+
+### After the fourth pre-review
+Commits: d8779f51 (merge of origin/main at 1efea23c; conflict in this card only), 5c447e6e (RED: three rows), a3085711 (GREEN: the label of the enclosing function), then this evidence commit, which changes only this card. The 47 files of R1 are unchanged.
+
+RED (5c447e6e, actual run): acceptance 1 pass, acceptance 2 fail; all three rows red before: the method `[label]() {}` reported under `label`, the arrow function of `const f = () => ...` under `f`, the immediately invoked initializer of `await using probe = (() => {...})()` under `probe (immediately invoked)`.
+
+GREEN (a3085711): `functionName` follows the restated sentence of R2 clause by clause. Its own name: the name node when it is an identifier, a private name (with its `#`), a string or numeric literal, or a computed name whose expression is a string or numeric literal; a computed name of any other expression is no name. Without a name of its own: `<constant> (immediately invoked)` when the function, inside at most the one pair of parentheses the call needs, is the callee of the call that initializes a variable whose declaration list, masked with `ts.NodeFlags.BlockScoped`, equals `ts.NodeFlags.Const` (so not `let`, `var`, `using` or `await using`); otherwise `<anonymous>`. No name is inferred from a variable or a property.
+
+Real tree (a3085711, actual run): acceptance 1 passes, zero reports. Scratch copy under the gitignored `_local/` with the 47 files at 3d3e9d31 (actual run): 132 reports with the same 132 file and line pairs in the same order as on 125527cc, all 85 earlier pairs among them. Two labels changed, both from an inferred name to `<anonymous>`: tests/surface/config.test.ts:350 `[inCheckout]` and tests/surface/lessons.test.ts:16 `[dir]`, each an arrow function assigned to a constant.
+
+Revert table for the final scan (each row an actual run with one change, the file restored from a copy in memory after each; `git diff --stat HEAD` empty at the end). Every row of the previous table is rerun on a3085711: N14 and M3a-M3c because their code moved, the others with it; L1-L3 are the reverts of these rulings.
+
 | Reverted or mutated | Run on | Test run | Result | |
 |---|---|---|---|---|
-| N1 identifiers in type positions skipped | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/type-query.ts:2 [module scope] reference of mkdtempSync' | red |
-| N2 property names skipped | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/namespace.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/default.ts:3 [<anonymous>] call of mkdtempSync'; and 15 more | red |
-| N3 binding names skipped | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/destructure.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/destructure-rename.ts:2 [module scope] reference of mkdtempSync'; and 1 more | red |
-| N4 import specifiers reported in a helper file | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/infra/helpers.ts:1 [module scope] reference of mkdtempSync'; + 'tests/infra/helpers.ts:1 [module scope] reference of mkdtempSync'; and 5 more | red |
-| N5 import specifiers not reported in another file | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/named.ts:1 [module scope] reference of mkdtempSync'; - 'tests/forms/aliased.ts:1 [module scope] reference of mkdtempSync'; and 6 more | red |
-| N6 string literals not read | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/escape.ts:2 [module scope] reference of mkdtempSync' | red |
-| N7 substitution-free templates not read | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:3 [module scope] call of mkdtempSync' | red |
-| N8 text compared before escapes | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/escape.ts:1 [module scope] reference of mkdtempSync' | red |
-| N9 the exemption widened to any ancestor function | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:4 [inner] call of mkdtempSync'; + 'tests/infra/helpers.ts:3 [outer] call of mkdtempSync'; and 2 more | red |
-| N10 the exemption widened to a function of the same name in another file | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/elsewhere.ts:3 [tmpDir] call of mkdtempSync' | red |
-| N11 a comment read as code | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/comment.ts:1 [module scope] call of mkdtempSync'; + 'tests/forms/comment.ts:2 [module scope] call of mkdtemp' | red |
-| N12 a string holding a name among other characters reported | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/text.ts:1 [module scope] reference of mkdtempSync'; + 'tests/surface/test-temp.test.ts:80 [module scope] reference of mkdtemp'; and 34 more | red |
-| N13 line counting by the compiler line map | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/separators.ts:5 [module scope] call of mkdtempSync'; - 'tests/forms/separators.ts:3 [module scope] call of mkdtempSync' | red |
-| N14 the immediately invoked naming | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/iife.ts:3 [<anonymous>] call of mkdtempSync'; - 'tests/forms/iife.ts:3 [probe (immediately invoked)] call of mkdtempSync' | red |
-| M1 private names not read | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/forms/private.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/private.ts:3 [module scope] reference of mkdtemp' | red |
-| M2 the name of a function expression given the scope around it | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:2 [mkdtempSync] reference of mkdtempSync' | red |
-| M3a a method with a private name reported as <anonymous> | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:4 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:4 [#make] call of mkdtempSync' | red |
-| M3b a method with a string-literal computed name reported as <anonymous> | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:7 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:7 [build] call of mkdtempSync' | red |
-| M3c a method with a numeric name reported as <anonymous> | 125527cc | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:10 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:10 [42] call of mkdtempSync' | red |
-| M4 the top-level requirement dropped | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:3 [tmpDir] call of mkdtempSync' | red |
-| M5 module-scope occurrences of a helper file exempt | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/surface/evals.test.ts:2 [module scope] reference of mkdtempSync'; - 'tests/surface/command-lines.test.ts:2 [module scope] reference of mkdtempSync' | red |
-| M6 export specifiers exempt in a helper file | 125527cc | acceptance 2 | exit 1, fail 1: - 'tests/surface/command-lines.test.ts:2 [module scope] reference of mkdtempSync' | red |
+| N1 identifiers in type positions skipped | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/type-query.ts:2 [module scope] reference of mkdtempSync' | red |
+| N2 property names skipped | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/namespace.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/default.ts:3 [<anonymous>] call of mkdtempSync'; and 18 more | red |
+| N3 binding names skipped | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/destructure.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/destructure-rename.ts:2 [module scope] reference of mkdtempSync'; and 1 more | red |
+| N4 import specifiers reported in a helper file | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/infra/helpers.ts:1 [module scope] reference of mkdtempSync'; + 'tests/infra/helpers.ts:1 [module scope] reference of mkdtempSync'; and 5 more | red |
+| N5 import specifiers not reported in another file | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/named.ts:1 [module scope] reference of mkdtempSync'; - 'tests/forms/aliased.ts:1 [module scope] reference of mkdtempSync'; and 6 more | red |
+| N6 string literals not read | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/escape.ts:2 [module scope] reference of mkdtempSync' | red |
+| N7 substitution-free templates not read | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:3 [module scope] call of mkdtempSync' | red |
+| N8 text compared before escapes | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/escape.ts:1 [module scope] reference of mkdtempSync' | red |
+| N9 the exemption widened to any ancestor function | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:4 [inner] call of mkdtempSync'; + 'tests/infra/helpers.ts:3 [outer] call of mkdtempSync'; and 2 more | red |
+| N10 the exemption widened to a function of the same name in another file | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/elsewhere.ts:3 [tmpDir] call of mkdtempSync' | red |
+| N11 a comment read as code | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/comment.ts:1 [module scope] call of mkdtempSync'; + 'tests/forms/comment.ts:2 [module scope] call of mkdtemp' | red |
+| N12 a string holding a name among other characters reported | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/text.ts:1 [module scope] reference of mkdtempSync'; + 'tests/surface/test-temp.test.ts:76 [module scope] reference of mkdtemp'; and 37 more | red |
+| N13 line counting by the compiler line map | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/separators.ts:5 [module scope] call of mkdtempSync'; - 'tests/forms/separators.ts:3 [module scope] call of mkdtempSync' | red |
+| N14 the immediately invoked naming | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/iife.ts:3 [<anonymous>] call of mkdtempSync'; - 'tests/forms/iife.ts:3 [probe (immediately invoked)] call of mkdtempSync' | red |
+| M1 private names not read | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/forms/private.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/private.ts:3 [module scope] reference of mkdtemp' | red |
+| M2 the name of a function expression given the scope around it | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:2 [mkdtempSync] reference of mkdtempSync' | red |
+| M3a a method with a private name reported as <anonymous> | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:4 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:4 [#make] call of mkdtempSync' | red |
+| M3b a method with a string-literal computed name reported as <anonymous> | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:7 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:7 [build] call of mkdtempSync' | red |
+| M3c a method with a numeric name reported as <anonymous> | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/methods.ts:10 [<anonymous>] call of mkdtempSync'; - 'tests/forms/methods.ts:10 [42] call of mkdtempSync' | red |
+| L1 a computed name of any expression taken as the name | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/computed-identifier.ts:5 [label] call of mkdtempSync'; - 'tests/forms/computed-identifier.ts:5 [<anonymous>] call of mkdtempSync' | red |
+| L2 the declaration kind tested by its const bit | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/await-using.ts:3 [probe (immediately invoked)] call of mkdtempSync'; - 'tests/forms/await-using.ts:3 [<anonymous>] call of mkdtempSync' | red |
+| L3 the name of the variable inferred for an assigned function | a3085711 | acceptance 2 | exit 1, fail 1: + 'tests/forms/assigned-arrow.ts:2 [f] call of mkdtempSync'; - 'tests/forms/assigned-arrow.ts:2 [<anonymous>] call of mkdtempSync' | red |
+| M4 the top-level requirement dropped | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:3 [tmpDir] call of mkdtempSync' | red |
+| M5 module-scope occurrences of a helper file exempt | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/surface/evals.test.ts:2 [module scope] reference of mkdtempSync'; - 'tests/surface/command-lines.test.ts:2 [module scope] reference of mkdtempSync' | red |
+| M6 export specifiers exempt in a helper file | a3085711 | acceptance 2 | exit 1, fail 1: - 'tests/surface/command-lines.test.ts:2 [module scope] reference of mkdtempSync' | red |
 | R1: tests/surface/review-bench.test.ts:158 back to `mkdtempSync(path.join(dir, 'bad-'))` | 928b23c9 | acceptance 1 | exit 1, fail 1, names `tests/surface/review-bench.test.ts:158 [callback of test]` | red |
 | R1: tests/surface/reviewer-env.child.ts as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, names `tests/surface/reviewer-env.child.ts:22 [tempDir]` | red |
 | R1: tests/surface/review-bench.test.ts as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, names its 5 sites | red |
 | R1: all 47 files as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, `85 sites outside the four helpers` | red |
 | R1 imports: an unused `import { tmpdir } from 'node:os'` left in tests/surface/stats.test.ts | 928b23c9 | `npm run typecheck` | exit 2, TS6133 'tmpdir' is declared but its value is never read | red |
 
-Rows red: 27/27 (N1-N14 and M1-M6 on 125527cc; the 5 migration rows on 928b23c9, the 47 files unchanged since 733a8434).
+Rows red: 30/30 (N1-N14, M1-M6 and L1-L3 on a3085711; the 5 migration rows on 928b23c9, the 47 files unchanged since 733a8434).
 
-DoD (125527cc, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+DoD (a3085711, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
 
 Full suite: not run by the implementer; the coordinator runs it on the final head.
 
 ### Size
-`git diff --shortstat origin/main...HEAD` at 125527cc (origin/main e8e21bd4): 49 files changed, 526 insertions(+), 181 deletions(-), 707 lines; with this evidence commit: 49 files changed, 560 insertions(+), 181 deletions(-), 741 lines, against the budget of 880 (attempt evidence counted).
+`git diff --shortstat origin/main...HEAD` at a3085711 (origin/main 1efea23c): 49 files changed, 559 insertions(+), 181 deletions(-), 740 lines; with this evidence commit: 49 files changed, 579 insertions(+), 181 deletions(-), 760 lines, against the budget of 880 (attempt evidence counted).
 
 ## Planner rulings on the points disclosed in the repair rounds (coordinator, before R3)
 
