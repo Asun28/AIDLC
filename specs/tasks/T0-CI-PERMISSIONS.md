@@ -1,7 +1,7 @@
 ---
 id: T0-CI-PERMISSIONS
 title: ci.yml sets permissions contents read at the top level as the other four workflows do, and a test requires that of every workflow and the exact block of ci.yml
-status: todo
+status: merged
 branch: T0-CI-PERMISSIONS
 worktree: D:\wt\AIDLC\T0-CI-PERMISSIONS
 allow_paths:
@@ -87,3 +87,39 @@ The readers of ci.yml, unchanged and in the DoD: tests/surface/bench.test.ts:211
 The CHANGELOG entry, one line, directly above `- T0-CARDS-PROJECTED-REENTRY`:
 
 "- T0-CI-PERMISSIONS (CI, audit item H9): `.github/workflows/ci.yml` sets `permissions: contents: read` at the top level, as the other four workflows do; before, it had no `permissions` block, so the token of its `check` and `bench` jobs had the repository's default scopes. `tests/surface/workflow-permissions.test.ts` requires of every workflow under `.github/workflows` a top-level `contents: read` with no permission other than `read` or `none` at the top level or in any job, and of ci.yml exactly that block and no job override."
+
+## Attempt evidence
+- RED c124def8 (test file alone): acceptance 1, 2 pass; 3 fails `ci.yml: top-level permissions is not a mapping of scopes` (assertion).
+- GREEN 7ea3da91: ci.yml lines 15-17 block, CHANGELOG entry above T0-CARDS-PROJECTED-REENTRY.
+- Repair round, measured on e10ebc2a: mapping test is a plain-object test (Map and Set refused) with omap and set rows at each boundary; rows for wrong exact contents (write, none, Read), a null own job permissions, and an added top-level read scope accepted by permissionProblems.
+- Revert table on e10ebc2a, 17 of 17 red: the 14 above plus exact without the contents value check, plain-object test as an Array check, top-level other scope accepting only none. Exact job truthiness is `job.permissions`, red on the null row.
+- DoD on e10ebc2a, no pipe: typecheck exit 0, then the four files exit 0, 95 tests, 95 pass, 0 fail.
+- CHANGELOG sentence is true by the ci.yml block and the live test (acceptance 3). Changed lines against budget 200: see report.
+
+Coordinator verification:
+- At a9eb060e, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/workflow-permissions.test.ts): tests 3, pass 3, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1802 # pass 1791 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+### After R3 decision 1 (block: the first CI run of the pull request is not in the evidence)
+
+R3 decision 1 blocked this candidate on one finding: the Attempt evidence did not hold the first pull-request CI run and its cache restore and save outcomes, which R1 and the hygiene asked for. That run cannot exist before the review: the ship opens the pull request after R3 passes. The planner amended R1 and the hygiene on main (the confirmation is the pull request's required checks, which run ci.yml with the new block, fail when a setup-node cache step or `npm ci` fails, and gate the merge; the coordinator records that run's cache lines at CLOSE). This evidence therefore states, and does not claim more: the statement that `actions/setup-node@v4` with `cache: npm` and `npm ci` need no token scope beyond `contents: read` is taken from the documentation of the two actions (both recommend `contents: read`), it is not yet observed in this repository, and the merge of this card is gated on the run that observes it. No source, test or workflow change since the candidate R3 read.
+
+Coordinator verification:
+- At 391864c3, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/workflow-permissions.test.ts): tests 3, pass 3, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1803 # pass 1791 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+PR 287 merged as 0cb391b9 on 2026-11-12T00:39:35Z. Its required checks ran `.github/workflows/ci.yml` with the new block `permissions: contents: read` (run 43126894276) and all passed: build-test, check (ubuntu-latest, 22), check (windows-latest, 22), bench, and Gitleaks (committed history).
+
+The setup-node cache steps of that run, which R1 names as the confirmation:
+
+| Job | actions/setup-node@v4 | npm ci | Post step |
+|---|---|---|---|
+| check (ubuntu-latest, 22) | cache hit, `Cache restored successfully` | added 13 packages in 2 s | hit on the primary entry, nothing to save |
+| check (windows-latest, 22) | cache hit, `Cache restored successfully` | added 13 packages in 4 s | hit on the primary entry, nothing to save |
+| bench | cache hit, `Cache restored successfully` | added 13 packages in 1 s | hit on the primary entry, nothing to save |
+
+What this shows and what it does not. With the token limited to `contents: read`, the cache restore and `npm ci` work in every job. The run did not save a cache entry, because each job hit the existing one, so the save path under the new block is not exercised by this run; it will be at the next change of package-lock.json, and a failing save does not fail the job. The log lines are retained whole as evidence `ci-cache-T0-CI-PERMISSIONS`; the names of the cache entries are left out here.
