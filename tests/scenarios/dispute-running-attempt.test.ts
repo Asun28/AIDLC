@@ -615,6 +615,38 @@ test("T0-ATTEMPT-NUMBER: with no not-counted record the numbers and the narratio
   assert.deepEqual([d.attempt, d.narration], [3, WITH_RED('Attempt 3')]);
 });
 
+/** Write the stored run with the episode [not-counted n 1, running n 5], whose stored numbers do not follow their positions (acceptance 15). */
+function storeGapped(s: Setup, run: CardRun): CardRun {
+  const attempts: EffortEpisode['attempts'] = [
+    { n: 1, effort: 'medium', startedAt: T, finishedAt: T, outcome: 'not-counted', notCountedReason: 'tool-outage', progress: false, checksGained: [], checksLost: [] },
+    { n: 5, effort: 'medium', startedAt: T, outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+  ];
+  return s.fx.store.updateCardRun(s.goalId, 'T0-DRA', () => ({ ...run, effort: { ...run.effort!, attempts, terminal: undefined, escalationUsed: false } }));
+}
+
+test('T0-ATTEMPT-NUMBER: acceptance 15: build() names a stored running attempt by the ladder number at its array index', (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const d = buildOf(s.runner.next(s.g(), s.card, storeGapped(s, notCountedFirst(s))));
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1 (record 5 of this run; 1 not counted)')]);
+});
+
+test('T0-ATTEMPT-NUMBER: acceptance 15: the review-fix field names a stored running attempt by the ladder number at its array index', async (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(s.first.run, 'sha-1').run, BLOCK);
+  const d = buildOf(s.runner.next(s.g(), s.card, storeGapped(s, decided)));
+  assert.deepEqual([d.attempt, d.narration], [1, REVIEW_FIX('')]);
+});
+
+test('T0-ATTEMPT-NUMBER: acceptance 15: the buildDirective fallback names a stored running attempt by the ladder number at its array index', async (t) => {
+  const s = setup(['base-sync-merged']);
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(s.first.run, 'sha-1').run);
+  const d = buildOf(s.runner.next(s.g(), s.card, storeGapped(s, decided)));
+  assert.deepEqual([d.attempt, d.narration], [1, MERGE_CONFLICT]);
+});
+
 /** The sentence card T0-ATTEMPT-NUMBER appends to the ship repair attempt paragraph of docs/OPERATIONS.md. */
 const LADDER_OPERATIONS =
   'Every build directive names, in its `attempt` field and in the `Attempt <n>` label of a BUILD or review-fix narration that has one, the ladder number of the attempt it opens, runs or asks for: the records of the run before that attempt that are not `not-counted`, plus one (card T0-ATTEMPT-NUMBER). When that attempt\'s record number, its `n` in the run, differs, the label adds `(record <n> of this run; <k> not counted)`; the stored `n`, the failure counts and the ladder limits are unchanged, and in the journal an `ATTEMPT_STARTED` that opens an attempt carries its ladder number while one that journals the promotion of a running repair, and every `ATTEMPT_FINISHED` that carries a number, carry the stored `n`, as before.';

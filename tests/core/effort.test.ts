@@ -605,5 +605,18 @@ describe('T0-ATTEMPT-NUMBER: the ladder number of an attempt', () => {
       { n: 7, effort: 'medium', startedAt: at(5), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
     ] };
     assert.deepEqual(afterShipFailure(gappedRepair, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'afterShipFailure with a running repair, stored n not following positions');
+    // A running record that is not last (acceptance 15): the index is the running record's, never the last one's.
+    const runningFirst: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+      { n: 2, effort: 'medium', startedAt: at(2), finishedAt: at(3), outcome: 'not-counted', notCountedReason: 'quota', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(repairAction(runningFirst, JUSTIFIED), { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'repairAction, running record not last');
+    assert.deepEqual(afterShipFailure(runningFirst, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'afterShipFailure with nothing settled, running record not last');
+    const repairNotLast: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), finishedAt: at(2), outcome: 'success', progress: false, checksGained: [], checksLost: [] },
+      { n: 2, effort: 'medium', startedAt: at(3), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+      { n: 3, effort: 'medium', startedAt: at(4), finishedAt: at(5), outcome: 'not-counted', notCountedReason: 'quota', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(afterShipFailure(repairNotLast, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'afterShipFailure with a running repair, running record not last');
   });
 });
