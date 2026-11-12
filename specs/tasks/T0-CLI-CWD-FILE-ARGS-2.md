@@ -120,3 +120,487 @@ The check is a function of a source text (so the table can call it) applied to s
 Failing texts, each with the rule it breaks: `process.chdir(at)` and `process['chdir'](at)` (a, and the second also b); `process.env.X = v`, the same with a line break before `=`, `process.env['X'] ??= v`, `process.env['X'] ||= v`, `process.env.X += v`, `delete process.env.X`, `process.env.X++`, `[process.env.X] = a`, `({ a: process.env.X } = o)`, `for (process.env.X of a) {}` (c: the access is not an operand of one of the five operators); `Object.assign(process.env, x)`, the same with a line break and with spaces before the parenthesis (the finding F8), `Object.defineProperty(process.env, 'X', d)`, `Reflect.set(process.env, 'X', v)`, `fn(process.env)`, `const e = process.env`, `return process.env`, `process.env` as an expression statement (c: none of the three shapes); `process['env'].X = v`, `const { env } = process`, `const p = process`, `globalThis.process.env.X = v`, `fn(process)`, `import p from 'node:process'`, `require('process')` (b). A comment and a longer string that hold these words pass (`// process.env.X = v`, `'run process.chdir here'`).
 
 Reverts that must each fail a row: rule (a) removed; the string form of (a) removed; rule (b) removed; the string form of (b) removed; each of the three shapes of (c) removed in turn (main.ts then fails); the operator list widened by an assignment operator; the callee of the third shape not compared; a comment read as code.
+
+## Attempt evidence
+
+History: this card replaces T0-CLI-CWD-FILE-ARGS, whose candidate 04fccad1 (branch T0-CLI-CWD-FILE-ARGS, merge base 90dd71bb) had four formal decisions: 1 blocked (findings F3 to F6), 2 passed, 3 blocked (F7), 4 blocked on F8 (class environment-write-guard-gap: the regular expression of acceptance 13 missed white space before the parenthesis of `Object.assign (process.env` and `Object.defineProperty (process.env`); STOP review at 2026-11-11T12:33Z, replaced by the owner's ruling of 2026-11-12. Its evidence follows as it stands at 04fccad1 in specs/tasks/T0-CLI-CWD-FILE-ARGS.md (lines 67 to 402), headings one level down; under each attempt a line "Measured:" names the commit of the branch T0-CLI-CWD-FILE-ARGS that recorded it and whose run it was, and the two verification blocks of the coordinator are renamed so that this card holds no line "Coordinator verification:" of its own yet. The finding numbers inside are the predecessor's own (its attempt 2 numbers the findings of decision 1 F1 to F3; the hygiene numbers them F3 to F6). The evidence of this card on its own branch follows the moved text.
+
+### Predecessor T0-CLI-CWD-FILE-ARGS (moved from 04fccad1)
+
+#### Attempt 1
+Measured: the commit of attempt 1, 2bbd708c, the implementer's runs on a Windows host; RED commit 0b285beb: acceptance 1 failed on the missing export, 2, 3, 4 (Windows case) and 6 failed on main for the reasons the card states; 5 passes on main by design.
+
+| Item | Test or command | Result |
+|---|---|---|
+| 1 | `tests/surface/cli-cwd-paths.test.ts` "the path function by input class" | pass |
+| 2 | same file, "each file argument resolves against -C" | pass |
+| 3 | same file, "supplied values are refused before any read or write", and on Windows "supplied values: a drive-relative or incomplete UNC value is refused and a leading separator means the root of the -C drive" | pass, pass |
+| 4 | same file, "an invalid -C is refused for every command" | pass |
+| 5 | same file, "absent optional values" | pass |
+| 6 | same file, "plan_ref is the same with and without -C" | pass |
+| 7 | `incident`, `ci-policy`, `command-lines`, `approver`, `review-bench`, `init`, `init-base-ci`, `init-no-package` test files, unchanged | pass (in the DoD run, no test file edited) |
+| 8 | `docs/OPERATIONS.md` (Setup, `-C <dir>` paragraph) and the CHANGELOG entry above `T0-CARD-LEASE-HEARTBEAT-2` | written; reviewer-verified |
+| DoD | `dod_command` as given | exit 0: typecheck clean; 206 tests, 206 pass, 0 fail, 0 skipped (Windows host) |
+
+Revert check of attempt 1 (Windows host): each behavioural source hunk reverted on its own in src/cli/main.ts, the named tests of `tests/surface/cli-cwd-paths.test.ts` run, the file restored. Tests: T1 "the path function by input class", T2 "each file argument resolves against -C", T3 "supplied values are refused before any read or write", T4 the Windows drive-relative case, T5 "an invalid -C is refused for every command", T7 "plan_ref is the same with and without -C".
+
+| Hunk reverted | Failing test and assertion | Result |
+|---|---|---|
+| R3 empty or whitespace refusal | T1 `win32 "" is refused`; T3 status 1 | both fail |
+| R3 drive-relative refusal | T1 `win32 "C:" is refused`; T4 `--plan "C:plan.md"` status 1 | both fail |
+| R3 incomplete UNC refusal | T1 `win32 "\\\\x" is refused` | fails |
+| R3 complete UNC and device exception | T1 `win32 "\\\\server\\share"` resolves as given | fails |
+| R2 -C refused by R3 | T5 `-C ""` exit 1 naming `--cwd` | fails |
+| R2 -C must be a directory | T5 `-C <missing>` and `-C <file>` | fails |
+| R2 exit 2 under `hook` | T5 `hook auto` status 2 | fails |
+| R4 `fileArg` helper | T2 `init [dir]` reads the target's `sub`; T3 status 1 | both fail |
+| R4 `init [dir]` | T2 skipped lists `aidlc.config.json`; T3 `init ""` refused | both fail |
+| R4 `cards project --plan` | T2 drafts `T0-CWD-ROW`; T3; T7 status 0 | all fail |
+| R7 `canonical(planFile)` | T7 `-C a link to the repository` gives `plan_ref: plans/p.md#7` | fails |
+| R4 `intent validate <file>` | T2 problems `missing front matter`; T3 | both fail |
+| R4 `spec validate <file>` | T2; T3 | both fail |
+| R4 `plan check <file>` | T2 overall `needs-clarification`; T3 | both fail |
+| R4 `bench compare <before.json>` | T2 refusal names the target's `after.json`; T3 | both fail |
+| R4 `bench compare <after.json>` | T2; T3 | both fail |
+| R4 `ci classify --log` | T2 class `code-defect`; T3 | both fail |
+| R4 `migrate assess --diff` | T2 strong impact; T3 | both fail |
+| R5 empty `--diff` refused (`=== undefined`, not a truthy test) | T3 `--diff ""` status 1 | fails |
+| R4 `evidence retain --file` | T2 retained bytes are the target's; T3 | both fail |
+| R5 empty `--file` refused | T3 `--file ""` status 1 | fails |
+| R4 `monitor check --bands` | T2 one breach; T3 | both fail |
+| R4 `monitor check --data` | T2; T3 | both fail |
+
+#### Attempt 2
+Measured: 6a3e5d15, the commit of attempt 2, the implementer's runs on a Windows host.
+R3 decision 1 blocked on three findings.
+- F1 (class cwd-stat-hook-fail-open): `statSync(r.path, { throwIfNoEntry: false })` threw for a regular file on the way (ENOTDIR on POSIX) or a parent that cannot be read (EACCES), so `hook auto` exited 1 without the `--cwd` refusal. Fix: the -C check (`process.cwd()`, `resolvePathArg` and `statSync`) runs in one `try`; any throw gives the quoted `--cwd` refusal with its error code, exit 2 under `hook <name>` and 1 otherwise.
+- F2 (class missing-linux-pre-review-run): the coordinator records its Linux run under `Coordinator verification:` at the end of this file.
+- F3 (class missing-hunk-revert-verification): the revert table of attempt 1 is above; the hunks attempt 2 adds or changes are below.
+
+Class sweep, every `statSync`, `lstatSync` or `existsSync`-then-read on a path value the change added or relies on:
+
+| Site | Value | Under a regular file (ENOTDIR on POSIX, no entry on Windows) or an unreadable parent (EACCES) |
+|---|---|---|
+| src/cli/main.ts preAction, `statSync` | `-C` | the `--cwd` refusal, exit 2 under `hook`, 1 otherwise (fixed in attempt 2) |
+| src/cli/main.ts preAction, `process.cwd()` | `-C` base | inside the same `try`: a removed process directory gives the refusal, not a throw (not tested: a test cannot start the CLI in a removed directory) |
+| `readFileSync` in the actions | `--plan`, the `<file>` of intent, spec and plan, `--log`, `--diff`, `--bands`, `--data` | the error of main naming the resolved path, exit 1; no stat added; not reachable under `hook` |
+| src/review/bench.ts `savedReport`, `existsSync` then `readFileSync` | `<before.json>`, `<after.json>` | `existsSync` is false: `<path>: no such file`, exit 1, as on main |
+| src/audit/manifest.ts `retain`, `existsSync` then `readFileSync` | `--file` | `existsSync` is false: `evidence source missing: <path>`, exit 1, as on main |
+| src/scaffold/init.ts `holdsContent`, `readdirSync` | `init [dir]` | ENOENT counts as an empty target (as on main); ENOTDIR or EACCES ends with main's error, exit 1; unchanged |
+
+New and changed tests (all in `tests/surface/cli-cwd-paths.test.ts`):
+- "an invalid -C is refused for every command": adds `-C <regular file>/child` on every platform and `hook protect-paths` next to `hook auto`, and asserts the reason after `--cwd "<value>": ` (empty, no directory, a file, drive letter, server and share).
+- "an invalid -C is refused for every command: a parent that cannot be read": `-C <dir of mode 0o000>/inner`; skipped on Windows and for uid 0; the mode is restored in a `finally`.
+- "supplied values: a value under a regular file fails with the error of main naming the resolved path": nine commands, the eleven file values other than `init [dir]`; exit 1, stderr names the resolved path, nothing written.
+
+Revert check of attempt 2 (Windows host), T5 as above, T8 the regular-file test:
+
+| Hunk reverted | Result |
+|---|---|
+| R2 -C refused by R3 (`if (!r.ok) refusal = r.message`) | T5 fails (the reason `the value is empty` is missing) |
+| R2 -C must be a directory (`(a file)`) | T5 fails |
+| R2 exit 2 under `hook` | T5 fails |
+| R2 the `catch` removed (any throw escapes) | T5 fails |
+| R2 the `catch` back to the attempt-1 form (only ENOENT refused, other codes thrown) | T5 and T8 green on Windows, which reports no entry for `<file>/child` and does not deny a read for mode 0o000; on Linux the `<file>/child` case (ENOTDIR) and the unreadable-parent case (EACCES) of T5 fail. The coordinator runs this revert under Linux. |
+
+| Item | Test or command | Result |
+|---|---|---|
+| 4 | T5 and the unreadable-parent test | pass on Windows; the unreadable-parent test skipped there |
+| 3 | T3, T4 and the regular-file test | pass |
+| DoD | `dod_command` as given | exit 0: typecheck clean; 208 tests, 207 pass, 0 fail, 1 skipped (the unreadable-parent test, Windows host) |
+
+#### Attempt 3
+Measured: the attempt 3 DoD (212 tests) at a5d522e2, the implementer's run on a Windows host; this text written at 49fac7ce.
+R3 decision 3 blocked on one finding: [spec, scope fidelity, class resolved-cwd-discarded] src/cli/main.ts:242. The -C check discarded `r.path` and every reader got the raw value; on POSIX `-C missing/../src` passed the check (the lexical path exists) while git, spawned with the raw relative cwd, failed ENOENT, so `src` became a non-repository root and `goal new` could write state under `src/.aidlc`. This is reading 3 of attempt 1 ("-C is checked but not stored resolved").
+
+Attempt 3 stored `canonical(<R3 result>)` as the -C directory, changed the process directory to it and rewrote a relative `AIDLC_STATE_DIR`; its DoD passed (212 tests, 211 pass, 1 skipped). Two consults of 2026-11-11 showed that the canonical base and the change of directory move the base of the twelve values and of the options of R8, and the planner ruled all three out (card R1, R8, `forbid`, d612f13a). Its reader sweep, requirement table, readings and revert table no longer describe the code and are replaced by those of attempt 4.
+
+#### Attempt 4
+Measured: 49fac7ce, the implementer's runs on a Windows host, except the runs of main named with their own commit and host; the labels of the Linux rows edited at 6a36b57e and 28342543.
+Rulings of 2026-11-11 after the consults on a5d522e2, applied on the card of d612f13a:
+- The -C directory is stored once, as R3 returns it (`workDir = at`, lexical); `canonical()` remains only in the `plan_ref` of `cards project`.
+- No `process.chdir` and no write to `process.env` anywhere in the CLI; the catch names three causes: nothing there, a regular file on the way, a parent that cannot be read.
+- Without -C, `fileArg` uses R3 only to refuse and returns the value as typed; `init [dir]` follows the same rule.
+- The default session token is a non-goal: every CLI call of the tests that select a repository or state directory sets `AIDLC_SESSION`, and no assertion reads `session-default`.
+- Every child the tests start runs with no `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` or `GIT_COMMON_DIR` (`childEnv`).
+
+Reader list, `git grep -n "g().cwd\|process.cwd()\|opts.cwd" -- src/cli/main.ts` at this commit:
+
+| Line | Reader | Takes |
+|---|---|---|
+| :73 | `ctx()`: repository identity, config, state directory, controller, and through `c.root`/`c.repo` every git and gh probe | `opts.cwd`, which every caller passes as `g().cwd` = the stored directory; the process directory without -C |
+| :236 | `g()` | `cwd: workDir`, the stored directory; the typed text is not in it |
+| :239, :245 | the -C check | the typed text (`program.opts().cwd`), resolved against the process directory and printed; nothing else reads it |
+| :263, :265 | `fileArg`, the base of the twelve values | the stored directory; without -C the value as typed (R9) |
+| :279 | `init` without `[dir]` | the stored directory, else the process directory |
+| :1078 | `review bench run` root | the stored directory, else the process directory |
+| :1446 | `hook <name>` | the stored directory, else `event.cwd`, else the process directory |
+
+Main's output for the two no-`-C` rows of acceptance 10, run on 2026-11-11 with `node D:\Projects\AIDLC\src\cli\main.ts` (main at d612f13a) from a scratch directory holding `spec.md` and no `missing`, `AIDLC_STATE_DIR` set to a scratch directory (which stayed empty):
+
+```
+$ node D:\Projects\AIDLC\src\cli\main.ts spec validate nofile.md
+aidlc: ENOENT: no such file or directory, open 'C:\Users\Admin\AppData\Local\Temp\claude\ba6303180ca8049b\eb02f3fb-6d6a-4a44-870b-34d780644c33\scratchpad\t4main\dir\nofile.md'
+exit 1
+$ node D:\Projects\AIDLC\src\cli\main.ts spec validate missing/../spec.md --json
+{ "ok": false, "problems": [ "missing front matter" ], "requirements": [] }   (JSON printed on six lines; joined here)
+exit 1
+$ node D:\Projects\AIDLC\src\cli\main.ts review bench compare nofile.json other.json
+aidlc: nofile.json: no such file
+exit 1
+```
+
+Two of these differed from the first wording of acceptance 10 (the card of 1c77a086 states them as main gives them), and the test pins main's behaviour as observed:
+- On Windows, Node's ENOENT names the file in the process directory, not the value as typed. The every-host row therefore asserts that path on Windows and the value as typed on POSIX. The bench row (an error the command writes itself) names the value as typed on every host, so a resolved value without -C fails the test on Windows too.
+- The POSIX row (`missing/../spec.md` fails where `missing` does not exist) cannot run on this Windows host: Windows reads `missing\..\spec.md` lexically, and main reads the file (second output above). WSL here has no Node; the coordinator ran main on Linux (below) and its Linux run executes the POSIX test.
+
+Main's Linux output, run by the coordinator on main at 1c77a086 (WSL Ubuntu, Node v22.23.4) from a scratch directory holding `spec.md`, verbatim:
+
+```
+spec validate missing/../spec.md -> aidlc: ENOENT: no such file or directory, open 'missing/../spec.md', exit 1
+spec validate nofile.md -> aidlc: ENOENT: no such file or directory, open 'nofile.md', exit 1
+review bench compare nofile.json other.json -> aidlc: nofile.json: no such file, exit 1
+```
+
+The POSIX rows of acceptance 10 assert exactly these lines (attempt 5): `assert.equal(stderr, "aidlc: ENOENT: no such file or directory, open 'missing/../spec.md'\n")`, the same for `'nofile.md'`, and `'aidlc: nofile.json: no such file\n'` on every host.
+
+Clause table, R1 to R10 (lines of src/cli/main.ts at this commit; tests by name in `tests/surface/cli-cwd-paths.test.ts`):
+
+| Clause | Code | Test that fails without it |
+|---|---|---|
+| R1 -C validated by R2, resolved by R3 against the process directory | :245 | "an invalid -C"; "-C leaves the process directory ...": relative `src` and `missing/../src` |
+| R1 effective base: the stored directory with -C, else the process directory | :236, :250, :263 | "each file argument resolves against -C"; "every form" |
+| R1 stored once, lexical, never a realpath | :250 `workDir = at` | "plan_ref is canonical when the plan is given through a link", run `-C <link> --plan ../link/plans/p.md` (revert row "forbid: canonical -C directory") |
+| R1 every reader takes the stored value | :73, :263, :279, :1078, :1446 | "every form" (doctor, bench root), "a hook runs its guards", "-C leaves the process directory ..." (doctor, goal new, hook auto) |
+| R1 the typed text read only to check and print | :239 | "an invalid -C" (revert row "R2 check reads the typed -C") |
+| R1 no `process.chdir`, no write to `process.env` | none in the diff | "-C leaves the process directory ...": the relative `AIDLC_STATE_DIR` assertion (`<caller>/<value>` with and without -C) is the behavioural check (revert row "forbid: process.chdir"); the removal of the `-C` directory in the same test is a cleanup check only and pins no clause |
+| R1 `hook` without -C keeps `event.cwd`, else the process directory | :1446 | "a hook runs its guards in the -C directory" |
+| R2 every action, before any read or write; refusals; exit 1, exit 2 under `hook` | :238-:256 | "an invalid -C" (five commands, nothing written); unreadable parent (POSIX) |
+| R2 `bin/aidlc-hook.js` unchanged | none | `git diff origin/main --stat` lists no bin/ file |
+| R3 every input class, both flavours | :119-:128 | "the path function by input class"; Windows "drive-relative or incomplete UNC" |
+| R4 the twelve values against the effective base, checked before `ctx()` and before any input | :279, :841, :884, :895, :907, :1088, :1089, :1121, :1258, :1379, :1408, :1409 | "each file argument resolves against -C"; "supplied values are refused" |
+| R4 `review bench run` root from the effective base | :1078 | "every form": `no REVIEW.md in <checkout>` |
+| R5 absent values as on main; explicit empty refused | :279, :1258, :1379 | "absent optional values"; "supplied values are refused" |
+| R6 message names option, quotes value, says why and what to pass; writes nothing | :120, refusals before `ctx()` | "the path function" (`; pass `); "supplied values are refused" (snapshot with `--write`, `--file-intent`, `init`); "an invalid -C" |
+| R6 a value naming no file: main's error, resolved with -C, as given without | unchanged readers, :265 | "a value under a regular file"; "without -C a value is passed as given" |
+| R7 `plan_ref` canonical, also with letter case, 8.3 name, and a plan given through a link; base stays the stored directory | :847 | "plan_ref is the same ..." (link, letter case); "... an 8.3 short name" (Windows); "plan_ref is canonical when the plan is given through a link" (revert row "R7 plan_ref canonical") |
+| R8 the nine options keep their base | unchanged code | acceptance 7 test files, unchanged in the DoD |
+| R8 `AIDLC_STATE_DIR` neither read nor rewritten for -C | none in the diff | "-C leaves the process directory ...": `<caller>/rel-state` with and without -C |
+| R9 without -C, R3 only refuses; the value is handed on as typed | :264-:265 | "without -C a value is passed as given" (bench row on every host; ENOENT row on POSIX); POSIX `missing/../spec.md` test; revert row "R9" |
+| R9 with -C, lexical | :263 | POSIX `missing/../spec.md` test (with -C it reads spec.md); "-C leaves the process directory ...": `-C missing/../src` |
+| R10 docs state R1 to R5 and R8, and the attempt 4 sentences | docs/OPERATIONS.md Setup, CHANGELOG | sentence by sentence below |
+
+Docs, each sentence of the `-C` paragraph of docs/OPERATIONS.md (the CHANGELOG entry says the same in fewer sentences) against its cover:
+
+| Sentence | Cover |
+|---|---|
+| `-C` names the directory a command works in | R1; "every form" |
+| resolved against the process directory, lexically, must name an existing directory; the refusals, exit 1, exit 2 under `hook` | R1, R2, R9; "an invalid -C"; POSIX `missing/../spec.md` test |
+| every part of the command takes the resolved directory (repository, state directory when `AIDLC_STATE_DIR` is unset, file arguments, `init`, bench root, hook guards) | R1; "every form", "a hook runs its guards", "-C leaves the process directory ..." |
+| `-C` changes neither the process directory nor the environment; a relative `AIDLC_STATE_DIR` is read against the process directory with or without `-C` | R1, R8; "-C leaves the process directory ..." |
+| with `-C` the twelve values resolve against the `-C` directory, lexically, fully qualified as given, `\x` at the root of the drive | R3, R4, R9; "each file argument resolves against -C"; "the path function"; Windows test |
+| without `-C` a value is passed as given | R9; "without -C a value is passed as given" |
+| refusals with or without `-C`, checked before any input or write | R3, R4, R6, R9; "supplied values are refused"; the empty value without -C in "without -C a value is passed as given" |
+| a value naming no file fails with the command's error, naming the resolved path with `-C` | R6; "a value under a regular file"; "without -C a value is passed as given" |
+| `plan_ref`: with `-C` the plan's canonical path relative to the canonical main checkout, without `-C` the typed value relative to the main checkout (wording of attempt 7) | R7; the `plan_ref` tests |
+| absent optional values | R5; "absent optional values" |
+| `hook` without `-C` keeps `event.cwd`, else the process directory | R1; "a hook runs its guards" |
+| the options that keep their base, and `AIDLC_STATE_DIR` | R8; acceptance 7 test files; "-C leaves the process directory ..." |
+
+`forbid` and `non_goals`:
+
+| Entry | How it holds |
+|---|---|
+| forbid: weakening or skipping a test | no test of main changed; this file's skips are platform gates with reasons |
+| forbid (new): `process.chdir` or a write to `process.env` in the CLI | acceptance 13 (attempt 6), "the CLI changes neither the process directory nor the environment", reads src/cli/main.ts and finds no `process.chdir(` and no line with `process.env.<name>` or `process.env[...]` left of an assignment operator, no `delete process.env` and no `Object.assign(process.env`; the reads of `process.env[...]` in the file (:323, :600, :809) write nothing. The chdir revert also fails "-C leaves the process directory ..." |
+| forbid (new): a realpath of the -C directory or of the base of a file argument | `workDir = at`; the canonical revert fails "plan_ref is canonical when the plan is given through a link" |
+| forbid (new): resolving or rewriting a value when -C is absent | `fileArg` returns the value as typed without -C; the R9 revert fails "without -C a value is passed as given" |
+| forbid: option names, help text, usage lines | no `.option`/`.command` line changed; command-lines.test.ts passes unchanged |
+| forbid: the base of an option of R8 | no R8 option's code changed |
+| forbid: tilde or environment variable expansion | none; `~\x` stays a file name ("the path function") |
+| forbid: bin/aidlc-hook.js, .aidlc state by hand | neither touched |
+| non_goal: the default session token | not changed; tests set `AIDLC_SESSION` |
+| non_goal: a child a library starts without a `cwd`; a removed process directory (POSIX) | not changed; the process directory is never changed |
+| non_goal: the options of R8; paths inside files the command reads; a directory where a file is expected | not changed |
+| non_goal: a path through a symbolic link or junction | resolved by the file system, as on main. One case found while testing: `-C <link to a subdirectory of a repository>` selects the link's parent as the repository, because `identityFrom` in src/state/paths.ts resolves git's relative `--git-common-dir` (`../.git`) lexically against the link; main gives the same result for that -C, the file is outside `allow_paths`, and "every form" therefore uses no link to a subdirectory. A link to the repository root works and is tested. |
+| non_goal: the meaning of `AIDLC_STATE_DIR` | unchanged ("-C leaves the process directory ...") |
+
+New and changed tests (attempt 4):
+- "-C leaves the process directory and the environment as they are" (all platforms; acceptance 11): relative `AIDLC_STATE_DIR` with and without -C; `-C src` and `-C missing/../src` from the checkout for doctor, goal new and hook auto; nothing under `src`; and, as a cleanup check only, the `-C` directory removed after the CLI exits.
+- "plan_ref is canonical when the plan is given through a link" (all platforms; acceptance 9): `-C <repo> --plan <link>/plans/p.md`, and `-C <links/link> --plan ../link/plans/p.md`, which only a lexical base reaches.
+- "without -C a value is passed as given" (all platforms; acceptance 10): the ENOENT row (platform-specific expectation, above), the bench row, and an empty value refused without -C.
+- "without -C a value is passed as given: missing/../spec.md on POSIX" (skipped on Windows by `process.platform`; acceptance 10).
+- "every form": the link to `src` is gone (non-goal above); the bench root uses `-C src`; no `session-default` assertion. The repository fixture sets `AIDLC_SESSION`.
+- `childEnv` for every child; `gitInit` for every `git init`.
+
+Revert check of attempt 4 (Windows host), one row per source hunk of the final diff against origin/main, each alone, the file restored; and the three forbidden changes added back:
+
+| Hunk reverted | Result |
+|---|---|
+| R3 empty/whitespace refusal | "the path function" fail |
+| R3 drive-relative refusal | "the path function", "Windows drive-relative or incomplete UNC" fail |
+| R3 incomplete UNC refusal | "the path function" fail |
+| R3 complete UNC/device exception | "the path function" fail |
+| R1 g() returns the stored directory | green on Windows, where git starts in a relative cwd such as `missing\..\src`, which Windows normalizes; on POSIX the `-C missing/../src` cases of "every form" and "-C leaves the process directory ..." fail by the finding of R3 decision 3; the Linux result is the coordinator's, not run here. |
+| R2 check reads the typed -C | "an invalid -C" fail |
+| R2 -C refused by R3 | "an invalid -C" fail |
+| R2 -C must be a directory | "an invalid -C" fail |
+| R2 exit 2 under hook | "an invalid -C" fail |
+| R2 catch removed | "an invalid -C" fail |
+| R2 catch narrowed to ENOENT (attempt 1 form) | green on Windows, which reports no entry for <file>/child and denies no read for mode 0o000; on POSIX "an invalid -C" (<file>/child, ENOTDIR) and the unreadable-parent test exercise it; the Linux result is the coordinator's, not run here. |
+| R1 store the -C directory (workDir = at) | "each file argument resolves against -C", "every form" fail |
+| forbid: canonical -C directory | "plan_ref is canonical when the plan is given through a link" fail |
+| forbid: process.chdir to the -C directory | "-C leaves the process directory ..." fail |
+| R4 fileArg base is the stored directory | "each file argument resolves against -C" fail |
+| R6 fileArg refuses | "supplied values are refused" fail |
+| R9 without -C the value as given | "without -C a value is passed as given" fail |
+| R4 init [dir] | "each file argument resolves against -C" fail |
+| R4 cards project --plan | "each file argument resolves against -C" fail |
+| R7 plan_ref canonical | "plan_ref is canonical when the plan is given through a link" fail |
+| R4 intent validate | "each file argument resolves against -C" fail |
+| R4 spec validate | "each file argument resolves against -C" fail |
+| R4 plan check | "each file argument resolves against -C" fail |
+| R4 bench <before.json> | "each file argument resolves against -C" fail |
+| R4 bench <after.json> | "each file argument resolves against -C" fail |
+| R4 ci classify --log | "each file argument resolves against -C" fail |
+| R4 migrate --diff | "each file argument resolves against -C" fail |
+| R5 empty --diff refused | "supplied values are refused" fail |
+| R4 evidence --file | "each file argument resolves against -C" fail |
+| R5 empty --file refused | "supplied values are refused" fail |
+| R4 monitor --bands | "each file argument resolves against -C" fail |
+| R4 monitor --data | "each file argument resolves against -C" fail |
+
+Other checks: the 78 test files that name docs/OPERATIONS.md or CHANGELOG.md (`git grep -l` over tests/), run together on Windows: 1867 tests, 1853 pass, 2 fail, 12 skipped; the two failures (tests/infra/exec.test.ts "T0-EXEC-TREE-KILL run on real processes", a timing bound, and tests/surface/hook-git-prefetch.test.ts "F3") are in files that do not start the CLI, and both files pass alone right after (70 tests, 70 pass), so they read as load-dependent under 78 files run at once; `npm run bench -- --check` exits 0: "every count within its ceiling (6 journeys)"; diff at 49fac7ce against origin/main (merge base d612f13a), against the budget of 800 then (940 since 1c77a086): 884 changed lines, 873 added and 11 removed: src/cli/main.ts 87, tests/surface/cli-cwd-paths.test.ts 551, this card 242, docs/OPERATIONS.md 2, CHANGELOG.md 2; over that budget by 84, in tests and attempt evidence.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given | exit 0: typecheck clean; 215 tests, 213 pass, 0 fail, 2 skipped (the unreadable-parent test and the POSIX `missing/../spec.md` test, Windows host) |
+
+#### Attempt 5
+Measured: 6a36b57e, the implementer's runs on a Windows host.
+The Codex consult on 49fac7ce passed the production code and blocked on three test points, with three risks; the card was amended in 1c77a086 (acceptance 10 and R9 state the error as main gives it, budget 940). This attempt changes tests and evidence only; src/cli/main.ts, docs/OPERATIONS.md and CHANGELOG.md are as at 49fac7ce.
+
+1. Block, the unreadable-parent test: the case `-C <mode-000 directory>` expected a `--cwd` refusal and named a change of directory that no longer exists. A stat of that directory needs search permission on its parent only, so R2 accepts it; the test now asserts that `-C <locked> spec validate spec.md` exits 1 with an error that starts `aidlc: `, names the directory and does not name `--cwd`. Expected text, derived and not run on this Windows host: `aidlc: EACCES: permission denied, open '<locked>/spec.md'` (git cannot start in the directory, so it is no repository; `aidlc.config.json` is not found there, so the defaults apply; then the open of spec.md fails). The `<locked>/inner` case keeps the refusal, exit 1 and exit 2 under a hook. POSIX only, skipped for uid 0, the mode restored in a `finally`.
+2. Block, the child environment: every child the file starts (`git init`, the CLI, the environment dump) gets `childEnv()`, which drops every inherited variable whose upper-cased name starts with `GIT_` or `AIDLC_`, and `CLAUDE_CODE_SESSION_ID`, and sets `GIT_CEILING_DIRECTORIES` to the canonical OS temporary directory, the parent of every fixture. New test "every child starts without the GIT_ variables of the test process, and repository discovery stops at the ceiling": with `GIT_DIR`, a lowercase `git_work_tree`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_0` and `GIT_CONFIG_VALUE_0` set in the test process, a child's environment holds only `GIT_CEILING_DIRECTORIES`, and the CLI in a caller outside any repository reports `<caller> (not a git repository)` although `GIT_DIR` names a repository. How the ceiling was checked: a fixture inside a git checkout (`<outer>/fx/caller`, `<outer>` a repository under the temporary directory) runs `doctor`; with the default ceiling, which lies above `<outer>`, it reports `<outer>` as the repository, and with `GIT_CEILING_DIRECTORIES=<outer>` it reports `<caller> (not a git repository)`. It passed on this Windows host, so Git for Windows reads the Windows path; the Linux run checks POSIX.
+3. Block, R4 "before `ctx()`": new test "supplied values are refused before the command context is built". The target holds an `aidlc.config.json` that is not JSON; the test first shows that `-C <target> spec validate spec.md` fails on that configuration, then that each empty value is refused naming its option. Commands among the twelve values that build a context: `cards project` (`--plan`), `intent validate`, `spec validate`, `plan check` (`<file>`), `ci classify` (`--log`), `migrate assess` (`--diff`), `evidence retain` (`--file`), `monitor check` (`--bands`, `--data`): eight commands, nine values. Commands that build none: `init [dir]` and `review bench compare` (`<before.json>`, `<after.json>`). The two-input commands are tested with the empty value second: `monitor check --bands bands.yaml --data ""` and `review bench compare before.json ""`.
+4. Risk, acceptance 11: the removal of the `-C` directory is described as a cleanup check only; the relative `AIDLC_STATE_DIR` assertion is the behavioural check of "no change of directory, no rewrite" (clause table, R1 row).
+5. Risk, evidence: the attempt 4 text now says the two results differed from the first wording of acceptance 10, and labels the 884-line figure as measured at 49fac7ce against the budget of 800 then.
+6. Main's Linux output (the coordinator's run at 1c77a086) is recorded verbatim under attempt 4, and the POSIX rows assert those lines exactly (`assert.equal` on the whole stderr), as the bench row does on every host.
+
+Revert rows of attempt 5 (Windows host, each alone, the file restored):
+
+| Change reverted | Result |
+|---|---|
+| src/cli/main.ts: in `spec validate`, the `fileArg` line moved after `ctx()` | "supplied values are refused before the command context is built" fails: `spec validate <file>: aidlc: aidlc.config.json: Expected property name or '}' in JSON at position 2 (line 1 column 3)` |
+| test: `childEnv` back to the attempt 4 filter (only `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR`) | "every child starts without the GIT_ variables ..." fails (`GIT_CONFIG_COUNT` and friends reach the child) |
+| the direct mode-000 case | POSIX only; the coordinator's Linux run executes it |
+
+Other checks: the 78 test files that name docs/OPERATIONS.md or CHANGELOG.md, run together on Windows: 1867 tests, 1855 pass, 0 fail, 12 skipped; diff against the merge base of that commit, 1c77a086: 994 changed lines (983 added, 11 removed; working tree before this commit) against the budget of 940: tests/surface/cli-cwd-paths.test.ts 627, this card 276, src/cli/main.ts 87, docs/OPERATIONS.md 2, CHANGELOG.md 2; over by 54, in tests and attempt evidence.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given | exit 0: typecheck clean; 217 tests, 215 pass, 0 fail, 2 skipped (the unreadable-parent test and the POSIX `missing/../spec.md` test, Windows host) |
+
+#### Attempt 6
+Measured: 28342543, the implementer's runs on a Windows host; the Linux run at 6a36b57e is the coordinator's.
+The second consult (Fable) on 6a36b57e confirmed the attempt 5 repair (the coordinator's Linux run at 6a36b57e: 18 tests, 16 pass, 0 fail, 2 Windows-only skips, uid 1000) and found one defect and four evidence and docs points; the card was amended in f4977081 (R7, acceptance 9, 12 and 13, budget 1100).
+
+1. Defect, `plan_ref` without -C: `c.root` is lexical where the directory is no git repository, and `canonical(planFile)` is canonical, so from a process directory reached by a short name or a link, with no -C, the candidate drafted another `plan_ref` than main. The code now follows R7 as amended (src/cli/main.ts:845):
+   `const planRef = workDir === undefined ? path.relative(c.root, o.plan) : path.relative(canonical(c.root), canonical(planFile));` and `planRef: \`${planRef.replace(/\\/g, '/')}#7\``. Without -C this is main's expression on the value as typed, byte for byte; with -C both sides are canonical.
+   Main's output for acceptance 12 (a), run on 2026-11-12 with main at f4977081, from inside a scratch git repository `<root>\repo`, with `<root>\link` a junction to it, `AIDLC_STATE_DIR` and `AIDLC_SESSION` set:
+   ```
+   $ node D:\Projects\AIDLC\src\cli\main.ts cards project --plan <root>\link\plans\p.md
+   plan_ref: ../link/plans/p.md#7
+   exit 0
+   ```
+   New test "plan_ref without -C is the one main drafts, and with -C both sides are canonical" (all platforms): (a) pins `plan_ref: ../link/plans/p.md#7`; (b) `-C <plain-link>`, a link to a directory that is no repository, `--plan plans/p.md` drafts `plan_ref: plans/p.md#7`. Acceptance 6 and 9 stay green.
+2. Source pin, acceptance 13: new test "the CLI changes neither the process directory nor the environment" reads src/cli/main.ts and asserts no `process.chdir(` and no line that assigns to `process.env` (a property or an index left of `=`, `+=`, `-=`, `??=`, `||=` or `&&=`, a `delete process.env`, an `Object.assign(process.env`). Reads stay allowed (:323, :600, :809).
+3. Docs: docs/OPERATIONS.md now names what takes the `-C` directory (the command's context, the base of its file arguments, `init`, the `review bench run` root, the hook's guards) and says that the default session token is read from the state directory of the process directory; the `plan_ref` sentence of docs/OPERATIONS.md and of the CHANGELOG follows R7 as amended.
+4. Evidence: the attempt 4 forbid row now cites the source pin; the attempt 5 diff names its merge base, 1c77a086; no placeholder is left; the two Windows-green revert rows of attempt 4 state that their Linux result is the coordinator's.
+
+New sentences against their cover:
+
+| Sentence | Cover |
+|---|---|
+| OPERATIONS: the command's context (repository, configuration, state directory when `AIDLC_STATE_DIR` is unset), the base of its file arguments, `init` without a directory, the `review bench run` root and the hook's guards take the resolved directory | R1; "every form", "a hook runs its guards", "-C leaves the process directory ...", "each file argument resolves against -C", "absent optional values" |
+| OPERATIONS: `-C` changes neither the process directory nor the environment; a relative `AIDLC_STATE_DIR` is read against the process directory | R1, R8; "-C leaves the process directory ..."; acceptance 13 |
+| OPERATIONS: the default session token is read from the state directory of the process directory, so set `AIDLC_SESSION` when `-C` names another repository | `non_goals` (the default session token); R1 ("what reads the process directory itself does so as on main") |
+| OPERATIONS and CHANGELOG (wording of attempt 7): with `-C`, `plan_ref` is the plan's canonical path relative to the canonical main checkout; without `-C`, the typed value relative to the main checkout, as before. The two differ for a plan file that is a link (`real.md#7` with `-C`, `link.md#7` without) | R7; "plan_ref is the same ..." (link, letter case), "... an 8.3 short name", "plan_ref is canonical when the plan is given through a link", "plan_ref without -C is the one main drafts ...", "... a plan file that is a link" (POSIX; skipped on this host, EPERM) |
+
+Revert rows of attempt 6 (Windows host, each alone, the file restored):
+
+| Change | Result |
+|---|---|
+| R7 without -C made canonical (`path.relative(canonical(c.root), canonical(planFile))` on both branches) | "plan_ref without -C is the one main drafts ..." fails: the run without -C drafts `plan_ref: plans/p.md#7`, not `../link/plans/p.md#7` |
+| R7 with -C, left side `c.root` | the same test fails: `-C <plain-link>` drafts `plan_ref: ../plain/plans/p.md#7` |
+| R7 with -C, right side `planFile` | "plan_ref is canonical when the plan is given through a link" fails (`--plan <link>/plans/p.md`) |
+| forbid: `process.chdir(at)` added back | acceptance 13 fails: "src/cli/main.ts calls process.chdir" |
+| forbid: the absolute `AIDLC_STATE_DIR` rewrite added back | acceptance 13 fails: "src/cli/main.ts writes process.env" |
+
+The Linux results of the two revert rows of attempt 4 that are green on Windows (`g()` returning the typed -C, the catch narrowed to ENOENT) are the coordinator's.
+
+Other checks: the 79 test files that name docs/OPERATIONS.md or CHANGELOG.md, run together on Windows: 1870 tests, 1858 pass, 0 fail, 12 skipped; diff against the merge base f4977081: 1069 changed lines (1058 added, 11 removed; working tree before this commit) against the budget of 1100: tests/surface/cli-cwd-paths.test.ts 657, this card 319, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given | exit 0: typecheck clean; 219 tests, 217 pass, 0 fail, 2 skipped (the unreadable-parent test and the POSIX `missing/../spec.md` test, Windows host) |
+
+#### Attempt 7
+Measured: 516d8739, the implementer's runs on a Windows host; the Linux run at 28342543 is the coordinator's.
+The Codex pre-review of 28342543 passed the source and blocked on three coverage and wording points, with one risk; the card was amended in 2184dc23 (R7 states the two `plan_ref` rules for a plan reached through a link; acceptance 12 and 13 gain a row each). The coordinator's Linux run at 28342543, quoted as the coordinator's: "20 tests, 18 pass, 0 fail, 2 Windows-only skips; both POSIX-only revert rows red (typed `-C` to the readers: tests 13, 14, 15 fail; catch narrowed to ENOENT: tests 8, 9 fail)". src/cli/main.ts is unchanged in this attempt.
+
+1. Before `ctx()`, both orders: "supplied values are refused before the command context is built" now has, for each command with two inputs, a row with the empty value first and one with it second: `monitor check --bands "" --data data.json`, `monitor check --bands bands.yaml --data ""`, `review bench compare "" after.json`, `review bench compare before.json ""`.
+2. A plan file that is a link: new test "plan_ref without -C is the one main drafts, and with -C both sides are canonical: a plan file that is a link". `plans/link.md` is a symbolic link to `plans/real.md`; with `-C <repo>`, `--plan plans/link.md` drafts `plan_ref: plans/real.md#7`; without -C, from inside the repository, `plan_ref: plans/link.md#7`. This host cannot create a file link (`symlinkSync(..., 'file')` throws EPERM), so the test skips with "this host cannot create a file link: EPERM", and main's output for the no-`-C` row was not recorded here; the coordinator's Linux run executes it.
+3. Wording: docs/OPERATIONS.md and the CHANGELOG state the two `plan_ref` rules directly, and the sentence on a value that names no file excepts `init [dir]` (pinned: `-C <target> init missing --dry-run` exits 0 in "a value under a regular file"). The card's docs tables follow the same wording.
+4. Acceptance 13: (a) the source pin reads the whole text with four rules, checked against a table inside the test:
+
+   ```ts
+   const rules: Array<[string, RegExp]> = [
+     ['chdir', /\bchdir\b/],
+     ['assignment to process.env', /\bprocess\.env(?:\s*(?:\.\s*[A-Za-z_$][\w$]*|\[[^\]]*\]))*\s*(?:=(?![=>])|\+=|-=|\?\?=|\|\|=|&&=)/],
+     ['delete process.env', /\bdelete\s+process\.env\b/],
+     ['Object.assign or Object.defineProperty on process.env', /\bObject\.(?:assign|defineProperty)\(\s*process\.env\b/],
+   ];
+   ```
+
+   | Text | Forbidden |
+   |---|---|
+   | `process.chdir(at)` | yes |
+   | `process['chdir'](at)` | yes |
+   | `process.env.X = v` | yes |
+   | `process.env.X` then a line break and `= v` | yes |
+   | `process.env['X'] ??= v` | yes |
+   | `delete process.env.X` | yes |
+   | `Object.assign(process.env, x)` | yes |
+   | `Object.defineProperty(process.env, 'X', { value: v })` | yes |
+   | `process.env['X']` | no |
+   | `{ ...process.env }` | no |
+   | `process.env.X === 'a'` | no |
+   | `(e = process.env) => e` | no |
+
+   (b) the behaviour row, its own test "the CLI changes neither the process directory nor the environment: the default session token stays with the process directory": with `-C <repository>` from a caller directory that is no repository, the child environment without `AIDLC_STATE_DIR`, `AIDLC_SESSION` or `CLAUDE_CODE_SESSION_ID`, `goal new` creates the goal in the repository's state directory, `session-default` under `<caller>/.aidlc` and none under `<repository>/.aidlc`. Checked by hand first on 2026-11-12, with the candidate and with main at 2184dc23 (`node D:\Projects\AIDLC\src\cli\main.ts`), the same way:
+
+   ```
+   == candidate: aidlc -C <repo> goal new "a small change" (cwd caller, no AIDLC_STATE_DIR, AIDLC_SESSION, CLAUDE_CODE_SESSION_ID)
+   exit 0; caller: [".aidlc\\session-default"]; repo/.aidlc: no session-default; goals in repo/.aidlc: 1
+   == main: the same
+   exit 0; caller: [".aidlc\\session-default"]; repo/.aidlc: no session-default; goals in repo/.aidlc: 1
+   ```
+
+5. Temporary directories (the coordinator's point after the formal reviews of two sibling cards): every directory the file creates comes from `tmpDir` of tests/infra/helpers.ts through the file's `tempDir`, which canonicalizes it (realpathSync.native), and is removed by `cleanup` in the file's `after` hook. The one direct removal is `gone` in acceptance 11: that the `-C` directory can be removed once the CLI has exited is what that assertion checks, so it stays a direct `rmSync`.
+
+   Grep at this commit (`git grep -n "tempDir('\|tmpDir(\|cleanup(\|rmSync(\|mkdtempSync" -- tests/surface/cli-cwd-paths.test.ts`):
+
+   | Directory | Created by | Removed by |
+   |---|---|---|
+   | `fx` (`fixture()`: caller, target, third, state) | `tempDir('fx')` (`tmpDir`) | `cleanup` in `after` |
+   | `repo` (`repoFixture()`: repository, src, caller) | `tempDir('repo')` | `cleanup` in `after` |
+   | `leak` (the environment test's repository) | `tempDir('leak')` | `cleanup` in `after` |
+   | `outer` (the ceiling check) | `tempDir('outer')` | `cleanup` in `after` |
+   | `locked` (the unreadable-parent test; mode restored in a `finally`) | `tempDir('locked')` | `cleanup` in `after` |
+   | `session` (the session token row) | `tempDir('session')` | `cleanup` in `after` |
+   | subdirectories, links and files inside these | `mkdirSync`, `write`, `symlinkSync`, the CLI | with their parent |
+   | `gone` (acceptance 11, inside `fx`) | `mkdirSync` | direct `rmSync`, the assertion under test |
+
+   `mkdtempSync` occurs 0 times in the file; `tmpDir(` once (inside `tempDir`), `cleanup(` once (the `after` hook), `rmSync(` once (`gone`).
+
+Revert rows of attempt 7 (Windows host, each alone, the file restored):
+
+| Change | Result |
+|---|---|
+| src/cli/main.ts: the `--bands` validation moved below `ctx()` | "supplied values are refused before the command context is built" fails: `monitor check --bands: aidlc: aidlc.config.json: Expected property name or '}' in JSON at position 2 (line 1 column 3)` |
+| R7 with -C only the plan's directory canonical (`path.join(canonical(path.dirname(planFile)), path.basename(planFile))`) | POSIX only on this host: the file-link test is skipped here (EPERM); the coordinator's Linux run executes it |
+| forbid: `process.chdir(at)` alone | the session token row fails (no `<caller>/.aidlc/session-default`: the token went to the repository); the source pin fails ("src/cli/main.ts": `chdir`) |
+| forbid: chdir with the absolute `AIDLC_STATE_DIR` rewrite of attempt 3 | the session token row fails the same way; the source pin fails (`chdir`, assignment to `process.env`) |
+
+Other checks: the 79 test files that name docs/OPERATIONS.md or CHANGELOG.md, run together on Windows: 1870 tests, 1857 pass, 1 fail, 12 skipped; the failure is the timing bound of tests/infra/exec.test.ts "T0-EXEC-TREE-KILL run on real processes" (acceptance 4, exit mode), a file that does not start the CLI, and the file passes alone right after (61 tests, 61 pass), as in attempt 4; diff against the merge base 2184dc23: 1206 changed lines (1195 added, 11 removed; working tree before this commit) against the budget of 1100: tests/surface/cli-cwd-paths.test.ts 721, this card 392, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2; over by 106, in tests and attempt evidence.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given | exit 0: typecheck clean; 221 tests, 218 pass, 0 fail, 3 skipped (the unreadable-parent test, the file-link test (EPERM) and the POSIX `missing/../spec.md` test, Windows host) |
+
+#### After the last pre-review of 516d8739 (coordinator edits)
+Written: 8428d904, by the coordinator; no run.
+
+A Codex pre-review of 516d8739 found no blocking point and two risks; the coordinator closed both. (1) docs/OPERATIONS.md: "A value that names no file fails ... naming the resolved path" now reads "fails, when the command reaches the read of that input, with the command's own error": with a malformed `aidlc.config.json` in the `-C` directory the command fails on the configuration first (the row of "supplied values are refused before the command context is built" that shows `ctx()` failing on that file). No other document or test changes. (2) The card's hygiene, on main, names the tests that leave `AIDLC_STATE_DIR` unset (acceptance 11 and the session-token row of acceptance 13).
+
+The predecessor's coordinator verification (written at 0d400f85, the coordinator's runs at 6d3c34c8):
+- At 6d3c34c8, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/cli-cwd-paths.test.ts): tests 9, pass 8, fail 0, skipped 1.
+- Windows, docpins: 78 test files reading 2 changed documents: # tests 1863 # pass 1851 # fail 0
+- Linux revert of the repair of F1, run by the coordinator under WSL as a non-root user: with the candidate tests/surface/cli-cwd-paths.test.ts gives 9 tests, 8 pass, 0 fail, 1 skipped (the Windows drive-letter case); with src/cli/main.ts restored to its attempt 1 form of the -C check (508ec31d), 'an invalid -C is refused for every command' and 'an invalid -C is refused for every command: a parent that cannot be read' fail, 6 of 9 pass; the file was restored afterwards.
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+The predecessor's coordinator verification (written at 04fccad1, the coordinator's runs at 486a0c21 and 516d8739):
+- At 486a0c21, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/cli-cwd-paths.test.ts): tests 22, pass 20, fail 0, skipped 2.
+- Windows, docpins: 79 test files reading 2 changed documents: # tests 1870 # pass 1857 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- Linux revert rows that are green or skipped on Windows, run by the coordinator under WSL (uid 1000) on the sources of 516d8739, unchanged since: the file gives 22 tests, 20 pass, 0 fail, 2 skipped (the two Windows-only tests); with g() handing the typed -C to the readers, tests 13, 14 and 15 fail; with the catch of the -C check rethrowing all but ENOENT, tests 8 and 9 fail; with only the directory of the plan made canonical under -C, test 20 (a plan file that is a link) fails. main at 1b9255f1 on Linux, no -C, cards project --plan plans/link.md (a link to plans/real.md) drafts plan_ref: plans/link.md#7, exit 0, the value the test pins.
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+### T0-CLI-CWD-FILE-ARGS-2 on its own branch
+Measured: the implementer's runs on a Windows host (Node v22.23.1), on the commits named at each item.
+
+Sweep, on the branch at 767fbe04 (main): the `git grep` of `sweep` gives the same 32 lines on main as at 90dd71bb (the two outputs without line numbers compared with `diff`, no difference). The commits of main since 90dd71bb add the help of `--dod-receipt <text>` and make `--final-digest <digest>` required; no path option and no file read. No path value outside R4 and R8.
+
+RED: c803fa35 commits tests/surface/cli-cwd-paths.test.ts alone, on the sources of main at 767fbe04. Run of the file there: tests 23, pass 8, fail 12, skipped 3. Red, each on an assertion: "the path function by input class" (`src/cli/main.ts exports resolvePathArg`); "each file argument resolves against -C" (`init sub` reports the caller's files, not the target's `sub`); "refused before the command context is built" (`--plan` fails on the target's configuration first); "refused before any read or write" (`init "" ` not refused); "a value under a regular file" and the Windows drive-relative test, the two `plan_ref is the same` tests, "an invalid -C" (`-C ""` runs in the caller directory), "plan_ref without -C ..." and "without -C a value is passed as given" (ENOENT naming the caller directory); "plan_ref is canonical when the plan is given through a link" (no `plan_ref: plans/p.md#7`). Green on main: the child-environment test, "absent optional values" (by design), "every form", "a hook runs its guards", "-C leaves the process directory ...", and the three tests of acceptance 13: the source pin passes on main's src/cli/main.ts, which uses `process.env` only in the three shapes, and the session-token row passes on main as the predecessor recorded. Skipped on this host: the unreadable parent, the file link (EPERM) and the POSIX `missing/../spec.md` test.
+
+Applied, cd5cb038: `git apply --3way` of `git diff origin/main...04fccad1 -- src/cli/main.ts docs/OPERATIONS.md CHANGELOG.md` (byte for byte `git diff 90dd71bb 04fccad1` of the same files), every hunk clean, with offsets only (src/cli/main.ts hunks 5 to 10 at -1 and 12 to 13 at +3 lines; CHANGELOG at +34, still directly above `- T0-CARD-LEASE-HEARTBEAT-2 (bugfix`). Each hunk of src/cli/main.ts read in its new surroundings: no call site changed shape. Check of step D: 04fccad1:src/cli/main.ts with `git diff 90dd71bb origin/main -- src/cli/main.ts` applied (clean) and the two renames below is byte-identical (`cmp`) to src/cli/main.ts at cd5cb038; the added and removed lines of `git diff 04fccad1 cd5cb038 -- src/cli/main.ts` and of `git diff 90dd71bb origin/main -- src/cli/main.ts` differ only in the two renamed comment lines.
+
+Renamed from T0-CLI-CWD-FILE-ARGS to T0-CLI-CWD-FILE-ARGS-2: the CHANGELOG entry (now `- T0-CLI-CWD-FILE-ARGS-2 (bugfix, replaces T0-CLI-CWD-FILE-ARGS, audit item C17):`); docs/OPERATIONS.md `(card T0-CLI-CWD-FILE-ARGS-2)`; src/cli/main.ts, the comments of `resolvePathArg` (`card T0-CLI-CWD-FILE-ARGS-2 R3`) and of `workDir` (`card T0-CLI-CWD-FILE-ARGS-2 R1`); the test file's header comment and suite title. Not renamed: "R3 decision 3" in a test comment, a decision of the predecessor.
+
+Acceptance 13, the guard (tests/surface/cli-cwd-paths.test.ts, `envViolations`): `ts.createSourceFile` with parent nodes, a walk with its own stack through `ts.forEachChild`, no type checker. (a) an identifier `chdir`, a string or substitution-free template literal `chdir`; (b) an identifier `process` that is not the `expression` of a `PropertyAccessExpression`, a literal `process` or `node:process`; (c) a `process.env` that is none of: a `SpreadAssignment` whose object literal is not the target of a destructuring assignment; the `expression` of a property or element access that is the `left` or `right` of a `BinaryExpression` with `||`, `&&`, `??`, `===` or `!==`; an argument of a call whose callee is the identifier `renewSessionCardLeases`. Every `ts.` name used is in node_modules/typescript/lib/typescript.d.ts (5.9.3): `createSourceFile`, `forEachChild`, `ScriptTarget.Latest`, `ScriptKind.TS`, the six `SyntaxKind` tokens, `isIdentifier`, `isStringLiteral`, `isNoSubstitutionTemplateLiteral`, `isPropertyAccessExpression`, `isElementAccessExpression`, `isCallExpression`, `isBinaryExpression`, `isSpreadAssignment`, `isSpreadElement`, `isObjectLiteralExpression`, `isArrayLiteralExpression`, `isParenthesizedExpression`, `isPropertyAssignment`, `isForOfStatement`, `isForInStatement`, and the node methods `getStart`, `getText` and `SourceFile.getLineAndCharacterOfPosition`. The table: 11 passing texts and 31 failing ones, each with the rules it breaks; beyond the card's list, `Object.assign` has two line-break forms (inside and before the parenthesis) and `({ ...process.env } = o)` fails (c): a spread on the left of a destructuring assignment writes the rest of `o` into the environment, so the first shape excludes it.
+
+Revert rows of acceptance 13, actual runs at cd5cb038: each mutation of `envViolations` on a scratch copy of the test file (tests/surface/cli-cwd-paths.mut13.test.ts, removed after each run), its three tests of acceptance 13 run; 11 rows, 11 red.
+
+| Mutation | Red (first message) |
+|---|---|
+| rule (a) removed | the table (`process.chdir(at)`) |
+| the string form of (a) removed | the table (`process['chdir'](at)`) |
+| rule (b) removed | the table (`process['chdir'](at)` lacks b) |
+| the string form of (b) removed | the table (`import p from 'node:process'`) |
+| shape 1 of (c) removed | src/cli/main.ts and the table |
+| shape 2 of (c) removed | src/cli/main.ts and the table |
+| shape 3 of (c) removed | src/cli/main.ts and the table |
+| the operator list widened by `=` | the table (`process.env.X = v`) |
+| the callee of shape 3 not compared | the table (`Object.assign(process.env, x)`) |
+| a comment read as code (`//` stripped before parsing) | src/cli/main.ts and the table |
+| beyond the card: a spread in a destructuring target taken as a read | the table (`({ ...process.env } = o)`) |
+
+Revert rows of the carried behaviour, actual runs at cd5cb038: each mutation in src/cli/main.ts in the worktree, the tests named run, the file written back byte for byte (`git status` and `git diff --stat` empty afterwards). The rows are those of the predecessor's attempt 4 table and its source rows of attempts 5 to 7, mutated as their text names them; row 15 is new (the form of F8 in the source).
+
+| # | Mutation | Tests run | Result |
+|---|---|---|---|
+| 1 | R3 empty/whitespace refusal removed | path function | red |
+| 2 | R3 drive-relative refusal removed | path function, Windows drive-relative | both red |
+| 3 | R3 incomplete UNC refusal removed | path function | red |
+| 4 | R3 complete UNC/device exception removed | path function | red |
+| 5 | `g()` hands the typed -C to the readers | every form, -C leaves ... | green on Windows, as the predecessor recorded; the Linux row is the coordinator's (red at 516d8739: tests 13, 14, 15) |
+| 6-9 | R2: the R3 refusal of -C ignored; no directory check; exit 1 under hook; the catch rethrows | invalid -C | red in each of the 4 runs |
+| 10 | R2: catch narrowed to ENOENT | invalid -C | green on Windows (unreadable parent skipped), as the predecessor recorded; Linux the coordinator's (red at 516d8739: tests 8, 9) |
+| 11 | `workDir = at` removed | each file argument, every form | both red |
+| 12 | forbid: `workDir = canonical(at)` | plan_ref through a link | red |
+| 13 | forbid: `process.chdir(at)` added | -C leaves ..., acceptance 13 | -C leaves ..., the source pin, the session-token row red |
+| 14 | forbid: chdir with the `AIDLC_STATE_DIR` rewrite of attempt 3 | -C leaves ..., acceptance 13 | the source pin and the session-token row red; -C leaves ... green (the rewrite keeps the relative state directory) |
+| 15 | forbid: `Object.assign (process.env, {...})` with chdir | acceptance 13 | the source pin and the session-token row red |
+| 16 | `fileArg` base `process.cwd()` | each file argument | red |
+| 17 | `fileArg` returns a refused value | refused before any read or write | red |
+| 18 | without -C, `fileArg` returns the resolved path | without -C ... | red |
+| 21 | R7 right side `planFile` | plan_ref through a link | red |
+| 22 | R7 canonical without -C | plan_ref without -C ... | red |
+| 23 | R7 left side `c.root` | plan_ref without -C ... | red |
+| 19-20, 24-30, 32, 34-35 | `init [dir]`, `--plan`, intent, spec, plan, `<before.json>`, `<after.json>`, `--log`, `--diff`, `--file`, `--bands`, `--data` not through `fileArg` | each file argument | red in each of the 12 runs |
+| 31, 33 | `--diff`, `--file` checked by truthiness | refused before any read or write | red, red |
+| 36 | spec validate: `fileArg` after `ctx()` | before the command context | red |
+| 37 | monitor check: `--bands` after `ctx()` | before the command context | red |
+| 38 | R7 with -C only the plan's directory canonical | plan_ref without -C ..., the file-link test | green: the file-link test is skipped here (EPERM); Linux the coordinator's (red at 516d8739: test 20) |
+
+38 rows run: 35 red, 3 green on this host (5, 10, 38), each with the Linux result recorded by the predecessor's coordinator. Carried as measured on the predecessor and not rerun: the attempt 4 row "R2 check reads the typed -C" (its text does not give the mutation); the test-only rows of attempt 5 (`childEnv` narrowed) and the POSIX-only mode-000 row; the tables of attempts 1 and 2, whose source rows are rows 1 to 35 here.
+
+Documents: docs/OPERATIONS.md and the CHANGELOG carry the predecessor's sentences with the card id renamed; the sentence tables of attempts 4 and 6 above still hold, and no sentence names the source pin. `forbid` and `non_goals`, checked by their letter against `git diff origin/main...HEAD`: no file under src/ but src/cli/main.ts, no `process.chdir`, no `process.env` write, no `.option`, `.command` or help text line changed, bin/aidlc-hook.js untouched; the session-token row reads the non-goal as main has it.
+
+| Item | Test or command | Result |
+|---|---|---|
+| 1 to 7, 9 to 13 | the named tests of tests/surface/cli-cwd-paths.test.ts and the eight files of acceptance 7, in the DoD | pass; three skips on this host as above |
+| 8 | docs/OPERATIONS.md, CHANGELOG | reviewer-verified |
+| DoD | `dod_command` as given, at cd5cb038 (the next commit changes only this card file, which no test of the DoD reads) | exit 0: typecheck clean; 257 tests, 251 pass, 0 fail, 6 skipped (this file: the unreadable parent, the file link (EPERM), the POSIX `missing/../spec.md` test; tests/surface/incident.test.ts: three POSIX mode-bit tests), 18 suites |
+
+Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1391 changed lines (1380 added, 11 removed) against the budget of 1400: tests/surface/cli-cwd-paths.test.ts 814, this card 484, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
