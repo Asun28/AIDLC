@@ -620,8 +620,8 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'ownership-stop-reconciled', reason: 'the blocking lease is gone', released: Boolean(lease?.released) } });
       run = { ...run, stop: undefined, blocker: undefined };
     }
-    // Heartbeat: the owner's own `card next` renews the card lease, as the controller renews the goal
-    // lease. Expiry alone never proves the owner stopped; only a takeover changes the generation, and
+    // Heartbeat: the owner's own `card next` renews the card lease it holds at the run's generation; nothing renews
+    // the goal lease. Expiry alone never proves the owner stopped; only a takeover changes the generation, and
     // that case still fails the fence in ship(). A stop caused only by the owner's own expiry is
     // revalidated by the renewal.
     let revalidatedStop = false;
@@ -1033,8 +1033,8 @@ export class CardRunner {
         attempt: attemptNo,
         skills: run.pendingRepair?.kind === 'merge-conflict' ? ['merge-conflicts', ...this.buildSkills(goal, card)] : this.buildSkills(goal, card),
         narration: card.tdd && !redReceipt
-          ? `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success|fail --cause ...\`. ${ACCEPTANCE_TABLE}`
-          : `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt. ${ACCEPTANCE_TABLE}`,
+          ? `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
+          : `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`,
       },
     };
   }
@@ -1104,11 +1104,13 @@ export class CardRunner {
       // not-counted attempt never records a base-sync candidate.
       const clearsMerge = run.pendingRepair?.kind === 'merge-conflict' && clearsPendingRepair(run.pendingRepair, input);
       if (candidate && (clearsMerge || repairsBaseSync)) candidate = { ...candidate, baseSync: true };
+      // The DoD receipt is the session's own statement and has no default (card T0-DOD-RECEIPT-REQUIRED): after every refusal above, before the save.
+      if (typeof input.dodReceipt !== 'string' || input.dodReceipt.trim() === '') throw new Error(`a successful attempt on card ${card.id} needs a DoD receipt: the attempt carries none or a blank one, and nothing was recorded; record it again with --dod-receipt "<command: exit code and counts>"`);
     }
     // A failed check, or lost checks, leave no DoD evidence: neither the active receipt nor the one a block retained.
     const checksHold = input.outcome === 'not-counted' && !input.checksLost?.length;
     // The finished attempt and its owed events land in one write; the events are appended after it (card T0-JOURNAL-FAULT-EVENTS).
-    const saved = this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : checksHold ? run.dodReceipt : undefined, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair, blockedReceipt: checksHold ? run.blockedReceipt : undefined, journalOwed: this.owedWith(goal.id, run, ...owed) });
+    const saved = this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? input.dodReceipt : checksHold ? run.dodReceipt : undefined, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair, blockedReceipt: checksHold ? run.blockedReceipt : undefined, journalOwed: this.owedWith(goal.id, run, ...owed) });
     this.deliverOwed(goal, card, saved, { keys: owed.map((o) => o.key) });
     return saved;
   }

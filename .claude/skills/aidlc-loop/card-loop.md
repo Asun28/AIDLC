@@ -7,7 +7,7 @@ changes. PREPARE never reruns the planning funnel or a survey.
 
 ## Precedence (evidence decides, never board or chat)
 1. Unknown operation outcome => WAIT: reconcile, admit no new mutation;
-   after the 5 min grace => STOP/time listing the unresolved ids.
+after the 5 min grace => STOP/time listing unresolved ids.
 2. Terminal, stale generation or capability blocker => STOP.
 3. Merge verified + closure complete => DONE.
 4. Known operation running => WAIT (attach; never duplicate dispatch).
@@ -21,19 +21,19 @@ changes. PREPARE never reruns the planning funnel or a survey.
 
 ## Probes (check exits before parsing; an error is not an empty result)
 - Card: `aidlc cards validate --card <id>`. Registry is authority; board is
-  a view.
+a view.
 - Worktree/owner: `git worktree list --porcelain`, exact branch + canonical
-  path + common dir + lease. A directory name or start exception is not
-  ownership; a mismatch => STOP/ownership.
+path + common dir + lease. A directory name or start exception is not
+ownership; a mismatch => STOP/ownership.
 - Candidate: HEAD + `git status --porcelain=v1 --untracked-files=all`.
-  Dirty/untracked inputs need more than a SHA; the digest binds them.
+Dirty/untracked inputs need more than a SHA; the digest binds them.
 - Base: explicit refresh, `git rev-list --left-right --count <base>...HEAD`.
 - PR: `gh pr list --state all --head --base` then `gh pr view` with head/
-  base/merge fields; keep the retained number. Retargeted, closed-unmerged
-  or multiple PRs never mean a new start.
+base/merge fields; keep the retained number. Retargeted, closed-unmerged
+or multiple PRs never mean a new start.
 - DoD: run the parsed command in the worktree; retain exit + output receipt.
 - Review: `.review/<branch>.json`; verdict enum is case-sensitive; keep raw
-  output.
+output.
 - CI: `gh run view <id> --json status,conclusion,headSha,jobs`.
 
 ## PREPARE
@@ -47,14 +47,15 @@ defect before you read the verdict, or a required gate with no reviewer
 ## BUILD
 TDD: prove behavioral RED first (`aidlc card red <id>`; scaffold: task.ps1
 -Phase red). Bugs keep a reproducing test before the fix. Non-TDD docs use
-the explicit exemption (`tdd: false`). Tests are proportionate; new units get
-new files. Never weaken or delete a test to hide a failure; a wrong test is
+`tdd: false`. Tests are proportionate; new units get new files. Never weaken
+or delete a test to hide a failure; a wrong test is
 corrected with evidence and re-validated. Checks = DoD + changed paths +
 risk criteria + integrated acceptance; reuse evidence only for the same
 candidate/base/inputs/runner policy. A diff over about 200 lines the card
 does not mandate => stop and ask.
 Attempts (MA2): `aidlc card attempt <id> --outcome success|fail|not-counted
---cause "<normalized>" [--progress]`. Record cause, evidence, checks gained
+--cause "<normalized>" [--progress]`; success needs `--dod-receipt
+"<command: exit code and counts>"`. Record cause, evidence, checks gained
 and lost, next hypothesis. Escalate once, only after the third baseline
 failure with evidenced progress and a diagnosed harder problem; a fourth
 failure ends the episode; no fifth from another session or card.
@@ -73,13 +74,13 @@ unchanged candidate re-reviews only with every finding of its block
 disputed. Ship command: `aidlc card ship <id>` (scaffold: task.ps1 -Phase
 ship from the MAIN checkout, never in the worktree). Preserve explicit base
 and mode across retries; an auth failure never becomes local mode. Do not
-change ReviewGate defaults. Persist rerun and merge intent before issuing.
+change ReviewGate defaults. Persist merge intent before issuing.
 Base moved => reconcile active ship, merge-based sync only; never rebase or
 amend receipt-bound or published history; recheck tests and review; no
 stale approval.
 
 ## Review (R3)
-R3 command when `formalReview.command` is set: `aidlc review r3 <id>`.
+When `formalReview.command` is set: `aidlc review r3 <id>`.
 Allowance: 2 or 4 for repairs; from decision 2 a block re-raising a
 finding the author disputed, or a block on decision 4 => STOP/review. Missing, malformed or stale verdict never
 passes; dispatch + one retry TOTAL across script and driver (a script
