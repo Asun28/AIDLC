@@ -237,3 +237,27 @@ Loaded runs on 2704ab12 under `load.sh 24 150` (same load and machine as above),
 | runner test alone 2 | 1 / 1 / 0 | 6457 | 4 (2899 ms) |
 | runner test alone 3 | 1 / 1 / 0 | 5628 | 8 (5851 ms) |
 Bounds at those scales: 24 500 (scale 7), 18 500 (5), 27 500 (8), 15 500 (4); main's 6500 would have failed file 2 (6842 ms). The six other calibrated tests passed in all three file runs (scales 5 to 8).
+
+### Repair round after the pre-review of 2094b0eb (merged origin/main at 76db37f6; RED bc5e9419, code 789d7fcc)
+RED (bc5e9419, `calibrated scale and the scaled|each failure of the spawned`: 8 tests, 6 pass, 2 fail): acceptance 1 fails on the `assertKilledBeforeNaturalEnd` rows (the seam passes everything); the late-sleeper row of acceptance 2 fails (`ended` empty). The own-pid root row passes on the code of 2094b0eb, as it should: it fails only under the revert of `end(child.pid)` (row below).
+
+Revert rows on scratch copies (`tests/infra/exec.scratch.test.ts`, deleted after; the worktree never mutated):
+| Revert | Row that fails |
+|---|---|
+| `>` for `>=` in `assertKilledBeforeNaturalEnd` | acceptance 1, the 60 000 row: red |
+| the 1000 ms margin removed | acceptance 1: red |
+| `end(child.pid)` removed from the time-limit path | acceptance 2, own-pid root row: red |
+| the late pid wait removed | acceptance 2, late-sleeper row: red |
+| `assertKilledBeforeNaturalEnd` call removed from acceptance 3 | scratch copy where acceptance 3 uses `createRun(() => {})` (kills nothing) and the death poll is 70 000 ms: with the call the test fails with `the sleeper was gone 60025 ms after it wrote its pid file, within 1000 ms of its natural end after 60000 ms: the death check cannot tell a kill from that end`; without it the test passes: red with the call, green without, so the call is what catches it |
+| the same call removed from the runSync test | NOT SHOWN: the helper ends the sleeper there, and a run where the sleeper ends by itself needs a change to src/ or the fixture |
+| the stderr assertion of R11 removed | scratch copy where the receipt is replaced by one with stderr `[tree helper error] exit null (backstop)` (fabricated, not a real backstop run): with the assertion `runSync returned the helper's backstop receipt: ...` fails; without it the test passes |
+| `assertRootGone` moved back below the receipt assertions in the exit case | NOT SHOWN: at scale 1 the receipt assertions pass first, so no run distinguishes the order |
+
+DoD on 789d7fcc alone: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, suites 15, pass 70, fail 0, cancelled 0, skipped 0.
+
+Loaded runs on 789d7fcc under `load.sh 24 150` (same machine and load), each 70 / 70 / 0:
+| Run | Runner exited after | Scales of the seven calibrated tests, in file order (calibration ms) |
+|---|---|---|
+| 1 | 5939 ms | 6, 7, 6, 6, 5, 7, 5 (3174-4637) |
+| 2 | 5543 ms | 7, 5, 6, 6, 6, 6, 6 (3391-4773) |
+| 3 | 5609 ms | 6, 6, 6, 5, 8, 6, 6 (3656-5302) |
