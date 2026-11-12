@@ -516,10 +516,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         process.exit(0);
       }
       const goalRec = c.controller.mustGoal(latestActiveGoalId(c, goalId ?? o.goal));
-      const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
-      const cards = goalRec.cards.map((id) => registry.cards.find((p) => p.card.id === id)?.card).filter((x): x is NonNullable<typeof x> => Boolean(x));
-      // One render: the text the board file gets is the text the command prints, prerequisites resolved once.
-      const text = c.controller.writeBoard(goalRec, cards);
+      // One render from one registry load: the text the board file gets is the text the command prints.
+      const text = c.controller.writeBoard(goalRec);
       process.stdout.write(text + '\n');
     });
 
