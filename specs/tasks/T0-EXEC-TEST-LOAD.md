@@ -128,7 +128,7 @@ The CHANGELOG entry, one line, directly above `- T0-BOARD-OWNER-WAIT` (or above 
 
 ## Attempt evidence
 
-Seam commit 2d2b9ece (tests only), candidate code 76388b27 (feat 76b15d02, then 92430066 and 76388b27 for the calibrate failure rows; merged origin/main at f1cf1347). Measured on Windows 11 with other verifications running on the machine (no load script was started). Linux run and the loaded runs (3 on main, 3 on the candidate under `load.sh 24 150`): pending (coordinator).
+Seam commit 2d2b9ece (tests only), candidate code 76388b27 (feat 76b15d02, then 92430066 and 76388b27 for the calibrate failure rows; merged origin/main at f1cf1347). Measured on Windows 11 with other verifications running on the machine (no load script was started). Linux run: pending (coordinator).
 
 ### RED (seam 2d2b9ece, `node --test --test-name-pattern "T0-EXEC-TEST-LOAD|calibrat" tests/infra/exec.test.ts`: 2 tests, 0 pass, 2 fail)
 - Acceptance 1 fails at `scaleFor(751)`: `AssertionError expected: 2 actual: 1`.
@@ -166,6 +166,17 @@ Platform results of the failure rows (Windows 11, Node 22): a child ending itsel
 | main 7ebc37ad | 3 | 61 / 60 / 1 | acceptance 4: in exit mode (the root gone, the sleeper holding its output) ... | none |
 | candidate 76b15d02 | 1-5 | 63 / 63 / 0 each | none | all 6 diagnostics at scale 1 (221-512 ms) |
 | candidate 76b15d02 (the DoD run, machine busy) | DoD | 63 / 63 / 0 | none | 4180 ms scale 6; 1132 ms scale 2; 1228 ms scale 2; 2695 ms scale 4; 2586 ms scale 4; 1226 ms scale 2 |
+
+### Loaded runs (head df510671; load: `load.sh 24 150`, 24 node processes looping on `Date.now()` for 150 s, started with each run; 16 logical CPUs; machine about 35% busy before, one remote review running)
+| Version | Run | tests / pass / fail | Failing rows | Scales |
+|---|---|---|---|---|
+| main 7ebc37ad | 1 | 61 / 58 / 3 | acceptance 3 (sleeper pid not written before the timeout); exit case of acceptance 4; runSync acceptance 1 (returned after 9715 ms, past 6000) | none |
+| main 7ebc37ad | 2 | 61 / 59 / 2 | exit case of acceptance 4 (receipt after 6138 ms, past 6000); runSync (7967 ms) | none |
+| main 7ebc37ad | 3 | 61 / 57 / 4 | acceptance 3; exit case of acceptance 4 (receipt after 6778 ms); no-kill case of acceptance 5; runSync (8188 ms) | none |
+| candidate | 1 | 68 / 67 / 1 | runner-handle test only (non-goal, unchanged): `the runner process is still running 6514 ms after its start` | 7, 7, 6, 7, 7, 7 (4372-5231 ms) |
+| candidate | 2 | 68 / 67 / 1 | runner-handle test only: 6650 ms | 6, 5, 7, 6, 6, 6 (3727-4710 ms) |
+| candidate | 3 | 68 / 67 / 1 | runner-handle test only: 7532 ms | 6, 7, 6, 6, 7, 7 (3893-5090 ms) |
+The six calibrated tests passed in 3 of 3 loaded candidate runs; on main each loaded run failed 2 to 4 of them. The runner-handle test (T0-EXEC-TREE-KILL acceptance 5, 6500 ms counted from the start of its runner process, fixed 1500 ms fixture timeout) is the card's non-goal and unchanged; it passed in the 3 loaded main runs and failed in the 3 loaded candidate runs. No bound was widened.
 
 ### DoD (`npm run typecheck && node --test tests/infra/exec.test.ts` on 76388b27): exit 0, tests 68, suites 15, pass 68, fail 0, cancelled 0, skipped 0; diagnostics 269, 299, 680, 348, 318, 439 ms, scale 1. The runs alone above were measured on 76b15d02 (63 tests).
 
