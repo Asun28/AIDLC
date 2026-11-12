@@ -13,7 +13,7 @@ import { evaluateHealth, windowElapsed } from '../core/health.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket } from '../core/authorization.ts';
 import { OperationRecord, ReleaseAttempt, addMs, type Goal, type HealthSignal, type Lease, type ReleaseState } from '../core/types.ts';
-import { executeOperation, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
+import { executeOperation, healthReportOf, healthSignals, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { Journal, currentActor } from '../state/journal.ts';
@@ -32,7 +32,7 @@ export interface ReleaseRunnerDeps {
   runner?: SyncRunner;
   opsLoad?: OpsLoad;
   now?: () => string;
-  /** Health signal source; defaults to reading bound health operations (none => INSUFFICIENT_DATA). */
+  /** Health signal source. Without one, OBSERVE runs the first bound `health` operation once per evaluation and reads its last non-blank stdout line (`healthReportOf`, `healthSignals`); unsuccessful execution receipts and invalid reports produce unavailable signals, and runner exceptions propagate. */
   signals?: (attempt: ReleaseAttempt) => HealthSignal[];
 }
 
@@ -103,7 +103,25 @@ export class ReleaseRunner {
     this.runner = deps.runner ?? runSync;
     this.opsLoad = deps.opsLoad ?? loadDeliveryOps(deps.repo.mainRoot);
     this.clock = deps.now ?? (() => new Date().toISOString());
-    this.signals = deps.signals ?? (() => []);
+    this.signals = deps.signals ?? ((attempt) => this.observedSignals(attempt));
+  }
+
+  /**
+   * The default signal source (card T0-HEALTH-OP-SIGNALS). With declared signals, a `health` binding, an attempt environment and
+   * an existing binding directory, runs the first `health` binding once, with no idempotency key and no ledger record, lease or
+   * journal event, and reads the report of a succeeded run that names the attempt's environment (by its lease file) and
+   * candidate; otherwise every declared signal is unavailable. With no declared signal: none, and no command. Catches nothing.
+   */
+  private observedSignals(attempt: ReleaseAttempt): HealthSignal[] {
+    if (this.opsLoad.status !== 'configured' || !this.opsLoad.config.health.length) return [];
+    const declared = this.opsLoad.config.health;
+    const binding = this.binding('health');
+    if (!binding || !attempt.environment || !isDirectory(operationCwd(binding, this.repo.mainRoot))) return healthSignals(declared, undefined);
+    const exec = executeOperation(binding, attempt.environment, { root: this.repo.mainRoot, runner: this.runner });
+    const report = exec.status === 'succeeded' ? healthReportOf(exec.receipt.stdout) : undefined;
+    const leaseOf = (name: string) => this.leases.file(resourceKeys.environment(name));
+    const accepted = report && leaseOf(report.environment) === leaseOf(attempt.environment) && report.candidate === attempt.candidateDigest;
+    return healthSignals(declared, accepted ? report : undefined);
   }
 
   private journal(goalId: string): Journal {
@@ -397,7 +415,14 @@ export class ReleaseRunner {
       case 'OBSERVE': {
         const window = attempt.healthWindow ?? { from: now, to: addMs(now, this.healthWindowMs()) };
         const signals = this.signals(attempt).map((s) => ({ ...s }));
-        const health = evaluateHealth(signals, window, now, { candidate: attempt.candidateDigest, environment: attempt.environment });
+        // Evaluated at the step's `now` and when the source has returned (the health command may have run for minutes); the
+        // worse result of the two is kept, whichever way the clock moved. The window, the maximum wait, the transition and the STOP keep `now`.
+        const returnedAt = this.clock();
+        const bound = { candidate: attempt.candidateDigest, environment: attempt.environment };
+        const early = evaluateHealth(signals, window, now, bound);
+        const late = evaluateHealth(signals, window, returnedAt, bound);
+        const severity = { PASS: 0, INSUFFICIENT_DATA: 1, BREACH: 2 } as const;
+        const health = severity[early.result] > severity[late.result] ? early : late;
         this.journal(goal.id).append({ type: 'HEALTH_EVALUATED', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, result: health.result, signals: health.signals.map((s) => `${s.name}=${s.result}`) } });
         const elapsed = windowElapsed(window, now);
         const withinMaxWait = Date.parse(now) < Date.parse(addMs(window.to, this.maxWaitMs()));
