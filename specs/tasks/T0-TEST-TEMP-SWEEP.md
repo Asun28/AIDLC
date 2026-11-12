@@ -240,42 +240,48 @@ Lines move by -1, 0 or +1 against 3d3e9d31, from the import lines removed (`node
 ### Revert table for the final scan (each row an actual run with one change, restored from a copy in memory after each; `git diff --stat HEAD` empty at the end)
 | Reverted or mutated | Run on | Test run | Result | |
 |---|---|---|---|---|
-| named and aliased imports not bound | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| an aliased import bound by its local name | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| namespace import not an fs object | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| default import not an fs object | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| fs.promises not followed | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| fs/promises modules not listed | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| destructuring from an fs object not bound | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| element access not read | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| require not an fs object | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| mkdtempDisposableSync not a target | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| an uncalled reference not reported | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| exemption by function name in any file | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| exemption by any enclosing function, not the nearest | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| no exemption | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| any identifier with a target name is a target (local function) | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| a text scan instead of the AST (strings and comments) | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| enclosing function not named | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| line counted from 0 | cc52b74c (test code of af94e449) | acceptance 2 | exit 1, pass 0, fail 1 | red |
-| acceptance 1 with no exemption (the four helpers reported) | cc52b74c (test code of af94e449) | acceptance 1 | exit 1, pass 0, fail 1 | red |
-| the binding default not read | af94e449 | acceptance 2 | exit 1, fail 1: -   'tests/forms/binding-default.ts:2 [module scope] reference of mkdtempSync' | red |
-| computed names not resolved | af94e449 | acceptance 2 | exit 1, fail 1: -   'tests/forms/computed.ts:3 [module scope] call of mkdtempSync' | red |
-| nested patterns not followed | af94e449 | acceptance 2 | exit 1, fail 1: -   'tests/forms/nested.ts:4 [nested] call of mkdtemp' | red |
-| the dynamic import not read | af94e449 | acceptance 2 | exit 1, fail 1: -   'tests/forms/dynamic.ts:2 [module scope] call of mkdtempSync' | red |
-| `called &&` removed from the exemption | af94e449 | acceptance 2 | exit 1, fail 1: -   'tests/infra/helpers.ts:3 [tmpDir] reference of mkdtempSync' | red |
-| `fn.parent === sf` removed from the exemption | af94e449 | acceptance 2 | exit 1, fail 1: -   'tests/surface/command-lines.test.ts:3 [tempDir] call of mkdtempSync' | red |
-| parentheses not looked through | af94e449 | acceptance 2 | exit 1, fail 1: +   'tests/surface/evals.test.ts:3 [tempDir] reference of mkdtempSync'; +   'tests/surface/eval-test-temp.test.ts:3 [inTemp] reference of mkdtempSync' | red |
-| type-only imports not excluded | af94e449 | acceptance 2 | exit 1, fail 1: +   'tests/forms/type-only.ts:2 [module scope] reference of mkdtempSync' | red |
-| Ruling row (a): the compiler's line count (`sf.getLineAndCharacterOfPosition(...).line + 1`) in place of the line-feed count | 61a51d81, again on cc52b74c (test code of af94e449) | acceptance 2 | exit 1, fail 1, `tests/forms/separators.ts:5` reported where `:3` is expected | red |
-| Ruling row (b): the immediately invoked function named `module scope` | 61a51d81, again on cc52b74c (test code of af94e449) | acceptance 2 | exit 1, fail 1, `tests/forms/iife.ts:3 [module scope]` reported where `[probe (immediately invoked)]` is expected | red |
+| S1 named and aliased imports not bound | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/named.ts:3 [named] call of mkdtempSync'; - 'tests/forms/aliased.ts:2 [aliased] call of mkdtempSync'; - 'tests/forms/fs-promises.ts:2 [module scope] call of mkdtemp'; and 10 more | red |
+| S2 an aliased import bound by its local name | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/aliased.ts:2 [aliased] call of mkdtempSync'; - 'tests/forms/default-specifier.ts:2 [module scope] call of mkdtempSync' | red |
+| S3 namespace import not an fs object | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/namespace.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/destructure-rename.ts:3 [renamed] call of mkdtempSync'; - 'tests/forms/fs-promises-namespace.ts:2 [module scope] call of mkdtemp'; and 1 more | red |
+| S4 default import not an fs object | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/default.ts:3 [callback of test] call of mkdtempSync'; - 'tests/forms/promises.ts:3 [viaPromises] call of mkdtemp'; - 'tests/forms/destructure.ts:3 [module scope] call of mkdtempSync'; and 11 more | red |
+| S5 fs.promises not followed | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/promises.ts:3 [viaPromises] call of mkdtemp' | red |
+| S6 fs/promises modules not listed | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/fs-promises.ts:2 [module scope] call of mkdtemp'; - 'tests/forms/fs-promises-namespace.ts:2 [module scope] call of mkdtemp' | red |
+| S7 destructuring from an fs object not bound | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/destructure.ts:3 [module scope] call of mkdtempSync'; - 'tests/forms/destructure-rename.ts:3 [renamed] call of mkdtempSync'; - 'tests/forms/require-destructure.ts:3 [viaRequire] call of mkdtempSync'; and 4 more | red |
+| S8 element access not read | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/element.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/default-element.ts:2 [module scope] call of mkdtempSync' | red |
+| S9 require not an fs object | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/require.ts:1 [module scope] call of mkdtempSync'; - 'tests/forms/require-destructure.ts:3 [viaRequire] call of mkdtempSync'; - 'tests/forms/require-variable.ts:2 [module scope] call of mkdtempSync'; and 1 more | red |
+| S10 mkdtempDisposableSync not a target | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/disposable.ts:2 [module scope] call of mkdtempDisposableSync' | red |
+| S11 an uncalled reference not reported | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/reference.ts:2 [module scope] reference of mkdtempSync'; - 'tests/forms/binding-default.ts:2 [module scope] reference of mkdtempSync'; - 'tests/infra/helpers.ts:3 [tmpDir] reference of mkdtempSync'; and 1 more | red |
+| S12 exemption by function name in any file | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/elsewhere.ts:3 [tmpDir] call of mkdtempSync' | red |
+| S13 exemption by any enclosing function, not the nearest | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:4 [inner] call of mkdtempSync'; - 'tests/surface/command-lines.test.ts:3 [tempDir] call of mkdtempSync' | red |
+| S14 no exemption | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/infra/helpers.ts:3 [tmpDir] call of mkdtempSync'; + 'tests/surface/evals.test.ts:3 [tempDir] call of mkdtempSync'; + 'tests/surface/command-lines.test.ts:3 [tempDir] call of mkdtempSync'; and 3 more | red |
+| S15 any identifier with a target name is a target (local function) | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/aliased.ts:2 [aliased] call of mkdtempSync'; - 'tests/forms/destructure-rename.ts:3 [renamed] call of mkdtempSync'; + 'tests/forms/local.ts:2 [module scope] call of mkdtempSync'; and 4 more | red |
+| S16 a text scan instead of the AST (strings and comments) | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/forms/named.ts:3 [module scope] call of mkdtempSync'; - 'tests/forms/named.ts:3 [named] call of mkdtempSync'; - 'tests/forms/aliased.ts:2 [aliased] call of mkdtempSync'; and 35 more | red |
+| S17 enclosing function not named | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/forms/named.ts:3 [module scope] call of mkdtempSync'; + 'tests/forms/aliased.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/named.ts:3 [named] call of mkdtempSync'; and 21 more | red |
+| S18 line counted from 0 | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/forms/named.ts:2 [named] call of mkdtempSync'; + 'tests/forms/aliased.ts:1 [aliased] call of mkdtempSync'; + 'tests/forms/namespace.ts:1 [module scope] call of mkdtempSync'; and 77 more | red |
+| S19 acceptance 1 with no exemption (the four helpers reported) | d554af8b | acceptance 1 | exit 1, fail 1: + 'tests/infra/helpers.ts:18 [tmpDir] call of mkdtempSync'; + 'tests/surface/command-lines.test.ts:18 [tempDir] call of mkdtempSync'; + 'tests/surface/eval-test-temp.test.ts:16 [inTemp] call of mkdtempSync'; and 1 more | red |
+| P1 the binding default not read | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/binding-default.ts:2 [module scope] reference of mkdtempSync' | red |
+| P2 computed names not resolved | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/computed.ts:3 [module scope] call of mkdtempSync' | red |
+| P3 nested patterns not followed | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/nested.ts:4 [nested] call of mkdtemp'; - 'tests/forms/nested-default.ts:2 [module scope] call of mkdtempSync' | red |
+| P4 the dynamic import not read | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/dynamic.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/default-pattern.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/default-property.ts:1 [module scope] call of mkdtempSync'; and 1 more | red |
+| P5 `called &&` removed from the exemption | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/infra/helpers.ts:3 [tmpDir] reference of mkdtempSync' | red |
+| P6 `fn.parent === sf` removed from the exemption | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/surface/command-lines.test.ts:3 [tempDir] call of mkdtempSync' | red |
+| B1 the compiler line count in place of the line-feed count | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/forms/separators.ts:5 [module scope] call of mkdtempSync'; - 'tests/forms/separators.ts:3 [module scope] call of mkdtempSync' | red |
+| B2 the immediately invoked function named module scope | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/forms/iife.ts:3 [module scope] call of mkdtempSync'; - 'tests/forms/iife.ts:3 [probe (immediately invoked)] call of mkdtempSync' | red |
+| D1 skipOuterExpressions removed at the object of a property access | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/non-null.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/as.ts:2 [module scope] call of mkdtempSync'; - 'tests/forms/angle.ts:2 [module scope] call of mkdtempSync'; and 1 more | red |
+| D2 skipOuterExpressions removed at a callee (replaces P7, parentheses not looked through) | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/surface/evals.test.ts:3 [tempDir] reference of mkdtempSync'; + 'tests/surface/eval-test-temp.test.ts:3 [inTemp] reference of mkdtempSync' | red |
+| D3 skipOuterExpressions removed at an initializer | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/wrapped-initializer.ts:2 [module scope] call of mkdtempSync' | red |
+| D4 default not the module at the import specifier | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/default-specifier.ts:2 [module scope] call of mkdtempSync' | red |
+| D5 default not the module in a binding pattern | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/default-pattern.ts:2 [module scope] call of mkdtempSync' | red |
+| D6 default not the module as a property | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/default-property.ts:1 [module scope] call of mkdtempSync'; - 'tests/forms/default-element.ts:2 [module scope] call of mkdtempSync' | red |
+| D7 the import-equals form not bound | d554af8b | acceptance 2 | exit 1, fail 1: - 'tests/forms/import-equals.ts:2 [module scope] call of mkdtempSync' | red |
+| D8 type positions not skipped | d554af8b | acceptance 2 | exit 1, fail 1: + 'tests/forms/type-only.ts:2 [module scope] reference of mkdtempSync'; + 'tests/forms/type-position.ts:2 [module scope] reference of mkdtempSync' | red |
 | R1: tests/surface/review-bench.test.ts:158 back to `mkdtempSync(path.join(dir, 'bad-'))` | 928b23c9 | acceptance 1 | exit 1, fail 1, names `tests/surface/review-bench.test.ts:158 [callback of test]` | red |
 | R1: tests/surface/reviewer-env.child.ts as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, names `tests/surface/reviewer-env.child.ts:22 [tempDir]` | red |
 | R1: tests/surface/review-bench.test.ts as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, names its 5 sites | red |
 | R1: all 47 files as at 3d3e9d31 | 928b23c9 | acceptance 1 | exit 1, fail 1, `85 sites outside the four helpers` | red |
 | R1 imports: an unused `import { tmpdir } from 'node:os'` left in tests/surface/stats.test.ts | 928b23c9 | `npm run typecheck` | exit 2, TS6133 'tmpdir' is declared but its value is never read | red |
 
-Rows red: 34/34: 19 single mutations of the scan, rerun on the final scan (first run on 928b23c9, all red there too); 8 reverts of the rulings after the pre-review of 0b22f3d1; 2 rows of the rulings after the build report; 4 R1 reverts and the unused-import row, run on 928b23c9 (the 47 files and their imports have not changed since 733a8434). Two of the 19 mutations were rewritten for the final code: "named and aliased imports not bound" now empties the loop that also skips a type-only specifier, and "destructuring from an fs object not bound" now disables the `bindName` call of `bindPattern`, which replaced the loop over the binding elements that 928b23c9 had inside `collect`. The rows of the rulings write U+2028 and U+2029 into the fixture with `String.fromCharCode` at run time, so the test file stays ASCII. The `finally` order of tests/infra/exec.test.ts (processes ended before `rmSync` of their directory, the `finally` blocks at :682, :763, :993, :1020) has no revert row: no test observes that order, and 733a8434 changes only the `mkdtempSync` line of each of those tests (`git diff 3d3e9d31 733a8434 -- tests/infra/exec.test.ts`: 6 lines, the import and the 5 sites).
+Rows red: 40/40. S1-S19: the single mutations of the scan (first run on 928b23c9), with their text updated to the code of d554af8b. P1-P6: the reverts of the rulings after the pre-review of 0b22f3d1 (first run on af94e449); P7 (parentheses not looked through) is replaced by D2, since the callee is now read through the outer-expression function, and P8 (type-only imports not excluded) left the table with the exclusion it reverted, by the rulings during the repair after R3 decision 1. B1-B2: the rows of the rulings after the build report (first run on 61a51d81). D1-D8: the reverts of the rulings after R3 decision 1 (`skipOuterExpressions` in their labels is the local outer-expression function). The R1 reverts of the migration and the unused-import row ran on 928b23c9; the 47 files and their imports have not changed since 733a8434. The `finally` order of tests/infra/exec.test.ts (processes ended before `rmSync` of their directory, the `finally` blocks at :682, :763, :993, :1020) has no revert row: no test observes that order, and 733a8434 changes only the `mkdtempSync` line of each of those tests (`git diff 3d3e9d31 733a8434 -- tests/infra/exec.test.ts`: 6 lines, the import and the 5 sites).
 
 ### Acceptance 3
 `git diff -U0 3d3e9d31 733a8434`, every changed line outside tests/surface/test-temp.test.ts is an import line or a site line (checked by filtering the diff: no other `+`/`-` line). No assertion, test name or test call changes, so no test count changes.
@@ -311,13 +317,54 @@ GREEN (c51ad6fd): a binding element's initializer is read (only its name and pro
 
 Correction (af94e449): the RED commit named the nested function `tmpDir`, which is not the helper allowed at command-lines.test.ts, so the revert of `fn.parent === sf` left the table green (actual run on c51ad6fd: exit 0, fail 0). The row now names it `tempDir`, the helper of that file; the revert below is red.
 
-Reverts: the eight of the rulings are rows of the revert table for the final scan above, run on af94e449, all red.
+Reverts: the reverts of these rulings are rows P1-P6 of the revert table for the final scan above (P7 and P8 left it; see that table).
 
 The 85 pairs (c51ad6fd, actual run): a scratch copy of `tests/` and `src/` at c51ad6fd under the gitignored `_local/`, with the 47 files restored to 3d3e9d31, gives 85 sites in acceptance 1, the same 85 file and line pairs as the `git grep` sweep and the same report lines as the scan of 928b23c9. Acceptance 1 passes on the real tree.
 
 DoD (af94e449, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69479 before, 69290 after; 0 new entries, 189 gone, which the DoD does not remove (another process cleaned the temporary directory during the run).
 
 Full suite: not run in this round; the coordinator runs it on the final head.
+
+### Repair after R3 decision 1
+Commits: bf2a0d91 (merge of origin/main at bf5c5909), d08846a3 (RED), 155cfcc9 (GREEN and two rows for contract lines), 4a9aa4e0 (a row for an initializer under an assertion), 9c21f6d6 (merge of origin/main at ce4d4054), d554af8b (the rulings during the repair: the local outer-expression function, the type-only exclusion removed), then this evidence commit, which changes only this card. Every merge conflicted in this card only. The 47 files of R1 are unchanged.
+
+RED (d08846a3, actual run): acceptance 1 pass, acceptance 2 fail. Rows of the rulings and whether each failed before the fix:
+
+| Row | Red before |
+|---|---|
+| `fs!.mkdtempSync(...)` | yes |
+| `(fs as typeof fs).mkdtempSync(...)` | yes |
+| `(<typeof fs>fs).mkdtempSync(...)` | yes |
+| `(fs satisfies typeof fs).mkdtempSync(...)` | yes |
+| `fs?.mkdtempSync(...)` | no |
+| `import { default as fs } from 'node:fs'` | yes |
+| `const { default: fs } = await import('node:fs')` | yes |
+| `(await import('node:fs')).default.mkdtempSync(...)` | yes |
+| `import fs = require('node:fs')` | no |
+| a value import used only in `typeof` of a type alias, not reported | yes (reported as a reference) |
+
+Rows added for lines of the closed contract that had none, and whether each failed on the scan of d08846a3 (the last three measured on a scratch copy that runs the scan of d08846a3 against the final rows):
+
+| Contract line | Row | Red before |
+|---|---|---|
+| a variable initialized with `require(m)` | `const fs = require('node:fs')` | no |
+| a variable initialized with another name so bound | `const other = fs` | no |
+| the module `fs/promises` | `import * as fsp from 'fs/promises'` | no |
+| a binding pattern nested under `default` | `const { default: { mkdtempSync: make } } = await import('node:fs')` | yes |
+| a binding pattern with a default value | `const { mkdtempSync: make = fallback } = fs` | no |
+| a runtime reference to an access that is not the callee of a call | `const make = fs.mkdtempSync` | no |
+| `['default']` on an fs module object | `ns['default'].mkdtempSync(...)` | yes |
+| the outer-expression step at an initializer (the ruled revert needs a row to fail) | `const fs = require('node:fs') as typeof import('node:fs')` | yes |
+
+GREEN (155cfcc9, then d554af8b): a local function removes parentheses, `as`, angle-bracket and non-null assertions and `satisfies` through `ts.isParenthesizedExpression`, `ts.isAsExpression`, `ts.isTypeAssertionExpression`, `ts.isNonNullExpression` and `ts.isSatisfiesExpression`, at the object of a property or element access, at the operand of `await`, at an initializer and at a callee; `default` of an fs module object is the module at the import specifier, in a binding pattern (also nested) and as `.default` or `['default']`; `import x = require(m)` binds the module, as before; an identifier for which `ts.isPartOfTypeNode` is true, or inside a type query, is skipped. The exclusion of type-only imports is removed (redundant with the type-position rule, by the rulings during the repair). 155cfcc9 called `ts.skipOuterExpressions` through a cast; d554af8b replaces it.
+
+Public API: every `ts.` name the scan uses at d554af8b is declared in node_modules/typescript/lib/typescript.d.ts (checked name by name). The remaining `as` casts narrow to public types only: `fn as ts.Expression`, `node as ts.PropertyAccessExpression | ts.ElementAccessExpression` (three, after `memberName` has matched one of the two), `fn as ts.SignatureDeclaration`, and `readdirSync(...) as string[]`.
+
+The 85 pairs (d554af8b, actual run): on a scratch copy of `tests/` and `src/` under the gitignored `_local/`, with the 47 files at 3d3e9d31, acceptance 1 reports 85 sites with the same file and line pairs as the `git grep` sweep and the same report lines as the scan of 928b23c9. Acceptance 1 passes on the real tree.
+
+DoD (d554af8b, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69290 before, 69290 after, 0 new and 0 gone entries; no `could not remove` line in the output.
+
+Reverts: the table for the final scan above (40/40, the scan rows on d554af8b).
 
 ### Size
 `git diff --shortstat origin/main...HEAD` at af94e449 (origin/main 99fbde2d): 49 files changed, 472 insertions(+), 181 deletions(-), 653 lines before this evidence update; the total with it is given in the report, against the budget of 780 (attempt evidence counted).
