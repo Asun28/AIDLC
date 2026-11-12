@@ -417,3 +417,17 @@ Red 6 of 6. DoD on b6842cfe, worktree clean: `npm run typecheck` exit 0; `node -
 Document text: H2 `A sample counts toward PASS only while ...; a breach found with the time at which the evaluation began still counts.` and the entry C sentence, word for word from Exact text: code `early` / `late` and `health = early.result === 'BREACH' ? early : late` in the OBSERVE case; tests R9 (a), (b), the BREACH row; reverts S1-S3.
 
 Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 881 insertions, 13 deletions; budget 950.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed these points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| In both DELIVERY-OPS.md copies H1 and H2 are single unwrapped lines, while Q1 to Q3 are wrapped at 77 columns like the paragraphs they extend | Accepted. The card gives a wrapping rule for Q1 to Q3 only ("wrapped as that paragraph is wrapped"); H1 and H2 are new paragraphs, and the two copies are equal |
+| The control row "two blank lines after the report" uses lines of spaces and a tab, not empty lines | Accepted. With empty lines no row could tell `trim()` from a comparison with the empty string; the row is stricter than the card's wording |
+| Acceptance 2 runs its cases (a) and (b) as two `makeFixture` fixtures inside one test, both removed by `t.after(cleanup)` | Accepted. The fixtures and their removal are the ones the card names |
+| Acceptance 9 (b) restores `Journal.prototype.append` in a `finally` directly after the row | Accepted. The card asks for the restore after the row; the forbid on `finally` concerns the removal of temporary directories |
+| Two test edits went into the source commit after the RED commit: an unused parameter removed for the typecheck, and the whitespace of the control row above | Accepted. No assertion changed; the RED results are those of the RED commit |
+| Repair rounds: the row on `stop.at` of the insufficient-data STOP and one revert row beyond the four asked for | Accepted. The row is (d) of the second round's rulings; the extra revert adds evidence and no code |
+| The merge commits 3dd7f9f7 and 26347bac carry git's default text (the first without the attribution line, the second with conflict comment lines after it) | Noted. They are merge commits of main into the branch and are squashed at the ship; published history is not rewritten for a message |
