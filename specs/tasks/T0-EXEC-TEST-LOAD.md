@@ -302,3 +302,8 @@ Loaded runs on 789d7fcc under `load.sh 24 150` (same machine and load), each 70 
 - Cleanup in both time-limit rows in the ruled order: `end(sleeperPid)` first with no file read before it (late-sleeper row only); then the root pid read in its own `try`/`catch` and `end(rootPid)`; then the waits, the root's in a nested `finally` so it runs when the sleeper's wait throws. A comment states that a root whose pid file cannot be read ends by itself after its 30 s. The earlier helper `endRecorded` is gone.
 - Reverts on scratch copies, recorded pids probed with `process.kill(pid, 0)` afterwards: "late pid wait removed": red (late-sleeper row), pids 80324, 95032, 101164, none alive; "end(child.pid) removed": red (own-pid root row and late-sleeper row), pids 45520, 93040, 75176, none alive; the root's pid read made unreadable in the late-sleeper row's `finally`: the row still passes and its sleeper (86832) is gone (the other recorded pid, 94396, is the own-pid root row's, also gone); the root of that row stays up to its 30 s, as the comment says.
 - DoD alone on 64447fcd: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, suites 15, pass 70, fail 0, cancelled 0, skipped 0. No loaded run this round: the timing of the rows is unchanged (the loaded runs of ef959e5e stand for the timing).
+
+Coordinator verification:
+- At 80124911, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/exec.test.ts): tests 70, pass 70, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1814 # pass 1803 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
