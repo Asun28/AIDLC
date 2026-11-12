@@ -295,3 +295,8 @@ The implementer disclosed five points where the card gave no rule or where it ch
 | JSDoc on the two new helpers, `ladderNumber` (src/core/effort.ts) and `attemptLabel` (src/loop/card-runner.ts), which R7 does not list | Accepted. A new function carries its JSDoc by the repository's convention; R7 lists the existing comments whose text changes |
 | The seam (`ladderNumber` returning `index + 1`, called by nothing) is a commit of its own before the RED tests | Accepted |
 | R2's clause that the index comes from the array and is never derived from the stored `n` had no revert row | Changed. An episode whose stored numbers do not follow their positions tells the two apart. Three unit rows in tests/core/effort.test.ts, one per site (`repairAction`, and both branches of `afterShipFailure`), each red under its revert (M26a, M26b, M26c) |
+
+Coordinator verification:
+- At e6ce11dc, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/effort.test.ts, tests/scenarios/dispute-running-attempt.test.ts): tests 61, pass 61, fail 0, skipped 0.
+- Windows, docpins: 83 test files reading 3 changed documents: # tests 1946 # pass 1934 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
