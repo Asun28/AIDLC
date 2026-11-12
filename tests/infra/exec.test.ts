@@ -322,6 +322,9 @@ function assertRootGone(aliveAtCall: boolean[], scale: number): void {
   if (aliveAtCall.some((alive) => alive)) throw notReady(scale, 'the tree kill found the root still running');
 }
 
+/** Seam: the check always passes. */
+function assertKilledBeforeNaturalEnd(_sleeperWrittenMs: number | undefined, _goneAtMs: number): void {}
+
 describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
   const dir = tmpDir('aidlc-exec-env-');
   after(() => cleanup(dir));
@@ -346,6 +349,12 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
 
     for (const alive of [[], [false]]) assertRootGone(alive, 3);
     for (const alive of [[true], [false, true]]) assert.throws(() => assertRootGone(alive, 3), notReadyMessage(3, 'the tree kill found the root still running'));
+
+    const naturalEnd = (gone: number): { message: string } => ({ message: `the sleeper was gone ${gone} ms after it wrote its pid file, within 1000 ms of its natural end after 60000 ms: the death check cannot tell a kill from that end` });
+    assertKilledBeforeNaturalEnd(1000, 59_999);
+    assert.throws(() => assertKilledBeforeNaturalEnd(1000, 60_000), naturalEnd(59_000));
+    assert.throws(() => assertKilledBeforeNaturalEnd(1000, 61_000), naturalEnd(60_000));
+    assert.throws(() => assertKilledBeforeNaturalEnd(undefined, 5), { message: 'no sleeper pid file' });
 
     const from = { GIT_DIR: 'a', git_work_tree: 'b', Git_Config_Global: 'c', GIT_CEILING_DIRECTORIES: 'd', NODE_OPTIONS: 'e', node_options: 'f', AIDLC_STATE_DIR: 'g', aidlc_state_dir: 'h', PATH: 'p', KEEP: 'k' };
     assert.deepEqual(fixtureEnv(dir, from), { PATH: 'p', KEEP: 'k', GIT_CEILING_DIRECTORIES: [dirname(dir), dirname(realpathSync.native(dir))].join(delimiter), AIDLC_STATE_DIR: join(dir, 'state') });
@@ -376,6 +385,33 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
       const ended: number[] = [];
       assert.equal(await calibrate(t, FIXTURE, ended, inline("process.kill(process.pid, 'SIGKILL')")), undefined);
       assert.equal(ended.length, 1);
+    });
+    it('a child that writes its own pid to <pidFile>.root and no pid file, with a limit of 5 s: undefined, the root gone, nothing ended', async (t) => {
+      const ended: number[] = [];
+      let pidFile = '';
+      const command = (file: string): [string, string[]] => {
+        pidFile = file;
+        return [process.execPath, ['-e', "require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); setTimeout(() => {}, 30_000)", file]];
+      };
+      assert.equal(await calibrate(t, FIXTURE, ended, command, 5000), undefined);
+      const root = readPid(`${pidFile}.root`);
+      assert.ok(root !== undefined, 'the child wrote its pid before the limit');
+      await assertGoneWithin(root, 3000);
+      assert.deepEqual(ended, []);
+    });
+    it('a root whose detached sleeper writes the pid file 1000 ms after the limit: undefined, the late sleeper ended', async (t) => {
+      const ended: number[] = [];
+      let pidFile = '';
+      const sleeper = "setTimeout(() => require('fs').writeFileSync(process.argv[1], String(process.pid)), 6500); setTimeout(() => {}, 30_000)";
+      const command = (file: string): [string, string[]] => {
+        pidFile = file;
+        const root = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}, process.argv[1]], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => {}, 30_000)`;
+        return [process.execPath, ['-e', root, file]];
+      };
+      t.after(() => end(readPid(pidFile)));
+      assert.equal(await calibrate(t, FIXTURE, ended, command, 6000), undefined);
+      assert.equal(ended.length, 1);
+      assert.equal(probe(ended[0]!), 'ESRCH');
     });
     it('a child that exits 0 without writing the pid file', async (t) => {
       const ended: number[] = [];
