@@ -20,22 +20,18 @@ const show = (s: Site): string => `${s.file}:${s.line} [${s.fn}] ${s.kind} of ${
 const isFunctionLike = (node: ts.Node): node is ts.SignatureDeclaration =>
   ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node);
 
-/** The name a report gives a function: its name, `<constant> (immediately invoked)`, else `<anonymous>`. */
+/** The name a report gives a function: its own name, `<constant> (immediately invoked)`, else `<anonymous>`; no name is inferred. */
 function functionName(fn: ts.SignatureDeclaration): string {
-  // An identifier, a private name with its `#`, a string or numeric literal, or a computed name that is such a literal.
-  const named = fn.name && ts.isComputedPropertyName(fn.name) ? fn.name.expression : fn.name;
-  if (named && (ts.isIdentifier(named) || ts.isPrivateIdentifier(named) || ts.isStringLiteral(named) || ts.isNumericLiteral(named))) return named.text;
-  // The parentheses an arrow function needs to be called are not a wrapper; anything else between it and the call is.
+  // Its own name: an identifier, a private name with its `#`, a string or numeric literal, or a computed name whose expression is such a literal.
+  const own = fn.name;
+  if (own && (ts.isIdentifier(own) || ts.isPrivateIdentifier(own) || ts.isStringLiteral(own) || ts.isNumericLiteral(own))) return own.text;
+  if (own && ts.isComputedPropertyName(own) && (ts.isStringLiteral(own.expression) || ts.isNumericLiteral(own.expression))) return own.expression.text;
+  // Without a name of its own: the callee, inside at most the one pair of parentheses the call needs, of the call that initializes a `const`.
   const callee = ts.isParenthesizedExpression(fn.parent) ? fn.parent : fn;
   const call = callee.parent;
-  if (ts.isCallExpression(call) && call.expression === callee) {
-    const decl = call.parent;
-    if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && (decl.parent.flags & ts.NodeFlags.Const) !== 0) return `${decl.name.text} (immediately invoked)`;
-    return '<anonymous>';
-  }
-  const parent = fn.parent;
-  if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
-  if ((ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent)) && ts.isIdentifier(parent.name)) return parent.name.text;
+  const decl = call.parent;
+  const isConst = ts.isVariableDeclaration(decl) && (decl.parent.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const;
+  if (ts.isCallExpression(call) && call.expression === callee && isConst && ts.isIdentifier(decl.name)) return `${decl.name.text} (immediately invoked)`;
   return '<anonymous>';
 }
 
