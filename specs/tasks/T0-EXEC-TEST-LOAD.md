@@ -273,9 +273,10 @@ Loaded runs on 789d7fcc under `load.sh 24 150` (same machine and load), each 70 
 | 2 | 5543 ms | 7, 5, 6, 6, 6, 6, 6 (3391-4773) |
 | 3 | 5609 ms | 6, 6, 6, 5, 8, 6, 6 (3656-5302) |
 
-### Late-sleeper row without node-start timing (code 88d3a83a)
-The row takes `writeAt = Date.now() + limitMs + 1000` before the call and the detached sleeper waits `Math.max(0, writeAt - Date.now())` before writing its pid file, so the write lands about 1000 ms after the limit whatever the node starts took. Margins (also in the row's comment): the write is after the limit while the two starts take under 7000 ms together (limit 6000 + 1000), and inside the 5000 ms wait unless they take over 11 000 ms (limit + 5000). This replaces the earlier timing caveat of the row (a sleeper-relative 6500 ms delay).
-- Revert "late pid wait removed": the row is red (`not ok 4 - a root whose detached sleeper writes the pid file 1000 ms after the limit`).
-- DoD alone on 88d3a83a: exit 0, tests 70, pass 70, fail 0; the row printed `pid file written 1012.6 ms after the limit`.
-- The row alone, three runs in sequence under one `load.sh 24 150`: 1 / 1 / 0 each; pid file written 1125.0, 1148.8 and 1153.1 ms after the limit.
-
+### Repair round after the second pre-review (of f6258fed; merged origin/main at fda8e8a1; code ee624d73)
+- The late pid wait uses a clock deadline, `Date.now() + CALIBRATION_LATE_PID_MS`, taken in the time-limit callback when the root is ended (not a count of polls); no row of its own, as ruled.
+- Late-sleeper row: the detached sleeper receives the root's pid, writes its own pid to `<pidFile>.late` at its start, polls `process.kill(rootPid, 0)` until ESRCH, waits 1000 ms and writes the pid file, so the write follows the time-limit callback however late it ran; the row's comment states the margin (the 5000 ms wait holds unless the write is delayed by more than about 4000 ms). Both time-limit rows end, in a `finally` and by the pids in `<pidFile>.root` and `<pidFile>.late`, the root and the late sleeper and wait for each to be gone (`assertGoneWithin`).
+- CHANGELOG entry: the card's text of detail 5 word for word, including "; a receipt that arrives after the test's own bound fails on that bound before this check, as before."
+- Reverts on scratch copies, with the pids the rows recorded probed afterwards with `process.kill(pid, 0)`: "late pid wait removed": red (late-sleeper row), recorded pids 91096, 98864, 101132, none alive; "end(child.pid) removed": red (own-pid root row and late-sleeper row), recorded pids 98144, 73872, 92076, none alive. A red run left no process.
+- DoD alone on ee624d73: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, suites 15, pass 70, fail 0, cancelled 0, skipped 0.
+- The two time-limit rows alone, three runs in sequence under one `load.sh 24 150` (the load ends on its own after 150 s; no process was ended by name): 2 / 2 / 0 in each run.
