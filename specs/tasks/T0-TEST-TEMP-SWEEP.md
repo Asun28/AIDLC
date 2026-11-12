@@ -126,7 +126,9 @@ Rulings on the points the implementer disclosed:
 
 ## Attempt evidence
 
-Implementer attempt on branch T0-TEST-TEMP-SWEEP from ebd2892b. Commits: 3d3e9d31 (RED: tests/surface/test-temp.test.ts alone), 733a8434 (R1: the 85 sites), a2b45c16 (the scan counts lines by LF; see RED), 928b23c9 (a local of the scan renamed from `key` to `prop`), then this evidence commit, which changes only this card.
+Implementer attempt on branch T0-TEST-TEMP-SWEEP from ebd2892b. Commits: 3d3e9d31 (RED: tests/surface/test-temp.test.ts alone), 733a8434 (R1: the 85 sites), a2b45c16 (the scan counts lines by LF; see RED), 928b23c9 (a local of the scan renamed from `key` to `prop`), 676fca5d (evidence), cc2a1aa3 (merge of origin/main at a087161e; conflict in this card only, main's rulings placed above this section), 61a51d81 (the two rows of the planner rulings), then this evidence commit, which changes only this card.
+
+Sweep after the merge (cc2a1aa3, actual run): acceptance 1 passes (pass 2, fail 0 for the file), and `git grep -n "mkdtemp[A-Za-z]*(" -- tests` outside the four helpers and tests/surface/test-temp.test.ts finds 0 lines: no site came in with main.
 
 Sweep before any edit (ebd2892b, actual run): `git grep -n "mkdtemp[A-Za-z]*(" -- tests` gives 90 lines; minus the four helpers of R2 and the string at tests/surface/eval-test-temp.test.ts:56, 85 calls in 47 files, as the planner note says. After 928b23c9 (actual run): the same grep finds only the four helpers, that string and the table strings of tests/surface/test-temp.test.ts. `git grep -c "mkdtemp" -- tests` names five files: the files of the four helpers (their own calls, imports, test names and the string above) and tests/surface/test-temp.test.ts, where every occurrence is inside a string literal; 0 occurrences elsewhere.
 
@@ -214,19 +216,21 @@ Lines move by -1, 0 or +1 against 3d3e9d31, from the import lines removed (`node
 | R1: tests/surface/review-bench.test.ts as at 3d3e9d31 | acceptance 1 | exit 1, fail 1, names its 5 sites | red |
 | R1: all 47 files as at 3d3e9d31 | acceptance 1 | exit 1, fail 1, `85 sites outside the four helpers` | red |
 | R1 imports: an unused `import { tmpdir } from 'node:os'` left in tests/surface/stats.test.ts | `npm run typecheck` | exit 2, TS6133 'tmpdir' is declared but its value is never read | red |
+| Ruling row (a), on 61a51d81: the compiler's line count (`sf.getLineAndCharacterOfPosition(...).line + 1`) in place of the line-feed count | acceptance 2 | exit 1, fail 1, `tests/forms/separators.ts:5` reported where `:3` is expected | red |
+| Ruling row (b), on 61a51d81: the immediately invoked function named `module scope` | acceptance 2 | exit 1, fail 1, `tests/forms/iife.ts:3 [module scope]` reported where `[probe (immediately invoked)]` is expected | red |
 
-Rows red: 24/24. No row covers the LF line count of a2b45c16 (no table row holds U+2028); the restored-files run above shows it. The `finally` order of tests/infra/exec.test.ts (processes ended before `rmSync` of their directory, the `finally` blocks at :682, :763, :993, :1020) has no revert row: no test observes that order, and 733a8434 changes only the `mkdtempSync` line of each of those tests (`git diff 3d3e9d31 733a8434 -- tests/infra/exec.test.ts`: 6 lines, the import and the 5 sites).
+Rows red: 26/26 (24 on 928b23c9, the two ruling rows on 61a51d81). The two rows of the rulings write U+2028 and U+2029 into the fixture with `String.fromCharCode` at run time, so the test file stays ASCII. The `finally` order of tests/infra/exec.test.ts (processes ended before `rmSync` of their directory, the `finally` blocks at :682, :763, :993, :1020) has no revert row: no test observes that order, and 733a8434 changes only the `mkdtempSync` line of each of those tests (`git diff 3d3e9d31 733a8434 -- tests/infra/exec.test.ts`: 6 lines, the import and the 5 sites).
 
 ### Acceptance 3
 `git diff -U0 3d3e9d31 733a8434`, every changed line outside tests/surface/test-temp.test.ts is an import line or a site line (checked by filtering the diff: no other `+`/`-` line). No assertion, test name or test call changes, so no test count changes.
 
 ### DoD (actual runs, the card's `dod_command` from the worktree root)
-- 928b23c9: `npm run typecheck` exit 0, then `node --test` over the 48 files: tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0.
-- 733a8434 and a2b45c16: the same counts, exit 0.
+- 61a51d81 (final test code): `npm run typecheck` exit 0, then `node --test` over the 48 files: tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0.
+- 733a8434, a2b45c16 and 928b23c9: the same counts, exit 0. The two ruling rows are inside the existing acceptance 2 test, so the test count stays 1013.
 - Temporary directory (`os.tmpdir()`, entries starting `aidlc-`), each run: 72480 before, 72480 after, 0 new and 0 gone entries (`comm` of the two listings); no `could not remove` line in either output.
 
 ### Full suite, R3 / acceptance 4 (733a8434, actual run, `npm test`, nothing else started beside it)
-tests 3462, suites 247, pass 3440, fail 0, cancelled 0, skipped 22, duration_ms 380702, exit 0. No file failed, so no file was rerun alone. Raw output kept by the implementer outside the repository (4019 lines). Not rerun on a2b45c16 and 928b23c9, which change only tests/surface/test-temp.test.ts (the line count, a local name); the DoD on 928b23c9 runs that file.
+tests 3462, suites 247, pass 3440, fail 0, cancelled 0, skipped 22, duration_ms 380702, exit 0. No file failed, so no file was rerun alone. Raw output kept by the implementer outside the repository (4019 lines). This full run of R3 was on 733a8434, before the two scan commits (a2b45c16, 928b23c9), the merge of main (cc2a1aa3) and the two rows (61a51d81); it was not rerun. Changed since 733a8434: tests/surface/test-temp.test.ts, this card, and main's files of the merge (.claude/skills/verify-card-run-writes/SKILL.md, CHANGELOG.md, docs/ARCHITECTURE.md, docs/LESSONS.md, docs/OPERATIONS.md, specs/tasks/T0-ATTEMPT-NUMBER.md, specs/tasks/T0-AUDIT-BINDING.md, src/core/effort.ts, src/loop/card-runner.ts, tests/core/effort.test.ts, tests/scenarios/dispute-running-attempt.test.ts). The DoD on 61a51d81 runs tests/surface/test-temp.test.ts.
 
 ### Size
-`git diff --shortstat origin/main...HEAD` at 928b23c9: 48 files changed, 336 insertions(+), 181 deletions(-), 517 lines against the budget of 520. This evidence section adds 107 lines of card text, 624 lines in all.
+`git diff --shortstat origin/main...HEAD` at 61a51d81 (origin/main a087161e): 49 files changed, 445 insertions(+), 181 deletions(-), 626 lines; with this evidence update it is given in the report, against the budget of 700 (attempt evidence counted).
