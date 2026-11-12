@@ -215,6 +215,7 @@ test('T0-AUDIT-BINDING: an entry retained for a card is compared with the merge 
   assert.deepEqual(run((f) => (intent(f, 'op1', 'd1'), intent(f, 'op1', 'd2'), result(f, 'op1'), f3(f))), ['e is bound to candidate d3, T0-A merged d1, d2'], '(f) each intent judged on its own');
   assert.deepEqual(run((f) => (merge(f, 'T0-A', 'abcdefghijkl1'), retain(f, 'e', 'dod-receipt', 'abcdefghijkl2', 'T0-A'))), ['e is bound to candidate abcdefghijkl, T0-A merged abcdefghijkl'], '(g) whole-string comparison, cut detail');
   assert.deepEqual(run((f) => (merge(f, 'T0-A', 'dA'), retain(f, 'e', 'dod-receipt', 'dX', 'T0-A')), { sealed: false, input: undefined }), ['e is bound to candidate dX, T0-A merged dA'], '(h) an unsealed manifest with no input digest');
+  assert.deepEqual(run((f) => (result(f, 'op1'), intent(f, 'op1', 'dA'), retain(f, 'e', 'dod-receipt', 'dA', 'T0-A'))), [], '(i) a succeeded completion journaled before its intent');
 });
 
 test('T0-AUDIT-BINDING: an entry without a card, or of a card with no merge digest, is compared with the input final digest when one is given', () => {
@@ -236,6 +237,8 @@ test('T0-AUDIT-BINDING: an entry without a card, or of a card with no merge dige
     ['intent with a numeric operation id', 'T0-C', (f) => (intent(f, { operationId: 5 }), done(f, { operationId: 5 }))],
     ['a NOTE as the completion', 'T0-C', (f) => (intent(f, {}), done(f, {}, 'T0-C', 'NOTE'))],
     ['card ids compared exactly', 't0-c', (f) => (intent(f, {}), done(f))],
+    ['a NOTE carrying the fields of a merge intent', 'T0-C', (f) => (f.append('NOTE', 'T0-C', { operationId: 'op1', kind: 'merge', candidateDigest: 'dZ' }), done(f))],
+    ['entry, intent and completion with the card id empty', '', (f) => (intent(f, {}, ''), done(f, {}, ''))],
   ];
   for (const [name, cardId, arrange] of cases) {
     const f = fixture();
