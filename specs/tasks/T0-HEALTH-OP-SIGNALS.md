@@ -374,7 +374,7 @@ Other runs on 92ffb803: tests/scenarios/health-op.test.ts on Linux (WSL Ubuntu, 
 ### Repair round after the pre-review of 9e9eecb2
 Commits: merge of origin/main `3dd7f9f7` (conflict in this card only), RED `a1e8f0f9` (tests only), GREEN `50b027db` (R9, the backward scan of `healthReportOf`, the H2 sentence in both DELIVERY-OPS.md copies, the entry C sentence).
 
-RED on a1e8f0f9 (sources of 3dd7f9f7), test "the staleness of a sample is judged when the health command has returned", each assertion run on its own in a scratch copy of the test file (removed): R9 (a) result FAIL (PASS at the old time); the STOP row FAIL (the attempt closed instead) and its `stop.at` FAIL; the rows that the window, the directive window and the event data keep the step's time: pass already; R9 (b) PASS row: passes already; U+FEFF and U+00A0 rows, 200 000 blank lines, `a` / ` A` / ` A ` for a declared `A`, both `safeParse` rows: pass already (they pin behaviour the old source has). Row (f): the test of acceptance 7 now unsets `AIDLC_TARGET_ENV` for its calls and restores it in a `finally`; observation: the 9e9eecb2 version of that test fails with `AIDLC_TARGET_ENV=staging` (`target: 'staging'`), the new one passes with it set.
+RED on a1e8f0f9 (sources of 3dd7f9f7), test "the staleness of a sample is judged when the health command has returned", each assertion run on its own in a scratch copy of the test file (removed): R9 (a) result FAIL (PASS at the old time); the STOP row FAIL (the attempt closed instead) and its `stop.at` FAIL; the rows that the window and the directive window keep the step's time: pass already (a third assertion, on the keys of the event data, was removed in the second repair round: the event's timestamp never carried the step's time); R9 (b) PASS row: passes already; U+FEFF and U+00A0 rows, 200 000 blank lines, `a` / ` A` / ` A ` for a declared `A`, both `safeParse` rows: pass already (they pin behaviour the old source has). Row (f): the test of acceptance 7 now unsets `AIDLC_TARGET_ENV` for its calls and restores it in a `finally`; observation: the 9e9eecb2 version of that test fails with `AIDLC_TARGET_ENV=staging` (`target: 'staging'`), the new one passes with it set.
 
 Revert rows, actual runs on the 50b027db sources (`git diff --stat` empty after the last):
 | # | Mutation | Red | Assertion |
@@ -393,6 +393,27 @@ Revert rows, actual runs on the 50b027db sources (`git diff --stat` empty after 
 
 Red 11 of 11. DoD on 50b027db, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; tests/scenarios/op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail.
 
-Document text added: H2 `The staleness of a sample is judged against the time at which the command returned.` and the entry C sentence: code `evaluateHealth(signals, window, this.clock(), ...)` in the OBSERVE case; test 12, R9 (a) and (b); revert R1.
+Document text added in this round: H2 and entry C sentences on staleness, replaced in the second repair round (below).
 
 Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 825 insertions, 13 deletions; the count with it is in the coordinator report; budget 900.
+
+### Second repair round after the pre-review of 431236a1
+Commits: merge of origin/main `26347bac` (conflict in this card only; its message keeps git's `# Conflicts:` lines after the Co-Authored-By line), RED `e59ac2b9` (tests only), GREEN `b6842cfe` (two evaluations, the H2 sentence in both DELIVERY-OPS.md copies, the entry C sentence, the code comment).
+
+Test changes in e59ac2b9: the comment and the assertion that said the journal event keeps the step's time are gone (the journal, the store and `recoverOrStop` read their own clock); the row asserts the saved fallback window and `stop.at` of the insufficient-data STOP instead. RED on e59ac2b9 (sources of 431236a1): row (a), a breaching sample 200 s old at the start, a 150 s command and a 300 s bound: FAIL (`INSUFFICIENT_DATA` where BREACH is expected; the `recover` assertion follows it); row (b), PASS with the command starting 25 s before the end of the window and returning 50 s later, stays in OBSERVE: passes already; row (c), insufficient data with the command starting 75 s before the end of the maximum wait and returning 150 s later, no STOP: passes already; row (d), the saved window and `stop.at`: pass already.
+
+Revert rows, actual runs on the b6842cfe sources (`git diff --stat` empty after the last):
+| # | Mutation | Red (line of tests/scenarios/health-op.test.ts) |
+|---|---|---|
+| S1 | `late` always | the BREACH row (:593) |
+| S2 | `early` always | R9 row (a), the stale PASS (:559) |
+| S3 | PASS taken from `early` | R9 row (a) (:559) |
+| S4 | later clock in `windowElapsed` | row (b), the window (:572) |
+| S5 | later clock in the maximum-wait check | row (c), the maximum wait (:576) |
+| S6 | later clock in `at` of the insufficient-data STOP | `stop.at` (:567) |
+
+Red 6 of 6. DoD on b6842cfe, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail.
+
+Document text: H2 `A sample counts toward PASS only while ...; a breach found with the time at which the evaluation began still counts.` and the entry C sentence, word for word from Exact text: code `early` / `late` and `health = early.result === 'BREACH' ? early : late` in the OBSERVE case; tests R9 (a), (b), the BREACH row; reverts S1-S3.
+
+Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 881 insertions, 13 deletions; budget 950.
