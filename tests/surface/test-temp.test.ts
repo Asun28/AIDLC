@@ -97,7 +97,8 @@ function scanSource(file: string, text: string): Site[] {
       while (fn && !isFunctionLike(fn)) fn = fn.parent;
       const exempt = called && fn !== undefined && ts.isFunctionDeclaration(fn) && fn.parent === sf && ALLOWED.has(`${file}#${fn.name?.text}`);
       if (!exempt) {
-        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+        // Lines counted by LF, as git grep and editors count them; the compiler also breaks lines at U+2028 and U+2029.
+        const line = text.slice(0, node.getStart(sf)).split('\n').length;
         sites.push({ file, line, fn: fn ? functionName(fn as ts.SignatureDeclaration, sf) : 'module scope', kind: called ? 'call' : 'reference', name });
       }
       return;
