@@ -33,17 +33,17 @@ const GIT_CONFIG = path.join(tempDir('gitconfig'), 'empty.gitconfig');
 writeFileSync(GIT_CONFIG, '');
 
 /**
- * The environment of every child the tests start: no inherited variable whose upper-cased name starts with GIT_ or AIDLC_ or is
- * NODE_OPTIONS, no session variable, and GIT_CEILING_DIRECTORIES at the fixtures' parent. `source` is the inherited environment, so a row can check it.
+ * The environment of every child the tests start: no inherited variable whose upper-cased name starts with GIT_, AIDLC_ or NODE_, no
+ * session variable, GIT_CEILING_DIRECTORIES at the fixtures' parent, and no system or global git configuration. `source` is the inherited environment, so a row can check it.
  */
 function childEnv(extra: NodeJS.ProcessEnv = {}, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(source)) {
     const upper = k.toUpperCase();
-    if (upper.startsWith('GIT_') || upper.startsWith('AIDLC_') || upper === 'CLAUDE_CODE_SESSION_ID' || upper === 'NODE_OPTIONS') continue;
+    if (upper.startsWith('GIT_') || upper.startsWith('AIDLC_') || upper.startsWith('NODE_') || upper === 'CLAUDE_CODE_SESSION_ID') continue;
     env[k] = v;
   }
-  return { ...env, GIT_CEILING_DIRECTORIES: CEILING, ...extra };
+  return { ...env, GIT_CEILING_DIRECTORIES: CEILING, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_CONFIG, ...extra };
 }
 
 function gitInit(repo: string): void {
@@ -199,6 +199,12 @@ function isAssignedPattern(literal: ts.ObjectLiteralExpression): boolean {
   }
 }
 
+/** Whether `once`, a `process.once` node, is the callee of a call that is a whole expression statement: the object it returns is discarded. */
+function isDiscardedCall(once: ts.PropertyAccessExpression): boolean {
+  const call = once.parent;
+  return ts.isCallExpression(call) && call.expression === once && ts.isExpressionStatement(call.parent) && call.parent.expression === call;
+}
+
 /** Whether `env`, a `process.env` node, has one of the three shapes of rule (c). */
 function allowedEnvShape(env: ts.PropertyAccessExpression): boolean {
   const p = env.parent;
@@ -216,7 +222,7 @@ function allowedEnvShape(env: ts.PropertyAccessExpression): boolean {
 /**
  * The violations of acceptance 13 in a source text, parsed with the TypeScript compiler API: (a) an identifier `chdir` or a string
  * literal that is exactly `chdir`; (b) an identifier `process` that is not the object of a property access to one of the ten
- * properties, or a string literal that is exactly `process` or `node:process`; (c) a `process.env` in none of the three shapes; (d) a
+ * properties (`once` only as a discarded call), or a string literal that is exactly `process` or `node:process`; (c) a `process.env` in none of the three shapes; (d) a
  * `this` expression or an identifier of HIDDEN_ACCESS. Comments are not nodes, so they never count.
  */
 function envViolations(text: string): EnvViolation[] {
@@ -230,7 +236,7 @@ function envViolations(text: string): EnvViolation[] {
       if (node.text === 'chdir') report('a', node);
       if (node.text === 'process') {
         const p = node.parent;
-        if (!(ts.isPropertyAccessExpression(p) && p.expression === node && PROCESS_PROPERTIES.has(p.name.text))) report('b', node);
+        if (!(ts.isPropertyAccessExpression(p) && p.expression === node && PROCESS_PROPERTIES.has(p.name.text)) || (p.name.text === 'once' && !isDiscardedCall(p))) report('b', node);
         else if (p.name.text === 'env' && !allowedEnvShape(p)) report('c', p);
       }
       if (HIDDEN_ACCESS.has(node.text)) report('d', node);
