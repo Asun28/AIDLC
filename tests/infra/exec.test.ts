@@ -413,14 +413,21 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     it('a root whose detached sleeper writes the pid file 1000 ms after the limit: undefined, the late sleeper ended', async (t) => {
       const ended: number[] = [];
       let pidFile = '';
-      const sleeper = "setTimeout(() => require('fs').writeFileSync(process.argv[1], String(process.pid)), 6500); setTimeout(() => {}, 30_000)";
+      const limitMs = 6000;
+      // The sleeper writes at an absolute time, 1000 ms after the limit counted from this line, whatever the two node starts take.
+      // Margins: the write is after the limit while the two starts take under limit + 1000 ms (7 s) together, and inside the
+      // CALIBRATION_LATE_PID_MS wait (5000 ms) unless they take over limit + 5000 ms (11 s) together.
+      const callMs = Date.now();
+      const writeAt = callMs + limitMs + 1000;
+      const sleeper = `setTimeout(() => require('fs').writeFileSync(process.argv[1], String(process.pid)), Math.max(0, ${writeAt} - Date.now())); setTimeout(() => {}, 30_000)`;
       const command = (file: string): [string, string[]] => {
         pidFile = file;
         const root = `require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}, process.argv[1]], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => {}, 30_000)`;
         return [process.execPath, ['-e', root, file]];
       };
       t.after(() => end(readPid(pidFile)));
-      assert.equal(await calibrate(t, FIXTURE, ended, command, 6000), undefined);
+      assert.equal(await calibrate(t, FIXTURE, ended, command, limitMs), undefined);
+      t.diagnostic(`pid file written ${String((writtenMs(pidFile) ?? NaN) - callMs - limitMs)} ms after the limit`);
       assert.equal(ended.length, 1);
       assert.equal(probe(ended[0]!), 'ESRCH');
     });
