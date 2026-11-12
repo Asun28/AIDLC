@@ -135,6 +135,8 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan reports every occurrence of the 
     ['tests/forms/empty.ts', '', []],
     ['tests/forms/comments-only.ts', "// mkdtempSync\n/* mkdtemp */\n/** mkdtempDisposableSync */\n", []],
     ['tests/forms/unusual.ts', "import fs from 'node:fs';\nexport default class {\n  build() {\n    return fs.mkdtempSync('a');\n  }\n}\nclass S {\n  static {\n    fs.mkdtempSync('b');\n  }\n}\nconst o = {\n  get g() { return fs.mkdtempSync('c'); },\n  set s(v: string) { fs.mkdtempSync(v); },\n};\nmkdtempSync: for (;;) { break mkdtempSync; }\nenum E { mkdtemp = 1 }\n", [[4, 'build', 'call', sync], [9, 'module scope', 'call', sync], [13, 'g', 'call', sync], [14, 's', 'call', sync], [16, 'module scope', 'reference', sync], [16, 'module scope', 'reference', sync], [17, 'module scope', 'reference', base]]],
+    // Depth: an expression of 10 000 additions, built here at run time, then one occurrence.
+    ['tests/forms/deep.ts', `export const x = ${Array(10000).fill('0').join(' + ')};\nexport const y = mkdtempSync;\n`, [[2, 'module scope', 'reference', sync]]],
     ['tests/surface/test-temp.test.ts', own, []],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
