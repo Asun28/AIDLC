@@ -604,3 +604,17 @@ Documents: docs/OPERATIONS.md and the CHANGELOG carry the predecessor's sentence
 | DoD | `dod_command` as given, at cd5cb038 (the next commit changes only this card file, which no test of the DoD reads) | exit 0: typecheck clean; 257 tests, 251 pass, 0 fail, 6 skipped (this file: the unreadable parent, the file link (EPERM), the POSIX `missing/../spec.md` test; tests/surface/incident.test.ts: three POSIX mode-bit tests), 18 suites |
 
 Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1391 changed lines (1380 added, 11 removed) against the budget of 1400: tests/surface/cli-cwd-paths.test.ts 814, this card 484, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed five points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| The guard of acceptance 13 does not count a spread inside a destructuring target (`({ ...process.env } = o)`) as the first shape, since that writes into the environment; it is a failing row of the table. Rules (a) and (b) also read a template literal without substitutions as a string | Accepted. Both make the guard stricter than the card's words and follow their sense: the first shape is a spread in an object literal that is a value |
+| The two lines "Coordinator verification:" of the predecessor's evidence are renamed "The predecessor's coordinator verification (...)" | Accepted. The coordinator's verification of this card is the block it appends below |
+| The predecessor's evidence numbers the findings of its first formal decision F1 to F3 in one place, and the hygiene of this card names them F3 to F6; the evidence records both | Accepted as recorded. The numbers F3 to F8 are those of the loop's stored card run of the predecessor; the earlier numbers are the predecessor's own |
+| Rows of the revert table were merged to keep the diff within the budget | Accepted. The budget is raised to 1480 by an amendment on main for the coordinator's blocks; the table keeps every row |
+| The carried helper `childEnv` of the test file keeps `NODE_OPTIONS` and sets no state directory per child, where the implementer brief's standing check asks for both | Kept as carried. The tests of this file select the state directory per case, and several of them need `AIDLC_STATE_DIR` unset (acceptance 11 and the behaviour row of acceptance 13); the predecessor's four formal decisions raised nothing on it. The pre-review is asked to check that no test of the file depends on the caller's environment |
+
+Three revert rows (5, 10 and 38) are green on Windows because their cases exist on POSIX only; they were red in the predecessor's Linux run at 516d8739, and the coordinator's Linux run of this card's test file is recorded below.
