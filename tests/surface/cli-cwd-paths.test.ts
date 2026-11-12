@@ -737,6 +737,10 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       "process.once('SIGINT', () => stop.abort())",
       // process.once as main.ts has it the second time: a whole statement inside an if without braces.
       "if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c))",
+      // The second shape of rule (c) reads a variable by a name of /^[A-Z][A-Z0-9_]*$/ (third pre-review).
+      "process.env.A1_B === '1'",
+      "process.env['AIDLC_SESSION'] || x",
+      'process.env[`AIDLC_SESSION`] || x',
       'process.version',
       'process.platform',
       'process.stderr.write(s)',
@@ -797,6 +801,14 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ["const p = process.once('exit', f)", ['b']],
       ["fn(process.once('exit', f))", ['b']],
       ['const o = process.once', ['b']],
+      // A member of the object, or a key whose name cannot be read from the source, is no variable read (third pre-review).
+      ['process.env.__proto__ || {}', ['c']],
+      ["process.env['__proto__'] || {}", ['c']],
+      ['process.env.constructor === Object', ['c']],
+      ['process.env.valueOf === f', ['c']],
+      ["process.env[k] === '1'", ['c']],
+      ["process.env[`${'A'}`] === '1'", ['c']],
+      ["process.env.lower === '1'", ['c']],
     ];
     for (const [text, rules] of failing) assert.deepEqual([...new Set(envViolations(text).map((v) => v.rule))].sort(), rules, JSON.stringify(text));
   });
