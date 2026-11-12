@@ -323,3 +323,7 @@ Coordinator verification:
 - At 1241eb22, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/card-close-cleanup.test.ts, tests/scenarios/lesson-dup.test.ts, tests/scenarios/manifest-lock.test.ts, tests/scenarios/seal-binding.test.ts, tests/surface/verifier-binding.test.ts): tests 64, pass 64, fail 0, skipped 0.
 - Windows, docpins: 83 test files reading 5 changed documents: # tests 1932 # pass 1919 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 70): load
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Planner note at CLOSE: the Bounds line (2026-11-12)
+
+R10 asks, at CLOSE, for the sync commit of .claude/skills/verify-card-run-writes/SKILL.md to move to the merge commit and for the Bounds line `- Message text: not compared.` when the file stays ASCII and at most 8,000 bytes. The close commit moved both references of the sync commit to 4fb459e5. The Bounds line was added in a commit of its own after it: the file goes from 7,963 to 7,993 bytes, stays ASCII, and tests/surface/templates.test.ts passes on it. The coordinator first closed the card without the line and added it when it re-read R10 at the close of T0-ATTEMPT-NUMBER.

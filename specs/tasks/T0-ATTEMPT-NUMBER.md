@@ -300,3 +300,7 @@ Coordinator verification:
 - At e6ce11dc, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/effort.test.ts, tests/scenarios/dispute-running-attempt.test.ts): tests 61, pass 61, fail 0, skipped 0.
 - Windows, docpins: 83 test files reading 3 changed documents: # tests 1946 # pass 1934 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Planner ruling at CLOSE: the Bounds line (2026-11-12)
+
+R7 asks, at CLOSE, for the sync commit of .claude/skills/verify-card-run-writes/SKILL.md to move to the merge commit and for the Bounds line `- Attempts: stored n only.` (27 bytes with its newline) when the file stays ASCII and at most 8,000 bytes, and otherwise for the reason in this card. The close commit moved both references of the sync commit to 8a28e857. The Bounds line is not added: T0-AUDIT-BINDING closed first and its Bounds line took the file from 7,963 to 7,993 bytes, so this line would make 8,020, above the cap that tests/surface/templates.test.ts asserts. What the line would say stays true without it: the fault-point check compares the stored `n` of an attempt and the journal events, which R5 of this card leaves unchanged, and never the ladder number a directive names. Compacting the skill file so that such lines fit is on the audit's follow-up list.

@@ -50,6 +50,7 @@ runs it, so CI runs it on every push.
   from `fs.appendFileSync` onto the goal journal.
 - Fixed fixture clock; git, gh and the reviewers are scripted
   (`scriptedRunner`, `DryRunShipPath`).
+- Message text: not compared.
 
 ## Not covered
 - Two-session interleavings of the lease and the review queue, and
