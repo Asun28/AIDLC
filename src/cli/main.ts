@@ -585,7 +585,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--not-counted <reason>', 'expected-red|quota|admission-hold|tool-outage|env-setup')
     .option('--progress', 'verified progress since the previous attempt')
     .option('--evidence <text>')
-    .option('--dod-receipt <text>')
+    .option('--dod-receipt <text>', 'the DoD command, its exit code and counts (required on success)')
     .option('--red-receipt <text>')
     .option('--candidate-sha <sha>')
     .action((cardId: string, o: { goal?: string; outcome: 'success' | 'fail' | 'not-counted'; cause?: string; notCounted?: 'expected-red' | 'quota' | 'admission-hold' | 'tool-outage' | 'env-setup'; progress?: boolean; evidence?: string; dodReceipt?: string; redReceipt?: string; candidateSha?: string }) => {
