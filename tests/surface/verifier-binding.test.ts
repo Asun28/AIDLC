@@ -218,7 +218,7 @@ test('T0-AUDIT-BINDING: an entry retained for a card is compared with the merge 
 });
 
 test('T0-AUDIT-BINDING: an entry without a card, or of a card with no merge digest, is compared with the input final digest when one is given', () => {
-  const intent = (f: Fx, data: Record<string, unknown>, cardId: string | undefined = 'T0-C') => f.append('OPERATION_INTENT', cardId, { operationId: 'op1', kind: 'merge', candidateDigest: 'dZ', ...data });
+  const intent = (f: Fx, data: Record<string, unknown>, cardId: string | null = 'T0-C') => f.append('OPERATION_INTENT', cardId ?? undefined, { operationId: 'op1', kind: 'merge', candidateDigest: 'dZ', ...data });
   const done = (f: Fx, data: Record<string, unknown> = {}, cardId = 'T0-C', type: JournalEventType = 'OPERATION_RESULT') => f.append(type, cardId, { operationId: 'op1', status: 'succeeded', ...data });
   const cases: Array<[string, string | undefined, (f: Fx) => void]> = [
     ['no cardId', undefined, () => undefined],
@@ -228,7 +228,7 @@ test('T0-AUDIT-BINDING: an entry without a card, or of a card with no merge dige
     ['intent without digest', 'T0-C', (f) => (intent(f, { candidateDigest: undefined }), done(f))],
     ['intent with an empty digest', 'T0-C', (f) => (intent(f, { candidateDigest: '' }), done(f))],
     ['intent with a numeric digest', 'T0-C', (f) => (intent(f, { candidateDigest: 42 }), done(f))],
-    ['intent without a card', 'T0-C', (f) => (intent(f, {}, undefined), done(f))],
+    ['intent without a card', 'T0-C', (f) => (intent(f, {}, null), done(f))],
     ['result of another card', 'T0-C', (f) => (intent(f, {}), done(f, {}, 'T0-D'))],
     ['result of another operation', 'T0-C', (f) => (intent(f, {}), done(f, { operationId: 'op2' }))],
     ['intent of another kind', 'T0-C', (f) => (intent(f, { kind: 'deploy' }), done(f))],
