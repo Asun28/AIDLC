@@ -120,6 +120,12 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan reports every occurrence of the 
     ['tests/forms/comment.ts', "// mkdtempSync('x')\n/* fs.mkdtemp('y') */\nexport {};\n", []],
     ['tests/forms/text.ts', "const s = 'mkdtempSync(';\nvoid s;\n", []],
     ['tests/forms/template.ts', "const n = 1;\nconst t = `mkdtempSync${n}`;\nvoid t;\n", []],
+    ['tests/forms/private.ts', "class C {\n  #mkdtempSync = 1;\n  #\\u006Dkdtemp = 2;\n}\n", [[2, 'module scope', 'reference', sync], [3, 'module scope', 'reference', base]]],
+    ['tests/infra/helpers.ts', "export function tmpDir(prefix: string): string {\n  const f = function mkdtempSync() { return prefix; };\n  return f();\n}\n", [[2, sync, 'reference', sync]]],
+    ['tests/infra/helpers.ts', "import { mkdtempSync } from 'node:fs';\nfunction outer() {\n  function tmpDir() { return mkdtempSync('x'); }\n  return tmpDir();\n}\nexport { outer };\n", [[3, 'tmpDir', 'call', sync]]],
+    ['tests/surface/evals.test.ts', "import fs from 'node:fs';\nconst { mkdtempSync } = fs;\nfunction tempDir(prefix: string) {\n  return mkdtempSync(prefix);\n}\n", [[2, 'module scope', 'reference', sync]]],
+    ['tests/surface/command-lines.test.ts', "import { mkdtempSync } from 'node:fs';\nexport { mkdtempSync };\n", [[2, 'module scope', 'reference', sync]]],
+    ['tests/forms/methods.ts', "import fs from 'node:fs';\nclass C {\n  #make() {\n    return fs.mkdtempSync('a');\n  }\n  ['build']() {\n    return fs.mkdtempSync('b');\n  }\n  42() {\n    return fs.mkdtempSync('c');\n  }\n}\n", [[4, '#make', 'call', sync], [7, 'build', 'call', sync], [10, '42', 'call', sync]]],
     ['tests/surface/test-temp.test.ts', own, []],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
