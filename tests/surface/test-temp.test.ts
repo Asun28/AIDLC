@@ -19,8 +19,11 @@ const stringValue = (node: ts.Node): string | undefined => (ts.isStringLiteral(n
 /** The member name of `x.name` or `x['name']`, else undefined. */
 const memberName = (node: ts.Node): string | undefined =>
   ts.isPropertyAccessExpression(node) ? node.name.text : ts.isElementAccessExpression(node) ? stringValue(node.argumentExpression) : undefined;
-/** `ts.skipOuterExpressions` (in the compiler's runtime API, not in its declarations): removes parentheses, `as`, angle-bracket and non-null assertions and `satisfies`. */
-const skipOuter = (ts as unknown as { skipOuterExpressions(node: ts.Node): ts.Node }).skipOuterExpressions;
+/** Removes parentheses, `as`, angle-bracket and non-null assertions and `satisfies` around an expression, through the public node tests. */
+const skipOuter = (node: ts.Node): ts.Node => {
+  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) || ts.isSatisfiesExpression(node)) node = node.expression;
+  return node;
+};
 const isFunctionLike =(node: ts.Node): node is ts.SignatureDeclaration =>
   ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node);
 
@@ -79,13 +82,12 @@ function scanSource(file: string, text: string): Site[] {
     }
   };
   const collect = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && FS_MODULES.has(stringValue(node.moduleSpecifier) ?? '') && node.importClause && !node.importClause.isTypeOnly) {
+    if (ts.isImportDeclaration(node) && FS_MODULES.has(stringValue(node.moduleSpecifier) ?? '') && node.importClause) {
       const { name, namedBindings } = node.importClause;
       if (name) fsObjects.add(name.text);
       if (namedBindings && ts.isNamespaceImport(namedBindings)) fsObjects.add(namedBindings.name.text);
       if (namedBindings && ts.isNamedImports(namedBindings)) {
         for (const el of namedBindings.elements) {
-          if (el.isTypeOnly) continue;
           const imported = (el.propertyName ?? el.name).text;
           if (imported === 'default') fsObjects.add(el.name.text);
           else bindName(el.name.text, imported);
