@@ -183,6 +183,8 @@ interface EnvViolation { rule: 'a' | 'b' | 'c' | 'd'; line: number; text: string
 const PROCESS_PROPERTIES = new Set(['argv', 'cwd', 'env', 'exit', 'exitCode', 'once', 'platform', 'stderr', 'stdout', 'version']);
 /** The identifiers of rule (d): each reaches the process object or runs code without naming it. */
 const HIDDEN_ACCESS = new Set(['eval', 'Function', 'globalThis', 'global', 'Reflect']);
+/** The names of rule (d), as identifiers and as exact string literals, by which a prototype is reached or a property defined on one. */
+const PROTOTYPE_NAMES = new Set(['prototype', '__proto__', 'getPrototypeOf', 'setPrototypeOf', 'defineProperty', 'defineProperties', '__defineGetter__', '__defineSetter__']);
 
 /** The operators of the second shape of rule (c): a read of the environment compared or defaulted. */
 const ENV_READ_OPERATORS = new Set<ts.SyntaxKind>([ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken]);
@@ -234,7 +236,8 @@ function allowedEnvShape(env: ts.PropertyAccessExpression): boolean {
  * The violations of acceptance 13 in a source text, parsed with the TypeScript compiler API: (a) an identifier `chdir` or a string
  * literal that is exactly `chdir`; (b) an identifier `process` that is not the object of a property access to one of the ten
  * properties (`once` only as a discarded call), or a string literal that is exactly `process` or `node:process`; (c) a `process.env` in none of the three shapes; (d) a
- * `this` expression or an identifier of HIDDEN_ACCESS. Comments are not nodes, so they never count.
+ * `this` expression, an identifier of HIDDEN_ACCESS, or an identifier or string literal of PROTOTYPE_NAMES. Comments are not nodes, so they
+ * never count.
  */
 function envViolations(text: string): EnvViolation[] {
   const sf = ts.createSourceFile('main.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -250,12 +253,13 @@ function envViolations(text: string): EnvViolation[] {
         if (!(ts.isPropertyAccessExpression(p) && p.expression === node && PROCESS_PROPERTIES.has(p.name.text)) || (p.name.text === 'once' && !isDiscardedCall(p))) report('b', node);
         else if (p.name.text === 'env' && !allowedEnvShape(p)) report('c', p);
       }
-      if (HIDDEN_ACCESS.has(node.text)) report('d', node);
+      if (HIDDEN_ACCESS.has(node.text) || PROTOTYPE_NAMES.has(node.text)) report('d', node);
     } else if (node.kind === ts.SyntaxKind.ThisKeyword) {
       report('d', node);
     } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       if (node.text === 'chdir') report('a', node);
       if (node.text === 'process' || node.text === 'node:process') report('b', node);
+      if (PROTOTYPE_NAMES.has(node.text)) report('d', node);
     }
     ts.forEachChild(node, (child) => {
       pending.push(child);
