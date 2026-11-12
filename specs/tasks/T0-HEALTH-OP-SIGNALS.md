@@ -4,7 +4,7 @@ title: A release runner built without a signal source, as aidlc release next bui
 status: todo
 branch: T0-HEALTH-OP-SIGNALS
 worktree: D:\wt\AIDLC\T0-HEALTH-OP-SIGNALS
-size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: raised from 600 to 820 after the Codex review of the draft card; about 45 source lines in src/delivery/ops.ts (the report schema, the last-line reader and the mapping) and about 25 in src/loop/release-runner.ts (the default source and its comment), about 520 lines of tests/scenarios/health-op.test.ts (thirteen tests: a failure table of about 45 rows, the parser and mapper rows, recording wrappers for the runner, the lease store, the journal and the store, and one CLI case), about 34 lines of docs (docs/DELIVERY-OPS.md and its template copy 14 each, docs/OPERATIONS.md 4, docs/ARCHITECTURE.md 2), 2 lines of CHANGELOG and about 190 lines of attempt evidence in this card file (the RED receipts, the mutation table of acceptance 3 and the clause table); raised from 820 to 900 by the coordinator on 2026-11-12 with R9 and the rulings after the pre-review of 9e9eecb2: the candidate is 772 changed lines, and the rows the pre-review asked for (the padded report, name case and padding apart, the direct schema rejections, the controlled target variable), the backward scan, R9 with its row and two document sentences in three files add about 90; raised from 900 to 950 by the coordinator on 2026-11-12 after the second pre-review: the candidate 431236a1 is 864 changed lines, and R9 as restated (two evaluations, a breach at the step's time stands), its three rows and the corrected sentences add about 60"
+size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: raised from 600 to 820 after the Codex review of the draft card; about 45 source lines in src/delivery/ops.ts (the report schema, the last-line reader and the mapping) and about 25 in src/loop/release-runner.ts (the default source and its comment), about 520 lines of tests/scenarios/health-op.test.ts (thirteen tests: a failure table of about 45 rows, the parser and mapper rows, recording wrappers for the runner, the lease store, the journal and the store, and one CLI case), about 34 lines of docs (docs/DELIVERY-OPS.md and its template copy 14 each, docs/OPERATIONS.md 4, docs/ARCHITECTURE.md 2), 2 lines of CHANGELOG and about 190 lines of attempt evidence in this card file (the RED receipts, the mutation table of acceptance 3 and the clause table); raised from 820 to 900 by the coordinator on 2026-11-12 with R9 and the rulings after the pre-review of 9e9eecb2: the candidate is 772 changed lines, and the rows the pre-review asked for (the padded report, name case and padding apart, the direct schema rejections, the controlled target variable), the backward scan, R9 with its row and two document sentences in three files add about 90; raised from 900 to 950 by the coordinator on 2026-11-12 after the second pre-review: the candidate 431236a1 is 864 changed lines, and R9 as restated (two evaluations, a breach at the step's time stands), its three rows and the corrected sentences add about 60; raised from 950 to 990 by the coordinator on 2026-11-12: the candidate 19288418 is 929 changed lines with the planner's rulings on the disclosed deviations, and the severity selection of the third pre-review with its two rows, their evidence and the coordinator's verification block add about 45"
 allow_paths:
   - src/delivery/ops.ts
   - src/loop/release-runner.ts
@@ -26,7 +26,7 @@ requirements:
   - R6. WHEN `ReleaseRunnerDeps.signals` is given, it shall stay the only source, as on main, and no health command shall run. Every test that drives OBSERVE injects a source (release.test.ts:202, :260, :284, :304, :326, :353; release-reissue.test.ts:45; checkpoint-packet.test.ts:28; release-report-step.test.ts:62; ops-cwd.test.ts:45; journal-lock-refusal.test.ts:167; release-lease.test.ts:41), and the runners built without one never reach OBSERVE (release.test.ts:40, :70, :109, :136, :428; release-publication.test.ts:28; checkpoint-packet.test.ts:108, :166, which read the checkpoint packet only); each passes unchanged.
   - R7. These shall not change: `evaluateSignal`, `evaluateHealth` and `windowElapsed` (src/core/health.ts), `nextAfterObserve` and the release transitions (src/core/release-machine.ts), the window and maximum wait (:632-640), the OBSERVE narrations and STOP (:406, :412), `HealthSignal` and `DeliveryOpsConfig`, src/cli/main.ts (it still builds the runner without a source, :1119) and src/loop/controller.ts (its runner reads the checkpoint packet only, :451).
   - R8. The documents shall carry the text of section Exact text: docs/DELIVERY-OPS.md and templates/docs/DELIVERY-OPS.md, which stay identical (line endings aside, tests/infra/ops.test.ts:232-236), gain Q1 in the opening paragraph (:3-7), Q2 in Asynchronous operations (:46-51), Q3 in Tags and publication (:53-57), and H1, the example report and H2 in Health (:65-70); docs/OPERATIONS.md gains Q4 at the end of the Rules paragraph (:286), paragraph O after the paragraph that begins `A BREACH routes to RECOVER` (:165) and `"timeoutMs": 120000` on its example `health` binding (:276); docs/ARCHITECTURE.md gains sentence A at the end of the paragraph that begins `` `finalStateForTarget` fixes `` (:130); the comment on `signals` (release-runner.ts:35) is the one of Exact text; CHANGELOG.md, Unreleased, gains entry C.
-  - R9. (added 2026-11-12 after the pre-review of 9e9eecb2 and restated after that of 431236a1, body sections Planner rulings) In OBSERVE the signals shall be evaluated twice with the unchanged `evaluateHealth`: once with the step's `now` and once with the runner clock read directly after the signal source returned (`this.clock()` after `this.signals(attempt)`). The result used is the first evaluation when its result is BREACH and the second otherwise. So a PASS needs every sample inside its staleness bound when the health command has returned, and a breach whose sample was inside its bound when the evaluation began still routes to RECOVER although the command outlasted the bound; the later time never turns a result into PASS, and with a clock that does not move during the source, every existing test included, the two evaluations are equal. What keeps the step's `now`, as on main: the fallback window, `windowElapsed`, the maximum-wait check, the `CLOSE` transition and the `at` of the STOP for insufficient data. What does not, also as on main and unchanged by this card: the journal writes the timestamp of `HEALTH_EVALUATED` itself, the store writes `updatedAt` itself, and `recoverOrStop` reads the runner clock itself. `evaluateHealth` and `evaluateSignal` are unchanged (R7).
+  - R9. (added 2026-11-12 after the pre-review of 9e9eecb2 and restated after that of 431236a1, body sections Planner rulings) In OBSERVE the signals shall be evaluated twice with the unchanged `evaluateHealth`: once with the step's `now` and once with the runner clock read directly after the signal source returned (`this.clock()` after `this.signals(attempt)`). The result used is the more severe of the two, BREACH over INSUFFICIENT_DATA over PASS, and the second when they are equally severe (ruling after the third pre-review; the first wording took the first evaluation only when it was BREACH, which let a clock that went backward during the command give PASS). So a PASS needs both evaluations to pass: every sample inside its staleness bound when the evaluation began and when the health command has returned, whichever way the clock moved between them; a breach whose sample was inside its bound at either time routes to RECOVER; and with a clock that does not move during the source, every existing test included, the two evaluations are equal. What keeps the step's `now`, as on main: the fallback window, `windowElapsed`, the maximum-wait check, the `CLOSE` transition and the `at` of the STOP for insufficient data. What does not, also as on main and unchanged by this card: the journal writes the timestamp of `HEALTH_EVALUATED` itself, the store writes `updatedAt` itself, and `recoverOrStop` reads the runner clock itself. `evaluateHealth` and `evaluateSignal` are unchanged (R7).
 acceptance:
   - 1. `tests/scenarios/health-op.test.ts` "a runner built without signals closes on a health PASS over the elapsed window": PASS while the window is open, CLOSE after it, DONE delivered. Fails on main. [R1] [R2] [R3] [dod arm 1] Detail: body section Acceptance detail, item 1.
   - 2. Same file, "a health BREACH read from the bound command goes to RECOVER, or stops without recovery authority". Fails on main. [R3] [dod arm 1] Detail: body section Acceptance detail, item 2.
@@ -41,9 +41,9 @@ acceptance:
   - 11. Same file, "aidlc release next closes an observed attempt from the bound health command": a CLI child saves CLOSE from a real health process. Fails on main. [R1] [R2] [dod arm 1] Detail: body section Acceptance detail, item 11.
   - 12. The other files of `dod_command` pass unchanged; this passes once T0-OP-TIMESTAMP-NOW-2 has merged (T0-STAGING-LEASE-RELEASE-2 merged as PR 282). [R6] [R7] [dod arm 1] Detail: body section Acceptance detail, item 12.
   - 13. The documents and the comment carry the text of R8 (reviewer-verified against the diff); tests/infra/ops.test.ts "the template copy of DELIVERY-OPS.md is the repository's" passes. [R8] Detail: body section Acceptance detail, item 13.
-  - 14. tests/scenarios/health-op.test.ts "the staleness of a sample is judged when the health command has returned": a scripted health command during which the fixture clock advances past the staleness bound of a sample that was inside it at the start gives INSUFFICIENT_DATA (PASS at the candidate 9e9eecb2), and one during which it advances less than the bound gives PASS; a breaching sample inside its bound at the start and past it at the return gives BREACH and RECOVER; a PASS whose command starts before the end of the window and returns after it stays in OBSERVE, and insufficient data whose command starts before the end of the maximum wait and returns after it stays in OBSERVE; plus the rows of the rulings (a report line padded with a byte order mark and with no-break spaces is read; a name that differs only in case, and one that differs only in padding, each alone, is unavailable, and a single entry ` A ` for a declared `A` is unavailable; `HealthReport` refuses an empty `environment` and an empty `candidate`; an output of many blank lines before the report is read). [R2] [R3] [R9] [dod arm 1] Detail: body section Planner rulings.
+  - 14. tests/scenarios/health-op.test.ts "the staleness of a sample is judged when the health command has returned": a scripted health command during which the fixture clock advances past the staleness bound of a sample that was inside it at the start gives INSUFFICIENT_DATA (PASS at the candidate 9e9eecb2), and one during which it advances less than the bound gives PASS; a breaching sample inside its bound at the start and past it at the return gives BREACH and RECOVER; a PASS whose command starts before the end of the window and returns after it stays in OBSERVE, and insufficient data whose command starts before the end of the maximum wait and returns after it stays in OBSERVE; a passing sample 301 s old at the start with a bound of 300 s and a clock that goes back 2 s during the command gives INSUFFICIENT_DATA; plus the rows of the rulings (a report line padded with a byte order mark and with no-break spaces is read; a name that differs only in case, and one that differs only in padding, each alone, is unavailable, and a single entry ` A ` for a declared `A` is unavailable; `HealthReport` refuses an empty `environment` and an empty `candidate`; an output of many blank lines before the report is read). [R2] [R3] [R9] [dod arm 1] Detail: body section Planner rulings.
 depends_on: [T0-STAGING-LEASE-RELEASE-2, T0-OP-TIMESTAMP-NOW-2]
-budget: 950
+budget: 990
 tdd: true
 diagnosis:
   root_cause: "The signal source of `ReleaseRunner` defaults to `() => []` (src/loop/release-runner.ts:106 on main at e2ca57fd), although the comment on the option says it reads bound health operations (:35), and `aidlc release next` builds the runner without a source (src/cli/main.ts:1119). `evaluateHealth([])` is INSUFFICIENT_DATA (src/core/health.ts:65-67), so OBSERVE answers `observe` (:406) until the window plus the maximum wait and then saves STOP/release-health with disposition `failed` (:412): a production attempt deployed from the CLI reaches neither CLOSE nor RECOVER. No code runs the `health` role that `REQUIRED_ROLES` requires for staging and production (src/delivery/ops.ts:113-114)."
@@ -259,3 +259,204 @@ The second Codex pre-review confirmed the backward scan against 37 449 generated
 | The rationale said the later time can only turn PASS into INSUFFICIENT_DATA. It also turns a BREACH into INSUFFICIENT_DATA when the breaching sample passes its bound while the command runs, which holds back RECOVER for that evaluation | Accepted as a defect of R9, not only of its rationale: a rule added to stop a stale PASS must not delay a recovery. R9 now evaluates twice and keeps a BREACH found with the step's time. One row: a breaching sample 200 s old at the start, a command of 150 s, a bound of 300 s gives BREACH and the `recover` path, where 431236a1 gives INSUFFICIENT_DATA |
 
 Code, as ruled: `const early = evaluateHealth(signals, window, now, binding); const late = evaluateHealth(signals, window, this.clock(), binding); const health = early.result === 'BREACH' ? early : late;` with the clock read placed directly after the source returned. A BREACH in the later evaluation implies one in the earlier (its sample was younger then and the comparison is the same), so the choice is the worse of the two for every input. Reverts that must each fail a row: `late` always (the BREACH row), `early` always (R9 row (a)), `PASS` taken from `early` (R9 row (a)), the later clock in `windowElapsed` (the window row), the later clock in the maximum-wait check (the maximum-wait row).
+
+## Planner ruling of 2026-11-12 after the third pre-review (of 19288418)
+
+The third Codex pre-review confirmed the forward-clock cases, the kept step times, the event data, the document sentences and the rulings on the deviations, and found one input the selection of the second round got wrong: a clock that moves backward while the command runs. A passing sample 301 s old at the start, bound 300 s, clock back by 2 s: the first evaluation is INSUFFICIENT_DATA, the second PASS, and `early.result === 'BREACH' ? early : late` took the PASS. The runner's default clock is the wall clock, which a time correction can set back.
+
+Ruling: the stricter of the two fixes the review names. The selection is by severity, so the statement "the worse of the two for every input" holds without a condition on the clock:
+
+`const severity = { PASS: 0, INSUFFICIENT_DATA: 1, BREACH: 2 } as const; const health = severity[early.result] > severity[late.result] ? early : late;`
+
+Row (acceptance 14): the case above gives INSUFFICIENT_DATA and the attempt stays in OBSERVE; the scripted runner moves the fixture clock back by 2 000 ms while the health command runs (the fixture's clock is set, not advanced, for this row, and set forward again after it if the fixture is used further). A second row for the other direction of the same rule: a breaching sample 301 s old at the start, bound 300 s, clock back by 2 s gives BREACH. Reverts that must each fail a row: the second round's selection (`early.result === 'BREACH' ? early : late`) fails the first row; `late` always fails the first row; `early` always fails the second row and the stale-PASS row. The sentences of H2 and entry C stay as they are: both remain true.
+
+## Attempt evidence
+
+Commits: RED `1f7630df` (tests only, on 2f38fc4f), GREEN `92ffb803` (source, docs and two test edits: `lines` lost its unused `fx` parameter for `noUnusedParameters`, and the control row "two blank lines after the report" now writes a line of spaces and a line holding a tab, so the blank-line rule of R2 has a row that detects it; no assertion changed).
+
+### RED (`node --test tests/scenarios/health-op.test.ts` on 1f7630df, sources of 2f38fc4f: 1 pass, 10 fail)
+| Item | Result on main | First failing assertion |
+|---|---|---|
+| 1 | fail | `healthResult` INSUFFICIENT_DATA, expected PASS |
+| 2 | fail | directive `observe` (Insufficient telemetry), expected `recover` |
+| 3 | fail | row "no binding": signals `[[]]`, expected both INSUFFICIENT_DATA |
+| 4 | fail | row "environment Production": signals `[[]]` |
+| 5 | fail | row "http_5xx_rate only": evaluations without signals |
+| 6 | fail | TypeError `ops.healthReportOf is not a function` (inside the body, as the card states) |
+| 7 | fail | runner calls `[]`, expected three `health-cmd` calls |
+| 8 | fail | `health-cmd` calls 0 !== 1 after the record is marked succeeded |
+| 9 | fail | row (a): Missing expected exception (no runner call on main) |
+| 10 | pass | passes on main, as the card states |
+| 11 | fail | saved STOP / INSUFFICIENT_DATA, detail `insufficient health data within the maximum wait`, expected CLOSE / PASS |
+| 12 | not run on main | green on 92ffb803 (DoD below) |
+| 13 | not run on main | document text; template equality green on 92ffb803 |
+
+### Revert table (actual revert runs on the 92ffb803 sources)
+Each row: one mutation applied in the worktree, `node --test tests/scenarios/health-op.test.ts` run, the file restored with `git checkout`; `git diff --stat` empty after the last row. "Red" names the failing tests by acceptance item and the first assertion.
+
+| # | Clause | Mutation | Red | Assertion |
+|---|---|---|---|---|
+| 1 | R1 list not empty | drop the `health.length` check | 7 | `an empty health list` health calls |
+| 2 | R1 binding exists | drop `!binding` | 3 | TypeError reading `cwd` (no-binding row throws) |
+| 3 | R1 environment present, not empty | drop `!attempt.environment` | 3 | TypeError reading `toLowerCase` (environment rows throw) |
+| 4 | R1 isDirectory before dispatch | drop the isDirectory check | 3 | `cwd missing` health calls |
+| 5 | R1 first binding | last `health` binding instead | 7 | calls `health-b` |
+| 6 | R1 at most once | a second `executeOperation` | 3, 4, 7, 8, 9 | `exit 1: health calls` |
+| 7 | R1 no idempotency key | the attempt id passed as the idempotency key | 7 | call deep-equal (args) |
+| 8 | R1 binding timeout | timeout 30 minutes | 7 | call deep-equal |
+| 9 | R1 root is the main checkout | `process.cwd()` as root | 7 | call deep-equal (cwd) |
+| 10 | R1 attempt environment as target | target `undefined` | 4, 7, 8, 11 | args deep-equal |
+| 11 | ORDER R1 reconciliation first | signals read before the reconciliation | 8 | health calls while the record is unresolved |
+| 12 | R2 only `succeeded` | read every execution | 3 | row `exit 1` |
+| 13 | R2 only `succeeded` | read all but `failed` | 3 | row `timed out` |
+| 14 | R2 only stdout | stdout and stderr | 3 | row `report on stderr, stdout empty` |
+| 15 | R2 last non-blank line | first non-blank line | 1-8, 11 | PASS rows |
+| 16 | R2 last non-blank line | last line that parses as JSON | 3 | row `report then a line done` |
+| 17 | R2 blank is `trim()` empty | blank is the empty string only | 3 | control `two blank lines after the report` |
+| 18 | R2 the line trimmed | no `trim()` of the chosen line | 12 (repair) | at 92ffb803 not detected (`JSON.parse` skips ASCII whitespace); now red: `a line that begins with U+FEFF` (repair row R2) |
+| 19 | R2 parse throw is no report | no `try` | 3 | `"done" is not valid JSON` thrown |
+| 20 | R2 environment min 1 | `z.string()` | 12 (repair) | at 92ffb803 masked by the lease check; now red on the direct `HealthReport.safeParse` row (repair row R7) |
+| 21 | R2 candidate min 1 | `z.string()` | 12 (repair) | at 92ffb803 masked by the candidate comparison; now red on the direct `HealthReport.safeParse` row (repair row R8) |
+| 22 | R2 samples integer | drop `.int()` | 3 | row `samples 1.5` |
+| 23 | R2 samples safe | integer check without the safe range | 3 | row `samples 9007199254740992` |
+| 24 | R2 samples 0 or more | drop `.nonnegative()` | 3 | row `samples -1` |
+| 25 | R2 observed finite | any number, infinite included | 3 | row `observed 1e400` |
+| 26 | R2 observed not null | `.nullable()` | 3 | row `observed null` |
+| 27 | R2 lastSampleAt a real time | drop the `Date.parse` refine | 3 | row `lastSampleAt month 13` |
+| 28 | R2 lastSampleAt IsoTimestamp | `z.string()` with the refine | 3 | row `lastSampleAt with a space` |
+| 29 | R2 strip, top level | `z.looseObject` | 6 | (a) deep-equal (`window` kept) |
+| 30 | R2 strip, entry | `z.looseObject` | 6 | (a) deep-equal (`unit` kept) |
+| 31 | R2 malformed entry fails the report | keep only valid entries | 3 | row `an entry without name` |
+| 32 | R2 environment by lease file | exact string comparison | 4 | `environment Production` |
+| 33 | R2 environment by lease file | lower-cased comparison | 4 | `environment OPS\prod for ops/prod` |
+| 34 | R2 environment checked | no environment check | 4 | `environment staging` |
+| 35 | R2 candidate case-sensitive | lower-cased comparison | 4 | `candidate C1` |
+| 36 | R2 candidate not trimmed | trimmed report candidate | 4 | `candidate with a leading space` |
+| 37 | R2 candidate checked | no candidate check | 4 | `candidate C1` |
+| 38 | R2 absent digest accepts nothing | an absent or empty digest accepts any | 4 | `attempt without a digest` |
+| 39 | R3 declaration order | sorted by report order | 5, 6 | `http_5xx_rate only`; (b) |
+| 40 | R3 not parsed through `HealthSignal` | `HealthSignal.parse` per signal | 6 | (f) throws on the empty name |
+| 41 | R3 exactly one entry | first of two read | 5 | `p95_latency_ms twice` |
+| 42 | R3 no other report field read | the entry spread over the signal | 6 | (b) deep-equal (`source` `other`) |
+| 43 | R3 threshold from the list | schema and mapper read `threshold` | 6 | (g) threshold row |
+| 44 | R3 minSamples from the list | schema and mapper read `minSamples` | 6 | (g) minSamples row |
+| 45 | R3 staleness from the list | schema and mapper read `maxStalenessMs` | 6 | (g) staleness row |
+| 46 | R3 name as the same string | case and padding ignored together | 12 (repair) | at 92ffb803 masked by the exactly-one rule in row 6(e); now red on the single entry `a` for a declared `A` (repair row R11) |
+| 47 | R3 name as the same string | letter case ignored | 6 | (e) `probeAvailable` |
+| 48 | R3 name as the same string | padding ignored | 6 | (e) `probeAvailable` |
+| 49 | R3 unavailable signal | `probeAvailable` true | 6 | (c) deep-equal |
+| 50 | R3 synthetic false | `synthetic` true | 6 | (b) deep-equal |
+| 51 | R4 runner exceptions propagate | catch and return unavailable | 9 | (a) Missing expected exception |
+| 52 | ORDER R4 transition write remains | APPLY steps into OBSERVE without its save | 9 | (a) APPLY row stored state |
+| 53 | R5 no ledger record | `recordIntent` before the run | 1, 2, 7, 9 | 7 ledger list; the next call waits on `unknown:` |
+| 54 | R5 no lease method | `claim` before the run | 7 | lease counts |
+| 55 | R5 no journal event | a `NOTE` append before the run | 7 | added events |
+| 56 | R6 injected source runs nothing | the command run, then the injected source | 10 | health calls |
+| 57 | R1 default source | `() => []` (main) | 1-9, 11 | every behavioural row |
+| D1 | R8 template copy | H1 removed from templates/docs/DELIVERY-OPS.md only | ops.test.ts | "the template copy of DELIVERY-OPS.md is the repository's" |
+
+At 92ffb803: red 53 of 57 source rows. After the repair round all four rows that were not detected (18, 20, 21, 46) are red; see the repair section. D1 (actual run) is the only document row a test reads; the other texts of R8 are reviewer-verified against the diff.
+
+### DoD (`dod_command` on 92ffb803, worktree clean)
+`npm run typecheck`: exit 0. `node --test` of the eleven files: tests 119, pass 116, fail 0, skipped 3 (tests/scenarios/release-lease.test.ts, POSIX permission rows, skipped on Windows); exit 0.
+
+Other runs on 92ffb803: tests/scenarios/health-op.test.ts on Linux (WSL Ubuntu, node v24.3.0): 11 pass, 0 fail. Document readers tests/infra/init.test.ts, tests/surface/templates.test.ts, tests/surface/module-map.test.ts, tests/core/journal-event-types.test.ts, tests/scenarios/op-intent-dup.test.ts and tests/scenarios/fault-points.test.ts: 111 pass, 0 fail; tests/surface/prose, budget-doc, removed-surface, command-lines, readme, edge-scope and claude-md-size: 54 pass, 0 fail.
+
+### Document text against code and test
+| Text | Code | Test |
+|---|---|---|
+| Q1, Q3, Q4 (no publication, effect or authority check; no operation recorded) | `observedSignals` reads no `triggersPublication`, `effects` or authorization and calls no ledger method | 7 (d) ledger unchanged; row 53 |
+| Q2 and H2, `async: true` gives unavailable signals | `executeOperation` returns `issued` or `UNKNOWN`; only `succeeded` is read | 3 async rows; rows 12, 13 |
+| H1 conditions, first binding, once per call, directory, target, timeout, no idempotency key | `observedSignals` checks and its `executeOperation` call | 3, 7 (a)-(c), (e); rows 1-10 |
+| H1 reconciliation first | the OBSERVE case follows the reconciliation in `step` | 8; row 11 |
+| H1 no lease, no journal event; `HEALTH_EVALUATED` as before | no `LeaseStore` or `Journal` call in `observedSignals` | 7 (d); rows 54, 55 |
+| H2 environment by lease, candidate exactly | the `leaseOf` comparison and `===` | 4; rows 32-38 |
+| H2 entry fields, other keys dropped, a malformed entry invalidates | `HealthReport`, `healthReportOf` | 3 schema rows, 6 (a); rows 22-31 |
+| H2 source, threshold, minimum, staleness from `health`; exact name | `healthSignals` | 5, 6; rows 39-50 |
+| H2 failure classes, one-signal rule; runner exceptions propagate | `observedSignals`, `healthSignals` | 3, 5, 9; rows 12-19, 41, 51 |
+| H2 last sentence and O (no declared signal, window, maximum wait, STOP) | `return []`; `healthWindowMs`, `maxWaitMs` and the OBSERVE STOP unchanged | 3 final STOP check; 7 (e) |
+| A, C and the comment on `signals` | as above; exports of src/delivery/ops.ts (src/index.ts re-exports the module) | 1-11 |
+| OPERATIONS example `"timeoutMs": 120000` | `OperationBinding.timeoutMs` | none (example) |
+
+### Size
+`git diff --shortstat origin/main...HEAD` on 92ffb803: 8 files, 649 insertions, 12 deletions (661 changed lines). With this section the count is given in the coordinator report; budget 820.
+
+### Repair round after the pre-review of 9e9eecb2
+Commits: merge of origin/main `3dd7f9f7` (conflict in this card only), RED `a1e8f0f9` (tests only), GREEN `50b027db` (R9, the backward scan of `healthReportOf`, the H2 sentence in both DELIVERY-OPS.md copies, the entry C sentence).
+
+RED on a1e8f0f9 (sources of 3dd7f9f7), test "the staleness of a sample is judged when the health command has returned", each assertion run on its own in a scratch copy of the test file (removed): R9 (a) result FAIL (PASS at the old time); the STOP row FAIL (the attempt closed instead) and its `stop.at` FAIL; the rows that the window and the directive window keep the step's time: pass already (a third assertion, on the keys of the event data, was removed in the second repair round: the event's timestamp never carried the step's time); R9 (b) PASS row: passes already; U+FEFF and U+00A0 rows, 200 000 blank lines, `a` / ` A` / ` A ` for a declared `A`, both `safeParse` rows: pass already (they pin behaviour the old source has). Row (f): the test of acceptance 7 now unsets `AIDLC_TARGET_ENV` for its calls and restores it in a `finally`; observation: the 9e9eecb2 version of that test fails with `AIDLC_TARGET_ENV=staging` (`target: 'staging'`), the new one passes with it set.
+
+Revert rows, actual runs on the 50b027db sources (`git diff --stat` empty after the last):
+| # | Mutation | Red | Assertion |
+|---|---|---|---|
+| R1 | `now` in place of the clock read after the source returned (R9) | 12 | R9 (a) result deep-equal |
+| R2 | chosen line not trimmed (blank test still by `trim()`) | 12 | `a line that begins with U+FEFF` (the U+00A0 row is after it; `JSON.parse` throws on both padded lines, checked with `node -e`) |
+| R3 | blank means the empty string (chosen line still trimmed) | 3 | control `two blank lines after the report` |
+| R4 | first non-blank line in place of the backward scan | 1-9, 11, 12 | every PASS row |
+| R5 | last line that parses as JSON | 3 | row `report then a line done` |
+| R6 | no `try` around `JSON.parse` | 3 | `"done" is not valid JSON` thrown |
+| R7 | `environment` without `min(1)` | 12 | `HealthReport.safeParse` empty environment |
+| R8 | `candidate` without `min(1)` | 12 | `HealthReport.safeParse` empty candidate |
+| R9 | letter case ignored alone (both sides lower-cased) | 6, 12 | 6(e); entry `a` |
+| R10 | padding ignored alone (both sides trimmed) | 6, 12 | 6(e); entry ` A` |
+| R11 | case and padding ignored together (old row 46) | 12 | entry `a` |
+
+Red 11 of 11. DoD on 50b027db, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; tests/scenarios/op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail.
+
+Document text added in this round: H2 and entry C sentences on staleness, replaced in the second repair round (below).
+
+Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 825 insertions, 13 deletions; the count with it is in the coordinator report; budget 900.
+
+### Second repair round after the pre-review of 431236a1
+Commits: merge of origin/main `26347bac` (conflict in this card only; its message keeps git's `# Conflicts:` lines after the Co-Authored-By line), RED `e59ac2b9` (tests only), GREEN `b6842cfe` (two evaluations, the H2 sentence in both DELIVERY-OPS.md copies, the entry C sentence, the code comment).
+
+Test changes in e59ac2b9: the comment and the assertion that said the journal event keeps the step's time are gone (the journal, the store and `recoverOrStop` read their own clock); the row asserts the saved fallback window and `stop.at` of the insufficient-data STOP instead. RED on e59ac2b9 (sources of 431236a1): row (a), a breaching sample 200 s old at the start, a 150 s command and a 300 s bound: FAIL (`INSUFFICIENT_DATA` where BREACH is expected; the `recover` assertion follows it); row (b), PASS with the command starting 25 s before the end of the window and returning 50 s later, stays in OBSERVE: passes already; row (c), insufficient data with the command starting 75 s before the end of the maximum wait and returning 150 s later, no STOP: passes already; row (d), the saved window and `stop.at`: pass already.
+
+Revert rows, actual runs on the b6842cfe sources (`git diff --stat` empty after the last):
+| # | Mutation | Red (line of tests/scenarios/health-op.test.ts) |
+|---|---|---|
+| S1 | `late` always | the BREACH row (:593) |
+| S2 | `early` always | R9 row (a), the stale PASS (:559) |
+| S3 | PASS taken from `early` | R9 row (a) (:559) |
+| S4 | later clock in `windowElapsed` | row (b), the window (:572) |
+| S5 | later clock in the maximum-wait check | row (c), the maximum wait (:576) |
+| S6 | later clock in `at` of the insufficient-data STOP | `stop.at` (:567) |
+
+Red 6 of 6. DoD on b6842cfe, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail.
+
+Document text: H2 `A sample counts toward PASS only while ...; a breach found with the time at which the evaluation began still counts.` and the entry C sentence, word for word from Exact text: code `early` / `late` and `health = early.result === 'BREACH' ? early : late` in the OBSERVE case; tests R9 (a), (b), the BREACH row; reverts S1-S3.
+
+Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 881 insertions, 13 deletions; budget 950.
+
+### Third repair round after the pre-review of 19288418
+Commits: merge of origin/main `d90ee69e` (conflict in this card only; the merge was concluded with `git commit --no-edit`, so git's `# Conflicts:` lines again follow the Co-Authored-By line), RED `2567e5e0` (tests only), GREEN `d8d9dbdb` (the `severity` selection of the ruling and the code comment; H2 and entry C unchanged).
+
+RED on 2567e5e0 (sources of 19288418): row 1, a passing sample 301 s old, bound 300 s, the fixture clock set back 2 000 ms during the command: FAIL (`PASS` where INSUFFICIENT_DATA is expected); row 2, the same with a breaching sample: passes already (observation: run alone in a scratch copy of the test, removed). The fixture clock is set back to the step's start after each row.
+
+Revert rows, actual runs on the d8d9dbdb sources, each also run on a scratch copy of the test with every assertion of acceptance 14 reported on its own (removed; `git status` clean after):
+| # | Mutation | Red |
+|---|---|---|
+| T1 | the second round's selection (`early.result === 'BREACH' ? early : late`) | row 1 (observed 0.1) |
+| T2 | `late` always | row 1; also the BREACH row of the second round |
+| T3 | `early` always | row 2 (observed 7.5) and the stale-PASS row R9 (a); also the STOP rows |
+
+Red 3 of 3. DoD on d8d9dbdb, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail. `git diff --shortstat origin/main...HEAD` before this section: 9 files, 932 insertions, 13 deletions; budget 990.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed these points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| In both DELIVERY-OPS.md copies H1 and H2 are single unwrapped lines, while Q1 to Q3 are wrapped at 77 columns like the paragraphs they extend | Accepted. The card gives a wrapping rule for Q1 to Q3 only ("wrapped as that paragraph is wrapped"); H1 and H2 are new paragraphs, and the two copies are equal |
+| The control row "two blank lines after the report" uses lines of spaces and a tab, not empty lines | Accepted. With empty lines no row could tell `trim()` from a comparison with the empty string; the row is stricter than the card's wording |
+| Acceptance 2 runs its cases (a) and (b) as two `makeFixture` fixtures inside one test, both removed by `t.after(cleanup)` | Accepted. The fixtures and their removal are the ones the card names |
+| Acceptance 9 (b) restores `Journal.prototype.append` in a `finally` directly after the row | Accepted. The card asks for the restore after the row; the forbid on `finally` concerns the removal of temporary directories |
+| Two test edits went into the source commit after the RED commit: an unused parameter removed for the typecheck, and the whitespace of the control row above | Accepted. No assertion changed; the RED results are those of the RED commit |
+| Repair rounds: the row on `stop.at` of the insufficient-data STOP and one revert row beyond the four asked for | Accepted. The row is (d) of the second round's rulings; the extra revert adds evidence and no code |
+| The merge commits 3dd7f9f7 and 26347bac carry git's default text (the first without the attribution line, the second with conflict comment lines after it) | Noted. They are merge commits of main into the branch and are squashed at the ship; published history is not rewritten for a message |
+
+Coordinator verification:
+- At 85367493, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/health-op.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 82 test files reading 5 changed documents: # tests 1915 # pass 1902 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
