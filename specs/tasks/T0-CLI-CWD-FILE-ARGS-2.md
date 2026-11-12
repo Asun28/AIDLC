@@ -698,6 +698,21 @@ Reverts, actual runs at cf61a3fa, each on a scratch copy of the test file (remov
 
 Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1531 changed lines (1520 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 876, this card 562, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
+### Third repair round, after the third pre-review
+Measured: the implementer's runs on a Windows host (Node v22.23.1), on the commits named. The merge e152f6cd brings main at 9a1b8fea; the only conflict was this file, resolved as before.
+
+RED, b81afdda (the test file alone): the table is red at the 7 new failing rows (`process.env.__proto__ || {}`, `process.env['__proto__'] || {}`, `process.env.constructor === Object`, `process.env.valueOf === f`, `process.env[k] === '1'`, the template key with a substitution, `process.env.lower === '1'`), each with no violation; the 3 new passing rows pass already; the source pin and the session-token row pass.
+
+GREEN, 07cd849a: the second shape of rule (c) takes the name of the access (`variableName`: the property name, or a string or substitution-free template key, else none) and requires it to match `ENV_NAME`, `/^[A-Z][A-Z0-9_]*$/`. The source pin stays green: main.ts reads `AIDLC_SESSION`, `CLAUDE_CODE_SESSION_ID` and `AIDLC_RUN_NO_SHIP` by string keys. The table holds 21 passing and 53 failing texts.
+
+Reverts, actual runs at 07cd849a, each on a scratch copy of the test file (removed after each run), the three child-environment tests and the three tests of acceptance 13 run: the name pattern removed, red (the table, `process.env.__proto__ || {}`); the pattern widened to lower-case letters, red (`process.env.constructor === Object`); a key that is not a string literal accepted, red (`process.env[k] === '1'`). Rerun on the moved code, the 25 earlier reverts of the guard and the child environment: 25 red, with the first messages of the earlier tables.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given, at 07cd849a (the next commit changes only this card file) | exit 0: typecheck clean; 259 tests, 253 pass, 0 fail, 6 skipped (the same six as above), 18 suites |
+
+Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1579 changed lines (1568 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 899, this card 587, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
 The implementer disclosed five points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
