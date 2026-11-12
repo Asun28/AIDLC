@@ -39,8 +39,12 @@ function functionName(fn: ts.SignatureDeclaration): string {
 /** Every occurrence of one of the three names in `text`: an identifier in any position, or a string or substitution-free template literal equal to the name; nothing is resolved. */
 function scanSource(file: string, text: string): Site[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const sites: Site[] = [];
-  const visit = (node: ts.Node): void => {
+  const found: Array<{ pos: number; site: Site }> = [];
+  // The walk keeps its own stack of nodes, so that the depth of a source does not reach the call stack.
+  const pending: ts.Node[] = [sf];
+  for (;;) {
+    const node = pending.pop();
+    if (node === undefined) break;
     const literal = ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
     // `text` holds an identifier or a literal after its escapes are decoded; a private name counts without its `#`.
     const spelled = ts.isPrivateIdentifier(node) ? node.text.slice(1) : ts.isIdentifier(node) || literal ? node.text : undefined;
@@ -56,13 +60,16 @@ function scanSource(file: string, text: string): Site[] {
         const called = ts.isCallExpression(access.parent) && access.parent.expression === access;
         // Lines counted by LF, as git grep and editors count them; the compiler also breaks lines at U+2028 and U+2029.
         const line = text.slice(0, node.getStart(sf)).split('\n').length;
-        sites.push({ file, line, fn: fn ? functionName(fn as ts.SignatureDeclaration) : 'module scope', kind: called ? 'call' : 'reference', name });
+        found.push({ pos: node.getStart(sf), site: { file, line, fn: fn ? functionName(fn as ts.SignatureDeclaration) : 'module scope', kind: called ? 'call' : 'reference', name } });
       }
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
-  return sites;
+    const children: ts.Node[] = [];
+    ts.forEachChild(node, (child) => void children.push(child));
+    // One push per child: a spread of a long list of children would pass each one as an argument.
+    for (let i = children.length - 1; i >= 0; i--) pending.push(children[i]!);
+  }
+  // Reports in source order.
+  return found.sort((a, b) => a.pos - b.pos).map((f) => f.site);
 }
 
 /** Scans every `.ts` file under `<root>/tests`, in path order. */
