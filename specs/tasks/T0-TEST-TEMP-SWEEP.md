@@ -163,6 +163,15 @@ Reverts that must each fail its row: `skipOuterExpressions` removed at the objec
 
 Before the second formal decision the coordinator has the candidate pre-reviewed against this closed list until a pre-review finds no form on the list that the scan misses.
 
+## Planner rulings of 2026-11-12 during the repair after R3 decision 1
+
+Two points the implementer raised while applying the rulings after R3 decision 1; both change those rulings.
+
+| Point | Ruling |
+|---|---|
+| `ts.skipOuterExpressions` is in the TypeScript 5.9.3 runtime and not in its public type declarations; the scan reached it through a cast | The planner named a function that is not public API. The scan does not call it. A local function removes the same wrappers through the five public node tests (`ts.isParenthesizedExpression`, `ts.isAsExpression`, `ts.isTypeAssertionExpression`, `ts.isNonNullExpression`, `ts.isSatisfiesExpression`), in a loop, at every place the rulings name. Where those rulings and the contract say `ts.skipOuterExpressions`, read: that local function. The rows and reverts are unchanged |
+| With type positions skipped, removing the exclusion of type-only imports leaves every row green: an `import type` name can only stand in a type position in code that compiles, and that position is skipped anyway | The exclusion of type-only imports is removed as redundant; the earlier row (a type-only import used in a type position is not reported) stays and is covered by the rule on type positions. No row with code that does not compile is added |
+
 ## Attempt evidence
 
 Implementer attempt on branch T0-TEST-TEMP-SWEEP from ebd2892b. Commits: 3d3e9d31 (RED: tests/surface/test-temp.test.ts alone), 733a8434 (R1: the 85 sites), a2b45c16 (the scan counts lines by LF; see RED), 928b23c9 (a local of the scan renamed from `key` to `prop`), 676fca5d (evidence), cc2a1aa3 (merge of origin/main at a087161e; conflict in this card only, main's rulings placed above this section), 61a51d81 (the two rows of the planner rulings), then this evidence commit, which changes only this card.
