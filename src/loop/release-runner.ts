@@ -415,8 +415,13 @@ export class ReleaseRunner {
       case 'OBSERVE': {
         const window = attempt.healthWindow ?? { from: now, to: addMs(now, this.healthWindowMs()) };
         const signals = this.signals(attempt).map((s) => ({ ...s }));
-        // Staleness is judged when the signal source has returned (the health command may have run for minutes); the rest keeps `now`.
-        const health = evaluateHealth(signals, window, this.clock(), { candidate: attempt.candidateDigest, environment: attempt.environment });
+        // A PASS needs every sample fresh when the source has returned (the health command may have run for minutes); a BREACH
+        // found at the step's `now` stands. The window, the maximum wait, the transition and the STOP keep `now`.
+        const returnedAt = this.clock();
+        const bound = { candidate: attempt.candidateDigest, environment: attempt.environment };
+        const early = evaluateHealth(signals, window, now, bound);
+        const late = evaluateHealth(signals, window, returnedAt, bound);
+        const health = early.result === 'BREACH' ? early : late;
         this.journal(goal.id).append({ type: 'HEALTH_EVALUATED', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, result: health.result, signals: health.signals.map((s) => `${s.name}=${s.result}`) } });
         const elapsed = windowElapsed(window, now);
         const withinMaxWait = Date.parse(now) < Date.parse(addMs(window.to, this.maxWaitMs()));
