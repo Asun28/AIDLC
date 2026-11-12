@@ -1,7 +1,7 @@
 ---
 id: T0-ATTEMPT-NUMBER
 title: Every build directive names its attempt by the ladder number, the records before it that are not not-counted plus one, and where a BUILD or review-fix narration already names the attempt, it adds the record number only when the two differ, so one attempt is never announced under two numbers
-status: todo
+status: merged
 branch: T0-ATTEMPT-NUMBER
 worktree: D:\wt\AIDLC\T0-ATTEMPT-NUMBER
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: changed lines counted as added plus deleted, against main with this card file and T0-DOD-RECEIPT-REQUIRED already merged: about 27 in src/core/effort.ts (the helper, the removed `nextAttemptNumber`, its two calls, the three running-attempt sites, the JSDoc and a comment), about 27 in src/loop/card-runner.ts (the label helper, four attempt fields, the succeeded BUILD, three narrations, a comment); about 64 in tests/core/effort.test.ts (two unit tests and the two edited rows of R6), about 230 in tests/scenarios/dispute-running-attempt.test.ts (the scenario tests the two Codex reviews of the card asked for: the running fallbacks, the succeeded BUILD, two not-counted records, the promotion with its journal event, whole-string narrations, and the edits of R6); 2 each in docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md; about 5 in .claude/skills/verify-card-run-writes/SKILL.md at CLOSE; about 120 lines of attempt evidence (RED receipts, the revert table, the doc-reader run); about 480 in all; raised from 500 to 600 by the coordinator on 2026-11-12 after the pre-review of 0551ee51: the candidate is 467 changed lines with the planner's rulings on the disclosed deviations, and the rows of acceptance 15 (three unit rows, three scenario rows on a stored episode, a revert run each), the corrected sentence and the coordinator's verification block add about 110"
@@ -179,3 +179,128 @@ The Codex reviewer was at capacity (`Selected model is at capacity`), so this pr
 | The verify-card-run-writes check has no recorded outcome | The coordinator runs tests/scenarios/fault-points.test.ts on the candidate at its verification (it is in the `dod_command`) and records that the check adds no pin; the change adds, removes and reorders no write |
 | Two older sentences of docs/OPERATIONS.md keep the bare word "number" | No change: Document text lists them as sentences that stay true as worded, and the new sentence defines the two numbers |
 | A stored episode with gapped numbers and no `not-counted` record (`[success n 1, running n 5]`) gives `Attempt 2 (record 5 of this run; 0 not counted)` | No change: no code path stores such an episode (`startAttempt` stores the length plus one and nothing removes a record), R4's wording gives this label, and a tie order for such records is a non-goal |
+
+## Attempt evidence
+
+Commits on branch T0-ATTEMPT-NUMBER (base d327a20e): ef9d8e1a (RED seam: `ladderNumber` returns `index + 1`, called by nothing), 19ee1b81 (RED tests), 36628a8e (GREEN: source and documents), a885074c (test imports moved to new lines so no existing import line changes; no assertion changed), 63fd38c8 (evidence), 72be08e8 (planner rulings: the review-fix field keeps main's value with an episode and nothing running; the unit row with stored numbers that do not follow their positions), c4fc568b (evidence), d52f828d (the unit row for effort.ts:171), d46f7599 (evidence); after the pre-review of 0551ee51: 6de3f8b5 (merge of origin/main at 672db5ea), 2c9e8656 (the ATTEMPT_FINISHED clause of docs/OPERATIONS.md and its pinned literal, as the card's Document text now reads), 56e6a579 (acceptance 15 rows, tests only), then this evidence commit (card file only).
+
+Narration literals: the numberless narrations (review-fix, pre-review hand-back, merge-conflict, rejected-RED, dod-failed) and the pending-repair prefixes were captured from the code at ef9d8e1a (main plus the uncalled seam) before any source change, by running the new scenarios with their assertions disabled in a temporary copy of the test file, which was deleted afterwards. The two build() templates match main's narrations at card-runner.ts:1036-1037 apart from the label; the card's Narration templates text matched main, so no wording was chosen.
+
+### RED (run on the tree committed as 19ee1b81: `node --test tests/core/effort.test.ts tests/scenarios/dispute-running-attempt.test.ts`, 45 pass, 13 fail counting parents)
+
+| Item | Result at 19ee1b81 | Failure |
+|---|---|---|
+| 1 | red | effort.test.ts:567, ERR_ASSERTION, actual 2 expected 1 (one not-counted record, index 1; the seam gives `index + 1`) |
+| 2 | red | effort.test.ts:584, ERR_ASSERTION, `n: 2` actual, `n: 1` expected (repairAction of not-counted, running) |
+| 3 | red | effort.test.ts:353 `n: 3` vs `n: 2` (R6 (b)); effort.test.ts:423 `n: 2` vs `n: 1` (R6 (a)); both ERR_ASSERTION |
+| 4 | red | ERR_ASSERTION, narration `Attempt 1 at effort medium: ...` vs `Attempt 1 (record 2 of this run; 1 not counted) at effort medium: ...` |
+| 5 | red | ERR_ASSERTION, attempt 3 vs 2 and the note `Attempt 2` vs the label with the record suffix |
+| 6 | red | ERR_ASSERTION, attempt 3 vs 2 (hand-back) |
+| 7 | red | ERR_ASSERTION, attempt 3 vs 2 (base-sync-merged, running fallback, first row reached) |
+| 8 | red | ERR_ASSERTION, attempt 3 vs 2 (dod-failed with a running repair) |
+| 9 | green, as the card requires | `ok` |
+| 10 | red | ERR_ASSERTION, `0 !== 1` |
+| 11 | green, as the card requires | `ok` |
+| 12 | red | dispute-running-attempt.test.ts:101 test (R6 (c)), ERR_ASSERTION `3 !== 2`; :270 test (R6 (d)), ERR_ASSERTION attempt 3 vs 2 |
+| 14 | red | ERR_ASSERTION, 'the ship repair attempt paragraph ends with the ladder sentence' |
+
+Item 13 was not run on main by this attempt; it passes in the DoD runs below.
+
+Acceptance 15 (coverage rows, commit 56e6a579, tests only): each row passes on the current source, which has not changed since 36628a8e apart from the review-fix field of 72be08e8. tests/core/effort.test.ts, in "repairAction and afterShipFailure name a running attempt by its ladder number, and a promotion keeps the stored n": `repairAction` and `afterShipFailure` with nothing settled on `[running n 1, not-counted n 2]` give `n: 1`; `afterShipFailure` with a settled attempt and a running repair on `[success n 1, running n 2, not-counted n 3]` gives `n: 2`. tests/scenarios/dispute-running-attempt.test.ts, three tests "T0-ATTEMPT-NUMBER: acceptance 15: ..." on a run written through `fx.store.updateCardRun` with the episode `[not-counted n 1, running n 5]`: build() names attempt 1 with the before-RED narration of label `Attempt 1 (record 5 of this run; 1 not counted)`; the review-fix directive of a repeated `card next` names attempt 1 with main's narration (no label); the merge-conflict fallback of `buildDirective` names attempt 1 with main's narration (no label). Every site was reached with a stored episode.
+
+### Revert table (41 rows, 41 red)
+
+Each row is an actual revert run: the one change applied to the worktree source (or document) alone, the named test run with `--test-name-pattern`, the file restored; afterwards `git status --short` was empty (byte-identical to 36628a8e). Script: an-mutate.py and an-docmut.py in the session scratchpad.
+
+| Row | Clause | Mutation | Test run | Result |
+|---|---|---|---|---|
+| M1 | R1 not-counted records are skipped | `ladderNumber` counts every record before the index | effort "ladderNumber counts" | red (ERR_ASSERTION) |
+| M2 | R1 a running record counts | `ladderNumber` counts only success and fail | effort "ladderNumber counts" | red |
+| M3 | R1 :71 calls the helper | `n: episode.attempts.length + 1` after a success | dispute "review-fix repair names" | red |
+| M4 | R1 :80 calls the helper | `const n = episode.attempts.length + 1` | dispute "BUILD names" | red |
+| M5 | R2 repairAction | `n: running.n` | effort "repairAction and afterShipFailure" | red |
+| M5b | R2 repairAction, R6 (d) | `n: running.n` | dispute "pre-review hand-back of a still-blocked candidate" | red |
+| M6 | R2 afterShipFailure, nothing settled | `n: running.n` | effort "an episode with no settled attempt" | red |
+| M7 | R2 afterShipFailure, running repair | `n: running.n` | effort "repairAction and afterShipFailure" | red |
+| M7b | R2 the same, R6 (b) | `n: running.n` | effort "a repair already running" | red |
+| M7c | R3 (e) ship failure directive | `n: running.n` | dispute "ship failure with a running repair" | red |
+| M8 | R2/R5 promoted.n is the stored n | `promoted.n` = ladder number | dispute "ship failure with a running repair" | red |
+| M9 | R3 (a) running attempt | `running?.n ?? ladderNumber(...)` | dispute "BUILD names" | red |
+| M10 | R3 (a) succeeded episode | `episode.attempts.length + 1` when nothing runs | dispute "BUILD names" | red |
+| M11 | R3 (b) running attempt | `running.n` | dispute "review-fix repair names" | red |
+| M12 | R3 (b) no effort episode | `0` | dispute "no effort episode names attempt 1" | red |
+| M13 | R3 (c) hand-back, succeeded episode | `(run.effort?.attempts.length ?? 0) + 1` | dispute "hand-back of a succeeded episode" | red |
+| M14 | R3 (d) fallback, running branch only | stored `n` of the running record | dispute "merge-conflict and rejected-RED" | red |
+| M15 | R3 (d) fallback, other branch only | `attempts.length + 1` | dispute "merge-conflict and rejected-RED" | red |
+| M15b | R3 (d) other branch, R6 (c) | `attempts.length + 1` | dispute "sequence of issue 106" | red |
+| M16 | R4 suffix when R differs from L | label never adds the suffix | dispute "BUILD names" | red |
+| M17 | R4 byte-identical when R equals L | label always adds the suffix | dispute "narrations are main's" | red |
+| M18 | R4 K is counted | `1 not counted` fixed | dispute "BUILD names" | red |
+| M19 | R4 R of a running attempt is its stored n | R = `attempts.length + 1` | dispute "BUILD names" | red |
+| M20 | R4 R of an attempt not opened is length + 1 | R = `attempts.length` | dispute "BUILD names" | red |
+| M21 | R4 review-fix note | `Attempt ${action.n}` | dispute "review-fix repair names" | red |
+| M22 | R4 build() narration before RED | `Attempt ${attemptNo}` | dispute "BUILD names" | red |
+| M23 | R4 build() narration with RED | `Attempt ${attemptNo}` | dispute "BUILD names" | red |
+| M24 | R5 ATTEMPT_STARTED at BUILD keeps the ladder number | `n: episode.attempts.length` (record) | dispute "BUILD names" | red |
+| M25 | R5 implicit ATTEMPT_STARTED keeps the ladder number | `n: episode.attempts.length` (record) | dispute "implicit attempt journals" | red |
+| D1 | R7 docs/OPERATIONS.md sentence | sentence removed | dispute "state the ladder number" | red ('the ship repair attempt paragraph ends with the ladder sentence') |
+| D2 | R7 docs/ARCHITECTURE.md sentence | sentence removed | dispute "state the ladder number" | red ('the src/core/ paragraph states ...') |
+| D3 | R7 CHANGELOG entry | entry and its blank line removed | dispute "state the ladder number" | red ('the CHANGELOG Unreleased section holds the entry') |
+| M26a | R2 repairAction: the index comes from the array, never from the stored n | `ladderNumber(episode, running.n - 1)` | effort "repairAction and afterShipFailure name" (episode [n 1 not-counted, n 5 running]) | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M26b | R2 afterShipFailure with nothing settled: the same | `ladderNumber(episode, running.n - 1)` | the same test and episode | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M26c | R2 afterShipFailure with a settled attempt and a running repair (effort.ts:171): the same | `ladderNumber(reopened, running.n - 1)` | the same test, episode [success n 1, not-counted n 2, running n 7] | red (ERR_ASSERTION at effort.test.ts:585, `n: 3` actual, `n: 2` expected) |
+| M27a | R2 repairAction: never assumed to be the last record | `ladderNumber(episode, episode.attempts.length - 1)` | effort "repairAction and afterShipFailure name", episode [running n 1, not-counted n 2] | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M27b | R2 afterShipFailure with nothing settled: the same | `ladderNumber(episode, episode.attempts.length - 1)` | the same test and episode | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M27c | R2 afterShipFailure with a settled attempt and a running repair: the same | `ladderNumber(reopened, reopened.attempts.length - 1)` | the same test, episode [success n 1, running n 2, not-counted n 3] | red (ERR_ASSERTION, `n: 3` actual, `n: 2` expected) |
+| M28a | R3 (a) build(), running attempt: never derived from the stored n | `attemptIndex = running.n - 1` | dispute "acceptance 15: build()", stored episode [not-counted n 1, running n 5] | red (ERR_ASSERTION, attempt 2 actual, 1 expected) |
+| M28b | R3 (b) review-fix field: the same | `ladderNumber(episode, running.n - 1)` | dispute "acceptance 15: the review-fix field", the same stored episode | red (ERR_ASSERTION, attempt 2 actual, 1 expected) |
+| M28c | R3 (d) `buildDirective` fallback, running branch: the same | stored `n - 1` of the running record in place of `runningIndex` | dispute "acceptance 15: the buildDirective fallback", the same stored episode | red (ERR_ASSERTION, attempt 2 actual, 1 expected) |
+
+Rows M26a and M26b (actual revert runs, added after the planner's ruling on R2) use an episode whose stored numbers do not follow their positions, `[{ n: 1, not-counted }, { n: 5, running }]`: the index from the array is 1 and gives `n: 1`, an index derived from the stored n (4) counts the running record and gives 2. Row M26c (an actual revert run, added after the planner's second ruling) covers the branch of `afterShipFailure` with a settled attempt and a running repair (effort.ts:171) with the episode `[{ n: 1, success }, { n: 2, not-counted }, { n: 7, running }]`: the array index 2 gives 2, an index derived from the stored n (6) gives 3. R2's clause has a row at each of its three sites. Rows M27a to M28c are actual revert runs of the round after the pre-review of 0551ee51 (acceptance 15); under the M27 mutants every older row of that unit test has its running record last and still passes, so the failing row is the new one. The heading of this table read 34 rows while it listed 35 (M1 to M25, M5b, M7b, M7c, M15b, D1 to D3, M26a to M26c); it now counts all 41.
+
+Review-fix `attempt` field (R3 (b)): with an effort episode and no attempt running the field keeps main's value, `episode.attempts.length` (planner ruling). I read that case as not reachable: when nothing runs, the REVIEW_FIX step first reopens a succeeded episode, then `nextEffortAction` either answers `stop`, which returns a stop directive before the field is built, or `attempt`, which opens an attempt; `done` cannot follow `reopenAfterReviewBlock`. A terminal episode other than succeeded answers `stop`. No test pins this case.
+
+### DoD
+
+`dod_command` on 56e6a579 (source and tests final; the later commit changes only this card file, whose final text the run read): exit 0, tests 405, suites 34, pass 405, fail 0, cancelled 0, skipped 0. Earlier runs: d52f828d, exit 0, 402 of 402; 72be08e8, exit 0, 402 of 402; a885074c and 63fd38c8, exit 0, 402 of 402; 36628a8e, exit 0, 402 of 402.
+
+### Documents against code and tests
+
+| Sentence | Made true by | Pinned by |
+|---|---|---|
+| OPERATIONS.md, ship repair paragraph: build directives name the ladder number in the field and the `Attempt <n>` label | effort.ts `ladderNumber`, `repairAction`, `afterShipFailure`; card-runner.ts build(), review-fix, hand-back, `buildDirective` | acceptance 4 to 8, 10, 12 |
+| the label adds `(record <n> of this run; <k> not counted)` when the record number differs | card-runner.ts `attemptLabel` | acceptance 4, 5, 6, 7, 8 (M16 to M20) |
+| stored `n`, failure counts, ladder limits unchanged | `startAttempt`, `countedAttempts`, `MAX_BASELINE_ATTEMPTS` untouched | acceptance 4 (stored n), 9, fault-points (acceptance 13) |
+| `ATTEMPT_STARTED` that opens carries the ladder number; the promotion one and every `ATTEMPT_FINISHED` carry the stored `n` | card-runner.ts :770, :1020, :1086 (the ladder step's `n`), :2873 (`promoted.n`), :2871 (`refuted.n`) | acceptance 4 (a), 5, 8 (b), 9 (M8, M24, M25) |
+| ARCHITECTURE.md: `ladderNumber`; stored numbers and journal numbering unchanged | effort.ts `ladderNumber` | acceptance 1, 9 |
+| CHANGELOG entry, every clause | as above; review-fix with no episode names 1 (`attempt: ... : 1`) | acceptance 4 to 12 |
+| JSDoc of `repairAction`, comment effort.ts:154, comment card-runner.ts:2875 | the `n:` lines next to them | reviewer-verified (acceptance 14) |
+
+### Changed lines
+
+`git diff --shortstat origin/main...HEAD` (merge base 672db5ea, after the merge of origin/main) with this section: 8 files changed, 491 insertions(+), 29 deletions(-), 520 lines, against the budget 600.
+
+### Not run by this attempt
+
+The verify-card-run-writes skill, the Linux run of the two test files, and acceptance 13 on main.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed five points where the card gave no rule or where it chose a form. The planner ruled on each before the formal review; two led to a change, which is in the candidate.
+
+| Disclosed point | Ruling |
+|---|---|
+| The `attempt` field of the review-fix directive, in the case R3 (b) does not name (an effort episode exists and no attempt runs): the first candidate named 1 where main names `attempts.length` | Changed. This card changes nothing it does not name, so that case keeps main's value: the ladder number of the running attempt when one runs, `episode.attempts.length` when an episode exists and none runs, 1 with no episode. The implementer reads the case as not reachable (a stop returns before the field is built, and an admitted attempt is running) and could not reach it with the fixtures, so it has no row |
+| `buildDirective` has a block body with a local `runningIndex` where main has a one-line arrow | Accepted. R3 (d) needs the array index of the running record |
+| JSDoc on the two new helpers, `ladderNumber` (src/core/effort.ts) and `attemptLabel` (src/loop/card-runner.ts), which R7 does not list | Accepted. A new function carries its JSDoc by the repository's convention; R7 lists the existing comments whose text changes |
+| The seam (`ladderNumber` returning `index + 1`, called by nothing) is a commit of its own before the RED tests | Accepted |
+| R2's clause that the index comes from the array and is never derived from the stored `n` had no revert row | Changed. An episode whose stored numbers do not follow their positions tells the two apart. Three unit rows in tests/core/effort.test.ts, one per site (`repairAction`, and both branches of `afterShipFailure`), each red under its revert (M26a, M26b, M26c) |
+
+Coordinator verification:
+- At e6ce11dc, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/effort.test.ts, tests/scenarios/dispute-running-attempt.test.ts): tests 61, pass 61, fail 0, skipped 0.
+- Windows, docpins: 83 test files reading 3 changed documents: # tests 1946 # pass 1934 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Planner ruling at CLOSE: the Bounds line (2026-11-12)
+
+R7 asks, at CLOSE, for the sync commit of .claude/skills/verify-card-run-writes/SKILL.md to move to the merge commit and for the Bounds line `- Attempts: stored n only.` (27 bytes with its newline) when the file stays ASCII and at most 8,000 bytes, and otherwise for the reason in this card. The close commit moved both references of the sync commit to 8a28e857. The Bounds line is not added: T0-AUDIT-BINDING closed first and its Bounds line took the file from 7,963 to 7,993 bytes, so this line would make 8,020, above the cap that tests/surface/templates.test.ts asserts. What the line would say stays true without it: the fault-point check compares the stored `n` of an attempt and the journal events, which R5 of this card leaves unchanged, and never the ladder number a directive names. Compacting the skill file so that such lines fit is on the audit's follow-up list.

@@ -27,9 +27,12 @@ export function countedAttempts(episode: EffortEpisode): Attempt[] {
   return episode.attempts.filter((a) => a.outcome === 'fail');
 }
 
-/** Sequence number of the next attempt: every attempt that ran, not-counted ones excluded. */
-function nextAttemptNumber(episode: EffortEpisode): number {
-  return episode.attempts.filter((a) => a.outcome !== 'not-counted').length + 1;
+/**
+ * The ladder number of the attempt at `index` of the episode, or of the next attempt when `index` is the length (card
+ * T0-ATTEMPT-NUMBER): the records before it that are not `not-counted`, plus one. The stored `n` is the record number.
+ */
+export function ladderNumber(episode: EffortEpisode, index: number): number {
+  return episode.attempts.slice(0, index).filter((a) => a.outcome !== 'not-counted').length + 1;
 }
 
 /** A review block (R2 or R3) reopens a succeeded episode: the blocked attempt keeps its success and its evidence notes the block; the repair is the next attempt at the same effort. */
@@ -68,7 +71,7 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   const evaluated = episode.attempts.filter((a) => a.outcome === 'success' || a.outcome === 'fail');
   const lastRun = evaluated[evaluated.length - 1];
   if (lastRun?.outcome === 'success') {
-    return { action: 'attempt', effort: lastRun.effort, n: nextAttemptNumber(episode), escalated: lastRun.effort !== episode.baseline };
+    return { action: 'attempt', effort: lastRun.effort, n: ladderNumber(episode, episode.attempts.length), escalated: lastRun.effort !== episode.baseline };
   }
   // The same-cause rule reads consecutive evaluated attempts: a preserved success between two failures breaks the streak.
   const last = evaluated[evaluated.length - 1];
@@ -77,7 +80,7 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
     return { action: 'stop', reason: 'same-cause-stop', detail: `two consecutive failures with cause ${JSON.stringify(normaliseCause(last.cause))} and no verified progress` };
   }
   const counted = countedAttempts(episode).length;
-  const n = nextAttemptNumber(episode);
+  const n = ladderNumber(episode, episode.attempts.length);
   if (counted < MAX_BASELINE_ATTEMPTS) {
     return { action: 'attempt', effort: episode.baseline, n, escalated: false };
   }
@@ -99,13 +102,13 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
 
 /**
  * The next step of a reopened episode whose repair may already be running (card T0-DISPUTE-RUNNING-ATTEMPT): a running
- * attempt is that repair, at its own number and effort, as `afterShipFailure` treats one; a terminal episode, and one with
- * nothing running, answer as the ladder does on the settled attempts, so the ladder never sees a running attempt, on
- * which `nextEffortAction` throws (R3 decision 1 F2).
+ * attempt is that repair, at its own effort and named by its ladder number (card T0-ATTEMPT-NUMBER), as
+ * `afterShipFailure` treats one; a terminal episode, and one with nothing running, answer as the ladder does on the
+ * settled attempts, so the ladder never sees a running attempt, on which `nextEffortAction` throws (R3 decision 1 F2).
  */
 export function repairAction(episode: EffortEpisode, justification?: EscalationJustification): NextEffortAction {
   const running = episode.terminal ? undefined : episode.attempts.find((a) => a.outcome === 'running');
-  if (running) return { action: 'attempt', effort: running.effort, n: running.n, escalated: running.effort !== episode.baseline };
+  if (running) return { action: 'attempt', effort: running.effort, n: ladderNumber(episode, episode.attempts.indexOf(running)), escalated: running.effort !== episode.baseline };
   return nextEffortAction({ ...episode, attempts: episode.attempts.filter((a) => a.outcome !== 'running') }, justification);
 }
 
@@ -148,10 +151,10 @@ export function afterShipFailure(episode: EffortEpisode, cause: string, justific
   const idx = episode.attempts.findLastIndex((a) => a.outcome === 'success' || a.outcome === 'fail');
   if (idx < 0) {
     // Nothing settled (T0-SHIP-FAILURE-UNSETTLED): a ship needs a recorded success first, so no ladder step happened and
-    // a running attempt keeps its effort and number; a terminal episode answers with its own terminal.
+    // a running attempt keeps its effort and is named by its ladder number; a terminal episode answers with its own terminal.
     const running = episode.attempts.find((a) => a.outcome === 'running');
     const action: NextEffortAction = running && !episode.terminal
-      ? { action: 'attempt', effort: running.effort, n: running.n, escalated: running.effort !== episode.baseline }
+      ? { action: 'attempt', effort: running.effort, n: ladderNumber(episode, episode.attempts.indexOf(running)), escalated: running.effort !== episode.baseline }
       : nextEffortAction({ ...episode, attempts: episode.attempts.filter((a) => a.outcome !== 'running') }, justification);
     return { episode, action };
   }
@@ -165,7 +168,7 @@ export function afterShipFailure(episode: EffortEpisode, cause: string, justific
   if (!running || action.action !== 'attempt') return { episode: reopened, action, refuted };
   return {
     episode: { ...reopened, escalationUsed: reopened.escalationUsed || action.escalated, attempts: attempts.map((a) => (a === running ? { ...a, effort: action.effort } : a)) },
-    action: { ...action, n: running.n },
+    action: { ...action, n: ladderNumber(reopened, attempts.indexOf(running)) },
     refuted,
     ...(running.effort !== action.effort ? { promoted: { n: running.n, from: running.effort, effort: action.effort } } : {}),
   };
