@@ -174,3 +174,43 @@ npm run typecheck && node --test tests/scenarios/unresolved-narration.test.ts te
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; every existing file listed passes unchanged apart from the describe block added to tests/surface/prose.test.ts.
+
+## Attempt evidence
+
+Sessions bytes at PREPARE on 7097dfd9 (LF, heading to next heading): 13,556 bytes, cap 13,701 (strictly below); sentence L adds 126, so 13,682 after. Room unchanged from the card, no card merged earlier grew the section.
+
+RED, measured on 4c3dceef (source as on main 7097dfd9): tests/scenarios/unresolved-narration.test.ts fails 12 subtests (items 1, 2, 3, 4) on the assertion `narration` actual `Reconcile 1 operation(s) with unknown outcome before admitting any new mutation: run ...` against the expected new narration; the control and item 5 rows (a), (b), (d), (e), (f) pass, and item 5 (c) passes after its narration was compared with the one read at T0. tests/surface/prose.test.ts: 2 fail (`Sessions states sentence L once`, `paragraph N is its own paragraph directly after the Narration paragraph`), 16 pass.
+
+Revert table, measured on 4771cc60 (source restored byte for byte after each row, `git diff --stat` empty): 17 of 17 red.
+
+| # | piece reverted or mutated | result |
+|---|---|---|
+| 1 | issued/running class dropped | red |
+| 2 | intended/UNKNOWN class dropped (all may still be running) | red |
+| 3 | only issued is may-run | red |
+| 4 | only running is may-run | red |
+| 5 | card clause `cardId !== undefined` | red |
+| 6 | card id trimmed | red |
+| 7 | card id quoted | red |
+| 8 | operations ordered by class | red |
+| 9 | head count n+1 | red |
+| 10 | second ledger read for the narration | red |
+| 11 | terminal check after a ledger read | red |
+| 12 | reconcile step skipped | red |
+| 13 | grace expiry no longer stops | red |
+| 14 | pollSeconds changed | red |
+| 15 | sentence L reverted (RED commit state) | red |
+| 16 | paragraph N removed (RED commit state) | red |
+| 17 | CHANGELOG entry removed (RED commit state, same test as 16) | red |
+
+DoD on 4771cc60: `npm run typecheck` clean, then node --test of the seven files: tests 158, pass 158, fail 0, exit 0.
+
+Document sentences against code and test:
+
+| sentence | code | test |
+|---|---|---|
+| paragraph N, Running a goal | src/loop/controller.ts reconcile step, `unresolvedNarration` | unresolved-narration items 1 to 5; prose test 8 |
+| sentence L, Sessions | ownership step (reads the lease, inclusive `expiresAt`), `createGoal` claim, report admission | prose test 7 |
+| CHANGELOG entry | same as the two above, plus the two comments | prose test 8; comments reviewer-verified |
+
+Changed lines `git diff --shortstat origin/main...HEAD` before this section: 5 files, 353 insertions, 5 deletions (358 against budget 480).
