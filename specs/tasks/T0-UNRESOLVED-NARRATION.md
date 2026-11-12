@@ -1,7 +1,7 @@
 ---
 id: T0-UNRESOLVED-NARRATION
 title: The wait of aidlc next on unresolved operations names each operation, tells an issued or running one (may still be running) from an intended or UNKNOWN one (no recorded outcome) and asks to check before recording, with what next decides unchanged; the goal-lease comments and the Sessions sentence say what the code does
-status: todo
+status: merged
 branch: T0-UNRESOLVED-NARRATION
 worktree: D:\wt\AIDLC\T0-UNRESOLVED-NARRATION
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: about 26 changed source lines in src/loop/controller.ts (the narration about 12, the two comments about 14), about 300 lines of tests/scenarios/unresolved-narration.test.ts (the narration cases with exact strings, the twelve kinds and the card-id forms, the instrumented single read and no-write spies, and the precedence and grace rows), about 55 lines added to tests/surface/prose.test.ts (the two document tests), 6 document lines (docs/OPERATIONS.md 4: the changed Sessions line removed and added, paragraph N and its blank line; CHANGELOG.md 2) and about 90 lines of attempt evidence; budget counts added plus deleted lines"
