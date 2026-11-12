@@ -229,6 +229,10 @@ const SCALE_MAX = 8;
 const CALIBRATION_LIMIT_MS = 30_000;
 /** How long the slow-kill case's tree kill blocks. */
 const SLOW_KILL_MS = 1500;
+/** How long the fixture's sleeper lives (SLEEP_MS of exec-tree.child.ts). */
+const SLEEPER_LIFE_MS = 60_000;
+/** After the calibration's time limit, how long a pid file of a sleeper the root had started is awaited. */
+const CALIBRATION_LATE_PID_MS = 5000;
 
 /** `from` without the git and node variables that redirect a child, plus a git ceiling and a state directory under `dir`. */
 function fixtureEnv(dir: string, from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -263,15 +267,19 @@ async function calibrate(
   const [file, args] = command(pidFile);
   const child = spawn(file, args, { stdio: 'ignore', windowsHide: true, env: fixtureEnv(dir) });
   let limit: NodeJS.Timeout | undefined;
+  let limited = false;
   const measured = await new Promise<number | undefined>((resolve) => {
     child.once('error', () => resolve(undefined));
     child.once('exit', (code, signal) => resolve(code === 0 && signal === null && readPid(pidFile) !== undefined ? Date.now() - startedAt : undefined));
     limit = setTimeout(() => {
+      limited = true;
       end(child.pid);
       resolve(undefined);
     }, limitMs);
   });
   clearTimeout(limit);
+  // A sleeper the root had started may publish its pid after the limit: wait for it, at most CALIBRATION_LATE_PID_MS.
+  for (let waited = 0; limited && readPid(pidFile) === undefined && waited < CALIBRATION_LATE_PID_MS; waited += 50) await new Promise((r) => setTimeout(r, 50));
   const sleeper = readPid(pidFile);
   if (sleeper !== undefined) {
     end(sleeper);
@@ -317,13 +325,16 @@ function assertSleeperExisted(run: { sleeperWrittenMs: number | undefined; start
   if (run.sleeperWrittenMs > run.startedMs + timeoutMs) throw notReady(scale, `the sleeper's pid file was written ${Math.round(run.sleeperWrittenMs - run.startedMs)} ms after the call, the timeout was ${timeoutMs} ms`);
 }
 
+/** The sleeper died well before its own 60 s end, so its death was a kill and not that end. */
+function assertKilledBeforeNaturalEnd(sleeperWrittenMs: number | undefined, goneAtMs: number): void {
+  if (sleeperWrittenMs === undefined) throw new Error('no sleeper pid file');
+  if (goneAtMs >= sleeperWrittenMs + SLEEPER_LIFE_MS - 1000) throw new Error(`the sleeper was gone ${Math.round(goneAtMs - sleeperWrittenMs)} ms after it wrote its pid file, within 1000 ms of its natural end after ${SLEEPER_LIFE_MS} ms: the death check cannot tell a kill from that end`);
+}
+
 /** No tree kill call found the root alive: it had exited before the timeout. */
 function assertRootGone(aliveAtCall: boolean[], scale: number): void {
   if (aliveAtCall.some((alive) => alive)) throw notReady(scale, 'the tree kill found the root still running');
 }
-
-/** Seam: the check always passes. */
-function assertKilledBeforeNaturalEnd(_sleeperWrittenMs: number | undefined, _goneAtMs: number): void {}
 
 describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
   const dir = tmpDir('aidlc-exec-env-');
@@ -527,6 +538,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
       assert.equal(ok(receipt), false);
       assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the timeout');
       await assertGoneWithin(sleeper, b.goneWithinMs);
+      assertKilledBeforeNaturalEnd(sleeperWrittenMs, Date.now());
     }, b.timeoutMs);
   });
 
@@ -545,10 +557,10 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     const b = await calibratedBounds(t);
     const { calls, aliveAtCall, treeKill } = delegatingTreeKill();
     await raceFixture(createRun(treeKill), 'exit', b.stayBoundMs, ({ receipt, elapsedMs }) => {
+      assertRootGone(aliveAtCall, b.scale);
       assert.ok(receipt, `no receipt within ${b.stayBoundMs} ms of the call (${elapsedMs} ms)`);
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
-      assertRootGone(aliveAtCall, b.scale);
       assert.deepEqual(calls, []);
       // [R3] stdout and stderr are destroyed at the timeout, so the close event of the exited root
       // resolves the receipt before the grace bound, with the exit the system reported for the root.
@@ -687,8 +699,10 @@ describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R
       // The caller's cwd is the system temp dir, not `dir`: a leaked process holding `dir` as its cwd would make the cleanup fail instead of the assertion.
       const receipt = runSync(process.execPath, args, { cwd: tmpdir(), timeoutMs: b.timeoutMs, killTree: true });
       const elapsedMs = Date.now() - started;
-      assertSleeperExisted({ sleeperWrittenMs: writtenMs(pidFile), startedMs: started }, b.timeoutMs, b.scale);
+      const sleeperWrittenMs = writtenMs(pidFile);
+      assertSleeperExisted({ sleeperWrittenMs, startedMs: started }, b.timeoutMs, b.scale);
       assert.ok(elapsedMs <= b.syncBoundMs, `runSync returned after ${elapsedMs} ms, past the ${b.syncBoundMs} ms bound`);
+      assert.ok(!receipt.stderr.startsWith('[tree helper error]'), `runSync returned the helper's backstop receipt: ${receipt.stderr}`);
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
       assert.equal(receipt.command, process.execPath);
@@ -697,6 +711,7 @@ describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R
       const sleeper = readPid(pidFile);
       assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the timeout');
       await assertGoneWithin(sleeper, b.goneWithinMs);
+      assertKilledBeforeNaturalEnd(sleeperWrittenMs, Date.now());
     } finally {
       end(readPid(pidFile));
       end(readPid(`${pidFile}.root`));
