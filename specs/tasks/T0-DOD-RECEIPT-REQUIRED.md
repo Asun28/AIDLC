@@ -222,3 +222,70 @@ npm run typecheck && node --test tests/scenarios/dod-receipt-required.test.ts te
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; every existing file listed passes unchanged and the fault-point check adds no pin.
+
+## Attempt evidence
+
+### RED, measured on 456a0556 (tests only; src is main at 2f38fc4f), `node --test tests/scenarios/dod-receipt-required.test.ts`: 25 tests, 16 pass, 9 fail
+| Item | Red on main | Failure on main |
+|---|---|---|
+| 1 | yes | `Missing expected exception: T0-DR absent: no error` (the success was recorded) |
+| 2 | yes | `Missing expected exception` (recorded with a generated receipt) |
+| 3 | no | 7 of 7 pass on main (stored as given, fail, not-counted, `Success` refused at the save, `running`) |
+| 4 | row (b) yes, rows (a) and (c) to (i) no | (b): `Missing expected exception` at the retry; the other eight pass |
+| 5 | yes | github, scaffold and probe-fails rows: `Missing expected exception` |
+| 6 | yes | the narration still holds `--outcome success\|fail --cause ...` |
+| 7 | yes | CLI child exit 0 and the success printed; the refusal rows fail |
+| 8 | no | passes on main |
+| 9 | yes | `D1 and D2 follow the RED sentence on its line` |
+| 10 | no | the fifteen other DoD files pass on main and now |
+
+### Revert table, measured on c5e9ccff: 25 of 25 red
+Each row is an actual revert or mutation run: the one piece changed in the worktree, `node --test tests/scenarios/dod-receipt-required.test.ts` run, the files restored; `git status` and `git diff --stat` empty afterwards. A guard moved is the guard deleted at its place and written at the named one.
+| # | Piece changed | Result (pass/fail) | First failing test |
+|---|---|---|---|
+| 1 | guard deleted | 18/7 | item 1 |
+| 2 | `trim()` dropped | 23/2 | item 1 (whitespace rows), item 7 |
+| 3 | `typeof` dropped | 18/7 | item 1 (`null`, `42`) |
+| 4 | outcome compared with `toLowerCase()` | 24/1 | item 3 `Success` row |
+| 5 | stored receipt read in place of the input | 24/1 | item 2 |
+| 6 | receipt trimmed before it is stored | 24/1 | item 3 spaces row |
+| 7 | guard applied to every outcome | 16/9 | item 3 fail row, not-counted row |
+| 8 | guard before the marker check | 13/12 | row (a) |
+| 9 | before the owed delivery | 14/11 | row (b) |
+| 10 | before the lost-checks refusal | 15/10 | row (c) |
+| 11 | before the missing-RED refusal | 16/9 | row (d) |
+| 12 | before the admission | 17/8 | rows (e), (f) |
+| 13 | before `finishAttempt` | 19/6 | row (g) |
+| 14 | before the worktree probe | 20/5 | row (h), item 5 |
+| 15 | before the dirty refusal | 20/5 | row (h) (also items 1, 2, 7: the dry-run path never reaches that place) |
+| 16 | before the withdrawn refusal | 24/1 | row (i) |
+| 17 | guard after the save | 18/7 | items 1, 2, 5 |
+| 18 | tdd narration reverted | 24/1 | item 6 |
+| 19 | other narration reverted | 24/1 | item 6 |
+| 20 | option description removed | 24/1 | item 7 (help) |
+| 21 | D1 and D2 removed from docs/OPERATIONS.md | 24/1 | item 9 |
+| 22 | CHANGELOG entry removed | 24/1 | item 9 |
+| 23 | flag text removed from the `.claude` card-loop.md | 24/1 | item 9 |
+| 24 | flag text removed from the `templates` card-loop.md | 24/1 | item 9 |
+| 25 | cut K2 reverted in both copies (6,506 bytes) | 24/1 | item 9 (cap) |
+
+Not run: the default removal (R3) and the heartbeat comment (R9) have no test (acceptance 11, reviewer-verified).
+
+### DoD, measured on c5e9ccff, from the worktree root: exit 0
+`npm run typecheck` clean; `node --test` over the 16 files: tests 493, suites 30, pass 490, fail 0, skipped 3, cancelled 0, todo 0. The new file alone: 25 tests, 25 pass. Not run here: the new file on Linux, `npm run check`, the full suite.
+
+### Documents against code and test
+| Text | True because | Test |
+|---|---|---|
+| D1, D2 (docs/OPERATIONS.md) | the guard of `recordAttempt` (card-runner.ts, last statement of the success block); no verification of the receipt text | items 1, 2, 4, 5, 7, 9 |
+| CHANGELOG entry | same guard; owed events delivered before it (row b); CLI creates the run first (item 7); build narrations, copies and help name the flag | items 4(b), 6, 7, 9 |
+| card-loop.md (both copies), 6,498 to 6,496 bytes, ASCII, identical | the success command shows the flag; cuts K1, K2, K4, K6, K8 | item 9 and the pinned surface tests |
+| Option description (src/cli/main.ts) | `--dod-receipt <text>` stays optional in the parser | item 7 |
+
+### Changed lines
+`git diff --shortstat origin/main...HEAD` on c5e9ccff plus the RED commit (before this section): 7 files, 502 insertions, 33 deletions = 535 against the budget 610. The total with this section is in the final report.
+
+Coordinator verification:
+- At fd42e9b1, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/dod-receipt-required.test.ts): tests 25, pass 25, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 4 changed documents: # tests 1910 # pass 1898 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
