@@ -5,8 +5,13 @@
  * transitions that have no external effect (deadline STOP, CARDS->RUN once authorized,
  * RUN->VERIFY_ARC once required cards closed, CLOSE->DONE once closure predicates hold) and
  * it regenerates the board view. `report()` commits externally observed results (plan output,
- * card results, arc verification, release results, revisions, cancellation). One goal has one
- * coordinator: the goal lease is claimed at intake and checked on every mutation.
+ * card results, arc verification, release results, revisions, cancellation). The goal lease names
+ * the goal's coordinator: `createGoal` claims it once and nothing renews it. The ownership step of
+ * `next` reads it and waits only while another session holds it unreleased with `expiresAt` at or
+ * after now; `aidlc goal takeover` and the closing session (`releaseGoalLease`) may take it over,
+ * and the closing session releases it. Report admission checks the goal generation and terminality
+ * without a goal-lease fence, then calls `next`. Goal records stay last-writer-wins; a live card
+ * lease stops another session's `card next` on that card.
  */
 import path from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -35,6 +40,7 @@ import {
   nowIso,
   type DeliveryTarget,
   type Lease,
+  type OperationRecord,
   type OwedEvent,
   type StopRecord,
 } from '../core/types.ts';
@@ -82,6 +88,16 @@ export interface CreateGoalOptions {
 /** Validation problems are narrated by category only: a YAML parser message quotes the offending source, which may be a private front-matter value. */
 function sanitizeIntentProblem(problem: string): string {
   return problem.startsWith('front matter:') ? 'front matter does not parse' : problem;
+}
+
+/** The wait on unresolved operations: each record by id, kind, status and card, as stored; the class is the stored status alone. */
+function unresolvedNarration(unresolved: OperationRecord[]): string {
+  const sentences = unresolved.map((o) => {
+    const card = o.cardId ? `, card ${o.cardId}` : '';
+    const state = o.status === 'issued' || o.status === 'running' ? 'may still be running' : 'has no recorded outcome';
+    return `Operation ${o.id} (${o.kind}, ${o.status}${card}) ${state}; check the issuing command and provider before recording its current outcome with \`aidlc ops reconcile ${o.id} --status <succeeded|failed|running|cancelled|UNKNOWN>\`.`;
+  });
+  return `No new mutation is admitted while ${unresolved.length} operation(s) of this goal are unresolved. ${sentences.join(' ')}`;
 }
 
 export class GoalController {
@@ -232,7 +248,7 @@ export class GoalController {
         goal = this.persistStop(goal, makeStop('time', 'reconciliation grace expired with unresolved operations', 'hand off the exact environment and unresolved operation ids to the named owner', { at: now, unresolvedOperations: unresolved.map((o) => o.id) }));
         return Directive.parse({ kind: 'stop', ...base(goal), stop: goal.stop, narration: 'Reconciliation grace expired.' });
       }
-      return Directive.parse({ kind: 'wait', ...base(goal), on: `reconcile:${unresolved.map((o) => o.id).join(',')}`, until: admission.graceEndsAt, pollSeconds: 60, narration: `Reconcile ${unresolved.length} operation(s) with unknown outcome before admitting any new mutation: run \`aidlc ops reconcile\`.` });
+      return Directive.parse({ kind: 'wait', ...base(goal), on: `reconcile:${unresolved.map((o) => o.id).join(',')}`, until: admission.graceEndsAt, pollSeconds: 60, narration: unresolvedNarration(unresolved) });
     }
 
     // 2. Deadline.
@@ -242,7 +258,8 @@ export class GoalController {
       return Directive.parse({ kind: 'stop', ...base(goal), stop: goal.stop, narration: 'Admission deadline reached; no new planned work.' });
     }
 
-    // 3. Ownership: this session must hold the goal lease (or attach read-only).
+    // 3. Ownership: this step reads the goal lease and waits while another session holds it unreleased with `expiresAt`
+    // at or after now (attach read-only); an absent, released or expired lease, or this session's, goes on. Nothing renews it.
     const lease = this.leases.read(resourceKeys.goal(this.repo.key, goal.id));
     const me = currentActor();
     if (lease && !lease.released && lease.owner.session !== me.session && Date.parse(lease.expiresAt) >= Date.parse(now)) {
