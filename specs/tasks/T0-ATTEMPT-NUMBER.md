@@ -182,7 +182,7 @@ The Codex reviewer was at capacity (`Selected model is at capacity`), so this pr
 
 ## Attempt evidence
 
-Commits on branch T0-ATTEMPT-NUMBER (base d327a20e): ef9d8e1a (RED seam: `ladderNumber` returns `index + 1`, called by nothing), 19ee1b81 (RED tests), 36628a8e (GREEN: source and documents), a885074c (test imports moved to new lines so no existing import line changes; no assertion changed), 63fd38c8 (evidence), 72be08e8 (planner rulings: the review-fix field keeps main's value with an episode and nothing running; the unit row with stored numbers that do not follow their positions), c4fc568b (evidence), d52f828d (the unit row for effort.ts:171), then this evidence commit (card file only).
+Commits on branch T0-ATTEMPT-NUMBER (base d327a20e): ef9d8e1a (RED seam: `ladderNumber` returns `index + 1`, called by nothing), 19ee1b81 (RED tests), 36628a8e (GREEN: source and documents), a885074c (test imports moved to new lines so no existing import line changes; no assertion changed), 63fd38c8 (evidence), 72be08e8 (planner rulings: the review-fix field keeps main's value with an episode and nothing running; the unit row with stored numbers that do not follow their positions), c4fc568b (evidence), d52f828d (the unit row for effort.ts:171), d46f7599 (evidence); after the pre-review of 0551ee51: 6de3f8b5 (merge of origin/main at 672db5ea), 2c9e8656 (the ATTEMPT_FINISHED clause of docs/OPERATIONS.md and its pinned literal, as the card's Document text now reads), 56e6a579 (acceptance 15 rows, tests only), then this evidence commit (card file only).
 
 Narration literals: the numberless narrations (review-fix, pre-review hand-back, merge-conflict, rejected-RED, dod-failed) and the pending-repair prefixes were captured from the code at ef9d8e1a (main plus the uncalled seam) before any source change, by running the new scenarios with their assertions disabled in a temporary copy of the test file, which was deleted afterwards. The two build() templates match main's narrations at card-runner.ts:1036-1037 apart from the label; the card's Narration templates text matched main, so no wording was chosen.
 
@@ -206,7 +206,9 @@ Narration literals: the numberless narrations (review-fix, pre-review hand-back,
 
 Item 13 was not run on main by this attempt; it passes in the DoD runs below.
 
-### Revert table (34 rows, 34 red)
+Acceptance 15 (coverage rows, commit 56e6a579, tests only): each row passes on the current source, which has not changed since 36628a8e apart from the review-fix field of 72be08e8. tests/core/effort.test.ts, in "repairAction and afterShipFailure name a running attempt by its ladder number, and a promotion keeps the stored n": `repairAction` and `afterShipFailure` with nothing settled on `[running n 1, not-counted n 2]` give `n: 1`; `afterShipFailure` with a settled attempt and a running repair on `[success n 1, running n 2, not-counted n 3]` gives `n: 2`. tests/scenarios/dispute-running-attempt.test.ts, three tests "T0-ATTEMPT-NUMBER: acceptance 15: ..." on a run written through `fx.store.updateCardRun` with the episode `[not-counted n 1, running n 5]`: build() names attempt 1 with the before-RED narration of label `Attempt 1 (record 5 of this run; 1 not counted)`; the review-fix directive of a repeated `card next` names attempt 1 with main's narration (no label); the merge-conflict fallback of `buildDirective` names attempt 1 with main's narration (no label). Every site was reached with a stored episode.
+
+### Revert table (41 rows, 41 red)
 
 Each row is an actual revert run: the one change applied to the worktree source (or document) alone, the named test run with `--test-name-pattern`, the file restored; afterwards `git status --short` was empty (byte-identical to 36628a8e). Script: an-mutate.py and an-docmut.py in the session scratchpad.
 
@@ -247,14 +249,20 @@ Each row is an actual revert run: the one change applied to the worktree source 
 | M26a | R2 repairAction: the index comes from the array, never from the stored n | `ladderNumber(episode, running.n - 1)` | effort "repairAction and afterShipFailure name" (episode [n 1 not-counted, n 5 running]) | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
 | M26b | R2 afterShipFailure with nothing settled: the same | `ladderNumber(episode, running.n - 1)` | the same test and episode | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
 | M26c | R2 afterShipFailure with a settled attempt and a running repair (effort.ts:171): the same | `ladderNumber(reopened, running.n - 1)` | the same test, episode [success n 1, not-counted n 2, running n 7] | red (ERR_ASSERTION at effort.test.ts:585, `n: 3` actual, `n: 2` expected) |
+| M27a | R2 repairAction: never assumed to be the last record | `ladderNumber(episode, episode.attempts.length - 1)` | effort "repairAction and afterShipFailure name", episode [running n 1, not-counted n 2] | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M27b | R2 afterShipFailure with nothing settled: the same | `ladderNumber(episode, episode.attempts.length - 1)` | the same test and episode | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M27c | R2 afterShipFailure with a settled attempt and a running repair: the same | `ladderNumber(reopened, reopened.attempts.length - 1)` | the same test, episode [success n 1, running n 2, not-counted n 3] | red (ERR_ASSERTION, `n: 3` actual, `n: 2` expected) |
+| M28a | R3 (a) build(), running attempt: never derived from the stored n | `attemptIndex = running.n - 1` | dispute "acceptance 15: build()", stored episode [not-counted n 1, running n 5] | red (ERR_ASSERTION, attempt 2 actual, 1 expected) |
+| M28b | R3 (b) review-fix field: the same | `ladderNumber(episode, running.n - 1)` | dispute "acceptance 15: the review-fix field", the same stored episode | red (ERR_ASSERTION, attempt 2 actual, 1 expected) |
+| M28c | R3 (d) `buildDirective` fallback, running branch: the same | stored `n - 1` of the running record in place of `runningIndex` | dispute "acceptance 15: the buildDirective fallback", the same stored episode | red (ERR_ASSERTION, attempt 2 actual, 1 expected) |
 
-Rows M26a and M26b (actual revert runs, added after the planner's ruling on R2) use an episode whose stored numbers do not follow their positions, `[{ n: 1, not-counted }, { n: 5, running }]`: the index from the array is 1 and gives `n: 1`, an index derived from the stored n (4) counts the running record and gives 2. Row M26c (an actual revert run, added after the planner's second ruling) covers the branch of `afterShipFailure` with a settled attempt and a running repair (effort.ts:171) with the episode `[{ n: 1, success }, { n: 2, not-counted }, { n: 7, running }]`: the array index 2 gives 2, an index derived from the stored n (6) gives 3. R2's clause has a row at each of its three sites.
+Rows M26a and M26b (actual revert runs, added after the planner's ruling on R2) use an episode whose stored numbers do not follow their positions, `[{ n: 1, not-counted }, { n: 5, running }]`: the index from the array is 1 and gives `n: 1`, an index derived from the stored n (4) counts the running record and gives 2. Row M26c (an actual revert run, added after the planner's second ruling) covers the branch of `afterShipFailure` with a settled attempt and a running repair (effort.ts:171) with the episode `[{ n: 1, success }, { n: 2, not-counted }, { n: 7, running }]`: the array index 2 gives 2, an index derived from the stored n (6) gives 3. R2's clause has a row at each of its three sites. Rows M27a to M28c are actual revert runs of the round after the pre-review of 0551ee51 (acceptance 15); under the M27 mutants every older row of that unit test has its running record last and still passes, so the failing row is the new one. The heading of this table read 34 rows while it listed 35 (M1 to M25, M5b, M7b, M7c, M15b, D1 to D3, M26a to M26c); it now counts all 41.
 
 Review-fix `attempt` field (R3 (b)): with an effort episode and no attempt running the field keeps main's value, `episode.attempts.length` (planner ruling). I read that case as not reachable: when nothing runs, the REVIEW_FIX step first reopens a succeeded episode, then `nextEffortAction` either answers `stop`, which returns a stop directive before the field is built, or `attempt`, which opens an attempt; `done` cannot follow `reopenAfterReviewBlock`. A terminal episode other than succeeded answers `stop`. No test pins this case.
 
 ### DoD
 
-`dod_command` on d52f828d (source and tests final; the later commit changes only this card file, whose final text the run read): exit 0, tests 402, suites 34, pass 402, fail 0, cancelled 0, skipped 0. Earlier runs: 72be08e8, exit 0, 402 of 402; a885074c and 63fd38c8, exit 0, 402 of 402; 36628a8e, exit 0, 402 of 402.
+`dod_command` on 56e6a579 (source and tests final; the later commit changes only this card file, whose final text the run read): exit 0, tests 405, suites 34, pass 405, fail 0, cancelled 0, skipped 0. Earlier runs: d52f828d, exit 0, 402 of 402; 72be08e8, exit 0, 402 of 402; a885074c and 63fd38c8, exit 0, 402 of 402; 36628a8e, exit 0, 402 of 402.
 
 ### Documents against code and tests
 
@@ -270,7 +278,7 @@ Review-fix `attempt` field (R3 (b)): with an effort episode and no attempt runni
 
 ### Changed lines
 
-`git diff --shortstat origin/main...HEAD` (merge base d327a20e) with this section: 8 files changed, 426 insertions(+), 29 deletions(-), 455 lines, against the budget 500.
+`git diff --shortstat origin/main...HEAD` (merge base 672db5ea, after the merge of origin/main) with this section: 8 files changed, 491 insertions(+), 29 deletions(-), 520 lines, against the budget 600.
 
 ### Not run by this attempt
 
