@@ -260,3 +260,15 @@ Review-fix `attempt` field (R3 (b)): with an effort episode and no attempt runni
 ### Not run by this attempt
 
 The verify-card-run-writes skill, the Linux run of the two test files, and acceptance 13 on main.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed five points where the card gave no rule or where it chose a form. The planner ruled on each before the formal review; two led to a change, which is in the candidate.
+
+| Disclosed point | Ruling |
+|---|---|
+| The `attempt` field of the review-fix directive, in the case R3 (b) does not name (an effort episode exists and no attempt runs): the first candidate named 1 where main names `attempts.length` | Changed. This card changes nothing it does not name, so that case keeps main's value: the ladder number of the running attempt when one runs, `episode.attempts.length` when an episode exists and none runs, 1 with no episode. The implementer reads the case as not reachable (a stop returns before the field is built, and an admitted attempt is running) and could not reach it with the fixtures, so it has no row |
+| `buildDirective` has a block body with a local `runningIndex` where main has a one-line arrow | Accepted. R3 (d) needs the array index of the running record |
+| JSDoc on the two new helpers, `ladderNumber` (src/core/effort.ts) and `attemptLabel` (src/loop/card-runner.ts), which R7 does not list | Accepted. A new function carries its JSDoc by the repository's convention; R7 lists the existing comments whose text changes |
+| The seam (`ladderNumber` returning `index + 1`, called by nothing) is a commit of its own before the RED tests | Accepted |
+| R2's clause that the index comes from the array and is never derived from the stored `n` had no revert row | Changed. An episode whose stored numbers do not follow their positions tells the two apart. Three unit rows in tests/core/effort.test.ts, one per site (`repairAction`, and both branches of `afterShipFailure`), each red under its revert (M26a, M26b, M26c) |
