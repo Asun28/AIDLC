@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const BIN = path.join(root, 'bin', 'aidlc.js');
@@ -16,7 +16,7 @@ after(() => {
 
 /** A temp git repository with its own state directory and one goal. */
 function repo(): { cwd: string; stateDir: string; env: NodeJS.ProcessEnv; goal: string } {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-ops-intent-'));
+  const cwd = tmpDir('aidlc-ops-intent-');
   temps.push(cwd);
   assert.equal(spawnSync('git', ['init', '-q'], { cwd, encoding: 'utf8' }).status, 0);
   const stateDir = path.join(cwd, 'state');

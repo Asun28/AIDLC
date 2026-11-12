@@ -1,12 +1,12 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG, isBlock, runHook, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
 import { initProject } from '../../src/scaffold/init.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const NEW_MATCHER = 'Bash|PowerShell|Edit|Write|MultiEdit';
@@ -23,7 +23,7 @@ after(() => {
 });
 
 function tempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ps-guard-'));
+  const dir = tmpDir('aidlc-ps-guard-');
   dirs.push(dir);
   return dir;
 }

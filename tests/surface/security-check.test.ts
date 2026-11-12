@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 /** The package entry the card names; it runs the sources when no build is at least as new as them (`bin/resolve-entry.js`). */
@@ -17,7 +17,7 @@ after(() => {
 });
 
 test('T1-SWEEP2-FLAGS acceptance 3: `node bin/aidlc.js security check --json` exits 2 with NOT CONFIGURED and a detail that keeps "never a pass" and names no aidlc.config.json [R3]', () => {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-security-check-'));
+  const cwd = tmpDir('aidlc-security-check-');
   temps.push(cwd);
   const init = spawnSync('git', ['init', '-q'], { cwd, encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);

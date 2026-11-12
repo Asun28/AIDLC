@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import os from 'node:os';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture } from './_harness.ts';
 import { Directive } from '../../src/loop/directive.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const INTENT = [
   '---',
@@ -115,7 +115,7 @@ test('R2: a missing intent file is narrated, never thrown; a T0 route never name
 });
 
 test('R2: aidlc goal new --intent records the intent on the goal and the printed plan directive lists its open questions', () => {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'aidlc-cli-'));
+  const tmp = tmpDir('aidlc-cli-');
   try {
     mkdirSync(path.join(tmp, 'intent'), { recursive: true });
     writeFileSync(path.join(tmp, 'intent', 'claims.md'), INTENT);

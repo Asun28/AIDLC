@@ -1,20 +1,20 @@
 // Card T1-SWEEP-HOOK-NAME: `aidlc hook <name>` with a name that is no guard fails closed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import fs, { readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runHook, type HookEvent, type HookName } from '../../src/hooks/index.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const KNOWN = 'known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, verify-before-done, route-new-work';
 const line = (quoted: string): string => `aidlc hook: unknown hook name ${quoted}; ${KNOWN}`;
 
 function tempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), 'aidlc-hook-name-'));
+  return tmpDir('aidlc-hook-name-');
 }
 
 function editEvent(cwd: string): HookEvent {

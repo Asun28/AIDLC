@@ -1,12 +1,12 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG } from '../../src/hooks/index.ts';
 import * as init from '../../src/scaffold/init.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const HOOK_ENTRY = path.join(root, 'bin', 'aidlc-hook.js');
@@ -28,7 +28,7 @@ after(() => {
 });
 
 function tempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-no-package-'));
+  const dir = tmpDir('aidlc-no-package-');
   dirs.push(dir);
   return dir;
 }

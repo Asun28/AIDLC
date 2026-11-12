@@ -1,12 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { goal, cardRun } from '../core/_fixtures.ts';
-import { cleanup } from '../infra/helpers.ts';
+import { cleanup, tmpDir } from '../infra/helpers.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -40,7 +39,7 @@ interface Payload {
 }
 
 test('aidlc bounds: JSON when piped, --goal narrows, unknown goal and unreadable run exit 1, state unchanged (acceptance 5)', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-bounds-'));
+  const dir = tmpDir('aidlc-bounds-');
   try {
     mkdirSync(path.join(dir, 'goals'), { recursive: true });
     for (const id of ['g-bounds-a', 'g-bounds-b']) mkdirSync(path.join(dir, 'cards', id), { recursive: true });

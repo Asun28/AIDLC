@@ -1,12 +1,12 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { baseSyncReport } from '../../src/probes/base-sync.ts';
 import { pathToFileURL } from 'node:url';
 import { runSync, scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
+import { tmpDir } from './helpers.ts';
 
 const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
 // Whether this git knows --no-lazy-fetch (git 2.45 or newer), decided by running it, never from a version number.
@@ -31,7 +31,7 @@ const commit = (cwd: string, message: string): string => git(cwd, ['commit', '-q
 
 /** A bare origin whose main has one commit, a seed repository that pushes to it, and a clone whose main tracks origin/main. */
 function cloneOfOrigin(): { dir: string; origin: string; seed: string; clone: string; cleanup: () => void } {
-  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-base-sync-')));
+  const dir = realpathSync.native(tmpDir('aidlc-base-sync-'));
   const origin = path.join(dir, 'origin.git');
   const seed = path.join(dir, 'seed');
   const clone = path.join(dir, 'clone');
@@ -211,7 +211,7 @@ function holds(cwd: string, oid: string): boolean {
 
 /** A promisor clone of origin whose origin/main names a commit pushed after the clone and never fetched into it. */
 function promisorClone(): { clone: string; missing: string; cleanup: () => void } {
-  const dir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-base-sync-promisor-')));
+  const dir = realpathSync.native(tmpDir('aidlc-base-sync-promisor-'));
   const origin = path.join(dir, 'origin.git');
   const seed = path.join(dir, 'seed');
   const clone = path.join(dir, 'clone');

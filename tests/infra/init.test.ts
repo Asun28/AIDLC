@@ -1,7 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +8,7 @@ import { initProject } from '../../src/scaffold/init.ts';
 import { loadProjectConfig } from '../../src/config.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import { hookWiringReport } from '../../src/probes/hook-wiring.ts';
+import { tmpDir } from './helpers.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
@@ -22,7 +22,7 @@ describe('aidlc init (scaffold)', () => {
   });
 
   test('lays the playbook layout over an empty directory and is idempotent', () => {
-    const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
+    const target = tmpDir('aidlc-init-');
     dirs.push(target);
     const first = initProject({ target, shipPath: 'dry-run' });
     for (const rel of ['.claude/settings.json', '.claude/skills/aidlc-loop/SKILL.md', '.claude/skills/aidlc-loop/card-loop.md', '.claude/agents/verifier.md', '.claude/skills/tdd/SKILL.md', '.claude/skills/diagnose/SKILL.md', '.claude/skills/grilling/SKILL.md', '.claude/skills/merge-conflicts/SKILL.md', 'docs/LESSONS.md', 'docs/THIRD-PARTY-NOTICES.md', '.github/workflows/security-scanners.yml', 'REVIEW.md', 'bands.yaml', 'intent/_TEMPLATE.md', 'specs/README.md', 'plans/_TEMPLATE.md', 'specs/tasks/_TEMPLATE.md', 'evals/example-regression.json', '.github/workflows/agent-evals.yml', 'aidlc.config.json', 'aidlc.ops.example.json', 'docs/DELIVERY-OPS.md', 'CLAUDE.md', '.gitignore']) {
@@ -50,7 +50,7 @@ _local/
   });
 
   test('merges an existing settings.json (hooks + deny) and appends to an existing CLAUDE.md', () => {
-    const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
+    const target = tmpDir('aidlc-init-');
     dirs.push(target);
     mkdirSync(path.join(target, '.claude'), { recursive: true });
     writeFileSync(path.join(target, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Read(./secret.txt)'], allow: ['Bash(git *)'] }, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'my-existing-gate' }, { type: 'command', command: 'npx --no-install aidlc hook production-gate' }] }] } }));
@@ -75,7 +75,7 @@ _local/
   });
 
   test('dry run reports without writing', () => {
-    const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
+    const target = tmpDir('aidlc-init-');
     dirs.push(target);
     const report = initProject({ target, dryRun: true });
     assert.ok(report.created.length > 0);
@@ -91,7 +91,7 @@ describe('T0-INIT-REVIEW-IGNORE: init ignores .review/', () => {
 
   /** Writes `before` as the target's .gitignore, runs init twice, returns the file after each run and the merged lists. */
   function upgrade(before: string): { first: string; second: string; merged1: string[]; merged2: string[] } {
-    const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-gi-'));
+    const target = tmpDir('aidlc-init-gi-');
     dirs.push(target);
     const gi = path.join(target, '.gitignore');
     writeFileSync(gi, before);
@@ -126,7 +126,7 @@ describe('T0-INIT-REVIEW-IGNORE: init ignores .review/', () => {
   });
 
   test('acceptance 3: a linked worktree of a committed init repository stays clean with review files under .review/ [R2]', { skip: !GIT_OK && 'git is not available' }, () => {
-    const base = mkdtempSync(path.join(tmpdir(), 'aidlc-init-git-'));
+    const base = tmpDir('aidlc-init-git-');
     dirs.push(base);
     // The test's own git configuration only: no global or system file of the developer is read.
     const emptyGlobal = path.join(base, 'empty.gitconfig');
@@ -214,7 +214,7 @@ describe('T0-INIT-REVIEW-IGNORE: init ignores .review/', () => {
   }
 
   function tempTarget(): string {
-    const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
+    const target = tmpDir('aidlc-init-');
     dirs.push(target);
     return target;
   }

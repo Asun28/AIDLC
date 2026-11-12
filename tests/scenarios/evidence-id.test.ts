@@ -2,12 +2,12 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EvidenceStore, type Manifest } from '../../src/audit/manifest.ts';
 import { makeFixture, writeCard, goalForCards, type Fixture } from './_harness.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 /** The CLI from the sources, never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -23,7 +23,7 @@ after(() => {
 
 /** A temporary directory the after hook removes. */
 function tempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-evidence-id-'));
+  const dir = tmpDir('aidlc-evidence-id-');
   temps.push(dir);
   return dir;
 }

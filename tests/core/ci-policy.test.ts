@@ -4,10 +4,10 @@ import { canRerun, classifyCiFailure, hasUnreconciledRerun, reconcileRerun, reco
 import { classifyShipOutput, encodeUntrusted } from '../../src/delivery/ship.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { tmpDir } from '../infra/helpers.ts';
 
 describe('CI classification (Q7)', () => {
   test('a transient log pattern alone is unknown: log text never grants a rerun, and its match stays as evidence (T0-CI-RERUN-STRUCTURED)', () => {
@@ -238,7 +238,7 @@ describe('T0-CI-RERUN-STRUCTURED acceptance 4: the docs state the rule and the C
   });
 
   test('aidlc ci classify --log on a log-only transient prints unknown and the note', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-'));
+    const dir = tmpDir('aidlc-ci-');
     try {
       const log = path.join(dir, 'ci.log');
       writeFileSync(log, 'npm ERR! network read ECONNRESET\n');
@@ -254,7 +254,7 @@ describe('T0-CI-RERUN-STRUCTURED acceptance 4: the docs state the rule and the C
 });
 
 test('successor R4: ci classify marks a complete log receipt as aggregate', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-aggregate-'));
+  const dir = tmpDir('aidlc-ci-aggregate-');
   try {
     const file = path.join(dir, 'ci.log');
     writeFileSync(file, '[CI-GATE-RED] [{"name":"build","conclusion":"startup_failure"}]');
@@ -268,7 +268,7 @@ test('successor R4: ci classify marks a complete log receipt as aggregate', () =
 });
 
 test('successor R4: ci classify applies disabled defaults and custom configured steps', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-config-'));
+  const dir = tmpDir('aidlc-ci-config-');
   try {
     const file = path.join(dir, 'ci.log');
     const cli = path.resolve(import.meta.dirname, '../../src/cli/main.ts');
@@ -604,7 +604,7 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
     const audit = ship([redLine(SCAN, 'security audit'), stepLine(SCAN, INSTALL)].join('\n'));
     assert.equal(audit.class, 'security', 'a second red scan check is a finding');
     assert.deepEqual([audit.evidence[0], audit.evidence.at(-1)], ['security: security audit', 'scan-setup: "Gitleaks (committed history)" failed at "Install gitleaks (pinned version, checksum verified)" before its scan']);
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-scan-'));
+    const dir = tmpDir('aidlc-ci-scan-');
     try {
       const file = path.join(dir, 'ci.log');
       writeFileSync(file, RUN_42467444385);

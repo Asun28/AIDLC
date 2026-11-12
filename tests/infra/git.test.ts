@@ -1,12 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { GitProbe, GitProbeError } from '../../src/probes/git.ts';
 import { runSync, scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { collectCandidateDiff } from '../../src/review/pre-review.ts';
+import { tmpDir } from './helpers.ts';
 
 // Drive-neutral fixture paths: Windows keeps a drive letter, POSIX runners use an absolute root.
 const D = process.platform === 'win32' ? 'C:' : '';
@@ -152,7 +152,7 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
   });
 
   it('lists a renamed file by its source and its destination, unquoted, in GitProbe and in the review listing (T1-RENAME-PATHS acceptance 1) [R3]', () => {
-    const repo = mkdtempSync(path.join(tmpdir(), 'aidlc-rename-'));
+    const repo = tmpDir('aidlc-rename-');
     const git = (args: string[]) => {
       const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8', windowsHide: true });
       assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);

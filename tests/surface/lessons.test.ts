@@ -1,11 +1,11 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, reviewLessons, LESSON_LINE, REVIEW_LESSONS_MAX_BYTES } from '../../src/artifacts/lessons.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const ENTRY = { date: '2026-09-14', ref: 'T1-LOOP-LESSONS', kind: 'NEVER' as const, rule: 'skip the lesson step at CLOSE', source: 'PR #11' };
 const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE (source: PR #11)';
@@ -13,7 +13,7 @@ const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE 
 describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
   const dirs: string[] = [];
   const dir = () => {
-    const d = mkdtempSync(path.join(tmpdir(), 'aidlc-lessons-'));
+    const d = tmpDir('aidlc-lessons-');
     dirs.push(d);
     return d;
   };
@@ -155,7 +155,7 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
 
   /** A temp repository on the dry-run ship path with one card driven to CLOSE through the CLI. */
   function repoAtClose() {
-    const tmp = mkdtempSync(path.join(tmpdir(), 'aidlc-lessons-cli-'));
+    const tmp = tmpDir('aidlc-lessons-cli-');
     repos.push(tmp);
     mkdirSync(path.join(tmp, 'specs', 'tasks'), { recursive: true });
     writeFileSync(path.join(tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks', worktreeRoot: path.join(tmp, 'wt') }));

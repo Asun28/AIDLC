@@ -6,8 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runReviewPanel } from '../../src/review/pre-review.ts';
 import { runPreReview } from './_review-once.ts';
@@ -15,11 +14,12 @@ import { run, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { makeFixture, writeCard } from '../scenarios/_harness.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const PASS = '{"verdict":"pass","reasons":[]}\n';
 
 function tempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-reviewer-env-'));
+  const dir = tmpDir('aidlc-reviewer-env-');
   mkdirSync(path.join(dir, '.review'), { recursive: true });
   return dir;
 }

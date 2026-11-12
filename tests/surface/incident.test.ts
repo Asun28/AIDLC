@@ -1,10 +1,9 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import fs, { chmodSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../../src/maintain/incident.ts';
 import { breachIdentity, type BandBreach } from '../../src/maintain/bands.ts';
@@ -50,7 +49,7 @@ function childEnv(stateDir: string, cwd: string): NodeJS.ProcessEnv {
 }
 
 test('shouldFile files once, dedupes within the window, respects dismissal and refiles after the window', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-incident-'));
+  const dir = tmpDir('aidlc-incident-');
   const ledger = new IncidentLedger(dir);
   const first = ledger.shouldFile(breach, 6 * HOUR, t0);
   assert.equal(first.file, true);
@@ -73,7 +72,7 @@ test('shouldFile files once, dedupes within the window, respects dismissal and r
 });
 
 test('the dedupe window starts at each filing: a breach refiled after the window is deduped again until the next window ends', () => {
-  const ledger = new IncidentLedger(mkdtempSync(path.join(tmpdir(), 'aidlc-incident-')));
+  const ledger = new IncidentLedger(tmpDir('aidlc-incident-'));
   const id = breachIdentity(breach);
   assert.equal(ledger.shouldFile(breach, 6 * HOUR, t0).file, true);
   ledger.attachIntent(id, 'intent/x.md', t0);
@@ -90,7 +89,7 @@ test('the dedupe window starts at each filing: a breach refiled after the window
 });
 
 test('a record filed before filedAt existed keeps its window from firstSeen', () => {
-  const ledger = new IncidentLedger(mkdtempSync(path.join(tmpdir(), 'aidlc-incident-')));
+  const ledger = new IncidentLedger(tmpDir('aidlc-incident-'));
   const id = breachIdentity(breach);
   ledger.write({ [id]: { identity: id, firstSeen: t0, lastSeen: t0, count: 1, intentFile: 'intent/x.md', disposition: 'open' } });
   assert.equal(ledger.shouldFile(breach, 6 * HOUR, later(2)).file, false);
@@ -98,7 +97,7 @@ test('a record filed before filedAt existed keeps its window from firstSeen', ()
 });
 
 test('intentFromBreach + writeIncidentIntent produce a parseable incident intent', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-intent-'));
+  const dir = tmpDir('aidlc-intent-');
   const intent = intentFromBreach(
     breach,
     { summary: 'Test failure rate spiked after the 09:00 deploy.', affected: 'CI pipeline, deploy job', proposedOutcome: 'Quarantine the flaky test or revert the deploy.', openQuestions: ['Was the deploy the cause?'], evidence: ['gh run view 123'] },

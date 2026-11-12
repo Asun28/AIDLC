@@ -1,7 +1,7 @@
 import { after, describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type SpawnSyncOptions } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -515,7 +515,7 @@ function writtenMs(file: string): number | undefined {
  * Every fixture process is ended in a `finally`, so a red run neither waits 60 s nor leaves a sleeper.
  */
 async function raceFixture(runner: typeof run, mode: 'stay' | 'exit', boundMs: number, check: (r: FixtureRun) => void | Promise<void>, timeoutMs = TIMEOUT_MS): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-tree-'));
+  const dir = tmpDir('aidlc-exec-tree-');
   const pidFile = join(dir, 'sleeper.pid');
   const started = Date.now();
   let bound: NodeJS.Timeout | undefined;
@@ -661,7 +661,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
 describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the bound [R3]', () => {
   it('acceptance 5 [R3]: with a tree kill that kills nothing and a large input the root never reads, the runner process exits on its own after the receipt, the root still alive at the receipt', async (t) => {
     const b = await calibratedBounds(t);
-    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-tree-'));
+    const dir = tmpDir('aidlc-exec-tree-');
     const pidFile = join(dir, 'sleeper.pid');
     // The runner's node start, the 1500 ms timeout, TIMEOUT_GRACE_MS (2000) and 3000 ms of slack: only the slack scales.
     const boundMs = b.runnerExitBoundMs;
@@ -739,7 +739,7 @@ describe('T0-EXEC-TREE-KILL docs [R5] [R6] [R7]', () => {
 describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R2]', () => {
   it("acceptance 1: on the stay fixture with timeoutMs 1500 times the calibrated scale returns within 6 s times that scale and before the helper's backstop, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async (t) => {
     const b = await calibratedBounds(t);
-    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const dir = tmpDir('aidlc-exec-sync-tree-');
     const pidFile = join(dir, 'sleeper.pid');
     const args = [FIXTURE, 'stay', pidFile];
     try {
@@ -972,7 +972,7 @@ const OVERFLOW_ROOT = [
 
 describe('T0-EXEC-SYNC-TREE-KILL the 64 MiB output limit through the helper (R3 decision 2 N2) [R2]', () => {
   it('a command whose output passes 64 MiB is ended with its tree before its timeout and reported as the direct runner reports ENOBUFS', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const dir = tmpDir('aidlc-exec-sync-tree-');
     const [directPid, helperPid] = [join(dir, 'direct.pid'), join(dir, 'helper.pid')];
     try {
       const direct = runSync(process.execPath, ['-e', OVERFLOW_ROOT, FIXTURE, directPid], { cwd: tmpdir(), timeoutMs: 20_000 });
@@ -1010,7 +1010,7 @@ describe('T0-EXEC-SYNC-TREE-KILL timeouts past the largest timer delay (R3 decis
   });
 
   it('timeoutMs 2 147 483 648 with killTree refuses a real command, which never runs', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const dir = tmpDir('aidlc-exec-sync-tree-');
     const marker = join(dir, 'ran');
     try {
       const r = runSync(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.argv[1], "x")', marker], { timeoutMs: 2_147_483_648, killTree: true });

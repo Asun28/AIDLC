@@ -1,12 +1,12 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { GhProbe, GhProbeError } from '../../src/probes/gh.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
+import { tmpDir } from './helpers.ts';
 
 // Card T0-SHIP-MERGE-REFUSED (issue #85): a `gh pr merge` refusal after the base moved goes through the base sync again.
 const HEAD = 'a'.repeat(40);
@@ -32,7 +32,7 @@ type Call = { key: string; args: string[]; cwd?: string };
  * merge state read (JSON bodies, or a receipt); `resync` is what the second merge test reports.
  */
 function refusedShip(opts: { states: Array<string | Partial<ExecReceipt>>; resync?: Partial<ExecReceipt>; overrides?: Record<string, Step>; changelog?: { diff3: string } } = { states: [] }) {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-refused-'));
+  const root = tmpDir('aidlc-refused-');
   const wtRoot = path.join(root, 'wt');
   const wt = path.join(wtRoot, 'T1-A');
   mkdirSync(path.join(wt, '.review'), { recursive: true });

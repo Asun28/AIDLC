@@ -3,9 +3,8 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -15,6 +14,7 @@ import type { CardRun } from '../../src/core/types.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB, makeFixture, writeCard } from './_harness.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const CARD = 'T0-CW';
 const T = '2026-09-11T00:00:00.000Z';
@@ -382,7 +382,7 @@ test('T0-CANDIDATE-WITHDRAW acceptance 10: card attempt on a succeeded episode n
 
 test('T0-CANDIDATE-WITHDRAW acceptance 11: the CLI withdraws a bound candidate and requires a cause [R1]', () => {
   const bin = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'aidlc.js');
-  const tmp = mkdtempSync(path.join(tmpdir(), 'aidlc-withdraw-cli-'));
+  const tmp = tmpDir('aidlc-withdraw-cli-');
   try {
     mkdirSync(path.join(tmp, 'specs', 'tasks'), { recursive: true });
     writeFileSync(path.join(tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks', worktreeRoot: path.join(tmp, 'wt') }));

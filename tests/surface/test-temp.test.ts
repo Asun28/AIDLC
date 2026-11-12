@@ -36,7 +36,7 @@ function functionName(fn: ts.SignatureDeclaration, sf: ts.SourceFile): string {
   return '<anonymous>';
 }
 
-/** Every call of an fs mkdtemp function in `text`, and every reference to one that is not called, outside the four helpers of R2. */
+/** Every call of a TARGETS function of fs in `text`, and every reference to one that is not called, outside the four helpers of R2. */
 function scanSource(file: string, text: string): Site[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const fsObjects = new Set<string>();

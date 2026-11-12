@@ -3,8 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as lazy from '../../src/hooks/lazy.ts';
@@ -14,6 +13,7 @@ import { addMs, CardRun, Goal } from '../../src/core/types.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { hostName, resolveRepoIdentity, statePathsFromRoot } from '../../src/state/paths.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const counterUrl = pathToFileURL(path.join(root, 'bench', 'counter.ts')).href;
@@ -31,7 +31,7 @@ function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 function withTemp<T>(fn: (dir: string) => T): T {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'aidlc-hook-lazy-')));
+  const dir = realpathSync.native(tmpDir('aidlc-hook-lazy-'));
   try {
     return fn(dir);
   } finally {

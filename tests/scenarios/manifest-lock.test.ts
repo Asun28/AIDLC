@@ -1,13 +1,13 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EvidenceStore, Manifest, type ManifestEntry } from '../../src/audit/manifest.ts';
 import { StoreError } from '../../src/state/store.ts';
 import { makeFixture, writeCard, goalForCards, type Fixture } from './_harness.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 /** The CLI from the sources, never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -26,7 +26,7 @@ after(() => {
 
 /** A temporary directory the after hook removes. */
 function tempDir(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-manifest-lock-'));
+  const dir = tmpDir('aidlc-manifest-lock-');
   temps.push(dir);
   return dir;
 }

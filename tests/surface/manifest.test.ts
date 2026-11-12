@@ -1,14 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { EvidenceStore, Manifest, fileSha256 } from '../../src/audit/manifest.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const now = '2026-09-11T00:00:00.000Z';
 
 test('retain copies artifacts into the evidence tree and records their digest', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-evidence-'));
+  const root = tmpDir('aidlc-evidence-');
   const store = new EvidenceStore(path.join(root, 'evidence'), 'g1');
   let m = store.load('g1', 0, 0, now);
   assert.equal(m.entries.length, 0);
@@ -33,7 +33,7 @@ test('retain copies artifacts into the evidence tree and records their digest', 
 });
 
 test('seal binds the journal head; verifySeal detects tampering; retain after seal throws', () => {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-evidence-'));
+  const root = tmpDir('aidlc-evidence-');
   const store = new EvidenceStore(path.join(root, 'evidence'), 'g2');
   let m = store.retain(store.load('g2', 1, 2, now), { id: 'a', kind: 'artifact', content: 'a' });
   assert.equal(store.verifySeal(m), false);

@@ -1,9 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir } from 'node:os';
 import { ZodError } from 'zod';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
 import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, PreReviewConfig, PreReviewFallback, preReviewFallbackSettings, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
@@ -308,7 +307,7 @@ describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptanc
     for (const file of ['aidlc.config.json', path.join('templates', 'aidlc.config.json')]) assert.doesNotThrow(() => ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, file), 'utf8'))), file);
   });
   test('aidlc doctor on a whitespace-only preReview.answerMarker prints config: ERROR naming the path and exits 1, with no stack trace [R2]', () => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-config-error-'));
+    const dir = tmpDir('aidlc-config-error-');
     try {
       const doctor = (config: string) => {
         writeFileSync(path.join(dir, 'aidlc.config.json'), config, 'utf8');
@@ -347,7 +346,7 @@ describe('ConfigError and the doctor catch (T0-PARSE-GUARD-FOLLOWUPS)', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   /** A temporary main checkout with `write` applied to its aidlc.config.json path. */
   const inCheckout = (write: (file: string) => void, check: (dir: string) => void): void => {
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-config-error-'));
+    const dir = tmpDir('aidlc-config-error-');
     try {
       write(path.join(dir, 'aidlc.config.json'));
       check(dir);

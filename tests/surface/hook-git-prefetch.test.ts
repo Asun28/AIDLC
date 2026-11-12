@@ -4,10 +4,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
@@ -24,7 +24,7 @@ function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 function withTemp<T>(fn: (dir: string) => T, prefix = 'aidlc-git-prefetch-'): T {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  const dir = realpathSync.native(tmpDir(prefix));
   try {
     return fn(dir);
   } finally {

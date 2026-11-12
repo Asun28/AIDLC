@@ -1,7 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
@@ -11,6 +10,7 @@ import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { makeFixture, writeCard, goalForCards } from '../scenarios/_harness.ts';
 import { classifyCiFailure } from '../../src/core/ci-policy.ts';
+import { tmpDir } from './helpers.ts';
 
 const HEAD = 'a'.repeat(40);
 const BASE_OID = 'd'.repeat(40);
@@ -30,7 +30,7 @@ const CONFLICT_TREE = `${'e'.repeat(40)}\n100644 ${'1'.repeat(40)} 1\tCHANGELOG.
 const CONFLICT_MERGE = 'Auto-merging CHANGELOG.md\nCONFLICT (content): Merge conflict in CHANGELOG.md\nAutomatic merge failed; fix conflicts and then commit the result.\n';
 
 function fixture(verdict?: Record<string, unknown>) {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-ghship-'));
+  const root = tmpDir('aidlc-ghship-');
   const wtRoot = path.join(root, 'wt');
   const wt = path.join(wtRoot, 'T1-A');
   mkdirSync(path.join(wt, '.review'), { recursive: true });
@@ -1388,7 +1388,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
   });
 
   test('the resolver reads the diff3 file real git writes for two entries added at the top of Unreleased', () => {
-    const repo = mkdtempSync(path.join(tmpdir(), 'aidlc-changelog-union-'));
+    const repo = tmpDir('aidlc-changelog-union-');
     dirs.push(repo);
     const git = (...args: string[]) => {
       const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' });

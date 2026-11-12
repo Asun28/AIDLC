@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { lessonTerms, matchedLessons, reviewLessons, type ReviewLessons } from '../../src/artifacts/lessons.ts';
@@ -8,11 +8,12 @@ import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import { runSync, type ExecReceipt } from '../../src/probes/exec.ts';
 import { buildReviewPrompt, type PriorFinding } from '../../src/review/pre-review.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const rule = (day: number, ref: string, text: string, kind = 'ALWAYS') => `- 2026-01-${String(day).padStart(2, '0')} ${ref}: ${kind} ${text} (source: PR ${day})`;
 
 function withFile(lines: string[], body: (file: string) => void): void {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-match-'));
+  const dir = tmpDir('aidlc-match-');
   try {
     const file = path.join(dir, 'LESSONS.md');
     writeFileSync(file, `# Lessons\n\n${lines.join('\n')}\n`);
@@ -92,7 +93,7 @@ test('T1-LESSON-MATCH acceptance 3: a term matches the diff case-sensitively [R3
 });
 
 function repo(body: (root: string, git: (...args: string[]) => string) => void): void {
-  const root = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-match-git-')));
+  const root = realpathSync.native(tmpDir('aidlc-match-git-'));
   const git = (...args: string[]): string => {
     const r = runSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root });
     assert.equal(r.exitCode, 0, `git ${args.join(' ')}: ${r.stderr}`);
@@ -214,7 +215,7 @@ test('T1-LESSON-MATCH acceptance 4: a rule takes the files of commits naming its
 });
 
 test('T1-LESSON-MATCH acceptance 5: the prompt names what a matched section left out, and the newest sentence is unchanged [R5]', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-match-card-'));
+  const dir = tmpDir('aidlc-match-card-');
   try {
     const cards = path.join(dir, 'specs', 'tasks');
     mkdirSync(cards, { recursive: true });

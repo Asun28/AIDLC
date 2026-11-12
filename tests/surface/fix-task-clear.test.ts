@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG, fixTaskMarker, protectTests } from '../../src/hooks/index.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 /** The package entry the card names; it runs the sources when no build is at least as new as them (`bin/resolve-entry.js`). */
@@ -19,7 +19,7 @@ after(() => {
 
 /** A temp git repository with its own state directory; the environment is built here, so no AIDLC_FIX_TASK of the caller leaks in. */
 function repo(): { cwd: string; stateDir: string; env: NodeJS.ProcessEnv; marker: string } {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-fix-task-'));
+  const cwd = tmpDir('aidlc-fix-task-');
   temps.push(cwd);
   const init = spawnSync('git', ['init', '-q'], { cwd, encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);

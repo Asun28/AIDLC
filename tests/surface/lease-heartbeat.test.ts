@@ -4,9 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchHook } from '../../src/hooks/entry.ts';
@@ -14,6 +13,7 @@ import { renewSessionCardLeases, type HookEvent } from '../../src/hooks/index.ts
 import { DEFAULT_LEASE_TTL_MS, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { MINUTE_MS, addMs, type ActorIdentity, type Lease } from '../../src/core/types.ts';
 import { hostName } from '../../src/state/paths.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const NOW = '2026-11-09T12:00:00.000Z';
@@ -28,7 +28,7 @@ const marker = (session: string): string => createHash('sha256').update(session)
 const windowOf = (at: string): number => Math.floor(Date.parse(at) / 60_000);
 
 function withState<T>(fn: (s: { cwd: string; env: NodeJS.ProcessEnv; stateDir: string; leases: LeaseStore }) => T): T {
-  const cwd = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-heartbeat-')));
+  const cwd = realpathSync.native(tmpDir('aidlc-heartbeat-'));
   const stateDir = path.join(cwd, 'state');
   mkdirSync(path.join(stateDir, 'leases'), { recursive: true });
   try {

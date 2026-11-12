@@ -1,11 +1,11 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG, runHook, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook } from '../../src/hooks/entry.ts';
+import { tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -24,7 +24,7 @@ after(() => {
 });
 
 function context(frozenPaths?: string[]): { cwd: string; env: NodeJS.ProcessEnv } {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-ps-read-'));
+  const cwd = tmpDir('aidlc-ps-read-');
   dirs.push(cwd);
   if (frozenPaths) writeFileSync(path.join(cwd, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths } }));
   return { cwd, env: { PATH: process.env['PATH'], AIDLC_STATE_DIR: path.join(cwd, 'state') } };
