@@ -162,3 +162,12 @@ The contract of the scan, closed (R2 as this card reads it; what is not on this 
 Reverts that must each fail its row: `skipOuterExpressions` removed at the object of a property access, at a callee and at an initializer (three runs); `default` not treated as the module at the import specifier, in a binding pattern and as a property (three runs); the import-equals form not bound; type positions not skipped.
 
 Before the second formal decision the coordinator has the candidate pre-reviewed against this closed list until a pre-review finds no form on the list that the scan misses.
+
+## Planner rulings of 2026-11-12 during the repair after R3 decision 1
+
+Two points the implementer raised while applying the rulings after R3 decision 1; both change those rulings.
+
+| Point | Ruling |
+|---|---|
+| `ts.skipOuterExpressions` is in the TypeScript 5.9.3 runtime and not in its public type declarations; the scan reached it through a cast | The planner named a function that is not public API. The scan does not call it. A local function removes the same wrappers through the five public node tests (`ts.isParenthesizedExpression`, `ts.isAsExpression`, `ts.isTypeAssertionExpression`, `ts.isNonNullExpression`, `ts.isSatisfiesExpression`), in a loop, at every place the rulings name. Where those rulings and the contract say `ts.skipOuterExpressions`, read: that local function. The rows and reverts are unchanged |
+| With type positions skipped, removing the exclusion of type-only imports leaves every row green: an `import type` name can only stand in a type position in code that compiles, and that position is skipped anyway | The exclusion of type-only imports is removed as redundant; the earlier row (a type-only import used in a type position is not reported) stays and is covered by the rule on type positions. No row with code that does not compile is added |
