@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
+import { IsoTimestamp, type HealthSignal } from '../core/types.ts';
 
 export const OperationRole = z.enum(['build', 'package', 'deploy', 'status', 'environment', 'health', 'recover', 'migration-status', 'migration-apply', 'backup-verify', 'restore']);
 export type OperationRole = z.infer<typeof OperationRole>;
@@ -164,6 +165,57 @@ export function executeOperation(binding: OperationBinding, target: string | und
   if (binding.async) return { receipt, providerOperationId: id, status: 'issued', detail: 'asynchronous operation issued; exit zero is not completion' };
   if (binding.successPattern && !new RegExp(binding.successPattern, 'm').test(text)) return { receipt, providerOperationId: id, status: 'UNKNOWN', detail: 'exit zero but success pattern not observed' };
   return { receipt, providerOperationId: id, status: 'succeeded', detail: 'exit zero and success criteria observed' };
+}
+
+/**
+ * The report a `health` operation prints as the last non-blank line of its stdout (card T0-HEALTH-OP-SIGNALS): the environment
+ * and candidate it measured and one entry per signal. Unknown keys are dropped; any malformed entry fails the whole report.
+ */
+export const HealthReport = z.object({
+  environment: z.string().min(1),
+  candidate: z.string().min(1),
+  signals: z.array(
+    z.object({
+      name: z.string(),
+      samples: z.number().int().nonnegative(),
+      observed: z.number().optional(),
+      lastSampleAt: IsoTimestamp.refine((at) => !Number.isNaN(Date.parse(at)), 'must name a real time').optional(),
+    }),
+  ),
+});
+export type HealthReport = z.infer<typeof HealthReport>;
+
+/** The report on the last line of `stdout` whose `trim()` is not empty, trimmed; `undefined` when that line is not JSON or not a `HealthReport`. */
+export function healthReportOf(stdout: string): HealthReport | undefined {
+  const line = stdout
+    .split('\n')
+    .filter((l) => l.trim() !== '')
+    .pop()
+    ?.trim();
+  if (line === undefined) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  const parsed = HealthReport.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * One signal per declared entry, in declaration order, with the declaration's name, source, threshold, minimum samples and
+ * staleness. The observation comes from the one report entry whose `name` is the declared name exactly; with no report, no
+ * such entry or two of them, the signal is unavailable (samples 0, no observation).
+ */
+export function healthSignals(declared: DeliveryOpsConfig['health'], report: HealthReport | undefined): HealthSignal[] {
+  return declared.map((d) => {
+    const base = { name: d.name, source: d.source, threshold: d.threshold, minSamples: d.minSamples, maxStalenessMs: d.maxStalenessMs, synthetic: false };
+    const hits = report ? report.signals.filter((s) => s.name === d.name) : [];
+    const hit = hits.length === 1 ? hits[0]! : undefined;
+    if (!hit) return { ...base, samples: 0, probeAvailable: false };
+    return { ...base, samples: hit.samples, ...(hit.observed === undefined ? {} : { observed: hit.observed }), ...(hit.lastSampleAt === undefined ? {} : { lastSampleAt: hit.lastSampleAt }), probeAvailable: true };
+  });
 }
 
 export function lookupOperation(binding: OperationBinding, providerOperationId: string, root: string, runner: SyncRunner = runSync): { status: 'succeeded' | 'failed' | 'running' | 'UNKNOWN'; receipt?: ExecReceipt; detail: string } {

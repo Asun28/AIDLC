@@ -4,7 +4,10 @@ Development is the default target and finishes without any of this. Nothing
 in this file deploys anything by itself. An operation runs only when it is
 bound in `aidlc.ops.json`, the goal's target enables it, an intent is
 recorded, and the matching authority exists. The scaffold never auto-deploys;
-CD is downstream opt-in.
+CD is downstream opt-in. The `health` operation that `aidlc release next`
+runs in OBSERVE is the exception: health dispatch checks neither publication
+or effect flags nor authority, records no operation and performs no
+asynchronous reconciliation (see Health).
 
 ## Operation roles (not invented flags)
 
@@ -48,13 +51,18 @@ Record intent before issuing (`aidlc op intent`), capture the provider
 operation id, then reconcile through `statusLookup`. A lost response means
 "look it up", never "retry". Outcomes the provider cannot resolve stay
 UNKNOWN and block dependent steps. Exactly-once requires an idempotency key
-or unambiguous status lookup; without either the unattended path stops.
+or unambiguous status lookup; without either the unattended path stops. This
+applies to the operations `release next` issues; health dispatch performs no
+asynchronous reconciliation, and an `async: true` health binding gives
+unavailable signals (see Health).
 
 ## Tags and publication
 Inspect tag- or release-triggered workflows before any tag action. A local
 tag, a pushed tag and a published release are three effects; the ones that
 trigger external publication or CD sit behind production authority. Mark
-such bindings `triggersPublication: true`.
+such bindings `triggersPublication: true`. Health dispatch checks neither
+publication or effect flags nor authority: bind a read-only, repeatable
+synchronous probe as `health`, never a command with such an effect.
 
 ## Ownership
 One owner per environment and per database (aidlc leases). Deployments and
@@ -68,6 +76,14 @@ staleness bound, window and maximum wait before deployment. Evaluation is
 PASS / BREACH / INSUFFICIENT_DATA; missing telemetry, stale data, no traffic
 or an unavailable probe is never PASS. A soak duration is a setting, not a
 proof.
+
+For `aidlc release next` the declared signals come from the bound `health` operation (card T0-HEALTH-OP-SIGNALS). Once `release next` reaches OBSERVE (the reconciliation of unresolved operations comes first), and when this file declares at least one signal under `health`, binds the `health` role and the attempt names its environment, it checks that the first `health` binding's directory is an existing directory and then runs that binding once per call, in that directory, with the attempt's environment as its target by `targetSelection`, under the binding's timeout and patterns and with no idempotency key. Health dispatch checks neither publication or effect flags nor authority, records no operation, takes no lease, appends no journal event and performs no asynchronous reconciliation; the evaluation journals `HEALTH_EVALUATED` as before. Bind a read-only, repeatable synchronous probe. The last non-blank line of the command's standard output must be one JSON object:
+
+```json
+{"environment":"production","candidate":"<candidate digest>","signals":[{"name":"http_5xx_rate","observed":0.004,"samples":42,"lastSampleAt":"2026-09-11T00:09:30.000Z"}]}
+```
+
+`environment` names the attempt's environment, letter case and `\` against `/` aside, as its lease does; `candidate` is the attempt's candidate digest, exactly. Each entry of `signals` gives a signal's `name` and `samples` (a safe integer, 0 or more) and, when there is data, `observed` (a finite number) and `lastSampleAt` (a UTC timestamp in the form above that names a real time). The source, threshold, minimum samples and staleness of a signal come from `health` here, never from the output; a declared signal reads the one entry whose `name` is exactly its own, and other keys are dropped. Only schema-valid entries with undeclared names are ignored; any malformed entry invalidates the report. Unsuccessful execution receipts and invalid reports produce unavailable signals, which are INSUFFICIENT_DATA and never PASS: every declared signal is unavailable when the operation is not bound, the attempt names no environment, the binding's directory is missing, is a file, or cannot be checked as a directory, the command does not succeed (a failure pattern or an exit other than 0, a timeout, a success pattern not seen, or `async: true`, whose exit zero only means issued; the patterns read standard output and standard error), or the last non-blank stdout line is not such an object or names another environment or candidate; one signal is unavailable when that line does not name it or names it twice. Runner exceptions propagate without completing the evaluation. Set a `timeoutMs` of a few minutes on the binding: `release next` waits for the command, and the default timeout is 30 minutes. With no declared signals, `release next` runs no health command and OBSERVE stays INSUFFICIENT_DATA; the maximum wait is then 30 minutes and a newly constructed fallback window is 10 minutes, and the first `release next` that reaches OBSERVE at or after the end of the window plus the maximum wait stops the attempt with STOP/release-health.
 
 ## Recovery
 Application rollback and database restore are separate effects. Verify the

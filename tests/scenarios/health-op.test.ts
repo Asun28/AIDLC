@@ -182,7 +182,7 @@ test('unsuccessful execution receipts and invalid reports produce unavailable si
   const { fx, goalId } = setup(t);
   writeFileSync(path.join(fx.tmp, 'health-file'), 'not a directory');
   const base = (fx: Fx): string => printed(body(fx));
-  const lines = (fx: Fx, last: string): Receipt => ({ exitCode: 0, stdout: `probe start\n${last}\n` });
+  const lines = (last: string): Receipt => ({ exitCode: 0, stdout: `probe start\n${last}\n` });
   const schema = (label: string, report: (fx: Fx) => Entry): Row => ({ label: `schema: ${label}`, answer: (fx) => ({ exitCode: 0, stdout: printed(report(fx)) }) });
   const noBinding: Row = { label: 'no binding', ops: { bindings: [] }, noCall: true };
   const rows: Row[] = [
@@ -203,10 +203,10 @@ test('unsuccessful execution receipts and invalid reports produce unavailable si
     { label: 'stdout empty', answer: () => ({ exitCode: 0, stdout: '' }) },
     { label: 'stdout blank lines', answer: () => ({ exitCode: 0, stdout: '\n  \n\t\n' }) },
     { label: 'report then a line done', answer: (fx) => ({ exitCode: 0, stdout: `${base(fx)}done\n` }) },
-    { label: 'last line {', answer: (fx) => lines(fx, '{') },
-    { label: 'last line []', answer: (fx) => lines(fx, '[]') },
-    { label: 'last line null', answer: (fx) => lines(fx, 'null') },
-    { label: 'last line "text"', answer: (fx) => lines(fx, '"text"') },
+    { label: 'last line {', answer: () => lines('{') },
+    { label: 'last line []', answer: () => lines('[]') },
+    { label: 'last line null', answer: () => lines('null') },
+    { label: 'last line "text"', answer: () => lines('"text"') },
     schema('environment absent', (fx) => body(fx, { environment: undefined })),
     schema('environment 7', (fx) => body(fx, { environment: 7 })),
     schema("environment ''", (fx) => body(fx, { environment: '' })),
@@ -236,7 +236,7 @@ test('unsuccessful execution receipts and invalid reports produce unavailable si
   const controls: [string, (fx: Fx) => Receipt, HealthChange?][] = [
     ['the base report', passing],
     ['CRLF line ends', (fx) => ({ exitCode: 0, stdout: base(fx).replace(/\n/g, '\r\n') })],
-    ['two blank lines after the report', (fx) => ({ exitCode: 0, stdout: `${base(fx)}\n\n` })],
+    ['two blank lines after the report', (fx) => ({ exitCode: 0, stdout: `${base(fx)}  \n\t\n` })],
     ['spaces around the report line', (fx) => ({ exitCode: 0, stdout: `probe start\n   ${JSON.stringify(body(fx))}   \n` })],
     ['success pattern on stdout', (fx) => ({ exitCode: 0, stdout: `probe ok\n${base(fx)}` }), { binding: { successPattern: 'probe ok' } }],
     ['success pattern on stderr only', (fx) => ({ exitCode: 0, stdout: base(fx), stderr: 'probe ok\n' }), { binding: { successPattern: 'probe ok' } }],
