@@ -270,3 +270,16 @@ Exit 0: typecheck clean; `# tests 244`, `# suites 17`, `# pass 242`, `# fail 0`,
 
 ### Size
 `git diff --shortstat origin/main...HEAD` on e2963a8a: 15 files changed, 659 insertions(+), 30 deletions(-) (689 lines, budget 850); this section adds about 85. card-loop.md: 6,496 bytes before, 6,494 after, both copies identical and ASCII.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed these points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| The rows of acceptance 7 and the held-lock row of acceptance 9 compare every file of the evidence directory before and after, where the card names the manifest and the journal bytes (`state()` of tests/scenarios/seal-binding.test.ts) | Accepted and kept. The comparison is stricter than the card's wording and holds on the code: a refused seal changes nothing under the evidence directory |
+| src/loop/card-runner.ts changes 7 lines where the size exception counts 6: `passed` stays a variable of its own at :3177-3178 | Accepted. The count in the size exception is an estimate; the hunk is the close narration of R9 (b) and nothing else |
+| Fixture choices the card does not fix: the `' '` row of acceptance 2 and rows (a) to (g) of acceptance 4 seal with the input digest; rows (d) to (g) of acceptance 4 assert the new detail text, so on main they would fail as well as (a) to (c) and (h) | Accepted. The RED run on main stops at row (a); that rows (d) to (g) would also fail there is the implementer's reading and is not claimed as run |
+| The commit df5b4acb, between the RED commit and the source commit, corrects one row of the new acceptance 5 test (the intent without a card passed `undefined` to a parameter with a default, so the intent still carried a card id; it now passes `null`) | Accepted. It is a correction of a new test before any source change; acceptance 5 passes on main, as the card says, and was run again against main's verifier.ts and manifest.ts after the correction |
+| Two revert rows are red by a thrown error, not by an assertion (R4-l: `d.slice is not a function`; R8-a: the mutant's own error) | Accepted as evidence that the revert is detected. The RED receipts of the acceptance items are assertion failures; these two are mutation rows |
+| Two clauses have no mutant because nothing observable changes: R3 "such an entry is not compared" and R4 "an empty cardId takes (b)" | Accepted as stated in the evidence |
