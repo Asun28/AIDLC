@@ -205,15 +205,26 @@ function isDiscardedCall(once: ts.PropertyAccessExpression): boolean {
   return ts.isCallExpression(call) && call.expression === once && ts.isExpressionStatement(call.parent) && call.parent.expression === call;
 }
 
+/** The name a variable read of the second shape must have. */
+const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
+
+/** The variable an access to `process.env` names: its property name, or a string or substitution-free template key; else undefined. */
+function variableName(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined {
+  if (ts.isPropertyAccessExpression(access)) return access.name.text;
+  const key = access.argumentExpression;
+  return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : undefined;
+}
+
 /** Whether `env`, a `process.env` node, has one of the three shapes of rule (c). */
 function allowedEnvShape(env: ts.PropertyAccessExpression): boolean {
   const p = env.parent;
   // 1. The operand of a spread in an object literal that is read, not assigned to.
   if (ts.isSpreadAssignment(p)) return !isAssignedPattern(p.parent);
-  // 2. The object of a property or element access that is a direct operand of ||, &&, ??, === or !==.
+  // 2. The object of a property or element access that reads a variable by its name and is a direct operand of ||, &&, ??, === or !==.
   if ((ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === env) {
     const b = p.parent;
-    return ts.isBinaryExpression(b) && ENV_READ_OPERATORS.has(b.operatorToken.kind) && (b.left === p || b.right === p);
+    const name = variableName(p);
+    return name !== undefined && ENV_NAME.test(name) && ts.isBinaryExpression(b) && ENV_READ_OPERATORS.has(b.operatorToken.kind) && (b.left === p || b.right === p);
   }
   // 3. An argument of a call whose callee is the identifier renewSessionCardLeases.
   return ts.isCallExpression(p) && p.arguments.some((a) => a === env) && ts.isIdentifier(p.expression) && p.expression.text === 'renewSessionCardLeases';
