@@ -19,7 +19,9 @@ const stringValue = (node: ts.Node): string | undefined => (ts.isStringLiteral(n
 /** The member name of `x.name` or `x['name']`, else undefined. */
 const memberName = (node: ts.Node): string | undefined =>
   ts.isPropertyAccessExpression(node) ? node.name.text : ts.isElementAccessExpression(node) ? stringValue(node.argumentExpression) : undefined;
-const isFunctionLike = (node: ts.Node): node is ts.SignatureDeclaration =>
+/** `ts.skipOuterExpressions` (in the compiler's runtime API, not in its declarations): removes parentheses, `as`, angle-bracket and non-null assertions and `satisfies`. */
+const skipOuter = (ts as unknown as { skipOuterExpressions(node: ts.Node): ts.Node }).skipOuterExpressions;
+const isFunctionLike =(node: ts.Node): node is ts.SignatureDeclaration =>
   ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node);
 
 /** The name a report gives a function: its declared or bound name, `callback of <callee>` for an argument, `<name> (immediately invoked)`, else `<anonymous>`. */
@@ -43,11 +45,12 @@ function scanSource(file: string, text: string): Site[] {
   const bound = new Map<string, string>();
   const isRequireOfFs = (node: ts.Node): boolean =>
     ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'require' && node.arguments.length === 1 && FS_MODULES.has(stringValue(node.arguments[0]!) ?? '');
+  /** An fs module object: a bound name, `.promises` or `.default` of one, `await import(m)` or `require(m)`. The caller skips outer expressions. */
   const isFsObject = (node: ts.Node): boolean => {
-    if (ts.isParenthesizedExpression(node)) return isFsObject(node.expression);
     if (ts.isIdentifier(node)) return fsObjects.has(node.text);
-    if (memberName(node) === 'promises') return isFsObject((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression);
-    if (ts.isAwaitExpression(node)) return isImportOfFs(node.expression);
+    const member = memberName(node);
+    if (member === 'promises' || member === 'default') return isFsObject(skipOuter((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression));
+    if (ts.isAwaitExpression(node)) return isImportOfFs(skipOuter(node.expression));
     return isRequireOfFs(node);
   };
   /** `import('<fs module>')`, read as `require` is when awaited. */
@@ -57,20 +60,22 @@ function scanSource(file: string, text: string): Site[] {
   const target = (node: ts.Node): string | undefined => {
     if (ts.isIdentifier(node)) return bound.get(node.text);
     const name = memberName(node);
-    return name !== undefined && TARGETS.has(name) && isFsObject((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression) ? name : undefined;
+    return name !== undefined && TARGETS.has(name) && isFsObject(skipOuter((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)) ? name : undefined;
   };
   const bindName = (local: string, imported: string): void => {
     if (TARGETS.has(imported)) bound.set(local, imported);
     else if (imported === 'promises') fsObjects.add(local);
   };
-  /** Binds the names a destructuring of an fs object declares; a nested pattern under `promises` destructures an fs object too. */
+  /** Binds the names a destructuring of an fs object declares; `default` is the module itself, and a nested pattern under `promises` or `default` destructures an fs object too. */
   const bindPattern = (pattern: ts.ObjectBindingPattern): void => {
     for (const el of pattern.elements) {
       const prop = el.propertyName ?? el.name;
       const member = ts.isIdentifier(prop) || ts.isStringLiteral(prop) ? prop.text : ts.isComputedPropertyName(prop) ? stringValue(prop.expression) : undefined;
       if (member === undefined) continue;
-      if (ts.isIdentifier(el.name)) bindName(el.name.text, member);
-      else if (ts.isObjectBindingPattern(el.name) && member === 'promises') bindPattern(el.name);
+      if (ts.isIdentifier(el.name)) {
+        if (member === 'default') fsObjects.add(el.name.text);
+        else bindName(el.name.text, member);
+      } else if (ts.isObjectBindingPattern(el.name) && (member === 'promises' || member === 'default')) bindPattern(el.name);
     }
   };
   const collect = (node: ts.Node): void => {
@@ -78,10 +83,17 @@ function scanSource(file: string, text: string): Site[] {
       const { name, namedBindings } = node.importClause;
       if (name) fsObjects.add(name.text);
       if (namedBindings && ts.isNamespaceImport(namedBindings)) fsObjects.add(namedBindings.name.text);
-      if (namedBindings && ts.isNamedImports(namedBindings)) for (const el of namedBindings.elements) if (!el.isTypeOnly) bindName(el.name.text, (el.propertyName ?? el.name).text);
+      if (namedBindings && ts.isNamedImports(namedBindings)) {
+        for (const el of namedBindings.elements) {
+          if (el.isTypeOnly) continue;
+          const imported = (el.propertyName ?? el.name).text;
+          if (imported === 'default') fsObjects.add(el.name.text);
+          else bindName(el.name.text, imported);
+        }
+      }
     } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && FS_MODULES.has(stringValue(node.moduleReference.expression) ?? '')) {
       fsObjects.add(node.name.text);
-    } else if (ts.isVariableDeclaration(node) && node.initializer && isFsObject(node.initializer)) {
+    } else if (ts.isVariableDeclaration(node) && node.initializer && isFsObject(skipOuter(node.initializer))) {
       if (ts.isIdentifier(node.name)) fsObjects.add(node.name.text);
       else if (ts.isObjectBindingPattern(node.name)) bindPattern(node.name);
     }
@@ -100,11 +112,13 @@ function scanSource(file: string, text: string): Site[] {
   };
   const sites: Site[] = [];
   const visit = (node: ts.Node): void => {
-    const name = ts.isIdentifier(node) && declares(node) ? undefined : target(node);
+    // An identifier in a type position or a type query is not a runtime reference.
+    const typeOnly = (id: ts.Identifier): boolean => ts.isPartOfTypeNode(id) || ts.findAncestor(id, ts.isTypeQueryNode) !== undefined;
+    const name = ts.isIdentifier(node) && (declares(node) || typeOnly(node)) ? undefined : target(node);
     if (name !== undefined) {
-      // Parentheses and a non-null assertion around the callee are looked through: `(f)(x)` and `f!(x)` call f.
+      // The callee of a call is read after skipOuter: `(f)(x)`, `f!(x)` and `(f as F)(x)` call f.
       let callee: ts.Node = node;
-      while (ts.isParenthesizedExpression(callee.parent) || ts.isNonNullExpression(callee.parent)) callee = callee.parent;
+      while (skipOuter(callee.parent) === node) callee = callee.parent;
       const called = ts.isCallExpression(callee.parent) && callee.parent.expression === callee;
       let fn: ts.Node | undefined = node.parent;
       while (fn && !isFunctionLike(fn)) fn = fn.parent;
@@ -187,6 +201,8 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan finds every form [R2]', () => {
     ['tests/forms/fs-promises-namespace.ts', "import * as fsp from 'fs/promises';\nawait fsp.mkdtemp('x');\n", [[2, 'module scope', 'call', 'mkdtemp']]],
     ['tests/forms/nested-default.ts', "const { default: { mkdtempSync: make } } = await import('node:fs');\nmake('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
     ['tests/forms/pattern-default-value.ts', "import fs from 'node:fs';\nconst fallback = (p: string) => p;\nconst { mkdtempSync: make = fallback } = fs;\nmake('x');\n", [[4, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/access-reference.ts', "import fs from 'node:fs';\nconst make = fs.mkdtempSync;\nmake('x');\n", [[2, 'module scope', 'reference', 'mkdtempSync']]],
+    ['tests/forms/default-element.ts', "import * as ns from 'node:fs';\nns['default'].mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
   const actual = rows.flatMap(([file, text], i) => {
