@@ -26,7 +26,7 @@ const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table i
 const msg = (id: string) => `a successful attempt on card ${id} needs a DoD receipt: the attempt carries none or a blank one, and nothing was recorded; record it again with --dod-receipt "<command: exit code and counts>"`;
 
 type Input = Parameters<CardRunner['recordAttempt']>[3];
-type Owing = CardRun & { journalOwed?: { key: string; type: string }[] };
+type Owing = CardRun & { journalOwed?: Record<'key' | 'type', string>[] };
 
 interface Ctx {
   fx: Fixture;
