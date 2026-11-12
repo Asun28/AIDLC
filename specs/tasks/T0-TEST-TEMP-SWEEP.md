@@ -1,7 +1,7 @@
 ---
 id: T0-TEST-TEMP-SWEEP
 title: Every remaining mkdtempSync site of tests/ uses the registering tmpDir helper, and a check fails on any mkdtemp call outside the four helpers that register their removal
-status: todo
+status: merged
 branch: T0-TEST-TEMP-SWEEP
 worktree: D:\wt\AIDLC\T0-TEST-TEMP-SWEEP
 allow_paths:
@@ -531,3 +531,15 @@ Coordinator verification:
 - At 1fcb3a32, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/ci-policy.test.ts, tests/core/journal-event-types.test.ts, tests/infra/base-sync.test.ts, tests/infra/exec.test.ts, tests/infra/git.test.ts, tests/infra/github-ship-merge-refused.test.ts, tests/infra/github-ship.test.ts, tests/infra/init.test.ts, tests/scenarios/board-watch.test.ts, tests/scenarios/candidate-withdraw.test.ts, tests/scenarios/context-pack.test.ts, tests/scenarios/evidence-id.test.ts, tests/scenarios/manifest-lock.test.ts, tests/scenarios/mutants-review.test.ts, tests/scenarios/pre-existing.test.ts, tests/scenarios/t1-plan.test.ts, tests/surface/approver.test.ts, tests/surface/bench.test.ts, tests/surface/bounds.test.ts, tests/surface/card.test.ts, tests/surface/config.test.ts, tests/surface/fix-task-clear.test.ts, tests/surface/hook-git-prefetch.test.ts, tests/surface/hook-lazy.test.ts, tests/surface/hook-name.test.ts, tests/surface/incident.test.ts, tests/surface/init-base-ci.test.ts, tests/surface/init-no-package.test.ts, tests/surface/lease-heartbeat.test.ts, tests/surface/lesson-match.test.ts, tests/surface/lessons.test.ts, tests/surface/manifest.test.ts, tests/surface/mutants.test.ts, tests/surface/ops-intent.test.ts, tests/surface/outcome-github.test.ts, tests/surface/outcome-ingest.test.ts, tests/surface/outcome-usage.test.ts, tests/surface/ps-guard-read.test.ts, tests/surface/ps-guard-wire.test.ts, tests/surface/r2-pass-notes.test.ts, tests/surface/readme.test.ts, tests/surface/review-bench-export.test.ts, tests/surface/review-bench.test.ts, tests/surface/reviewer-env.test.ts, tests/surface/security-check.test.ts, tests/surface/stats.test.ts, tests/surface/test-temp.test.ts): tests 1000, pass 989, fail 0, skipped 11.
 - Windows, docpins: no document changed
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+The record of this card, for the reader of the audit.
+
+What merged. The 85 `mkdtempSync` calls of 47 test files use `tmpDir` with the same prefix (only import lines and site expressions changed; no assertion, test name or test count changed), and tests/surface/test-temp.test.ts fails on any code occurrence of `mkdtempSync`, `mkdtemp` or `mkdtempDisposableSync` under tests/ outside four helper functions and the import specifiers of their files.
+
+The reviews. Two formal decisions: decision 1 blocked on three forms the scan missed or misreported; decision 2 and its second pass passed with no finding. Seven Codex pre-reviews ran between them. The scan as first built followed how a name is bound to the fs module, and each review found further binding forms (5, then 4 points before decision 1; 3 at decision 1; 4 against the planner's closed list). The planner then restated R2: the scan resolves nothing and reports the names themselves. After that the pre-reviews found no unreported way to reach the function; their points were on private names, the label of the enclosing function, one crash on a function declaration without a name and the depth of the walk (4, 3, 2, 1, then none). The lesson line of this close states the rule.
+
+Two things the coordinator did wrong. It named a compiler function that is not public API in a ruling (the implementer found it and stopped). And it did not extend the goal's deadline while the review rounds ran: the card stopped for time at 06:49Z, three minutes after its 3 hour deadline, with the candidate verified and R3 decision 2 not yet run. The extension is recorded in the goal with that reason (`aidlc goal extend`, to 08:30Z), which re-admitted the card as docs/OPERATIONS.md describes.
+
+One figure to read with care: in the table of full-suite runs the row for 0f6307da gives the minute after its start (the run began at 06:18:16Z).
