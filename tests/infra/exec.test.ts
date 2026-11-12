@@ -298,7 +298,7 @@ function boundsAt(scale: number): Bounds {
     slowKillBoundMs: (1500 + 1000) * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
     goneWithinMs: 3000 * scale,
     syncBoundMs: Math.min(6000 * scale, timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
-    runnerExitBoundMs: 0, // seam
+    runnerExitBoundMs: TIMEOUT_MS + TIMEOUT_GRACE_MS + 3000 * scale,
   };
 }
 
@@ -562,11 +562,12 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
 });
 
 describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the bound [R3]', () => {
-  it('acceptance 5 [R3]: with a tree kill that kills nothing and a large input the root never reads, the runner process exits on its own after the receipt, the root still alive at the receipt', async () => {
+  it('acceptance 5 [R3]: with a tree kill that kills nothing and a large input the root never reads, the runner process exits on its own after the receipt, the root still alive at the receipt', async (t) => {
+    const b = await calibratedBounds(t);
     const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-tree-'));
     const pidFile = join(dir, 'sleeper.pid');
-    // The runner's node start, the 1500 ms timeout, TIMEOUT_GRACE_MS (2000) and 3000 ms of slack.
-    const boundMs = TIMEOUT_MS + 2000 + 3000;
+    // The runner's node start, the 1500 ms timeout, TIMEOUT_GRACE_MS (2000) and 3000 ms of slack: only the slack scales.
+    const boundMs = b.runnerExitBoundMs;
     const started = Date.now();
     // No pipes to the runner: on Windows the root and the sleeper inherit the runner's own handles,
     // so a pipe would stay open after the runner exits; its receipt goes to a file and 'exit' decides.
@@ -578,6 +579,7 @@ describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the boun
         new Promise<boolean>((r) => (bound = setTimeout(() => r(false), boundMs))),
       ]);
       const elapsedMs = Date.now() - started;
+      t.diagnostic(`runner exited after ${elapsedMs} ms`);
       assert.equal(exited, true, `the runner process is still running ${elapsedMs} ms after its start`);
       assert.ok(elapsedMs <= boundMs, `the runner exited after ${elapsedMs} ms, past the ${boundMs} ms bound`);
       assert.equal(existsSync(`${pidFile}.receipt`) ? readFileSync(`${pidFile}.receipt`, 'utf8') : 'no receipt', 'resolved timedOut=true exitCode=null root=alive');
