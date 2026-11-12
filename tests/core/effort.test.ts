@@ -16,7 +16,8 @@ import {
   settleDisputedRepair,
   startAttempt,
 } from '../../src/core/effort.ts';
-import type { EffortEpisode, EffortLevel, NotCountedReason } from '../../src/core/types.ts';
+import type { EffortEpisode, EffortLevel } from '../../src/core/types.ts';
+import type { NotCountedReason } from '../../src/core/types.ts';
 import { addMs } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 import { readFileSync } from 'node:fs';
