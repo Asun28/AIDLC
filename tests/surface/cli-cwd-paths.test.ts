@@ -28,6 +28,9 @@ after(() => {
 
 /** The directory every fixture is created in: repository discovery of a child stops below it, also when it lies inside a git checkout. */
 const CEILING = realpathSync.native(tmpdir());
+/** An empty git configuration file, the global configuration of every child, so that no git call reads the caller's. */
+const GIT_CONFIG = path.join(tempDir('gitconfig'), 'empty.gitconfig');
+writeFileSync(GIT_CONFIG, '');
 
 /**
  * The environment of every child the tests start: no inherited variable whose upper-cased name starts with GIT_ or AIDLC_ or is
@@ -254,7 +257,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       Object.assign(process.env, set);
       const dump = spawnSync(process.execPath, ['-e', 'process.stdout.write(JSON.stringify(Object.entries(process.env).filter(([k]) => /^git_/i.test(k))))'], { encoding: 'utf8', env: childEnv(), windowsHide: true });
       assert.equal(dump.status, 0, dump.stderr);
-      assert.deepEqual(JSON.parse(dump.stdout), [['GIT_CEILING_DIRECTORIES', CEILING]]);
+      assert.deepEqual(Object.fromEntries(JSON.parse(dump.stdout) as Array<[string, string]>), { GIT_CEILING_DIRECTORIES: CEILING, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_CONFIG });
       // The CLI in a directory outside any repository does not reach the repository GIT_DIR names in the test process.
       const fx = fixture();
       const r = fx.run(['doctor', '--json']);
@@ -278,10 +281,21 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     assert.equal((JSON.parse(capped.stdout) as { repository: string }).repository, `${caller} (not a git repository)`, capped.stderr);
   });
 
-  test('every child starts without NODE_OPTIONS of the test process, in any letter case', () => {
-    // A --require of a relative path in NODE_OPTIONS fails a child started in another directory (pre-review of f9b50cf1).
-    const source = { NODE_OPTIONS: 'a', node_options: 'b', GIT_DIR: 'c', AIDLC_SESSION: 'd', CLAUDE_CODE_SESSION_ID: 'e', PATH: 'p' };
-    assert.deepEqual(childEnv({}, source), { PATH: 'p', GIT_CEILING_DIRECTORIES: CEILING });
+  test('every child starts without the NODE_ variables of the test process, in any letter case, and reads no system or global git configuration', () => {
+    // A --require of a relative path in NODE_OPTIONS fails a child started in another directory (pre-review of f9b50cf1); NODE_DEBUG
+    // adds diagnostics to its stderr, and the caller's git configuration can fail a fixture's git call (second pre-review).
+    const source = { NODE_OPTIONS: 'a', node_options: 'b', NODE_DEBUG: 'f', node_path: 'g', NODE_V8_COVERAGE: 'h', GIT_DIR: 'c', AIDLC_SESSION: 'd', CLAUDE_CODE_SESSION_ID: 'e', PATH: 'p' };
+    assert.deepEqual(childEnv({}, source), { PATH: 'p', GIT_CEILING_DIRECTORIES: CEILING, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_CONFIG });
+  });
+
+  test('every child starts without the NODE_ variables of the test process: a refusal prints the same stderr with NODE_DEBUG set', () => {
+    const fx = fixture();
+    const runWith = (source: NodeJS.ProcessEnv) => spawnSync(process.execPath, [main, '-C', fx.target, 'spec', 'validate', ''], { cwd: fx.caller, env: childEnv({ AIDLC_STATE_DIR: fx.state, AIDLC_SESSION: 'cwd-paths-test' }, source), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const plain = runWith(process.env);
+    assert.equal(plain.status, 1, plain.stderr);
+    assert.ok(plain.stderr.startsWith('aidlc: <file> "": '), plain.stderr);
+    const debug = runWith({ ...process.env, NODE_DEBUG: 'module' });
+    assert.deepEqual({ status: debug.status, stderr: debug.stderr }, { status: plain.status, stderr: plain.stderr });
   });
 
   test('the path function by input class [R3]', () => {
@@ -715,6 +729,8 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       'process.cwd()',
       // Each of the ten properties of rule (b) in the form main.ts uses it.
       "process.once('SIGINT', () => stop.abort())",
+      // process.once as main.ts has it the second time: a whole statement inside an if without braces.
+      "if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c))",
       'process.version',
       'process.platform',
       'process.stderr.write(s)',
@@ -770,6 +786,11 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ['globalThis.process', ['b', 'd']],
       ['global.process', ['b', 'd']],
       ['Reflect.get(o, k)', ['d']],
+      // process.once returns the process object: it is allowed only as a call that is a whole expression statement (second pre-review).
+      ["process.once('beforeExit', () => {}).env.X = 'v'", ['b']],
+      ["const p = process.once('exit', f)", ['b']],
+      ["fn(process.once('exit', f))", ['b']],
+      ['const o = process.once', ['b']],
     ];
     for (const [text, rules] of failing) assert.deepEqual([...new Set(envViolations(text).map((v) => v.rule))].sort(), rules, JSON.stringify(text));
   });
