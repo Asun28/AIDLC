@@ -230,3 +230,114 @@ npm run typecheck && node --test tests/scenarios/health-op.test.ts tests/infra/o
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; every existing file listed passes unchanged. The document readers are the coordinator's run before the first review (hygiene); the full suite runs in CI.
+
+## Attempt evidence
+
+Commits: RED `1f7630df` (tests only, on 2f38fc4f), GREEN `92ffb803` (source, docs and two test edits: `lines` lost its unused `fx` parameter for `noUnusedParameters`, and the control row "two blank lines after the report" now writes a line of spaces and a line holding a tab, so the blank-line rule of R2 has a row that detects it; no assertion changed).
+
+### RED (`node --test tests/scenarios/health-op.test.ts` on 1f7630df, sources of 2f38fc4f: 1 pass, 10 fail)
+| Item | Result on main | First failing assertion |
+|---|---|---|
+| 1 | fail | `healthResult` INSUFFICIENT_DATA, expected PASS |
+| 2 | fail | directive `observe` (Insufficient telemetry), expected `recover` |
+| 3 | fail | row "no binding": signals `[[]]`, expected both INSUFFICIENT_DATA |
+| 4 | fail | row "environment Production": signals `[[]]` |
+| 5 | fail | row "http_5xx_rate only": evaluations without signals |
+| 6 | fail | TypeError `ops.healthReportOf is not a function` (inside the body, as the card states) |
+| 7 | fail | runner calls `[]`, expected three `health-cmd` calls |
+| 8 | fail | `health-cmd` calls 0 !== 1 after the record is marked succeeded |
+| 9 | fail | row (a): Missing expected exception (no runner call on main) |
+| 10 | pass | passes on main, as the card states |
+| 11 | fail | saved STOP / INSUFFICIENT_DATA, detail `insufficient health data within the maximum wait`, expected CLOSE / PASS |
+| 12 | not run on main | green on 92ffb803 (DoD below) |
+| 13 | not run on main | document text; template equality green on 92ffb803 |
+
+### Revert table (actual revert runs on the 92ffb803 sources)
+Each row: one mutation applied in the worktree, `node --test tests/scenarios/health-op.test.ts` run, the file restored with `git checkout`; `git diff --stat` empty after the last row. "Red" names the failing tests by acceptance item and the first assertion.
+
+| # | Clause | Mutation | Red | Assertion |
+|---|---|---|---|---|
+| 1 | R1 list not empty | drop the `health.length` check | 7 | `an empty health list` health calls |
+| 2 | R1 binding exists | drop `!binding` | 3 | TypeError reading `cwd` (no-binding row throws) |
+| 3 | R1 environment present, not empty | drop `!attempt.environment` | 3 | TypeError reading `toLowerCase` (environment rows throw) |
+| 4 | R1 isDirectory before dispatch | drop the isDirectory check | 3 | `cwd missing` health calls |
+| 5 | R1 first binding | last `health` binding instead | 7 | calls `health-b` |
+| 6 | R1 at most once | a second `executeOperation` | 3, 4, 7, 8, 9 | `exit 1: health calls` |
+| 7 | R1 no idempotency key | the attempt id passed as the idempotency key | 7 | call deep-equal (args) |
+| 8 | R1 binding timeout | timeout 30 minutes | 7 | call deep-equal |
+| 9 | R1 root is the main checkout | `process.cwd()` as root | 7 | call deep-equal (cwd) |
+| 10 | R1 attempt environment as target | target `undefined` | 4, 7, 8, 11 | args deep-equal |
+| 11 | ORDER R1 reconciliation first | signals read before the reconciliation | 8 | health calls while the record is unresolved |
+| 12 | R2 only `succeeded` | read every execution | 3 | row `exit 1` |
+| 13 | R2 only `succeeded` | read all but `failed` | 3 | row `timed out` |
+| 14 | R2 only stdout | stdout and stderr | 3 | row `report on stderr, stdout empty` |
+| 15 | R2 last non-blank line | first non-blank line | 1-8, 11 | PASS rows |
+| 16 | R2 last non-blank line | last line that parses as JSON | 3 | row `report then a line done` |
+| 17 | R2 blank is `trim()` empty | blank is the empty string only | 3 | control `two blank lines after the report` |
+| 18 | R2 the line trimmed | no `trim()` of the chosen line | none | not detected: `JSON.parse` skips the space, tab, CR and LF around a value, and no row pads the line with other whitespace |
+| 19 | R2 parse throw is no report | no `try` | 3 | `"done" is not valid JSON` thrown |
+| 20 | R2 environment min 1 | `z.string()` | none | not detected: the lease check rejects the empty name first (`env:` is another lease file) |
+| 21 | R2 candidate min 1 | `z.string()` | none | not detected: the candidate comparison rejects the empty string first |
+| 22 | R2 samples integer | drop `.int()` | 3 | row `samples 1.5` |
+| 23 | R2 samples safe | integer check without the safe range | 3 | row `samples 9007199254740992` |
+| 24 | R2 samples 0 or more | drop `.nonnegative()` | 3 | row `samples -1` |
+| 25 | R2 observed finite | any number, infinite included | 3 | row `observed 1e400` |
+| 26 | R2 observed not null | `.nullable()` | 3 | row `observed null` |
+| 27 | R2 lastSampleAt a real time | drop the `Date.parse` refine | 3 | row `lastSampleAt month 13` |
+| 28 | R2 lastSampleAt IsoTimestamp | `z.string()` with the refine | 3 | row `lastSampleAt with a space` |
+| 29 | R2 strip, top level | `z.looseObject` | 6 | (a) deep-equal (`window` kept) |
+| 30 | R2 strip, entry | `z.looseObject` | 6 | (a) deep-equal (`unit` kept) |
+| 31 | R2 malformed entry fails the report | keep only valid entries | 3 | row `an entry without name` |
+| 32 | R2 environment by lease file | exact string comparison | 4 | `environment Production` |
+| 33 | R2 environment by lease file | lower-cased comparison | 4 | `environment OPS\prod for ops/prod` |
+| 34 | R2 environment checked | no environment check | 4 | `environment staging` |
+| 35 | R2 candidate case-sensitive | lower-cased comparison | 4 | `candidate C1` |
+| 36 | R2 candidate not trimmed | trimmed report candidate | 4 | `candidate with a leading space` |
+| 37 | R2 candidate checked | no candidate check | 4 | `candidate C1` |
+| 38 | R2 absent digest accepts nothing | an absent or empty digest accepts any | 4 | `attempt without a digest` |
+| 39 | R3 declaration order | sorted by report order | 5, 6 | `http_5xx_rate only`; (b) |
+| 40 | R3 not parsed through `HealthSignal` | `HealthSignal.parse` per signal | 6 | (f) throws on the empty name |
+| 41 | R3 exactly one entry | first of two read | 5 | `p95_latency_ms twice` |
+| 42 | R3 no other report field read | the entry spread over the signal | 6 | (b) deep-equal (`source` `other`) |
+| 43 | R3 threshold from the list | schema and mapper read `threshold` | 6 | (g) threshold row |
+| 44 | R3 minSamples from the list | schema and mapper read `minSamples` | 6 | (g) minSamples row |
+| 45 | R3 staleness from the list | schema and mapper read `maxStalenessMs` | 6 | (g) staleness row |
+| 46 | R3 name as the same string | case and padding ignored together | none | not detected: row (e) holds `A` and ` a`, which then both match, and the exactly-one rule makes `a` unavailable; rows 47 and 48 revert each part alone |
+| 47 | R3 name as the same string | letter case ignored | 6 | (e) `probeAvailable` |
+| 48 | R3 name as the same string | padding ignored | 6 | (e) `probeAvailable` |
+| 49 | R3 unavailable signal | `probeAvailable` true | 6 | (c) deep-equal |
+| 50 | R3 synthetic false | `synthetic` true | 6 | (b) deep-equal |
+| 51 | R4 runner exceptions propagate | catch and return unavailable | 9 | (a) Missing expected exception |
+| 52 | ORDER R4 transition write remains | APPLY steps into OBSERVE without its save | 9 | (a) APPLY row stored state |
+| 53 | R5 no ledger record | `recordIntent` before the run | 1, 2, 7, 9 | 7 ledger list; the next call waits on `unknown:` |
+| 54 | R5 no lease method | `claim` before the run | 7 | lease counts |
+| 55 | R5 no journal event | a `NOTE` append before the run | 7 | added events |
+| 56 | R6 injected source runs nothing | the command run, then the injected source | 10 | health calls |
+| 57 | R1 default source | `() => []` (main) | 1-9, 11 | every behavioural row |
+| D1 | R8 template copy | H1 removed from templates/docs/DELIVERY-OPS.md only | ops.test.ts | "the template copy of DELIVERY-OPS.md is the repository's" |
+
+Red 53 of 57 source rows; rows 18, 20, 21 and 46 are listed with the reason no row detects them. D1 (actual run) is the only document row a test reads; the other texts of R8 are reviewer-verified against the diff.
+
+### DoD (`dod_command` on 92ffb803, worktree clean)
+`npm run typecheck`: exit 0. `node --test` of the eleven files: tests 119, pass 116, fail 0, skipped 3 (tests/scenarios/release-lease.test.ts, POSIX permission rows, skipped on Windows); exit 0.
+
+Other runs on 92ffb803: tests/scenarios/health-op.test.ts on Linux (WSL Ubuntu, node v24.3.0): 11 pass, 0 fail. Document readers tests/infra/init.test.ts, tests/surface/templates.test.ts, tests/surface/module-map.test.ts, tests/core/journal-event-types.test.ts, tests/scenarios/op-intent-dup.test.ts and tests/scenarios/fault-points.test.ts: 111 pass, 0 fail; tests/surface/prose, budget-doc, removed-surface, command-lines, readme, edge-scope and claude-md-size: 54 pass, 0 fail.
+
+### Document text against code and test
+| Text | Code | Test |
+|---|---|---|
+| Q1, Q3, Q4 (no publication, effect or authority check; no operation recorded) | `observedSignals` reads no `triggersPublication`, `effects` or authorization and calls no ledger method | 7 (d) ledger unchanged; row 53 |
+| Q2 and H2, `async: true` gives unavailable signals | `executeOperation` returns `issued` or `UNKNOWN`; only `succeeded` is read | 3 async rows; rows 12, 13 |
+| H1 conditions, first binding, once per call, directory, target, timeout, no idempotency key | `observedSignals` checks and its `executeOperation` call | 3, 7 (a)-(c), (e); rows 1-10 |
+| H1 reconciliation first | the OBSERVE case follows the reconciliation in `step` | 8; row 11 |
+| H1 no lease, no journal event; `HEALTH_EVALUATED` as before | no `LeaseStore` or `Journal` call in `observedSignals` | 7 (d); rows 54, 55 |
+| H2 environment by lease, candidate exactly | the `leaseOf` comparison and `===` | 4; rows 32-38 |
+| H2 entry fields, other keys dropped, a malformed entry invalidates | `HealthReport`, `healthReportOf` | 3 schema rows, 6 (a); rows 22-31 |
+| H2 source, threshold, minimum, staleness from `health`; exact name | `healthSignals` | 5, 6; rows 39-50 |
+| H2 failure classes, one-signal rule; runner exceptions propagate | `observedSignals`, `healthSignals` | 3, 5, 9; rows 12-19, 41, 51 |
+| H2 last sentence and O (no declared signal, window, maximum wait, STOP) | `return []`; `healthWindowMs`, `maxWaitMs` and the OBSERVE STOP unchanged | 3 final STOP check; 7 (e) |
+| A, C and the comment on `signals` | as above; exports of src/delivery/ops.ts (src/index.ts re-exports the module) | 1-11 |
+| OPERATIONS example `"timeoutMs": 120000` | `OperationBinding.timeoutMs` | none (example) |
+
+### Size
+`git diff --shortstat origin/main...HEAD` on 92ffb803: 8 files, 649 insertions, 12 deletions (661 changed lines). With this section the count is given in the coordinator report; budget 820.
