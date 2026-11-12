@@ -48,7 +48,7 @@ import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
 import { ClaudeCodeProvider } from '../providers/claude-code.ts';
 import type { ModelProvider } from '../providers/types.ts';
-import { EvidenceStore, Manifest } from '../audit/manifest.ts';
+import { CANDIDATE_BOUND_KINDS, EvidenceStore, Manifest } from '../audit/manifest.ts';
 import { verifyAudit } from '../audit/verifier.ts';
 import { evaluateBands, parseBandsYaml, type Sample } from '../maintain/bands.ts';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../maintain/incident.ts';
@@ -1284,8 +1284,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('seal')
     .option('--goal <id>')
     .option('--final-sha <sha>')
-    .option('--final-digest <digest>')
-    .action((o: { goal?: string; finalSha?: string; finalDigest?: string }) => {
+    .requiredOption('--final-digest <digest>')
+    .action((o: { goal?: string; finalSha?: string; finalDigest: string }) => {
+      if (o.finalDigest.trim() === '') throw new Error('--final-digest is blank; name the final candidate digest');
       const c = ctx(g());
       const id = latestActiveGoalId(c, o.goal);
       const goalRec = c.controller.mustGoal(id);
@@ -1294,6 +1295,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const mf = ev.load(id, goalRec.generation, goalRec.revision, now);
       // The seal event is journaled inside the seal's lock section, counting the manifest it seals, and the seal binds to that event.
       const sealed = ev.seal({ ...mf, models: goalRec.roleProfiles.map((p) => ({ role: p.role, provider: p.provider, model: p.model })) }, (sealing) => {
+        const unbound = sealing.entries.filter((e) => CANDIDATE_BOUND_KINDS.includes(e.kind) && !e.candidateDigest).map((e) => e.id);
+        if (unbound.length) throw new Error(`manifest of ${id} holds evidence of a candidate-bound kind with no candidate digest: ${unbound.join(', ')}; ${sealing.seal ? 'this sealed manifest cannot accept replacement evidence; its audit level remains at most traceable' : 'retain each again with --candidate <digest>, then seal'}`);
         const event = Journal.forGoal(c.paths.journal, id).append({ type: 'MANIFEST_SEALED', goalId: id, generation: goalRec.generation, data: { entries: sealing.entries.length, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest } });
         return { journalHead: event.hash, journalEvents: event.seq + 1, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest, now, host: { node: process.version, platform: process.platform, aidlc: '0.1.0' } };
       });

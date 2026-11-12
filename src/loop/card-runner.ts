@@ -3070,7 +3070,7 @@ export class CardRunner {
     // the flags of cleanup and metadata do their step, and the evidence flag checks the manifest.
     const flagged = missing.filter((m) => m !== 'lessons');
     const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.' : '';
-    const checked = flagged.includes('evidence') ? ` \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${card.id}\`.` : '';
+    const checked = flagged.includes('evidence') ? ` \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${card.id}\`; \`aidlc audit seal\` also needs \`--candidate <digest>\` on each retained \`dod-receipt\`, \`review-verdict\`, \`ci-run\`, \`test-output\` or \`health\` file.` : '';
     const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}${checked}` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
@@ -3174,9 +3174,10 @@ export class CardRunner {
       // A retain loads the same file, so it fails the same way until the file is restored.
       state = `the manifest of ${goal.id} cannot be read, so restore it first (${oneLine((err as Error).message)})`;
     }
-    const verdict = run.review.invocations.filter((i) => i.outcome === 'pass').at(-1)?.verdictRef;
+    const passed = run.review.invocations.filter((i) => i.outcome === 'pass').at(-1);
+    const verdict = passed?.verdictRef;
     const file = verdict ? [verdict, path.join(evidence.dir, 'review', card.id, path.basename(verdict))].find((f) => existsSync(f)) : undefined;
-    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? `"${file}"` : '<file>'}`);
+    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? `"${file}"` : '<file>'} --candidate ${passed?.candidateDigest ?? '<digest>'}`);
   }
 
   /**

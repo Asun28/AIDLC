@@ -100,14 +100,14 @@ response still consumes it. Unknown => diagnose, no rerun. Same normalized
 cause twice without progress stops the branch.
 
 ## CLOSE
-Verify the merge on the intended base, then do only missing
-steps: doc_sync, finding dispositions replayed idempotently from all
-retained verdicts, evidence retained (`aidlc evidence retain --card`),
+Verify the merge on the intended base; do only missing steps:
+doc_sync, finding dispositions replayed idempotently from all verdicts,
+evidence (`aidlc evidence retain --card <id> --candidate <digest>`),
 base contents; last, `card close --all` writes status (commit on main),
 removes the worktree. A reminder or exit 0 is not closure. Persistence
-failure after merge => merge_verified + STOP/audit; never repeat the
-merge. Lessons only under repository policy; no unrelated staging,
-sweeps or base pushes.
+failure after merge => merge_verified + STOP/audit; never merge again.
+Lessons only under repository policy; no unrelated staging, sweeps or
+base pushes.
 
 ## DONE / STOP
 DONE is a child result; the parent verifies and delivers the goal. STOP

@@ -195,3 +195,131 @@ A Codex pre-review of 256de148 confirmed the seal (the check inside the lock sec
 | No row has a succeeded completion before its intent, or a `NOTE` carrying an intent's fields followed by a matching completion; a mutant that requires the completion after the intent, or that drops the event-type test of the intent, passes | Accepted: the first two rows of acceptance 16, each with its mutant run |
 | The evidence says two clauses have no mutant. Removing the `continue` of R3 throws at `.slice()` on an absent digest, and changing the card-id test to `!== undefined` changes the result when the entry, the intent and the completion all carry `cardId: ''`, which the journal schema accepts | Accepted: the evidence is corrected with the outcome of both mutants as run, and the third row of acceptance 16 is the empty-card fixture. The row of the section "Planner rulings on the disclosed deviations" that accepted "no mutant" for these two clauses is withdrawn by this ruling |
 | `verifyAudit` throws when hashing an artifact throws (a directory, an unreadable file), on main and with this card | Not in this card: a non-goal added today, and an item of the audit's follow-up list |
+
+## Attempt evidence
+
+### RED (commit 8d4ab90a, tests run on the sources of main d327a20e)
+`node --test` over verifier-binding, seal-binding, card-close-cleanup, lesson-dup and manifest-lock: 64 tests, 50 pass, 12 fail, each by an assertion:
+- 1: first row, findings `[]` where `[MANIFEST_UNBOUND]` is expected.
+- 2: findings `[]` where the six `EVIDENCE_UNBOUND` warnings are expected.
+- 3: the bound goal gives two `EVIDENCE_STALE_CANDIDATE` (the entries of T0-A against `dB`).
+- 4: row (a), `e is bound to candidate dA, final is dF` where none is expected. Observation: the test stops at (a); rows (d) to (g) assert the new detail, so they would differ on main too.
+- 5: passes on main (actual revert run after df5b4acb, main's verifier.ts and manifest.ts: item 5 ok).
+- 6: level `independently-verified` where `traceable` is expected. 7, 8, 9: the first seal exits 0 where 1 is expected.
+- 10: the message ends with `--file <file>`. 11: the narration lacks the sentence of R9 (b). 12: lesson-dup acceptance 3 fails on the R11 (b) string; manifest-lock passes with the R11 (a) edits. 15: OPERATIONS lacks the warnings list.
+- 13, 14: not run on main; unchanged files, green in the DoD below.
+
+df5b4acb corrects one row of acceptance 5 written in the RED commit: the "intent without a card" row passed `undefined` to a parameter with a default, so its intent carried `T0-C`; it now passes `null`.
+
+### Revert table (actual revert runs on e2963a8a, 82 rows, 82 red)
+Each row: one mutation of the committed tree, one acceptance test (`--test-name-pattern`), restore; `git status` and `git diff --stat` empty afterwards. Every row is red by an assertion except R4-l and R8-a, red by a thrown error (named).
+
+| Row | Requirement | Mutation | Test |
+|---|---|---|---|
+| R1-a | R1 | verifier matches kinds after trim and lower-casing | 2 |
+| R1-b | R1 | verifier holds its own list without `health` | 2 |
+| R1-c, R1-d | R1 | `CANDIDATE_BOUND_KINDS` drops `health` | 2; 8 |
+| R1-e, R1-f | R1 | entry digest: only absent is none; digest trimmed | 2 |
+| R2-a | R2 | no `MANIFEST_UNBOUND` | 1 |
+| R2-b | R2 | also for an unsealed manifest | 1 |
+| R2-c | R2 | reads `VerifierInput.finalCandidateDigest` | 1 |
+| R2-d, R2-e | R2 | manifest digest: only absent is none; trimmed | 1 |
+| R2-f, R2-g | R2 order | pushed after the journal-head findings; before the seal finding | 1 |
+| R3-a | R3 order | `EVIDENCE_UNBOUND` before the artifact finding | 2 |
+| R3-b | R3 | no `EVIDENCE_UNBOUND` | 2 |
+| R3-c | R3 | entries of other kinds with a digest compared | 2 |
+| R4-a | R4 (a) | no merge-digest comparison | 4 |
+| R4-b | R4 (b) | no fallback to the input digest | 5 |
+| R4-c | R4 (b) | fallback also when the card has merge digests | 4 |
+| R4-d | R4 order | digests in completion order | 4 (f) |
+| R4-e | R4 | one digest per completion | 4 (f) |
+| R4-f | R4 | digests not made distinct | 4 (f) |
+| R4-g | R4 | only the first intent of an operation id judged | 4 (f) |
+| R4-h, R4-i, R4-j, R4-k | R4 | intent card, kind `merge`, string operation id, non-empty digest not required | 5 |
+| R4-l | R4 | non-string digest counts (red by `d.slice is not a function`) | 5 |
+| R4-m, R4-n, R4-o, R4-q | R4 | completion card, status, type, operation id not required | 5 |
+| R4-p | R4 | `OPERATION_RECONCILED` not a completion | 4 (e) |
+| R4-r, R4-s | R4 | card ids; digests compared ignoring case | 5; 4 (d) |
+| R4-t | R4 | events of a broken chain read | 5 |
+| R4-u | R4 | merge digests not cut to 12 characters | 4 (g) |
+| R5-a, R5-b | R5 | level rule ignores `MANIFEST_UNBOUND`; `EVIDENCE_UNBOUND` | 3 |
+| R5-c, R5-d | R5 | either warning a block (exit 1) | 6 |
+| R6-a | R6 (a) | `--final-digest` optional | 7 |
+| R6-b, R6-d | R6 (b) | no blank refusal; blank only ASCII space and tab | 7 |
+| R6-c | R6 (b) order | blank refusal after ctx, lookup and load | 7 |
+| R6-e | R6 (c) | no unbound refusal | 8 |
+| R6-f, R6-g, R6-h | R6 (c) | own list without `health`; only absent digest; digest trimmed | 8 |
+| R6-i | R6 (c) | one refusal text for a sealed manifest | 8 |
+| R6-j, R6-k | R6 | value trimmed in `MANIFEST_SEALED`; in the seal | 7 |
+| R7-a | R7 order | check on the copy of the load (preload row) | 9 |
+| R7-b | R7 order | check on a fresh read in `EvidenceStore.seal` before `updateJson` (held-lock row) | 9 |
+| R7-c | R7 order | check after `Journal.append` (journal assertion) | 8 |
+| R8-a | R8 | `EvidenceStore.seal` refuses unbound evidence (red by the thrown `unbound`) | 1 |
+| R9-a, R9-b, R9-c | R9 (a) | no `--candidate`; last decision of any outcome; no `<digest>` | 10 |
+| R9-d, R9-e | R9 (b) | narration sentence as on main | 11; lesson-dup 3 |
+| R9-f, R9-g | R9 (c) | `.claude` copy; templates copy of CLOSE as on main | 11 |
+| R11-a1, R11-a2, R11-a3 | R11 (a) | each seal call of manifest-lock without `--final-digest` | the three named tests |
+| R11-b | R11 (b) | lesson-dup string as on main | lesson-dup 3 |
+| R10-ops-a, -b1 to -b3, -c1 to -c4 | R10 | each OPERATIONS text of Document text (a), (b), (c) removed alone | 15 |
+| R10-cl-1 to -7 | R10 | each sentence of the CHANGELOG entry removed alone | 15 |
+
+Corrected after the pre-review of 256de148: the statement first written here, that R3 "such an entry is not compared" and R4 "an entry with an absent or empty cardId takes (b)" have no mutant, was wrong. Both mutants were run (rows A16-c and A16-d below) and both are red.
+
+### DoD (`dod_command` on e2963a8a, from the worktree root)
+Exit 0: typecheck clean; `# tests 244`, `# suites 17`, `# pass 242`, `# fail 0`, `# cancelled 0`, `# skipped 2` (T0-CLOSE-CLEANUP-2 acceptance 10 and 12: case-folding filesystem, no symbolic link on this host), `# todo 0`. Every acceptance item of this card is green in it.
+
+### Document sentences against code and tests
+| Text | Code | Test |
+|---|---|---|
+| OPERATIONS (a) warnings list | verifier.ts:129, :157 | 15; verifier.test.ts pin |
+| OPERATIONS (b) 1: warnings, level, exit | verifier.ts:129, :157, :173; verify exit rule unchanged | 1, 2, 3, 6 |
+| OPERATIONS (b) 2: merge digests, fallback | verifier.ts:140-150, :160-164 | 4, 5 |
+| OPERATIONS (b) 3: stale blocks without a final digest | verifier.ts:161-162 | 4 (h), 6 (b) |
+| OPERATIONS (c) 1: required, blank refused first, value as given | main.ts:1287, :1289 | 7 |
+| OPERATIONS (c) 2: refusal in the lock section before the journal | main.ts:1298-1299 | 8, 9 |
+| OPERATIONS (c) 3, 4: retain again; sealed manifests | manifest.ts:107 (retain refuses a sealed manifest); main.ts:1299 | 8 |
+| ARCHITECTURE item 3; verifier.ts JSDoc | verifier.ts:129-173 | reviewer-verified |
+| CHANGELOG entry | the rows above; card-runner.ts:3073, :3177-3180; both card-loop.md | 1 to 11, 15 |
+
+### Size
+`git diff --shortstat origin/main...HEAD` on e2963a8a: 15 files changed, 659 insertions(+), 30 deletions(-) (689 lines, budget 850); this section adds about 85. card-loop.md: 6,496 bytes before, 6,494 after, both copies identical and ASCII.
+
+### Repair round after the pre-review of 256de148 (acceptance 16)
+Merge of origin/main 6f4c4871 as c3c2d47b; card conflict only. Rows added in fb12693c (tests only) to tests/surface/verifier-binding.test.ts; all three pass on the current source (coverage rows, no source change in this round):
+- acceptance 4, row (i): a succeeded `OPERATION_RESULT` journaled before its merge intent; the entry bound to the intent's digest gives no stale finding.
+- acceptance 5, row "a NOTE carrying the fields of a merge intent": a `NOTE` with card `T0-C`, kind `merge`, operation id and digest `dZ`, then a matching succeeded result: no merge digest, so the fallback to `dF` applies.
+- acceptance 5, row "entry, intent and completion with the card id empty": entry, intent and result all carry `cardId: ''`; the entry takes R4 (b) and is compared with `dF`.
+
+Mutant runs (actual runs on fb12693c, each restored, `git status` and `git diff --stat` empty afterwards; 5 runs, 5 red):
+
+| Row | Requirement | Mutation | Test | Outcome |
+|---|---|---|---|---|
+| A16-a | R4 | a completion counts only when journaled after its intent | 4 | red at row (i), assertion |
+| A16-b | R4 | the event-type test of the intent dropped | 5 | red at the NOTE row, assertion |
+| A16-c | R4 | `entry.cardId ? ...` changed to `entry.cardId !== undefined ? ...` | 5 | red at the empty-card row, assertion |
+| A16-d | R3 | the `continue` after `EVIDENCE_UNBOUND` removed | 2 | red by the thrown `Cannot read properties of undefined (reading 'slice')` |
+| A16-d (whole file) | R3 | same mutant, all six tests of the file | all | acceptance 2 and 3 red by the same throw; 1, 4, 5 and 15 green |
+
+No change was made to the R4 comparison in this round or before it to satisfy the sentence "nothing that blocks on main stops blocking and nothing that passes on main starts blocking": R4 is implemented as the card states it.
+
+DoD (`dod_command` on 813b7abd, from the worktree root): exit 0; `# tests 244`, `# suites 17`, `# pass 242`, `# fail 0`, `# cancelled 0`, `# skipped 2` (the same two host skips), `# todo 0`.
+
+Size: `git diff --shortstat origin/main...HEAD` on 813b7abd: 16 files changed, 781 insertions(+), 30 deletions(-) (811 lines); with these two lines about 815, budget 890.
+
+## Planner rulings on the disclosed deviations (coordinator, before R3)
+
+The implementer disclosed these points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| The rows of acceptance 7 and the held-lock row of acceptance 9 compare every file of the evidence directory before and after, where the card names the manifest and the journal bytes (`state()` of tests/scenarios/seal-binding.test.ts) | Accepted and kept. The comparison is stricter than the card's wording and holds on the code: a refused seal changes nothing under the evidence directory |
+| src/loop/card-runner.ts changes 7 lines where the size exception counts 6: `passed` stays a variable of its own at :3177-3178 | Accepted. The count in the size exception is an estimate; the hunk is the close narration of R9 (b) and nothing else |
+| Fixture choices the card does not fix: the `' '` row of acceptance 2 and rows (a) to (g) of acceptance 4 seal with the input digest; rows (d) to (g) of acceptance 4 assert the new detail text, so on main they would fail as well as (a) to (c) and (h) | Accepted. The RED run on main stops at row (a); that rows (d) to (g) would also fail there is the implementer's reading and is not claimed as run |
+| The commit df5b4acb, between the RED commit and the source commit, corrects one row of the new acceptance 5 test (the intent without a card passed `undefined` to a parameter with a default, so the intent still carried a card id; it now passes `null`) | Accepted. It is a correction of a new test before any source change; acceptance 5 passes on main, as the card says, and was run again against main's verifier.ts and manifest.ts after the correction |
+| Two revert rows are red by a thrown error, not by an assertion (R4-l: `d.slice is not a function`; R8-a: the mutant's own error) | Accepted as evidence that the revert is detected. The RED receipts of the acceptance items are assertion failures; these two are mutation rows |
+| Two clauses have no mutant because nothing observable changes: R3 "such an entry is not compared" and R4 "an empty cardId takes (b)" | Accepted as stated in the evidence |
+
+Coordinator verification:
+- At 1241eb22, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/card-close-cleanup.test.ts, tests/scenarios/lesson-dup.test.ts, tests/scenarios/manifest-lock.test.ts, tests/scenarios/seal-binding.test.ts, tests/surface/verifier-binding.test.ts): tests 64, pass 64, fail 0, skipped 0.
+- Windows, docpins: 83 test files reading 5 changed documents: # tests 1932 # pass 1919 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 70): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
