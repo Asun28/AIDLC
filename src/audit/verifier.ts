@@ -5,15 +5,17 @@
  *  - `recorded`: a journal exists and parses.
  *  - `traceable`: the chain verifies, every mutation intent has a result or explicit UNKNOWN,
  *    delegated work carries invocation ids, and closure references resolve.
- *  - `independently-verified`: additionally the sealed manifest verifies, retained artifacts
- *    match their digests, and evidence is bound to the final candidate.
+ *  - `independently-verified`: additionally the sealed manifest verifies and names a final candidate digest, retained
+ *    artifacts match their digests, and every entry of a candidate-bound kind names a candidate digest, compared with the
+ *    digests of its card's succeeded merges when the journal records one, otherwise with `finalCandidateDigest` only when
+ *    supplied and not empty (the CLI supplies the manifest's; card T0-AUDIT-BINDING).
  *  - `BLOCKED/capability`: the host cannot provide a capture boundary for the declared
  *    model/tool inventory; the narrower observed level is reported with the exact prerequisite.
  */
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Journal } from '../state/journal.ts';
-import { fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
+import { CANDIDATE_BOUND_KINDS, fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
 import type { OperationLedger } from '../coordination/reconcile.ts';
 import type { GitProbe } from '../probes/git.ts';
 import type { GhProbe } from '../probes/gh.ts';
@@ -124,6 +126,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
     manifestInfo = { sealed: Boolean(input.manifest.seal), sealOk, entries: input.manifest.entries.length };
     if (!input.manifest.seal) findings.push({ severity: 'warn', code: 'MANIFEST_UNSEALED', detail: 'manifest not sealed' });
     else if (!sealOk) findings.push({ severity: 'block', code: 'MANIFEST_SEAL', detail: 'manifest seal does not verify (altered after sealing)' });
+    if (input.manifest.seal && !input.manifest.finalCandidateDigest) findings.push({ severity: 'warn', code: 'MANIFEST_UNBOUND', detail: `manifest of ${input.manifest.goalId} is sealed without a final candidate digest` });
     if (input.manifest.journalHead && input.manifest.journalHead !== chain.head) {
       // Events after the seal are acceptable only when none of them is a mutation; closure bookkeeping may follow a seal.
       const sealedAt = events.find((e) => e.hash === input.manifest!.journalHead)?.seq;
@@ -132,12 +135,33 @@ export function verifyAudit(input: VerifierInput): AuditReport {
       if (sealedAt === undefined || mutating.length) findings.push({ severity: 'block', code: 'MANIFEST_STALE', detail: sealedAt === undefined ? 'manifest journal head is not in the journal' : `${mutating.length} mutation event(s) after the seal (${mutating.map((e) => e.type).join(',')})` });
       else findings.push({ severity: 'warn', code: 'MANIFEST_TRAILING', detail: `${after.length} non-mutating event(s) after the seal` });
     }
+    // The merge digests of a card: the distinct candidate digests of its merge intents that have a succeeded result or
+    // reconciliation of the same operation and card, in the order of their first intent (card T0-AUDIT-BINDING).
+    const succeeded = (operationId: string, card: string) => events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === operationId && e.cardId === card && e.data['status'] === 'succeeded');
+    const mergeDigests = (card: string): string[] => {
+      const digests: string[] = [];
+      for (const e of events) {
+        const operationId = e.data['operationId'];
+        const digest = e.data['candidateDigest'];
+        if (e.type === 'OPERATION_INTENT' && e.cardId === card && e.data['kind'] === 'merge' && typeof operationId === 'string' && typeof digest === 'string' && digest && !digests.includes(digest) && succeeded(operationId, card)) digests.push(digest);
+      }
+      return digests;
+    };
     for (const entry of input.manifest.entries) {
       const file = path.join(input.evidence.dir, entry.path);
       if (!existsSync(file)) findings.push({ severity: 'block', code: 'ARTIFACT_MISSING', detail: `${entry.id}: ${entry.path} missing` });
       else if (fileSha256(file) !== entry.sha256) findings.push({ severity: 'block', code: 'ARTIFACT_ALTERED', detail: `${entry.id}: digest mismatch` });
-      if (input.finalCandidateDigest && entry.candidateDigest && entry.candidateDigest !== input.finalCandidateDigest && ['dod-receipt', 'review-verdict', 'ci-run', 'test-output', 'health'].includes(entry.kind)) {
-        findings.push({ severity: 'block', code: 'EVIDENCE_STALE_CANDIDATE', detail: `${entry.id} is bound to candidate ${entry.candidateDigest.slice(0, 12)}, final is ${input.finalCandidateDigest.slice(0, 12)}` });
+      if (!CANDIDATE_BOUND_KINDS.includes(entry.kind)) continue;
+      const digest = entry.candidateDigest;
+      if (!digest) {
+        findings.push({ severity: 'warn', code: 'EVIDENCE_UNBOUND', detail: `${entry.id} (${entry.kind}) names no candidate digest` });
+        continue;
+      }
+      const merged = entry.cardId ? mergeDigests(entry.cardId) : [];
+      if (merged.length && !merged.includes(digest)) {
+        findings.push({ severity: 'block', code: 'EVIDENCE_STALE_CANDIDATE', detail: `${entry.id} is bound to candidate ${digest.slice(0, 12)}, ${entry.cardId} merged ${merged.map((d) => d.slice(0, 12)).join(', ')}` });
+      } else if (!merged.length && input.finalCandidateDigest && digest !== input.finalCandidateDigest) {
+        findings.push({ severity: 'block', code: 'EVIDENCE_STALE_CANDIDATE', detail: `${entry.id} is bound to candidate ${digest.slice(0, 12)}, final is ${input.finalCandidateDigest.slice(0, 12)}` });
       }
     }
   }
@@ -146,7 +170,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   let level: AuditLevel = 'none';
   if (chain.events > 0) level = 'recorded';
   if (chain.events > 0 && chain.ok && !blocks.some((b) => ['OP_UNRESOLVED', 'OP_INTENT_MISSING', 'TRACE_MISSING', 'WORK_AFTER_TERMINAL', 'JOURNAL_CHAIN'].includes(b.code))) level = 'traceable';
-  if (level === 'traceable' && manifestInfo?.sealed && manifestInfo.sealOk && !blocks.some((b) => b.code.startsWith('ARTIFACT') || b.code.startsWith('MANIFEST') || b.code === 'EVIDENCE_STALE_CANDIDATE' || b.code === 'FACT_MISMATCH')) level = 'independently-verified';
+  if (level === 'traceable' && manifestInfo?.sealed && manifestInfo.sealOk && !blocks.some((b) => b.code.startsWith('ARTIFACT') || b.code.startsWith('MANIFEST') || b.code === 'EVIDENCE_STALE_CANDIDATE' || b.code === 'FACT_MISMATCH') && !findings.some((f) => f.code === 'MANIFEST_UNBOUND' || f.code === 'EVIDENCE_UNBOUND')) level = 'independently-verified';
 
   let fullyAuditedStatus: AuditReport['fullyAuditedStatus'] = 'not-claimed';
   let prerequisite: string | undefined;
