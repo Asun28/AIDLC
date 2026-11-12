@@ -284,3 +284,8 @@ Not run: the default removal (R3) and the heartbeat comment (R9) have no test (a
 
 ### Changed lines
 `git diff --shortstat origin/main...HEAD` on c5e9ccff plus the RED commit (before this section): 7 files, 502 insertions, 33 deletions = 535 against the budget 610. The total with this section is in the final report.
+
+Coordinator verification:
+- At fd42e9b1, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/dod-receipt-required.test.ts): tests 25, pass 25, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 4 changed documents: # tests 1910 # pass 1898 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
