@@ -752,6 +752,9 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       "process.env.A1_B === '1'",
       "process.env['AIDLC_SESSION'] || x",
       'process.env[`AIDLC_SESSION`] || x',
+      // The names of rule (d) that reach a prototype, in a comment and inside a longer string (fourth pre-review).
+      '// Object.prototype.X = v',
+      "const m = 'set __proto__ or defineProperty here'",
       'process.version',
       'process.platform',
       'process.stderr.write(s)',
@@ -781,8 +784,8 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ['Object.assign(\n  process.env, x)', ['c']],
       ['Object.assign\n(process.env, x)', ['c']],
       ['Object.assign (process.env, x)', ['c']],
-      ["Object.defineProperty(process.env, 'X', d)", ['c']],
-      ["Object.defineProperty (process.env, 'X', d)", ['c']],
+      ["Object.defineProperty(process.env, 'X', d)", ['c', 'd']],
+      ["Object.defineProperty (process.env, 'X', d)", ['c', 'd']],
       ["Reflect.set(process.env, 'X', v)", ['c', 'd']],
       ['fn(process.env)', ['c']],
       ['const e = process.env', ['c']],
@@ -813,13 +816,23 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ["fn(process.once('exit', f))", ['b']],
       ['const o = process.once', ['b']],
       // A member of the object, or a key whose name cannot be read from the source, is no variable read (third pre-review).
-      ['process.env.__proto__ || {}', ['c']],
-      ["process.env['__proto__'] || {}", ['c']],
+      ['process.env.__proto__ || {}', ['c', 'd']],
+      ["process.env['__proto__'] || {}", ['c', 'd']],
       ['process.env.constructor === Object', ['c']],
       ['process.env.valueOf === f', ['c']],
       ["process.env[k] === '1'", ['c']],
       ["process.env[`${'A'}`] === '1'", ['c']],
       ["process.env.lower === '1'", ['c']],
+      // A prototype reached or a property defined on one changes what a later read of an unset variable returns (fourth pre-review).
+      ["Object.assign(Object.getPrototypeOf({ ...process.env }), { AIDLC_RUN_NO_SHIP: '1' })", ['d']],
+      ['Object.prototype.X = v', ['d']],
+      ['({}).__proto__.X = v', ['d']],
+      ["o['__proto__'].X = v", ['d']],
+      ['Object.setPrototypeOf(o, p)', ['d']],
+      ["Object.defineProperty(o, 'X', d)", ['d']],
+      ['Object.defineProperties(o, d)', ['d']],
+      ["o.__defineGetter__('X', f)", ['d']],
+      ["o.__defineSetter__('X', f)", ['d']],
     ];
     for (const [text, rules] of failing) assert.deepEqual([...new Set(envViolations(text).map((v) => v.rule))].sort(), rules, JSON.stringify(text));
   });
