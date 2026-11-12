@@ -3,12 +3,12 @@
  * `--json` (default when stdout is not a TTY) so an agent can consume it as the only next move.
  */
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
-import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
+import { canonical, resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { readErrorCode, workingTreeReport } from '../state/claims.ts';
 import { PLAIN_ID, readWatch, renderWatch, watchRegistry, type WatchReads } from '../state/board.ts';
@@ -112,6 +112,23 @@ function fail(message: string, code = 1): never {
 }
 
 /**
+ * A path value the CLI opens, classified by its leading characters (card T0-CLI-CWD-FILE-ARGS-2 R3): resolved against `base`,
+ * used as given when fully qualified, or refused with a message that names `option`. `isAbsolute` alone would accept
+ * `\x` and `\\x` under win32; the first means the root of the base's drive, the second is refused.
+ */
+export function resolvePathArg(value: string, option: string, base: string, flavour: path.PlatformPath = path): { ok: true; path: string } | { ok: false; message: string } {
+  const refuse = (why: string) => ({ ok: false as const, message: `${option} ${JSON.stringify(value)}: ${why}` });
+  if (/^\s*$/.test(value)) return refuse('the value is empty; pass a path relative to the -C directory or a fully qualified path');
+  if (flavour === path.win32) {
+    if (/^[A-Za-z]:(?![\\/])/.test(value)) return refuse(`a drive letter without a separator names the current directory of that drive; pass ${value.slice(0, 2)}\\ and the full path, or a path relative to the -C directory`);
+    // A device path (`\\?\C:\x`, `\\.\C:\x`) has the same shape as a complete UNC path: two separators, a name, a separator, a name.
+    if (/^[\\/]{2}/.test(value) && !/^[\\/]{2}[^\\/]+[\\/]+[^\\/]/.test(value)) return refuse('a network path needs a server and a share; pass \\\\server\\share\\path, or a path relative to the -C directory');
+  }
+  // A fully qualified value is returned normalized without reading `base`; `\x` takes the root of the base's drive.
+  return { ok: true, path: flavour.resolve(base, value) };
+}
+
+/**
  * `board --watch`: a screen now and one per interval (a terminal cleared first) until `stop` aborts (SIGINT) or `out` fails.
  * Resolves an output failure's errno code, or `undefined` for a stop or a reader that closed the pipe (EPIPE).
  */
@@ -210,7 +227,43 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   program.option('--json', 'print JSON (default when stdout is not a TTY)');
   program.option('--no-json', 'print the human line even when stdout is not a TTY');
   program.option('-C, --cwd <dir>', 'run as if started in <dir>');
-  const g = () => program.opts<{ json?: boolean; cwd?: string }>();
+  /**
+   * The directory an explicit -C names, as R3 resolves it (lexical) and checked (card T0-CLI-CWD-FILE-ARGS-2 R1): every reader of the
+   * working directory below takes it. -C changes neither the process directory nor the environment.
+   */
+  let workDir: string | undefined;
+  // The -C text as typed is read only by the check below, to resolve it and to print it.
+  const g = () => ({ ...program.opts<{ json?: boolean }>(), cwd: workDir });
+  // An explicit -C is checked before any action reads or writes (R1, R2).
+  program.hook('preAction', (_program, action) => {
+    const given = program.opts<{ cwd?: string }>().cwd;
+    if (given === undefined) return;
+    const code = action.name() === 'hook' ? 2 : 1; // a hook process that exits 1 lets the tool call through
+    let refusal: string | undefined;
+    let at = given;
+    try {
+      const r = resolvePathArg(given, '--cwd', process.cwd());
+      if (!r.ok) refusal = r.message;
+      else {
+        at = r.path;
+        if (!statSync(at).isDirectory()) refusal = `--cwd ${JSON.stringify(given)}: no directory at ${at} (a file); pass an existing directory`;
+        else workDir = at;
+      }
+    } catch (err) {
+      // Nothing there, a regular file on the way (ENOTDIR on POSIX) or a parent that cannot be read (EACCES): the same refusal, never a throw.
+      refusal = `--cwd ${JSON.stringify(given)}: no directory at ${at} (${(err as NodeJS.ErrnoException).code ?? 'unreadable'}); pass an existing directory`;
+    }
+    if (refusal !== undefined) fail(refusal, code);
+  });
+  /**
+   * A path value the command opens, or the CLI's refusal (R3). With -C it is resolved against the -C directory; without -C it is
+   * handed on as given, so the file system reads it against the process directory exactly as on main (R9).
+   */
+  const fileArg = (value: string, option: string): string => {
+    const r = resolvePathArg(value, option, workDir ?? process.cwd());
+    if (!r.ok) return fail(r.message);
+    return workDir === undefined ? value : r.path;
+  };
 
   // ------------------------------------------------------------------ init / doctor
   program
@@ -223,8 +276,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--no-hooks', 'write the same files and deny list and merge no hook entry into .claude/settings.json')
     .action((dir: string | undefined, o: { force?: boolean; cardsDir: string; shipPath?: 'scaffold' | 'github' | 'dry-run'; dryRun?: boolean; hooks: boolean }) => {
       // The same relative path holds from src/cli/main.ts and dist/cli/main.js.
+      const target = dir === undefined ? (g().cwd ?? process.cwd()) : fileArg(dir, '[dir]');
       const hookEntry = fileURLToPath(new URL('../../bin/aidlc-hook.js', import.meta.url));
-      const report = initProject({ target: dir ?? g().cwd ?? process.cwd(), force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun, hooks: o.hooks, hookEntry: existsSync(hookEntry) ? hookEntry : undefined });
+      const report = initProject({ target, force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun, hooks: o.hooks, hookEntry: existsSync(hookEntry) ? hookEntry : undefined });
       out({ json: Boolean(g().json) }, report, () => [`created: ${report.created.length}`, ...report.created.map((f) => `  + ${f}`), `merged: ${report.merged.join(', ') || '-'}`, `skipped (exists): ${report.skipped.length}`, ...report.skipped.map((f) => `  = ${f}`), `next: review aidlc.config.json, then \`aidlc doctor\``].join('\n'));
     });
 
@@ -783,12 +837,15 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--write', 'write missing card files into the registry')
     .option('--dod <command>', 'default dod_command for drafted cards', 'npm test')
     .action((o: { plan: string; write?: boolean; dod: string }) => {
+      const planFile = fileArg(o.plan, '--plan');
       const c = ctx(g());
-      const rows = parsePlanCards(readFileSync(o.plan, 'utf8'));
+      const rows = parsePlanCards(readFileSync(planFile, 'utf8'));
+      // R7: without -C main's expression on the value as typed; with -C the plan and the directory both canonical.
+      const planRef = workDir === undefined ? path.relative(c.root, o.plan) : path.relative(canonical(c.root), canonical(planFile));
       const dir = path.join(c.root, c.config.cardsDir);
       const drafted: string[] = [];
       for (const row of rows) {
-        const text = renderCard({ id: row.id, title: row.output || row.id, allowPaths: ['path/to/change'], dodCommand: o.dod, acceptance: [`1. ${row.output || 'the requested behaviour holds'}. [dod arm 1]`], dependsOn: row.dependsOn, planRef: `${path.relative(c.root, o.plan).replace(/\\/g, '/')}#7`, worktreeRoot: resolveWorktreeRoot(c.config, c.root), deliverable: row.output, freeze: row.freezePoint });
+        const text = renderCard({ id: row.id, title: row.output || row.id, allowPaths: ['path/to/change'], dodCommand: o.dod, acceptance: [`1. ${row.output || 'the requested behaviour holds'}. [dod arm 1]`], dependsOn: row.dependsOn, planRef: `${planRef.replace(/\\/g, '/')}#7`, worktreeRoot: resolveWorktreeRoot(c.config, c.root), deliverable: row.output, freeze: row.freezePoint });
         const file = path.join(dir, `${row.id}.md`);
         if (o.write && !existsSync(file)) {
           mkdirSync(dir, { recursive: true });
@@ -825,6 +882,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   intent
     .command('validate <file>')
     .action((file: string) => {
+      file = fileArg(file, '<file>');
       const c = ctx(g());
       const v = parseIntent(readFileSync(file, 'utf8'));
       out(c, v, () => (v.ok ? `intent: PASS` : `intent: FAIL\n${v.problems.map((p) => `  - ${p}`).join('\n')}`));
@@ -835,6 +893,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('stage 2 artifact')
     .command('validate <file>')
     .action((file: string) => {
+      file = fileArg(file, '<file>');
       const c = ctx(g());
       const v = parseSpec(readFileSync(file, 'utf8'));
       out(c, v, () => (v.ok ? `spec: PASS (${v.requirements.length} EARS requirements)` : `spec: FAIL\n${v.problems.map((p) => `  - ${p}`).join('\n')}`));
@@ -846,6 +905,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('definition-of-ready gates for a plan')
     .option('--light', 'T0 plan (no task split required)')
     .action((file: string, o: { light?: boolean }) => {
+      file = fileArg(file, '<file>');
       const c = ctx(g());
       const r = evaluatePlanReadiness(readFileSync(file, 'utf8'), { light: o.light, fileExists: (p) => existsSync(path.resolve(c.root, p)) });
       out(c, r, () => [`plan: ${r.overall}`, ...r.gates.map((gt) => `  ${gt.verdict.padEnd(4)} ${gt.severity === 'block' ? 'B' : 'w'} #${gt.gateId} ${gt.name}${gt.finding ? ` — ${gt.finding}` : ''}`), ...r.questions.map((q) => `  ? ${q}`)].join('\n'));
@@ -1026,6 +1086,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('the verdict on two saved bench reports: better, worse, no-measurable-difference or inconclusive (never a gate)')
     .action((before: string, after: string) => {
       let result: ReturnType<typeof compareBenchReports>;
+      before = fileArg(before, '<before.json>');
+      after = fileArg(after, '<after.json>');
       try {
         result = compareBenchReports(before, after);
       } catch (err) {
@@ -1057,8 +1119,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('classify')
     .requiredOption('--log <file>')
     .action((o: { log: string }) => {
+      const log = fileArg(o.log, '--log');
       const c = ctx(g());
-      const r = classifyCiFailure([{ name: 'log', aggregate: true, conclusion: 'failure', logExcerpt: readFileSync(o.log, 'utf8') }], undefined, { transientSteps: c.config.ci.transientSteps, scanSetupSteps: c.config.ci.scanSetupSteps });
+      const r = classifyCiFailure([{ name: 'log', aggregate: true, conclusion: 'failure', logExcerpt: readFileSync(log, 'utf8') }], undefined, { transientSteps: c.config.ci.transientSteps, scanSetupSteps: c.config.ci.scanSetupSteps });
       const note = 'a log alone cannot be transient: a rerun needs structured step evidence (ci.transientSteps)';
       out(c, { ...r, note }, () => `${r.class}: ${r.evidence.slice(0, 5).join('; ')}\n${note}`);
     });
@@ -1194,8 +1257,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--paths <list>', 'comma-separated changed paths')
     .option('--diff <file>', 'diff text to scan for ORM/SQL/backfill signals')
     .action((o: { paths: string; diff?: string }) => {
+      const diff = o.diff === undefined ? undefined : fileArg(o.diff, '--diff');
       const c = ctx(g());
-      const content = o.diff ? readFileSync(o.diff, 'utf8') : undefined;
+      const content = diff ? readFileSync(diff, 'utf8') : undefined;
       const r = detectDataImpact(o.paths.split(',').map((p) => ({ path: p.trim(), content })));
       out(c, r, () => `${r.impacted ? (r.strong ? 'DATA IMPACT (strong)' : 'data impact (hint only)') : 'no data impact'}\n${r.signals.map((s) => `  ${s.strength.padEnd(6)} ${s.kind.padEnd(16)} ${s.path ?? ''} ${s.detail}`).join('\n')}`);
     });
@@ -1317,11 +1381,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--note <text>')
     .option('--card <id>', 'the card this file is retained for; card close --evidence looks for it')
     .action((o: { goal?: string; id: string; kind: string; file?: string; content?: string; candidate?: string; env?: string; invocation?: string; note?: string; card?: string }) => {
+      const sourcePath = o.file === undefined ? undefined : fileArg(o.file, '--file');
       const c = ctx(g());
       const id = latestActiveGoalId(c, o.goal);
       const goalRec = c.controller.mustGoal(id);
       const ev = new EvidenceStore(c.paths.evidence, id);
-      const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath: o.file, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
+      const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
       Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
       out(c, { entries: mf.entries.length }, () => `retained ${o.id} (${mf.entries.length} entries)`);
     });
@@ -1345,9 +1410,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--data <file>', 'JSON {baseline:number[], recent:[{at,value}]}')
     .option('--file-intent', 'write an incident intent when a breach reaches the diagnose/propose tier')
     .action((o: { bands: string; data: string; fileIntent?: boolean }) => {
+      const bands = fileArg(o.bands, '--bands');
+      const dataFile = fileArg(o.data, '--data');
       const c = ctx(g());
-      const cfg = parseBandsYaml(readFileSync(o.bands, 'utf8'));
-      const data = JSON.parse(readFileSync(o.data, 'utf8')) as { baseline: number[]; recent: Sample[] };
+      const cfg = parseBandsYaml(readFileSync(bands, 'utf8'));
+      const data = JSON.parse(readFileSync(dataFile, 'utf8')) as { baseline: number[]; recent: Sample[] };
       const breaches = evaluateBands(cfg, data.baseline, data.recent);
       const filed: string[] = [];
       let refused: string | undefined;
