@@ -10,6 +10,10 @@ import { reopenEpisode } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CardRun } from '../../src/core/types.ts';
 import { makeFixture, writeCard } from './_harness.ts';
+import { cleanup } from '../infra/helpers.ts';
+import { finishAttempt } from '../../src/core/effort.ts';
+import type { CardDirective } from '../../src/loop/card-runner.ts';
+import type { EffortEpisode } from '../../src/core/types.ts';
 
 const T = '2026-09-11T00:00:00.000Z';
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -125,8 +129,13 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: the sequence of issue 106: the di
     assert.equal(next.directive.kind, 'build', `the merge is the repair to record, never a throw: ${next.directive.narration}`);
     assert.equal(next.run.pendingRepair?.kind, 'merge-conflict');
     // Nothing runs: the repair is the next attempt, never the settled one.
-    if (next.directive.kind === 'build') assert.equal(next.directive.attempt, next.run.effort!.attempts.length + 1);
-    if (next.directive.kind === 'build') assert.notEqual(next.directive.attempt, opened!.n);
+    if (next.directive.kind === 'build') assert.equal(next.directive.attempt, 2);
+    // One more `card next` opens the repair: a new record, never the settled one, named by its ladder number.
+    const repair = s.runner.next(s.g(), s.card, next.run);
+    const repairRecord = repair.run.effort!.attempts.find((a) => a.outcome === 'running')!;
+    assert.equal(repairRecord.n, 3);
+    assert.notEqual(repairRecord.n, opened!.n);
+    assert.deepEqual([buildOf(repair).attempt, buildOf(repair).narration], [2, WITH_RED('Attempt 2 (record 3 of this run; 1 not counted)', MERGE_CONFLICT_PREFIX)]);
   } finally {
     s.fx.cleanup();
   }
@@ -272,7 +281,8 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 2: the pre-review hand-back of a sti
     const running = legacy.effort!.attempts.find((a) => a.outcome === 'running')!;
     const next = s.runner.next(s.g(), s.card, legacy);
     assert.equal(next.directive.kind, 'build', next.directive.narration);
-    if (next.directive.kind === 'build') assert.deepEqual([next.directive.attempt, next.directive.effort], [running.n, running.effort]);
+    assert.equal(running.n, 3);
+    if (next.directive.kind === 'build') assert.deepEqual([next.directive.attempt, next.directive.effort], [2, running.effort]);
   } finally {
     s.fx.cleanup();
   }
@@ -408,4 +418,253 @@ test('a success recorded on the blocked candidate itself leaves the R3 block pen
   } finally {
     s.fx.cleanup();
   }
+});
+
+// Card T0-ATTEMPT-NUMBER: the ladder number of an attempt in build directives and narrations.
+const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table in its `## Attempt evidence` section before the final DoD run, one row per acceptance item: the item number, the test or command that proves it, and its result. A row with no proof is unfinished work. Correct the table on every repair.';
+/** The build() narration before a RED receipt, with only the label varying. */
+const BEFORE_RED = (label: string, prefix = '') => `${prefix}${label} at effort medium: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/T0-DRA.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt T0-DRA --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt T0-DRA --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`;
+/** The build() narration with a RED receipt, with only the label varying. */
+const WITH_RED = (label: string, prefix = '') => `${prefix}${label} at effort medium: implement/repair within allow_paths, run \`node --test tests/t0-dra.test.ts\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`;
+/** The review-fix narration of this fixture, with only the attempt note varying (empty on a repeated `card next`). */
+const REVIEW_FIX = (note: string) => "Review block to repair: \"[spec] 6 tests missing @ src/t0-dra.ts: the empty input is not covered -> add a case for it\". Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit." + note + ` ${ACCEPTANCE_TABLE}` + " Rerun the DoD and record `aidlc card attempt T0-DRA --outcome success --candidate-sha <new sha> --dod-receipt ...`; the repaired candidate ships with 3 substantive decision(s) left. Open finding(s): F1; a finding that does not hold is disputed with `aidlc review dispute T0-DRA <id> --note \"<why>\"`, and the next decision runs on the unchanged candidate once every finding of the block is disputed. Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines. List in the attempt evidence each input form and failure path the repair hunks handle (for a parser, each kind of value it can be given; for I/O, each error it can raise), each with the test that covers it. For each fixed finding of the Bugs or Security pass, record `aidlc review repro <cardId> <findingId> --argv '<JSON array>' --files <paths>` with the test that catches it, and attach one to a `wrong` dispute; a repro is evidence for the next decision and changes no gate.";
+const HAND_BACK = "Pre-review block still pending on candidate sha-1: \"[spec] 6 tests missing @ src/t0-dra.ts: the empty input is not covered -> add a case for it\". Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then `aidlc review pre T0-DRA`. Open finding(s): F1; dispute one with `aidlc review dispute T0-DRA <id> --note \"<why>\"`, and the round runs on the unchanged candidate once every finding of the block is disputed.";
+const MERGE_CONFLICT = "Merge conflict on the base sync (\"sentinel \\\\[SHIP-BASE-SYNC-MERGED\\\\]\"): the ship path merged the entries both sides added to CHANGELOG.md Unreleased and committed the merge; check it, rerun the DoD on it and record it as the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.";
+const MERGE_CONFLICT_PREFIX = "Pending merge-conflict repair: \"merge conflict on the base sync (sentinel \\\\[SHIP-BASE-SYNC-MERGED\\\\])\" ";
+const RED_MISSING = "red-missing: \"sentinel 缺少 RED 证据\". Establish the RED receipt again within scope and re-run the DoD.";
+const RED_MISSING_PREFIX = "Pending red-missing repair: \"sentinel 缺少 RED 证据\" ";
+const DOD_FAILED = "dod-failed: \"sentinel DoD 未通过; failing line: not ok N - parses the header\". Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD. The failure counts as a failed attempt on the effort ladder.";
+
+type BuildDirective = Extract<CardDirective, { kind: 'build' }>;
+function buildOf(r: { directive: CardDirective }): BuildDirective {
+  assert.equal(r.directive.kind, 'build', r.directive.narration);
+  return r.directive as BuildDirective;
+}
+/** A not-counted first: `card next` opens record 1 and `recordAttempt` records it not counted (`tool-outage`). */
+function notCountedFirst(s: Setup): CardRun {
+  const opened = s.runner.next(s.g(), s.card, s.first.run);
+  assert.equal(buildOf(opened).attempt, 1);
+  return s.runner.recordAttempt(s.g(), s.card, opened.run, { outcome: 'not-counted', notCountedReason: 'tool-outage' });
+}
+/** R2 passes on the recorded candidate and R3 decides it (`r3` queued first when given): the decided run. */
+async function reviewed(s: Setup, run: CardRun, r3?: string): Promise<CardRun> {
+  const r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, run)).run);
+  assert.equal(r.directive.kind, 'review', r.directive.narration);
+  if (r3) s.r3.push(r3);
+  return (await s.runner.formalReview(s.g(), s.card, r.run)).run;
+}
+const outcomes = (run: CardRun) => run.effort!.attempts.map((a) => [a.n, a.outcome]);
+
+test('T0-ATTEMPT-NUMBER: BUILD names its attempt by the ladder number when it opens it, while it runs and on a succeeded episode, with the record number in the label', async (t) => {
+  // (a) Opened after a not-counted record, then asked for again while it runs.
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const started = () => s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_STARTED');
+  let r = s.runner.next(s.g(), s.card, notCountedFirst(s));
+  assert.deepEqual(outcomes(r.run), [[1, 'not-counted'], [2, 'running']]);
+  let d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1 (record 2 of this run; 1 not counted)')]);
+  r = s.runner.next(s.g(), s.card, r.run);
+  d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1 (record 2 of this run; 1 not counted)')]);
+  assert.deepEqual(started().map((e) => e.data['n']), [1, 1], 'records 1 and 2 open as attempt 1; the repeated call journals nothing');
+
+  // (b) Two not-counted records before the attempt.
+  const b = setup();
+  t.after(() => cleanup(b.fx.tmp));
+  let rb = b.runner.next(b.g(), b.card, notCountedFirst(b));
+  rb = b.runner.next(b.g(), b.card, b.runner.recordAttempt(b.g(), b.card, rb.run, { outcome: 'not-counted', notCountedReason: 'quota' }));
+  assert.deepEqual(outcomes(rb.run), [[1, 'not-counted'], [2, 'not-counted'], [3, 'running']]);
+  d = buildOf(rb);
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1 (record 3 of this run; 2 not counted)')]);
+
+  // (c) A succeeded episode whose run lost its DoD receipt: BUILD names the next attempt and opens nothing.
+  const c = setup();
+  t.after(() => cleanup(c.fx.tmp));
+  const rc = c.record(notCountedFirst(c), 'sha-1');
+  assert.equal(rc.directive.kind, 'pre-review', rc.directive.narration);
+  const stripped = c.fx.store.updateCardRun(c.goalId, 'T0-DRA', (current) => ({ ...current!, dodReceipt: undefined }));
+  const startedBefore = c.fx.events(c.goalId).filter((e) => e.type === 'ATTEMPT_STARTED').length;
+  d = buildOf(c.runner.next(c.g(), c.card, stripped));
+  assert.deepEqual([d.attempt, d.narration], [2, WITH_RED('Attempt 2 (record 3 of this run; 1 not counted)')]);
+  const stored = c.fx.store.getCardRun(c.goalId, 'T0-DRA')!;
+  assert.deepEqual(outcomes(stored), [[1, 'not-counted'], [2, 'success']]);
+  assert.equal(stored.effort!.terminal, 'succeeded');
+  assert.equal(c.fx.events(c.goalId).filter((e) => e.type === 'ATTEMPT_STARTED').length, startedBefore, 'no attempt is opened');
+});
+
+test('T0-ATTEMPT-NUMBER: a review-fix repair names its attempt by the ladder number when it opens it and while it runs', async (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(notCountedFirst(s), 'sha-1').run, BLOCK);
+  let r = s.runner.next(s.g(), s.card, decided);
+  assert.deepEqual(outcomes(r.run), [[1, 'not-counted'], [2, 'success'], [3, 'running']]);
+  let d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [2, REVIEW_FIX(' Attempt 2 (record 3 of this run; 1 not counted) at effort medium.')]);
+  r = s.runner.next(s.g(), s.card, r.run);
+  d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [2, REVIEW_FIX('')]);
+  const repair = s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_STARTED').at(-1)!;
+  assert.deepEqual([repair.data['n'], repair.data['reason']], [2, 'review-fix']);
+});
+
+test('T0-ATTEMPT-NUMBER: the pre-review hand-back of a succeeded episode names the ladder number the next BUILD opens', async (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const { r } = await blockOpenDispute(s);
+  let next = s.runner.next(s.g(), s.card, s.runner.acceptFinding(s.g(), s.card, r.run, 'F1'));
+  let d = buildOf(next);
+  assert.deepEqual([d.attempt, d.narration], [2, HAND_BACK]);
+  next = s.runner.next(s.g(), s.card, next.run);
+  assert.deepEqual(outcomes(next.run), [[1, 'success'], [2, 'not-counted'], [3, 'running']]);
+  d = buildOf(next);
+  assert.deepEqual([d.attempt, d.narration], [2, WITH_RED('Attempt 2 (record 3 of this run; 1 not counted)')]);
+});
+
+test('T0-ATTEMPT-NUMBER: the merge-conflict and rejected-RED repairs name the ladder number, with an attempt running and with none', async (t) => {
+  for (const step of ['base-sync-merged', 'red-missing'] as const) {
+    const literal = step === 'base-sync-merged' ? MERGE_CONFLICT : RED_MISSING;
+    const opened = step === 'base-sync-merged' ? WITH_RED('Attempt 2 (record 3 of this run; 1 not counted)', MERGE_CONFLICT_PREFIX) : BEFORE_RED('Attempt 2 (record 3 of this run; 1 not counted)', RED_MISSING_PREFIX);
+    // (a) A running attempt left by an older run.
+    const s = setup([step]);
+    t.after(() => cleanup(s.fx.tmp));
+    const decided = await reviewed(s, s.record(notCountedFirst(s), 'sha-1').run);
+    s.fx.store.updateCardRun(s.goalId, 'T0-DRA', () => decided);
+    let next = s.runner.next(s.g(), s.card, s.legacyRunning());
+    let d = buildOf(next);
+    assert.deepEqual(next.run.effort!.attempts.filter((a) => a.outcome === 'running').map((a) => a.n), [3], step);
+    assert.deepEqual([d.attempt, d.narration], [2, literal], step);
+
+    // (b) Nothing running: the repair is the next attempt, opened by the next `card next`.
+    const u = setup([step]);
+    t.after(() => cleanup(u.fx.tmp));
+    next = u.runner.next(u.g(), u.card, await reviewed(u, u.record(notCountedFirst(u), 'sha-1').run));
+    d = buildOf(next);
+    assert.deepEqual([d.attempt, d.narration], [2, literal], step);
+    next = u.runner.next(u.g(), u.card, next.run);
+    assert.deepEqual(outcomes(next.run), [[1, 'not-counted'], [2, 'success'], [3, 'running']], step);
+    d = buildOf(next);
+    assert.deepEqual([d.attempt, d.narration], [2, opened], step);
+  }
+});
+
+test('T0-ATTEMPT-NUMBER: a ship failure with a running repair names its ladder number, and a promotion journals the stored n after the refutation', async (t) => {
+  // (a) The running repair after a not-counted record.
+  const s = setup(['dod-failed']);
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(notCountedFirst(s), 'sha-1').run);
+  s.fx.store.updateCardRun(s.goalId, 'T0-DRA', () => decided);
+  let next = s.runner.next(s.g(), s.card, s.legacyRunning());
+  let d = buildOf(next);
+  assert.deepEqual([d.attempt, d.narration], [2, DOD_FAILED]);
+  next = s.runner.next(s.g(), s.card, next.run);
+  d = buildOf(next);
+  assert.deepEqual([d.attempt, d.narration], [2, WITH_RED('Attempt 2 (record 3 of this run; 1 not counted)')]);
+
+  // (b) The promotion of a running repair to the escalation.
+  const p = setup(['dod-failed']);
+  t.after(() => cleanup(p.fx.tmp));
+  const passed = await reviewed(p, p.record(p.first.run, 'sha-1').run);
+  const fail = (ep: EffortEpisode, cause: string) => finishAttempt(startAttempt(ep, 'medium', T), { finishedAt: T, outcome: 'fail', cause, progress: true });
+  let ep: EffortEpisode = fail(fail({ ...passed.effort!, attempts: [], terminal: undefined, escalationUsed: false }, 'a'), 'b');
+  ep = reopenEpisode(finishAttempt(startAttempt(ep, 'medium', T), { finishedAt: T, outcome: 'success', progress: true }))!;
+  ep = startAttempt(finishAttempt(startAttempt(ep, 'medium', T), { finishedAt: T, outcome: 'not-counted', notCountedReason: 'quota' }), 'medium', T);
+  const written = p.fx.store.updateCardRun(p.goalId, 'T0-DRA', () => ({ ...passed, effort: ep }));
+  assert.deepEqual(outcomes(written), [[1, 'fail'], [2, 'fail'], [3, 'success'], [4, 'not-counted'], [5, 'running']]);
+  const before = p.fx.events(p.goalId).length;
+  d = buildOf(p.runner.next(p.g(), p.card, written));
+  assert.deepEqual([d.attempt, d.effort], [4, 'high']);
+  const appended = p.fx.events(p.goalId).slice(before).filter((e) => e.type === 'ATTEMPT_FINISHED' || e.type === 'ATTEMPT_STARTED');
+  assert.deepEqual(appended.map((e) => [e.type, e.data['n']]), [['ATTEMPT_FINISHED', 3], ['ATTEMPT_STARTED', 5]]);
+  assert.equal(appended[0]!.data['refutedBy'], 'ship dod-failed');
+  assert.deepEqual([appended[1]!.data['promoted'], appended[1]!.data['from'], appended[1]!.data['effort']], [true, 'medium', 'high']);
+});
+
+test('T0-ATTEMPT-NUMBER: the implicit attempt journals the ladder number, as on main', (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const run = s.runner.recordAttempt(s.g(), s.card, notCountedFirst(s), { outcome: 'success', dodReceipt: 'dod:sha-1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+  const implicit = s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_STARTED').at(-1)!;
+  assert.deepEqual([implicit.data['n'], implicit.data['implicit']], [1, true]);
+  assert.equal(run.effort!.attempts.at(-1)!.n, 2);
+});
+
+test('T0-ATTEMPT-NUMBER: a review-fix directive of a run with no effort episode names attempt 1', async (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(s.first.run, 'sha-1').run, BLOCK);
+  const stripped = s.fx.store.updateCardRun(s.goalId, 'T0-DRA', () => ({ ...decided, effort: undefined }));
+  assert.equal(buildOf(s.runner.next(s.g(), s.card, stripped)).attempt, 1);
+});
+
+test("T0-ATTEMPT-NUMBER: with no not-counted record the numbers and the narrations are main's", async (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  let r = s.runner.next(s.g(), s.card, s.first.run);
+  let d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1')]);
+  r = s.runner.next(s.g(), s.card, r.run);
+  d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1')]);
+  r = s.runner.next(s.g(), s.card, await reviewed(s, s.record(r.run, 'sha-1').run, BLOCK));
+  d = buildOf(r);
+  assert.deepEqual([d.attempt, d.narration], [2, REVIEW_FIX(' Attempt 2 at effort medium.')]);
+  r = s.record(r.run, 'sha-2');
+  const stripped = s.fx.store.updateCardRun(s.goalId, 'T0-DRA', (current) => ({ ...current!, dodReceipt: undefined }));
+  d = buildOf(s.runner.next(s.g(), s.card, stripped));
+  assert.deepEqual([d.attempt, d.narration], [3, WITH_RED('Attempt 3')]);
+});
+
+/** Write the stored run with the episode [not-counted n 1, running n 5], whose stored numbers do not follow their positions (acceptance 15). */
+function storeGapped(s: Setup, run: CardRun): CardRun {
+  const attempts: EffortEpisode['attempts'] = [
+    { n: 1, effort: 'medium', startedAt: T, finishedAt: T, outcome: 'not-counted', notCountedReason: 'tool-outage', progress: false, checksGained: [], checksLost: [] },
+    { n: 5, effort: 'medium', startedAt: T, outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+  ];
+  return s.fx.store.updateCardRun(s.goalId, 'T0-DRA', () => ({ ...run, effort: { ...run.effort!, attempts, terminal: undefined, escalationUsed: false } }));
+}
+
+test('T0-ATTEMPT-NUMBER: acceptance 15: build() names a stored running attempt by the ladder number at its array index', (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const d = buildOf(s.runner.next(s.g(), s.card, storeGapped(s, notCountedFirst(s))));
+  assert.deepEqual([d.attempt, d.narration], [1, BEFORE_RED('Attempt 1 (record 5 of this run; 1 not counted)')]);
+});
+
+test('T0-ATTEMPT-NUMBER: acceptance 15: the review-fix field names a stored running attempt by the ladder number at its array index', async (t) => {
+  const s = setup();
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(s.first.run, 'sha-1').run, BLOCK);
+  const d = buildOf(s.runner.next(s.g(), s.card, storeGapped(s, decided)));
+  assert.deepEqual([d.attempt, d.narration], [1, REVIEW_FIX('')]);
+});
+
+test('T0-ATTEMPT-NUMBER: acceptance 15: the buildDirective fallback names a stored running attempt by the ladder number at its array index', async (t) => {
+  const s = setup(['base-sync-merged']);
+  t.after(() => cleanup(s.fx.tmp));
+  const decided = await reviewed(s, s.record(s.first.run, 'sha-1').run);
+  const d = buildOf(s.runner.next(s.g(), s.card, storeGapped(s, decided)));
+  assert.deepEqual([d.attempt, d.narration], [1, MERGE_CONFLICT]);
+});
+
+/** The sentence card T0-ATTEMPT-NUMBER appends to the ship repair attempt paragraph of docs/OPERATIONS.md. */
+const LADDER_OPERATIONS =
+  'Every build directive names, in its `attempt` field and in the `Attempt <n>` label of a BUILD or review-fix narration that has one, the ladder number of the attempt it opens, runs or asks for: the records of the run before that attempt that are not `not-counted`, plus one (card T0-ATTEMPT-NUMBER). When that attempt\'s record number, its `n` in the run, differs, the label adds `(record <n> of this run; <k> not counted)`; the stored `n`, the failure counts and the ladder limits are unchanged, and in the journal an `ATTEMPT_STARTED` that opens an attempt carries its ladder number while one that journals the promotion of a running repair, and every `ATTEMPT_FINISHED` that carries a number, carry the stored `n`, as before.';
+const LADDER_ARCHITECTURE =
+  '`effort.ts` bounds implementation attempts (MA2). Build directives name an attempt by `ladderNumber`, the records before it that are not `not-counted` plus one; the stored attempt numbers and the journal\'s numbering are unchanged (card T0-ATTEMPT-NUMBER).';
+const LADDER_CHANGELOG =
+  '- T0-ATTEMPT-NUMBER (audit item F17): every build directive names its attempt by the ladder number, the records of the run before it that are not `not-counted` plus one, in its `attempt` field. Where a BUILD or review-fix narration already contains an attempt-number label, that label uses the ladder number and adds `(record <n> of this run; <k> not counted)` only when the attempt\'s record number differs. Before, with a not-counted record before the attempt, it was named by its ladder number when it opened and by its record number on a repeated `aidlc card next`, at BUILD on a succeeded episode, in the `attempt` field of a review-fix repair, in the pre-review hand-back and in the merge-conflict, rejected-RED and running-repair ship failure directives. With no not-counted record before the attempt every directive is as before, except that a review-fix directive of a run with no effort episode named attempt 0 and now names 1. The stored `n`, the journal events, the failure counts and the ladder limits are unchanged.';
+
+test('T0-ATTEMPT-NUMBER: docs/OPERATIONS.md, docs/ARCHITECTURE.md and the CHANGELOG state the ladder number', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+  const operations = read('docs', 'OPERATIONS.md').split('\n');
+  const paragraph = operations.find((line) => line.startsWith('A ship that fails on the candidate\'s own code is a failed attempt (card T0-SHIP-REPAIR-ATTEMPT)'));
+  assert.ok(paragraph?.endsWith(` ${LADDER_OPERATIONS}`), 'the ship repair attempt paragraph ends with the ladder sentence');
+  for (const sentence of DOC_SENTENCES) assert.ok(operations.join('\n').includes(sentence), `docs/OPERATIONS.md still states: ${sentence}`);
+  const core = read('docs', 'ARCHITECTURE.md').split('\n').find((line) => line.startsWith('`src/core/` holds the decision engines.'));
+  assert.ok(core?.includes(LADDER_ARCHITECTURE), 'the src/core/ paragraph states the ladder number directly after the effort.ts sentence');
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  assert.ok(unreleased.split('\n').includes(LADDER_CHANGELOG), 'the CHANGELOG Unreleased section holds the entry');
 });

@@ -8,6 +8,7 @@ import {
   countedAttempts,
   createEpisode,
   finishAttempt,
+  ladderNumber,
   nextEffortAction,
   nextSupportedEffort,
   normaliseCause,
@@ -16,6 +17,7 @@ import {
   startAttempt,
 } from '../../src/core/effort.ts';
 import type { EffortEpisode, EffortLevel } from '../../src/core/types.ts';
+import type { NotCountedReason } from '../../src/core/types.ts';
 import { addMs } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 import { readFileSync } from 'node:fs';
@@ -356,7 +358,7 @@ describe('T0-SHIP-REPAIR-ATTEMPT: a ship that fails on the candidate code', () =
     assert.equal(baseline.episode.escalationUsed, false);
     let quota = runningAfterBlock(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 2);
     quota = startAttempt(finishAttempt(quota, { finishedAt: addMs(T0, 150_000), outcome: 'not-counted', notCountedReason: 'quota' }), 'medium', addMs(T0, 200_000));
-    assert.deepEqual(afterShipFailure(quota, 'ship dod-failed: a', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 3, escalated: false }, 'the running attempt keeps its own number');
+    assert.deepEqual(afterShipFailure(quota, 'ship dod-failed: a', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'the running attempt keeps its ladder number');
 
     for (const progress of [true, false]) {
       const twice = fail(fail(createEpisode('t', 'implementer', 'medium', GPT), 1, 'a', true), 2, 'b', true);
@@ -426,7 +428,7 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
       { label: 'no attempt', ep: empty, action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
       { label: 'a running attempt', ep: startAttempt(empty, 'medium', T0), action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
       { label: 'not-counted records', ep: onlyQuota, action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
-      { label: 'not-counted records and a running attempt', ep: startAttempt(onlyQuota, 'medium', addMs(T0, 120_000)), action: { action: 'attempt', effort: 'medium', n: 2, escalated: false } },
+      { label: 'not-counted records and a running attempt', ep: startAttempt(onlyQuota, 'medium', addMs(T0, 120_000)), action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
     ];
     for (const { label, ep, action } of cases) {
       const before = structuredClone(ep);
@@ -550,5 +552,71 @@ describe('a dispute and a running repair (card T0-DISPUTE-RUNNING-ATTEMPT)', () 
     // A terminal episode keeps its terminal and its attempts.
     const stopped = { ...running, terminal: 'exhausted' as const };
     assert.deepEqual(settleDisputedRepair(stopped, at(4)), stopped);
+  });
+});
+
+describe('T0-ATTEMPT-NUMBER: the ladder number of an attempt', () => {
+  const at = (k: number) => addMs(T0, k * 60_000);
+  const base = () => createEpisode('t', 'implementer', 'medium', GPT);
+  const open = (ep: EffortEpisode, effort: EffortLevel = ep.baseline) => startAttempt(ep, effort, at(ep.attempts.length * 2 + 1));
+  const settle = (ep: EffortEpisode, input: { outcome: 'success' | 'fail' | 'not-counted'; notCountedReason?: NotCountedReason; cause?: string; progress?: boolean }) =>
+    finishAttempt(ep, { finishedAt: at(ep.attempts.length * 2), ...input });
+  const notCounted = (ep: EffortEpisode, reason: NotCountedReason = 'tool-outage') => settle(open(ep), { outcome: 'not-counted', notCountedReason: reason });
+  const failed = (ep: EffortEpisode, cause: string, progress = false) => settle(open(ep), { outcome: 'fail', cause, progress });
+  const succeeded = (ep: EffortEpisode, progress = false) => settle(open(ep), { outcome: 'success', progress });
+
+  test('T0-ATTEMPT-NUMBER: ladderNumber counts the records before the attempt that are not not-counted, plus one', () => {
+    assert.equal(ladderNumber(base(), 0), 1, 'an empty episode');
+    const one = notCounted(base());
+    assert.deepEqual([ladderNumber(one, 0), ladderNumber(one, 1)], [1, 1], 'one not-counted record');
+    const mixed = open(notCounted(failed(base(), 'a')));
+    assert.deepEqual(mixed.attempts.map((a) => a.outcome), ['fail', 'not-counted', 'running']);
+    assert.deepEqual([0, 1, 2, 3].map((i) => ladderNumber(mixed, i)), [1, 2, 2, 3], 'fail, not-counted, running');
+    const afterSuccess = notCounted(notCounted(reopenAfterReviewBlock(succeeded(base()), 'R3 block')));
+    assert.deepEqual(afterSuccess.attempts.map((a) => a.outcome), ['success', 'not-counted', 'not-counted']);
+    assert.equal(ladderNumber(afterSuccess, 3), 2, 'success, not-counted, not-counted');
+    assert.equal(ladderNumber(open(base()), 1), 2, 'a running record counts');
+    for (const reason of ['quota', 'expected-red', 'admission-hold', 'tool-outage', 'env-setup', 'review-disputed'] as const) {
+      const ep = failed(notCounted(base(), reason), 'a');
+      assert.deepEqual([ladderNumber(ep, 1), ladderNumber(ep, 2)], [1, 2], `a not-counted record of reason ${reason}`);
+    }
+  });
+
+  test('T0-ATTEMPT-NUMBER: repairAction and afterShipFailure name a running attempt by its ladder number, and a promotion keeps the stored n', () => {
+    assert.deepEqual(repairAction(open(notCounted(base())), JUSTIFIED), { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'not-counted, running');
+    const reopened = reopenAfterReviewBlock(succeeded(base()), 'R3 block');
+    assert.deepEqual(repairAction(open(notCounted(reopened, 'quota'), 'high'), JUSTIFIED), { action: 'attempt', effort: 'high', n: 2, escalated: true }, 'success, not-counted, running at its own effort');
+    assert.deepEqual(repairAction(open(reopened), JUSTIFIED), { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'success, running');
+    const ep = open(notCounted(reopenAfterReviewBlock(succeeded(failed(failed(base(), 'a', true), 'b', true), true), 'R3 block'), 'quota'));
+    assert.deepEqual(ep.attempts.map((a) => [a.n, a.outcome, a.effort]), [[1, 'fail', 'medium'], [2, 'fail', 'medium'], [3, 'success', 'medium'], [4, 'not-counted', 'medium'], [5, 'running', 'medium']]);
+    const step = afterShipFailure(ep, 'ship dod-failed: c', JUSTIFIED);
+    assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 4, escalated: true });
+    assert.deepEqual(step.promoted, { n: 5, from: 'medium', effort: 'high' }, 'the promotion carries the stored n');
+    // Stored numbers that do not follow their positions: the index comes from the array (1), never from the stored n (4).
+    const gapped: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), finishedAt: at(2), outcome: 'not-counted', notCountedReason: 'tool-outage', progress: false, checksGained: [], checksLost: [] },
+      { n: 5, effort: 'medium', startedAt: at(3), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(repairAction(gapped, JUSTIFIED), { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'repairAction, stored n not following positions');
+    assert.deepEqual(afterShipFailure(gapped, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'afterShipFailure with nothing settled, stored n not following positions');
+    const gappedRepair: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), finishedAt: at(2), outcome: 'success', progress: false, checksGained: [], checksLost: [] },
+      { n: 2, effort: 'medium', startedAt: at(3), finishedAt: at(4), outcome: 'not-counted', notCountedReason: 'quota', progress: false, checksGained: [], checksLost: [] },
+      { n: 7, effort: 'medium', startedAt: at(5), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(afterShipFailure(gappedRepair, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'afterShipFailure with a running repair, stored n not following positions');
+    // A running record that is not last (acceptance 15): the index is the running record's, never the last one's.
+    const runningFirst: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+      { n: 2, effort: 'medium', startedAt: at(2), finishedAt: at(3), outcome: 'not-counted', notCountedReason: 'quota', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(repairAction(runningFirst, JUSTIFIED), { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'repairAction, running record not last');
+    assert.deepEqual(afterShipFailure(runningFirst, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 1, escalated: false }, 'afterShipFailure with nothing settled, running record not last');
+    const repairNotLast: EffortEpisode = { ...base(), attempts: [
+      { n: 1, effort: 'medium', startedAt: at(1), finishedAt: at(2), outcome: 'success', progress: false, checksGained: [], checksLost: [] },
+      { n: 2, effort: 'medium', startedAt: at(3), outcome: 'running', progress: false, checksGained: [], checksLost: [] },
+      { n: 3, effort: 'medium', startedAt: at(4), finishedAt: at(5), outcome: 'not-counted', notCountedReason: 'quota', progress: false, checksGained: [], checksLost: [] },
+    ] };
+    assert.deepEqual(afterShipFailure(repairNotLast, 'ship dod-failed: x', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 2, escalated: false }, 'afterShipFailure with a running repair, running record not last');
   });
 });
