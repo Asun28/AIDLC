@@ -1,7 +1,7 @@
 ---
 id: T0-REGISTRY-PER-CALL
 title: Each outermost GoalController call of next, report or createGoal retains at most one successfully loaded card registry, loaded on first use and dropped on return or throw; aidlc board loads it once on its board path
-status: todo
+status: merged
 branch: T0-REGISTRY-PER-CALL
 worktree: D:\wt\AIDLC\T0-REGISTRY-PER-CALL
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: about 42 added and deleted source lines (src/loop/controller.ts about 38: the scope field, the accessor, the delegating wrappers of `next`, `report` and `createGoal`, and the seven loader sites; src/cli/main.ts 4), about 340 lines of tests/scenarios/registry-per-call.test.ts (exact load counts of six call shapes, freshness after a return and after a throw of each entry point, an escaping and a caught loader failure, the calls that load nothing, the first-use order and the `aidlc board` child process), 6 document lines (docs/ARCHITECTURE.md 2, docs/OPERATIONS.md 2, CHANGELOG.md 2) and about 110 lines of attempt evidence; raised from 360 to 500 after the Codex review of the draft added the throw, first-use and document items; raised from 500 to 540 after the pre-review of the candidate 1bfdd15e, which stood at 457 changed lines: the keep-first rule of R1 (about 3 source lines), acceptance 12 (about 25 test lines), the reworded sentences A and B and the CHANGELOG entry (changed in place) and about 20 lines of attempt evidence bring the estimate to about 505"
@@ -221,3 +221,13 @@ Coordinator verification:
 - At b29a37cf, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/registry-per-call.test.ts): tests 18, pass 18, fail 0, skipped 0.
 - Windows, docpins: 81 test files reading 3 changed documents: # tests 1888 # pass 1876 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+PR 288 merged as a2736329 on 2026-11-12T01:06:49Z with its five checks green.
+
+The ship took two candidates. The first (706b86fd) passed R3 at decision 1 and the second pass. At SHIP its base sync met the CHANGELOG entry of T0-CI-PERMISSIONS (PR 287), which the planner had given the same insertion anchor, `- T0-CARDS-PROJECTED-REENTRY`; the ship path merged both entries whole and returned the card to BUILD with the merge as a new candidate. The coordinator reran the DoD, the Linux run and the document-reading tests on it and recorded attempt 2 with no source change; R3 passed it at decision 2 with no block.
+
+Planner ruling on the advisory of decision 2 (R7 asks for the entry directly above `- T0-CARDS-PROJECTED-REENTRY`, and the entry of T0-CI-PERMISSIONS now stands between them). The entry stays where the merge put it. The anchor rule exists so that parallel cards do not conflict, not to fix an order; the hygiene of T0-CI-PERMISSIONS says the later of the two cards merges main first, which is what happened; and no test or document reads the order of the two entries. Moving the entry would have made a third candidate for no change in content.
+
+Two things the coordinator did wrong here, for the record. It gave two cards in flight one CHANGELOG anchor, which cost this card one R3 decision. And its review script asked the loop for the next step after the pass at decision 2; the card's one second pass was already used, so that call was the ship. The ship was the step the loop directed, but it was meant to be started by the ship script after the coordinator had read the review result; the review script no longer asks once the second pass is used.
