@@ -214,3 +214,8 @@ Document sentences against code and test:
 | CHANGELOG entry | same as the two above, plus the two comments | prose test 8; comments reviewer-verified |
 
 Changed lines `git diff --shortstat origin/main...HEAD` before this section: 5 files, 353 insertions, 5 deletions (358 against budget 480).
+
+Coordinator verification:
+- At 3c28cd93, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/unresolved-narration.test.ts, tests/surface/prose.test.ts): tests 41, pass 41, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1887 # pass 1872 # fail 3 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
