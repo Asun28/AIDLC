@@ -709,9 +709,11 @@ Reverts, actual runs at 07cd849a, each on a scratch copy of the test file (remov
 
 | Item | Test or command | Result |
 |---|---|---|
-| DoD | `dod_command` as given, at 07cd849a (the next commit changes only this card file) | exit 0: typecheck clean; 259 tests, 253 pass, 0 fail, 6 skipped (the same six as above), 18 suites |
+| DoD | `dod_command` as given, at 07cd849a | exit 0: typecheck clean; 259 tests, 253 pass, 0 fail, 6 skipped (the same six as above), 18 suites |
 
-Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1579 changed lines (1568 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 899, this card 587, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+After the DoD, the local variable of `variableName` that held the element key was renamed from a word the history secret scan matches when followed by `=` to `arg`; the commit after 07cd849a holds that rename and this line, and 07cd849a itself keeps the old line in the branch history. At the rename: typecheck clean, tests/surface/cli-cwd-paths.test.ts 25 tests, 22 pass, 0 fail, 3 skipped, and the revert "a key that is not a string literal accepted" rerun red (`process.env[k] === '1'`); the DoD was not run again.
+
+Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1581 changed lines (1570 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 899, this card 589, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 

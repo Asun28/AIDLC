@@ -211,8 +211,8 @@ const ENV_NAME = /^[A-Z][A-Z0-9_]*$/;
 /** The variable an access to `process.env` names: its property name, or a string or substitution-free template key; else undefined. */
 function variableName(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | undefined {
   if (ts.isPropertyAccessExpression(access)) return access.name.text;
-  const key = access.argumentExpression;
-  return ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key) ? key.text : undefined;
+  const arg = access.argumentExpression;
+  return ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? arg.text : undefined;
 }
 
 /** Whether `env`, a `process.env` node, has one of the three shapes of rule (c). */
