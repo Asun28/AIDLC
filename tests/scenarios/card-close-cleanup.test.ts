@@ -11,6 +11,7 @@ import { Journal } from '../../src/state/journal.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
+import { cleanup } from '../infra/helpers.ts';
 
 // T0-CLOSE-CLEANUP-2: `aidlc card close` does the cleanup and metadata steps it records. The card reaches CLOSE on the
 // dry-run path of the harness; the closing runner is on a real path over a real repository, so git does the refusing.
@@ -748,4 +749,54 @@ test('T0-CLOSE-CLEANUP-2 acceptance 8: the guide, the architecture note, both ca
   } finally {
     fx.cleanup();
   }
+});
+
+test('T0-AUDIT-BINDING: the closure failure names --candidate with the digest of the last passing decision, else <digest>', (t) => {
+  const invocation = (outcome: 'pass' | 'block', candidateDigest: string, n: number) => ({ invocationId: `r3:${n}`, candidateDigest, base: 'main', policyVersion: 'REVIEW.md@2', reviewer: 'codex', requestedAt: T0, outcome });
+  const rows: Array<[string, Array<['pass' | 'block', string]>, string]> = [
+    ['one pass', [['pass', 'd1']], 'd1'],
+    ['a pass, then a block', [['pass', 'd1'], ['block', 'd2']], 'd1'],
+    ['two passes', [['pass', 'd1'], ['pass', 'd2']], 'd2'],
+    ['one block', [['block', 'd2']], '<digest>'],
+    ['no decision', [], '<digest>'],
+  ];
+  for (const [name, decisions, candidate] of rows) {
+    const fx = makeFixture();
+    t.after(() => cleanup(fx.tmp));
+    const { goalId, card } = atClose(fx);
+    const run = stored(fx, goalId);
+    const saved = fx.store.saveCardRun({ ...run, review: { ...run.review, invocations: decisions.map(([outcome, digest], i) => invocation(outcome, digest, i)) } });
+    const message = refusal(() => closingRunner(fx, [], 'github').markClosure(fx.goal(goalId), card, saved, { evidence: true }));
+    assert.ok(message.endsWith(` --candidate ${candidate}`), `${name}: ${message}`);
+    const retain = `run aidlc evidence retain --goal ${goalId} --card ${CARD} --id ${CARD}.verdict --kind review-verdict --file `;
+    assert.ok(message.includes(retain) && message.indexOf(retain) < message.lastIndexOf(' --candidate '), `${name}: ${message}`);
+  }
+});
+
+test('T0-AUDIT-BINDING: the close narration and both card-loop copies name --candidate <digest>', (t) => {
+  const fx = makeFixture();
+  t.after(() => cleanup(fx.tmp));
+  const { goalId, run } = atClose(fx);
+  const directive = closingRunner(fx, [], 'dry-run').next(fx.goal(goalId), fx.card(CARD), run).directive;
+  const sentence = `\`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${CARD}\`; \`aidlc audit seal\` also needs \`--candidate <digest>\` on each retained \`dod-receipt\`, \`review-verdict\`, \`ci-run\`, \`test-output\` or \`health\` file.`;
+  assert.ok(directive.narration.includes(sentence), directive.narration);
+  const close = [
+    '## CLOSE',
+    'Verify the merge on the intended base; do only missing steps:',
+    'doc_sync, finding dispositions replayed idempotently from all verdicts,',
+    'evidence (`aidlc evidence retain --card <id> --candidate <digest>`),',
+    'base contents; last, `card close --all` writes status (commit on main),',
+    'removes the worktree. A reminder or exit 0 is not closure. Persistence',
+    'failure after merge => merge_verified + STOP/audit; never merge again.',
+    'Lessons only under repository policy; no unrelated staging, sweeps or',
+    'base pushes.',
+    '',
+  ].join('\n');
+  const copies = ['.claude/skills/aidlc-loop/card-loop.md', 'templates/claude/skills/aidlc-loop/card-loop.md'].map((copy) => readFileSync(path.resolve(copy)));
+  for (const text of copies) {
+    assert.ok(text.toString('utf8').replace(/\r\n/g, '\n').includes(`\n${close}`), 'the CLOSE section holds the eight lines');
+    assert.ok(text.every((b) => b < 0x80), 'ASCII');
+    assert.ok(text.length <= 6500, `${text.length} bytes`);
+  }
+  assert.ok(copies[0]!.equals(copies[1]!), 'the copies are byte-identical');
 });
