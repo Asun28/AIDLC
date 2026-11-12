@@ -455,3 +455,8 @@ The implementer disclosed these points where the card gave no rule or where it c
 | Two test edits went into the source commit after the RED commit: an unused parameter removed for the typecheck, and the whitespace of the control row above | Accepted. No assertion changed; the RED results are those of the RED commit |
 | Repair rounds: the row on `stop.at` of the insufficient-data STOP and one revert row beyond the four asked for | Accepted. The row is (d) of the second round's rulings; the extra revert adds evidence and no code |
 | The merge commits 3dd7f9f7 and 26347bac carry git's default text (the first without the attribution line, the second with conflict comment lines after it) | Noted. They are merge commits of main into the branch and are squashed at the ship; published history is not rewritten for a message |
+
+Coordinator verification:
+- At 85367493, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/health-op.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 82 test files reading 5 changed documents: # tests 1915 # pass 1902 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
