@@ -202,6 +202,7 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan finds every form [R2]', () => {
     ['tests/forms/nested-default.ts', "const { default: { mkdtempSync: make } } = await import('node:fs');\nmake('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
     ['tests/forms/pattern-default-value.ts', "import fs from 'node:fs';\nconst fallback = (p: string) => p;\nconst { mkdtempSync: make = fallback } = fs;\nmake('x');\n", [[4, 'module scope', 'call', 'mkdtempSync']]],
     ['tests/forms/access-reference.ts', "import fs from 'node:fs';\nconst make = fs.mkdtempSync;\nmake('x');\n", [[2, 'module scope', 'reference', 'mkdtempSync']]],
+    ['tests/forms/wrapped-initializer.ts', "const fs = require('node:fs') as typeof import('node:fs');\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
     ['tests/forms/default-element.ts', "import * as ns from 'node:fs';\nns['default'].mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
