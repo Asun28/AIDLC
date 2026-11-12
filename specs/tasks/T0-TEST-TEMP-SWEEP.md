@@ -307,3 +307,15 @@ The points of the first build report are ruled in the section "Planner rulings o
 | The 19 mutations of the first round were written against the scan as it was then; they were run again against the final scan, two with their text updated to the code that replaced what they changed | Accepted. The one revert table of the evidence names the commit each group ran on |
 | The merge commits of main into the branch carry messages amended once before anything was built on them | Noted. They were unpushed, and the ship squashes them |
 | The count of `aidlc-*` entries in the system temporary directory fell by 189 during one DoD run while this card's run added and removed none | Noted. Another process removed entries; the card's own figure is 0 new entries per DoD run |
+
+## The full suite on the candidate (acceptance 4, coordinator)
+
+R3 and acceptance 4 ask for one `npm test` on the candidate with exit 0 before the first review.
+
+| Run | Commit | Tests | Pass | Fail | Skipped | Exit |
+|---|---|---|---|---|---|---|
+| implementer, 2026-11-12 | 733a8434 (the migration, before the later scan commits) | 3462 | 3440 | 0 | 22 | 0 |
+| coordinator, 2026-11-12T04:26Z | 0b22f3d1 (the head the pre-review read) | 3476 | 3454 | 0 | 22 | 0 |
+| coordinator, 2026-11-12T04:45Z | a82d8f18 (the final test code, with main merged at 99fbde2d) | 3476 | 3454 | 0 | 22 | 0 |
+
+The last run took 370 s with nothing else running on the machine; no file failed, so none was run again alone. The commits after a82d8f18 change this card file only (this section and the coordinator's Linux and document-reader runs below). The raw output of each run is kept in the coordinator's scratchpad (`sweep-npm-test.txt`, `sweep-npm-test-final.txt`, `sweep-npm-test-final2.txt`); its last lines are the counts above.
