@@ -748,3 +748,11 @@ The implementer disclosed three changes to existing test lines in the second rep
 | The carried test of the child environment (the dump of the `GIT_` variables a child sees) now expects `GIT_CONFIG_NOSYSTEM` and `GIT_CONFIG_GLOBAL` beside `GIT_CEILING_DIRECTORIES`, compared as an object | Accepted. The ruling sets both variables for every child, so the carried expectation of one variable could not hold; the test still proves that no `GIT_` variable of the caller reaches a child |
 | The unit row of the helper is renamed to say what it now checks (no `NODE_` variable of the test process in any letter case, no system or global git configuration) | Accepted |
 | One passing row was added for `process.once` (the `if` without braces); the other statement of main.ts has been a passing row since the first repair round | Accepted. Both statements of main.ts are rows |
+
+## Planner ruling on the point raised in the third repair round (coordinator, before R3)
+
+One point of the third repair round, raised by the implementer for a decision.
+
+| Point | Ruling |
+|---|---|
+| The commit 07cd849a of this branch holds a local constant named with a word the secret scan treats as a credential name, assigned from a property access; the next commit renames it. The implementer could not run the scanner and asked whether the history must be rewritten or the finding listed | Neither. The coordinator scanned the 16 commits of the branch that are not on main with the pinned gitleaks 8.30.1 (`origin/main..51de3126`): no leak found. Nothing is rewritten and `.gitleaksignore` is unchanged. The rename stays |
