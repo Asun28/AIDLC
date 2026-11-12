@@ -428,6 +428,20 @@ Document text: H2 `A sample counts toward PASS only while ...; a breach found wi
 
 Size: `git diff --shortstat origin/main...HEAD` before this section: 9 files, 881 insertions, 13 deletions; budget 950.
 
+### Third repair round after the pre-review of 19288418
+Commits: merge of origin/main `d90ee69e` (conflict in this card only; the merge was concluded with `git commit --no-edit`, so git's `# Conflicts:` lines again follow the Co-Authored-By line), RED `2567e5e0` (tests only), GREEN `d8d9dbdb` (the `severity` selection of the ruling and the code comment; H2 and entry C unchanged).
+
+RED on 2567e5e0 (sources of 19288418): row 1, a passing sample 301 s old, bound 300 s, the fixture clock set back 2 000 ms during the command: FAIL (`PASS` where INSUFFICIENT_DATA is expected); row 2, the same with a breaching sample: passes already (observation: run alone in a scratch copy of the test, removed). The fixture clock is set back to the step's start after each row.
+
+Revert rows, actual runs on the d8d9dbdb sources, each also run on a scratch copy of the test with every assertion of acceptance 14 reported on its own (removed; `git status` clean after):
+| # | Mutation | Red |
+|---|---|---|
+| T1 | the second round's selection (`early.result === 'BREACH' ? early : late`) | row 1 (observed 0.1) |
+| T2 | `late` always | row 1; also the BREACH row of the second round |
+| T3 | `early` always | row 2 (observed 7.5) and the stale-PASS row R9 (a); also the STOP rows |
+
+Red 3 of 3. DoD on d8d9dbdb, worktree clean: `npm run typecheck` exit 0; `node --test` of the eleven files: tests 120, pass 117, fail 0, skipped 3 (the POSIX permission rows of release-lease.test.ts on Windows); exit 0; op-clock.test.ts green, unchanged. Linux (WSL Ubuntu, node v24.3.0): health-op.test.ts 12 pass, 0 fail. `git diff --shortstat origin/main...HEAD` before this section: 9 files, 932 insertions, 13 deletions; budget 990.
+
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
 The implementer disclosed these points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
