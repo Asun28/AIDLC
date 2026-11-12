@@ -1,7 +1,8 @@
 # Gitleaks configuration for the committed-history scan (.github/workflows/security-scanners.yml).
 # Extends the default rules; allowlisted: the secrets-guard hook fixtures (placeholders the hook must deny,
 # tests/surface/hooks.test.ts) and the synthetic canary a narration test plants in an invalid intent file
-# (tests/scenarios/t1-plan.test.ts). Nothing else: the scan blocks the merge.
+# (tests/scenarios/t1-plan.test.ts). Nothing else is allowlisted here: the scan blocks the merge.
+# The one reviewed finding in history is listed by fingerprint in .gitleaksignore, not in this file.
 [extend]
 useDefault = true
 

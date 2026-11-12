@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-GITLEAKS-LESSON-FP: `.gitleaksignore` lists the one finding of the history scan by its fingerprint, a lesson line of docs/LESSONS.md committed at 7265d106 that the generic-api-key rule misreads (R1); `.gitleaks.toml` keeps its rules and allowlist, and only its header comment names the new file (R2); `tests/surface/gitleaks-ignore.test.ts` pins both lists, so a later entry or a wider allowlist fails the suite (R3). From the close of T0-CLAUDE-EFFORT-OPT-IN (commit 7265d106) until this card the history scan was red on main and on every pull request.
+
 - T0-R3-SECOND-PASS-ROOM: with `formalReview.secondPass` on, no second R3 pass is due after a first pass at decision 3, and the candidate goes to the ship, as it already did after a first pass at decision 4. A second-pass block there would be decision 4, which can only stop the card. Between 2026-10-22 and 2026-11-11, 7 second passes ran after a first pass at decision 3: 4 passed and 3 blocked, and each of the 3 stopped its card (T0-CARD-LEASE-HEARTBEAT, T1-OUTCOME-USAGE, T1-OUTCOME-GITHUB). A first pass at decision 1 or 2 still gets its second pass.
 
 - T0-AUDIT-FIXES (bugfixes found by the audit of 2026-11-11, each with a test that failed before it):

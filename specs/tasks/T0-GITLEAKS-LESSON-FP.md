@@ -62,3 +62,63 @@ npm run typecheck && node --test tests/surface/gitleaks-ignore.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: the ignore list and the allowlist are exactly the pinned values, and the other files pass unchanged.
+
+## Attempt evidence
+
+RED (commit 0f9e912f, on main sources): acceptance 1 fails by assertion (missing file read as empty list, deepEqual against the fingerprint); classifier rows pass; acceptance 2 passes (pin). Run: pass 3, fail 1.
+
+Revert table (measured on 13e45a36, `gitleaks-ignore.test.ts` failures, 1 each; files restored, `git status` clean after):
+
+| # | Mutation | Result |
+|---|----------|--------|
+| A | second entry added to .gitleaksignore | red |
+| B | commit hex upper-cased | red |
+| C | .gitleaksignore removed | red |
+| D | `useDefault = false` | red |
+| E | `paths` widened | red |
+| F | second regex added | red |
+
+6/6 red. No TOML parser in package.json or node_modules; acceptance 2 compares the exact non-comment lines of the file.
+
+DoD on 13e45a36: typecheck exit 0; `node --test` 4 files: tests 96, pass 96, fail 0, exit 0.
+
+| Document sentence | Made true by |
+|---|---|
+| .gitleaks.toml header names .gitleaksignore | header lines 4-5 (acceptance 5, reviewer) |
+| OPERATIONS paragraph (R5, word for word) | gitleaks-ignore.test.ts pins both lists; .gitleaksignore holds the one entry |
+| CHANGELOG entry | R1 to R3 files above |
+
+Acceptance 3 (gitleaks 8.30.1 over the branch history, both counts): the coordinator adds it.
+
+Changed lines: see the final report (`git diff --shortstat origin/main...HEAD`).
+
+### Acceptance 3 (coordinator): the scan over the history of the candidate
+
+gitleaks 8.30.1 for linux x64 (the version and the SHA-256 the workflow pins, 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb, checked on download), run in WSL on 2026-11-12 over the history reachable from the candidate 54977cea9c2b149e4d1cc0b1baec7a4898132652 with the workflow's options (`gitleaks git --redact --no-banner --log-opts=<candidate> .`):
+
+| Ignore file | Commits scanned | Result |
+|---|---|---|
+| the candidate's `.gitleaksignore` | 1118 | no leaks found, exit 0 |
+| an empty ignore file | 1118 | 1 leak, fingerprint `7265d10642001a051fa36ac3f9c061a72a4540b3:docs/LESSONS.md:generic-api-key:153` |
+
+The same scan over main at 43a919f6 before this card gave the same single finding, and the Gitleaks check of PR 285 (run 43120762701) reported it. The candidate's own commits add no finding. The second row is the entry of R1 and nothing else.
+
+### Acceptance 3, rerun on the reviewed head (coordinator, 2026-11-11T23:54Z)
+
+The run above covers 54977cea; the commit that recorded it moved the head to c1bbbe71ef34dd6ba83c8d8eb9eb0a4a7ce604c2. Both scans were repeated over the history reachable from that head (1119 commits: the 1118 above and the evidence commit).
+
+Source setup. The scans run in WSL from the main checkout (`/mnt/d/Projects/AIDLC`, which shares the object store with the worktree; WSL git cannot open the Windows worktree). The main checkout is at 1c8a879d and has no `.gitleaksignore` (`ls .gitleaksignore` there fails before each scan), so the only ignore file gitleaks can load is the one `--gitleaks-ignore-path` names. `<cand>` is a directory holding a byte-identical copy of this branch's `.gitleaksignore` (`cmp` equal); `<empty>` is a directory holding a `.gitleaksignore` of 0 bytes. `gitleaks version` prints 8.30.1.
+
+| Command | Commits scanned | Result |
+|---|---|---|
+| `gitleaks git --redact --no-banner --log-opts=c1bbbe71ef34dd6ba83c8d8eb9eb0a4a7ce604c2 --gitleaks-ignore-path=<cand> .` | 1119 | no leaks found, exit 0 |
+| `gitleaks git --redact --no-banner --log-opts=c1bbbe71ef34dd6ba83c8d8eb9eb0a4a7ce604c2 --gitleaks-ignore-path=<empty> .` | 1119 | 1 leak, exit 1, fingerprint `7265d10642001a051fa36ac3f9c061a72a4540b3:docs/LESSONS.md:generic-api-key:153` |
+
+The first row shows the named directory is read (the source has no ignore file and the finding is suppressed); the second shows that without the entry the scan reports exactly the finding of R1. The four commits of the branch alone (`--log-opts=origin/main..c1bbbe71`) scan clean, and each file this card changes scans clean as file content (`gitleaks dir`).
+
+Commits after c1bbbe71 change this card file only (this section and the coordinator's Linux and document-reader runs below). The scan of the final head is the Gitleaks check of this card's pull request, which reads the branch's own `.gitleaksignore`; the coordinator also scans `origin/main..HEAD` at the final head before the push.
+
+Coordinator verification:
+- At 6fd0cf6d, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/gitleaks-ignore.test.ts): tests 4, pass 4, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1885 # pass 1873 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
