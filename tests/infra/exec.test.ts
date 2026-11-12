@@ -397,12 +397,6 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
       assert.equal(await calibrate(t, FIXTURE, ended, inline("process.kill(process.pid, 'SIGKILL')")), undefined);
       assert.equal(ended.length, 1);
     });
-    // Ends the processes a time-limit row records in its own files, and waits for each to be gone, so a red row leaves none.
-    const endRecorded = async (...files: string[]): Promise<void> => {
-      const pids = files.map(readPid);
-      pids.forEach(end);
-      for (const pid of pids) if (pid !== undefined) await assertGoneWithin(pid, 3000);
-    };
     it('a child that writes its own pid to <pidFile>.root and no pid file, with a limit of 5 s: undefined, the root gone, nothing ended', async (t) => {
       const ended: number[] = [];
       let pidFile = '';
@@ -417,13 +411,22 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
         await assertGoneWithin(root, 3000);
         assert.deepEqual(ended, []);
       } finally {
-        await endRecorded(`${pidFile}.root`);
+        // A root whose pid file cannot be read cannot be ended here; it ends by itself after its 30 s.
+        let rootPid: number | undefined;
+        try {
+          rootPid = readPid(`${pidFile}.root`);
+        } catch {
+          rootPid = undefined;
+        }
+        end(rootPid);
+        if (rootPid !== undefined) await assertGoneWithin(rootPid, 3000);
       }
     });
     it('a root whose detached sleeper writes the pid file 1000 ms after it saw the root gone: undefined, the late sleeper ended', async (t) => {
       const ended: number[] = [];
       let pidFile = '';
       let sleeperPid: number | undefined;
+      let spawnError: Error | undefined;
       // The sleeper waits for <pidFile>.root, then for the root to be gone (signal 0 gives ESRCH, the root is ended at the limit),
       // then 1000 ms, and writes the pid file; it ends by itself after 60 s in any case. The write follows the time-limit callback
       // however late that ran, and the 5000 ms wait from the callback holds unless the write is delayed by more than about 4000 ms.
@@ -442,19 +445,32 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
       const command = (file: string): [string, string[]] => {
         pidFile = file;
         const child = spawn(process.execPath, ['-e', sleeper, file], { detached: true, stdio: 'ignore', windowsHide: true, env: fixtureEnv(dirname(file)) });
+        child.once('error', (e) => (spawnError = e));
         sleeperPid = child.pid;
         child.unref();
         return [process.execPath, ['-e', "require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); setTimeout(() => {}, 30_000)", file]];
       };
       try {
         assert.equal(await calibrate(t, FIXTURE, ended, command, 6000), undefined);
+        assert.equal(spawnError, undefined);
         assert.ok(sleeperPid !== undefined, 'the sleeper was spawned');
         assert.deepEqual(ended, [sleeperPid]);
         assert.equal(probe(sleeperPid), 'ESRCH');
       } finally {
-        const pids = [sleeperPid, readPid(`${pidFile}.root`)];
-        pids.forEach(end);
-        for (const pid of pids) if (pid !== undefined) await assertGoneWithin(pid, 3000);
+        end(sleeperPid);
+        // A root whose pid file cannot be read cannot be ended here; it ends by itself after its 30 s.
+        let rootPid: number | undefined;
+        try {
+          rootPid = readPid(`${pidFile}.root`);
+        } catch {
+          rootPid = undefined;
+        }
+        end(rootPid);
+        try {
+          if (sleeperPid !== undefined) await assertGoneWithin(sleeperPid, 3000);
+        } finally {
+          if (rootPid !== undefined) await assertGoneWithin(rootPid, 3000);
+        }
       }
     });
     it('a child that exits 0 without writing the pid file', async (t) => {
