@@ -22,7 +22,9 @@ const isFunctionLike = (node: ts.Node): node is ts.SignatureDeclaration =>
 
 /** The name a report gives a function: its name, `<constant> (immediately invoked)`, else `<anonymous>`. */
 function functionName(fn: ts.SignatureDeclaration): string {
-  if (fn.name && (ts.isIdentifier(fn.name) || ts.isStringLiteral(fn.name))) return fn.name.text;
+  // An identifier, a private name with its `#`, a string or numeric literal, or a computed name that is such a literal.
+  const named = fn.name && ts.isComputedPropertyName(fn.name) ? fn.name.expression : fn.name;
+  if (named && (ts.isIdentifier(named) || ts.isPrivateIdentifier(named) || ts.isStringLiteral(named) || ts.isNumericLiteral(named))) return named.text;
   // The parentheses an arrow function needs to be called are not a wrapper; anything else between it and the call is.
   const callee = ts.isParenthesizedExpression(fn.parent) ? fn.parent : fn;
   const call = callee.parent;
@@ -43,11 +45,12 @@ function scanSource(file: string, text: string): Site[] {
   const sites: Site[] = [];
   const visit = (node: ts.Node): void => {
     const literal = ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
-    // `text` holds an identifier or a literal after its escapes are decoded.
-    const name = (ts.isIdentifier(node) || literal) && NAMES.has(node.text) ? node.text : undefined;
+    // `text` holds an identifier or a literal after its escapes are decoded; a private name counts without its `#`.
+    const spelled = ts.isPrivateIdentifier(node) ? node.text.slice(1) : ts.isIdentifier(node) || literal ? node.text : undefined;
+    const name = spelled !== undefined && NAMES.has(spelled) ? spelled : undefined;
     if (name !== undefined) {
-      // The name of a function lies in the scope around it.
-      let fn: ts.Node | undefined = isFunctionLike(node.parent) && node.parent.name === node ? node.parent.parent : node.parent;
+      // The name of a function declaration lies in the scope around it; a function expression's name lies in that function.
+      let fn: ts.Node | undefined = ts.isFunctionDeclaration(node.parent) && node.parent.name === node ? node.parent.parent : node.parent;
       while (fn && !isFunctionLike(fn)) fn = fn.parent;
       const inHelper = fn !== undefined && ts.isFunctionDeclaration(fn) && fn.parent === sf && ALLOWED.has(`${file}#${fn.name?.text}`);
       const helperImport = HELPER_FILES.has(file) && ts.isImportSpecifier(node.parent) && node.parent.parent.parent.parent.parent === sf;
