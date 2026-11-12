@@ -302,6 +302,10 @@ Mutant runs (actual runs on fb12693c, each restored, `git status` and `git diff 
 
 No change was made to the R4 comparison in this round or before it to satisfy the sentence "nothing that blocks on main stops blocking and nothing that passes on main starts blocking": R4 is implemented as the card states it.
 
+DoD (`dod_command` on 813b7abd, from the worktree root): exit 0; `# tests 244`, `# suites 17`, `# pass 242`, `# fail 0`, `# cancelled 0`, `# skipped 2` (the same two host skips), `# todo 0`.
+
+Size: `git diff --shortstat origin/main...HEAD` on 813b7abd: 16 files changed, 781 insertions(+), 30 deletions(-) (811 lines); with these two lines about 815, budget 890.
+
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
 The implementer disclosed these points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
