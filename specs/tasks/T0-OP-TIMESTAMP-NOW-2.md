@@ -1,7 +1,7 @@
 ---
 id: T0-OP-TIMESTAMP-NOW-2
 title: (replaces T0-OP-TIMESTAMP-NOW) Every operation-ledger write from the card runner and the release runner carries the injected clock, so operation timestamps and ids follow `now`
-status: todo
+status: merged
 branch: T0-OP-TIMESTAMP-NOW-2
 worktree: D:\wt\AIDLC\T0-OP-TIMESTAMP-NOW-2
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 150 to 380 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; 22 changed source lines in two files and 2 fixture lines, the rest one behavioural test per changed ledger-write branch, the completeness scan and attempt evidence; raised from 380 to 400 by the coordinator on 2026-11-12 for the third fixture line and its evidence; raised from 400 to 460 by the coordinator on 2026-11-12 for the replacement card: the carried candidate 75657155 is 322 changed lines, and the moved evidence gains a History line, a note of where each figure was measured, the DoD of this card on its own branch and the coordinator's verification block"
@@ -145,3 +145,13 @@ Coordinator verification:
 - At 256e0e1f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/op-clock.test.ts, tests/scenarios/review-admit-foreign.test.ts, tests/scenarios/ship-effect-unknown.test.ts, tests/scenarios/ship-throw.test.ts): tests 35, pass 35, fail 0, skipped 0.
 - Windows, docpins: 73 test files reading 1 changed documents: # tests 1803 # pass 1792 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+PR 289 merged as b3df78d7 on 2026-11-12T01:25:22Z with its five checks green. PR 285, the pull request of the superseded card T0-OP-TIMESTAMP-NOW, is closed in favour of it.
+
+The carried candidate. The coordinator compared `git diff origin/main...75657155` with `git diff origin/main...HEAD` for src, tests and CHANGELOG.md line by line before the review: the four renamed lines of the hygiene are the only difference. R3 passed at decision 1 and at the second pass with no block.
+
+The ship ran twice. The first run pushed the branch, opened PR 289 and was waiting for its checks when, at about 01:14Z, an implementer agent of another card ended every node.exe process on the machine while removing its own load processes. That ended the ship process before `gh pr merge` was issued and left the merge operation `issued` and the review pool slot held. The coordinator followed docs/OPERATIONS.md (the ship's `OPERATION_ISSUED` case): it looked up PR 289 (open, not merged, head the reviewed candidate), recorded the operation as cancelled with that detail (`aidlc ops reconcile op-20261112010750-fda3f87a --status cancelled`), released the slot of the dead process with the reason (`aidlc review release`), and ran the ship again, which reused PR 289 and merged it. `aidlc doctor` reported no interrupted write. The implementer brief now forbids ending processes by name or image.
+
+The verify-card-run-writes skill: this card changes src/loop/card-runner.ts, which its coverage record names. The change adds, removes and reorders no write (the fault-point check added no pin in the DoD on main), so the check is in sync and both references of the sync commit move to the merge commit with this close.
