@@ -318,3 +318,8 @@ The implementer disclosed these points where the card gave no rule or where it c
 | The commit df5b4acb, between the RED commit and the source commit, corrects one row of the new acceptance 5 test (the intent without a card passed `undefined` to a parameter with a default, so the intent still carried a card id; it now passes `null`) | Accepted. It is a correction of a new test before any source change; acceptance 5 passes on main, as the card says, and was run again against main's verifier.ts and manifest.ts after the correction |
 | Two revert rows are red by a thrown error, not by an assertion (R4-l: `d.slice is not a function`; R8-a: the mutant's own error) | Accepted as evidence that the revert is detected. The RED receipts of the acceptance items are assertion failures; these two are mutation rows |
 | Two clauses have no mutant because nothing observable changes: R3 "such an entry is not compared" and R4 "an empty cardId takes (b)" | Accepted as stated in the evidence |
+
+Coordinator verification:
+- At 1241eb22, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/card-close-cleanup.test.ts, tests/scenarios/lesson-dup.test.ts, tests/scenarios/manifest-lock.test.ts, tests/scenarios/seal-binding.test.ts, tests/surface/verifier-binding.test.ts): tests 64, pass 64, fail 0, skipped 0.
+- Windows, docpins: 83 test files reading 5 changed documents: # tests 1932 # pass 1919 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 70): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
