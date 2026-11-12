@@ -263,7 +263,7 @@ Each row: one mutation of the committed tree, one acceptance test (`--test-name-
 | R10-ops-a, -b1 to -b3, -c1 to -c4 | R10 | each OPERATIONS text of Document text (a), (b), (c) removed alone | 15 |
 | R10-cl-1 to -7 | R10 | each sentence of the CHANGELOG entry removed alone | 15 |
 
-Not constructible as a mutant: R3 "such an entry is not compared" (an entry with no digest gives no stale finding either way) and R4 "an entry with an absent or empty cardId takes (b)" (`mergeDigests('')` finds no intent, so `!== undefined` in place of the falsy test changes nothing observable).
+Corrected after the pre-review of 256de148: the statement first written here, that R3 "such an entry is not compared" and R4 "an entry with an absent or empty cardId takes (b)" have no mutant, was wrong. Both mutants were run (rows A16-c and A16-d below) and both are red.
 
 ### DoD (`dod_command` on e2963a8a, from the worktree root)
 Exit 0: typecheck clean; `# tests 244`, `# suites 17`, `# pass 242`, `# fail 0`, `# cancelled 0`, `# skipped 2` (T0-CLOSE-CLEANUP-2 acceptance 10 and 12: case-folding filesystem, no symbolic link on this host), `# todo 0`. Every acceptance item of this card is green in it.
@@ -283,6 +283,24 @@ Exit 0: typecheck clean; `# tests 244`, `# suites 17`, `# pass 242`, `# fail 0`,
 
 ### Size
 `git diff --shortstat origin/main...HEAD` on e2963a8a: 15 files changed, 659 insertions(+), 30 deletions(-) (689 lines, budget 850); this section adds about 85. card-loop.md: 6,496 bytes before, 6,494 after, both copies identical and ASCII.
+
+### Repair round after the pre-review of 256de148 (acceptance 16)
+Merge of origin/main 6f4c4871 as c3c2d47b; card conflict only. Rows added in fb12693c (tests only) to tests/surface/verifier-binding.test.ts; all three pass on the current source (coverage rows, no source change in this round):
+- acceptance 4, row (i): a succeeded `OPERATION_RESULT` journaled before its merge intent; the entry bound to the intent's digest gives no stale finding.
+- acceptance 5, row "a NOTE carrying the fields of a merge intent": a `NOTE` with card `T0-C`, kind `merge`, operation id and digest `dZ`, then a matching succeeded result: no merge digest, so the fallback to `dF` applies.
+- acceptance 5, row "entry, intent and completion with the card id empty": entry, intent and result all carry `cardId: ''`; the entry takes R4 (b) and is compared with `dF`.
+
+Mutant runs (actual runs on fb12693c, each restored, `git status` and `git diff --stat` empty afterwards; 5 runs, 5 red):
+
+| Row | Requirement | Mutation | Test | Outcome |
+|---|---|---|---|---|
+| A16-a | R4 | a completion counts only when journaled after its intent | 4 | red at row (i), assertion |
+| A16-b | R4 | the event-type test of the intent dropped | 5 | red at the NOTE row, assertion |
+| A16-c | R4 | `entry.cardId ? ...` changed to `entry.cardId !== undefined ? ...` | 5 | red at the empty-card row, assertion |
+| A16-d | R3 | the `continue` after `EVIDENCE_UNBOUND` removed | 2 | red by the thrown `Cannot read properties of undefined (reading 'slice')` |
+| A16-d (whole file) | R3 | same mutant, all six tests of the file | all | acceptance 2 and 3 red by the same throw; 1, 4, 5 and 15 green |
+
+No change was made to the R4 comparison in this round or before it to satisfy the sentence "nothing that blocks on main stops blocking and nothing that passes on main starts blocking": R4 is implemented as the card states it.
 
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
