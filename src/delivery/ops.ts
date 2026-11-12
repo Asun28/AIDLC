@@ -185,14 +185,20 @@ export const HealthReport = z.object({
 });
 export type HealthReport = z.infer<typeof HealthReport>;
 
-/** The report on the last line of `stdout` whose `trim()` is not empty, trimmed; `undefined` when that line is not JSON or not a `HealthReport`. */
+/**
+ * The report on the last line of `stdout` (split at `\n`) whose `trim()` is not empty, trimmed, found by scanning backward from
+ * the end without splitting the whole output; `undefined` when there is no such line or it is not JSON or not a `HealthReport`.
+ */
 export function healthReportOf(stdout: string): HealthReport | undefined {
-  const line = stdout
-    .split('\n')
-    .filter((l) => l.trim() !== '')
-    .pop()
-    ?.trim();
-  if (line === undefined) return undefined;
+  let end = stdout.length;
+  let line = '';
+  for (;;) {
+    const newline = end === 0 ? -1 : stdout.lastIndexOf('\n', end - 1);
+    line = stdout.slice(newline + 1, end).trim();
+    if (line !== '') break;
+    if (newline < 0) return undefined;
+    end = newline;
+  }
   let value: unknown;
   try {
     value = JSON.parse(line);

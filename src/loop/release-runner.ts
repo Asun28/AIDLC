@@ -415,7 +415,8 @@ export class ReleaseRunner {
       case 'OBSERVE': {
         const window = attempt.healthWindow ?? { from: now, to: addMs(now, this.healthWindowMs()) };
         const signals = this.signals(attempt).map((s) => ({ ...s }));
-        const health = evaluateHealth(signals, window, now, { candidate: attempt.candidateDigest, environment: attempt.environment });
+        // Staleness is judged when the signal source has returned (the health command may have run for minutes); the rest keeps `now`.
+        const health = evaluateHealth(signals, window, this.clock(), { candidate: attempt.candidateDigest, environment: attempt.environment });
         this.journal(goal.id).append({ type: 'HEALTH_EVALUATED', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, result: health.result, signals: health.signals.map((s) => `${s.name}=${s.result}`) } });
         const elapsed = windowElapsed(window, now);
         const withinMaxWait = Date.parse(now) < Date.parse(addMs(window.to, this.maxWaitMs()));
