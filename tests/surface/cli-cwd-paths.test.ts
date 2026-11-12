@@ -30,14 +30,14 @@ after(() => {
 const CEILING = realpathSync.native(tmpdir());
 
 /**
- * The environment of every child the tests start: no inherited variable whose upper-cased name starts with GIT_ or AIDLC_, no
- * session variable, and GIT_CEILING_DIRECTORIES at the fixtures' parent. `source` is the inherited environment, so a row can check it.
+ * The environment of every child the tests start: no inherited variable whose upper-cased name starts with GIT_ or AIDLC_ or is
+ * NODE_OPTIONS, no session variable, and GIT_CEILING_DIRECTORIES at the fixtures' parent. `source` is the inherited environment, so a row can check it.
  */
 function childEnv(extra: NodeJS.ProcessEnv = {}, source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(source)) {
     const upper = k.toUpperCase();
-    if (upper.startsWith('GIT_') || upper.startsWith('AIDLC_') || upper === 'CLAUDE_CODE_SESSION_ID') continue;
+    if (upper.startsWith('GIT_') || upper.startsWith('AIDLC_') || upper === 'CLAUDE_CODE_SESSION_ID' || upper === 'NODE_OPTIONS') continue;
     env[k] = v;
   }
   return { ...env, GIT_CEILING_DIRECTORIES: CEILING, ...extra };
@@ -176,6 +176,11 @@ function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
 /** A use of `chdir`, `process` or `process.env` that acceptance 13 does not allow, by its rule and line. */
 interface EnvViolation { rule: 'a' | 'b' | 'c' | 'd'; line: number; text: string }
 
+/** The ten properties of `process` that rule (b) allows: those src/cli/main.ts uses. */
+const PROCESS_PROPERTIES = new Set(['argv', 'cwd', 'env', 'exit', 'exitCode', 'once', 'platform', 'stderr', 'stdout', 'version']);
+/** The identifiers of rule (d): each reaches the process object or runs code without naming it. */
+const HIDDEN_ACCESS = new Set(['eval', 'Function', 'globalThis', 'global', 'Reflect']);
+
 /** The operators of the second shape of rule (c): a read of the environment compared or defaulted. */
 const ENV_READ_OPERATORS = new Set<ts.SyntaxKind>([ts.SyntaxKind.BarBarToken, ts.SyntaxKind.AmpersandAmpersandToken, ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken]);
 
@@ -207,8 +212,9 @@ function allowedEnvShape(env: ts.PropertyAccessExpression): boolean {
 
 /**
  * The violations of acceptance 13 in a source text, parsed with the TypeScript compiler API: (a) an identifier `chdir` or a string
- * literal that is exactly `chdir`; (b) an identifier `process` that is not the object of a property access, or a string literal that
- * is exactly `process` or `node:process`; (c) a `process.env` in none of the three shapes. Comments are not nodes, so they never count.
+ * literal that is exactly `chdir`; (b) an identifier `process` that is not the object of a property access to one of the ten
+ * properties, or a string literal that is exactly `process` or `node:process`; (c) a `process.env` in none of the three shapes; (d) a
+ * `this` expression or an identifier of HIDDEN_ACCESS. Comments are not nodes, so they never count.
  */
 function envViolations(text: string): EnvViolation[] {
   const sf = ts.createSourceFile('main.ts', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -221,9 +227,12 @@ function envViolations(text: string): EnvViolation[] {
       if (node.text === 'chdir') report('a', node);
       if (node.text === 'process') {
         const p = node.parent;
-        if (!(ts.isPropertyAccessExpression(p) && p.expression === node)) report('b', node);
+        if (!(ts.isPropertyAccessExpression(p) && p.expression === node && PROCESS_PROPERTIES.has(p.name.text))) report('b', node);
         else if (p.name.text === 'env' && !allowedEnvShape(p)) report('c', p);
       }
+      if (HIDDEN_ACCESS.has(node.text)) report('d', node);
+    } else if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      report('d', node);
     } else if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       if (node.text === 'chdir') report('a', node);
       if (node.text === 'process' || node.text === 'node:process') report('b', node);
