@@ -62,11 +62,11 @@ requirements:
   - R3. The full suite shall pass once on the candidate (`npm test`, exit 0) before the first review, since the DoD runs the changed files but the migration touches 47 of them.
 acceptance:
   - 1. `tests/surface/test-temp.test.ts` "no mkdtemp call of tests/ lies outside a helper that registers its removal" passes; on main (after T0-TEST-TEMP-CLEANUP) it fails, naming the 85 sites the sweep lists with file, line and function. [R1] [R2] [dod arm 1]
-  - 2. Same file, "the scan finds every form" (a table test of the scan function over source texts written in a directory from `tmpDir`): a named import call, an aliased import call, a namespace import call, a default import call, `fs.promises.mkdtemp`, an import from `node:fs/promises`, destructuring with and without a rename, `fs['mkdtempSync']`, `require('node:fs').mkdtempSync`, a destructured `require('fs')`, `mkdtempDisposableSync`, and an uncalled reference (`const make = mkdtempSync`) are each reported with the expected file, line and enclosing function; the four helpers at their exact files and functions are not reported; a function named `tmpDir` in another file, and a function nested inside `tmpDir` of helpers.ts, are reported; `'mkdtempSync('` in a string and in a comment, and a local function named `mkdtempSync` not imported from fs, are not. Two rows added by the planner's rulings of 2026-11-12: a call that follows a string holding U+2028 and U+2029 is reported at the line a count of line feeds gives, and a call inside an immediately invoked function assigned to a constant is reported with the enclosing function `<constant> (immediately invoked)`. [R2] [dod arm 1]
+  - 2. Same file, "the scan finds every form" (a table test of the scan function over source texts written in a directory from `tmpDir`): a named import call, an aliased import call, a namespace import call, a default import call, `fs.promises.mkdtemp`, an import from `node:fs/promises`, destructuring with and without a rename, `fs['mkdtempSync']`, `require('node:fs').mkdtempSync`, a destructured `require('fs')`, `mkdtempDisposableSync`, and an uncalled reference (`const make = mkdtempSync`) are each reported with the expected file, line and enclosing function; the four helpers at their exact files and functions are not reported; a function named `tmpDir` in another file, and a function nested inside `tmpDir` of helpers.ts, are reported; `'mkdtempSync('` in a string and in a comment, and a local function named `mkdtempSync` not imported from fs, are not. Two rows added by the planner's rulings of 2026-11-12: a call that follows a string holding U+2028 and U+2029 is reported at the line a count of line feeds gives, and a call inside an immediately invoked function assigned to a constant is reported with the enclosing function `<constant> (immediately invoked)`. Rows added by the rulings after the pre-review of 0b22f3d1, each reported unless it says otherwise: a binding default that names the function (`const { make = mkdtempSync } = {}`); a computed binding name (`const { ['mkdtempSync']: make } = fs`) and a nested one (`const { promises: { mkdtemp: make } } = fs`), each with the call of `make`; `const fs = await import('node:fs')` followed by `fs.mkdtempSync(...)`; a reference stored, not called, inside an allowed helper; a call inside a function nested in an allowed helper that bears an allowed helper's name; not reported: `(mkdtempSync)(...)` and `mkdtempSync!(...)` directly inside an allowed helper, and a type-only import used only in type positions (`import type { mkdtempSync } from 'node:fs'; type F = typeof mkdtempSync`). [R2] [dod arm 1]
   - 3. Every file of allow_paths passes in the DoD, and no assertion, test name or test count of any of them changes; tests/infra/exec.test.ts acceptance 5 of T0-EXEC-TREE-KILL (:357-384) keeps ending its processes before it removes its directory. [R1] [dod arm 1]
   - 4. Checkpoint: `npm test` on the candidate exits 0 before the first review, and its output is pasted in the attempt evidence. [R3]
 depends_on: [T0-TEST-TEMP-CLEANUP, T0-INCIDENT-INTENT-LEDGER, T0-SHIP-TIMEOUT]
-budget: 700
+budget: 780
 tdd: true
 diagnosis:
   root_cause: "The sites in sweep create directories with `mkdtempSync` under the OS temporary directory; many remove theirs at the end of the test, and a test that fails or exits early, or a removal that fails on Windows, leaves them. Together they left about 9 percent of the 71,508 aidlc- directories of 2026-11-11 (aidlc-evals- 2,300 before T0-EVAL-TEST-TEMP, aidlc-evidence- 464, aidlc-ghship- 346, aidlc-cards- 316, aidlc-hook-name- 305, aidlc-incident- 273, aidlc-stats- 254, aidlc-intent- 241, aidlc-stats-pe- 226, aidlc-pe-panel- 197, aidlc-no-package- 164 and smaller ones). Nothing stops a new test from adding another site."
@@ -80,6 +80,8 @@ forbid:
   - deleting the directories earlier runs left in the OS temporary directory
   - editing .aidlc state by hand
 non_goals:
+  - an alias of the fs namespace made by a later assignment (`other = fs`) and a re-export of the function from another module: the scan follows declarations with their initializers and the imports of each file, and a missed form of this kind has to be written to get around the check
+  - a report for a parameter or local that shadows the name of an fs import: it fails the check for code that makes no directory, and the fix is another name
   - temporary files the product code creates (the eval runner checkouts, the exec tree helper)
   - a process that is killed before its exit handler runs; its directories are left
   - deleting the directories already in the OS temporary directory
@@ -123,6 +125,26 @@ Rulings on the points the implementer disclosed:
 | The RED commit 3d3e9d31 holds a local constant named with a word the secret scan treats as a credential name; a later commit renames it | Accepted. The coordinator scanned the five commits of the branch with the pinned gitleaks: no finding. Nothing is rewritten |
 | Commits use the prefixes `test:` and `docs:` | Accepted for a test-only card |
 | No test observes that tests/infra/exec.test.ts ends its processes before it removes their directory, so that order has no revert row; the diff of that file is its import line and its five sites | Accepted as stated: acceptance 3 asks that the order is kept, and the diff shows no line of a `finally` changed |
+
+## Planner rulings of 2026-11-12 after the pre-review of 0b22f3d1
+
+A Codex pre-review of 0b22f3d1 verified all 85 replacements in the 47 files (only import lines and site expressions differ; prefixes, parents, `realpathSync` wrappers, assertions and cleanup order intact; no forbidden path, no CHANGELOG entry) and the two rows of the earlier rulings. The coordinator had asked it to look for forms the scan misses; it found several. The scan is a syntactic check against an ordinary new `mkdtempSync` in a test, not a defence against code written to evade it, so the rulings take every form R2's wording covers and state the rest as limits:
+
+| Point | Ruling |
+|---|---|
+| A binding default that names the function (`const { make = mkdtempSync } = {}`) gives no report | Accepted: it is a reference that is not called, which R2 reports. Row |
+| Computed and nested binding names from the namespace (`const { ['mkdtempSync']: make } = fs`, `const { promises: { mkdtemp: make } } = fs`) give no report | Accepted: both are destructuring, which R2 names. Rows |
+| A reference stored inside an allowed helper, and a function nested in a helper that bears a helper's name, are refused by the code but no row fails when either restriction is removed | Accepted: two rows. These are the restrictions the implementer added as the narrower reading of R2 |
+| `(mkdtempSync)(...)` inside an allowed helper is reported as an uncalled reference | Accepted: parentheses and a non-null assertion around the callee are looked through when deciding whether a reference is called. Row (not reported) |
+| A type-only import used in a type position fails the check | Accepted: `import type` and type positions hold no runtime reference. Row (not reported) |
+| `const fs = await import('node:fs')` gives no report | Accepted: a dynamic import of the module, awaited in an initializer, is read as `require` is. Row |
+| A namespace alias made by a later assignment (`other = fs; other.mkdtempSync(...)`) gives no report | Not in this card: a non-goal with its reason. Following assignments is data flow, which a syntactic scan does not do |
+| A re-export of the function from another module, and its consumers, give no report | Not in this card: a non-goal with the same reason |
+| An fs import named `fs` makes `fs.mkdtempSync()` on a parameter of the same name a report | Not in this card: a non-goal. The check then fails for code that makes no directory, which is the safe direction, and the fix is a different parameter name |
+
+Reverts that must each fail its row: the binding default not read; computed names not resolved; nested patterns not followed; the dynamic import not read; `called &&` removed from the exemption; `fn.parent === sf` removed from the exemption; the parentheses not looked through (the helper row then reports); type-only imports not excluded (the type row then reports).
+
+The full suite of R3. The implementer ran `npm test` on 733a8434 (3 462 tests, 3 440 pass, 0 fail, 22 skipped). The coordinator ran it again on 0b22f3d1, the head this pre-review read, on 2026-11-12T04:26Z: 3 476 tests, 3 454 pass, 0 fail, 22 skipped, exit 0. It runs it once more on the head that goes to the formal review and records the counts in the Attempt evidence.
 
 ## Attempt evidence
 
