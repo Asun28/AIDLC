@@ -791,3 +791,8 @@ One point of the fourth repair round, disclosed by the implementer.
 | Disclosed point | Ruling |
 |---|---|
 | Four rows of the earlier table now also break rule (d) and expect (c) and (d): the two `Object.defineProperty` texts on `process.env` and the two reads of `__proto__`. The planner's message had said two | Accepted. A row reports every rule its text breaks; four is the count the rules give |
+
+Coordinator verification:
+- At c0e85774, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/cli-cwd-paths.test.ts): tests 25, pass 23, fail 0, skipped 2.
+- Windows, docpins: 82 test files reading 2 changed documents: # tests 1943 # pass 1931 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
