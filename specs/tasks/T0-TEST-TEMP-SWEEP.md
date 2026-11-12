@@ -254,5 +254,49 @@ Rows red: 26/26 (24 on 928b23c9, the two ruling rows on 61a51d81). The two rows 
 ### Full suite, R3 / acceptance 4 (733a8434, actual run, `npm test`, nothing else started beside it)
 tests 3462, suites 247, pass 3440, fail 0, cancelled 0, skipped 22, duration_ms 380702, exit 0. No file failed, so no file was rerun alone. Raw output kept by the implementer outside the repository (4019 lines). This full run of R3 was on 733a8434, before the two scan commits (a2b45c16, 928b23c9), the merge of main (cc2a1aa3) and the two rows (61a51d81); it was not rerun. Changed since 733a8434: tests/surface/test-temp.test.ts, this card, and main's files of the merge (.claude/skills/verify-card-run-writes/SKILL.md, CHANGELOG.md, docs/ARCHITECTURE.md, docs/LESSONS.md, docs/OPERATIONS.md, specs/tasks/T0-ATTEMPT-NUMBER.md, specs/tasks/T0-AUDIT-BINDING.md, src/core/effort.ts, src/loop/card-runner.ts, tests/core/effort.test.ts, tests/scenarios/dispute-running-attempt.test.ts). The DoD on 61a51d81 runs tests/surface/test-temp.test.ts.
 
+### Repair round after the pre-review of 0b22f3d1
+Commits: 869c7e76 (merge of origin/main at 99fbde2d; conflict in this card only, main's rulings placed above this section), 290cffcc (RED: nine rows), c51ad6fd (GREEN: the scan), af94e449 (the nested-helper row corrected, below), then this evidence commit, which changes only this card. R1 and the 47 files are unchanged in this round.
+
+The table test now writes each row in a directory of its own and compares the reports in row order, so a helper's file can appear in more than one row; the expectations of the earlier rows are unchanged.
+
+RED (290cffcc, actual run, `node --test tests/surface/test-temp.test.ts`: acceptance 1 pass, acceptance 2 fail):
+
+| Row | Red before the fix |
+|---|---|
+| binding default `const { make = mkdtempSync } = {}` | yes: no report |
+| computed binding name `const { ['mkdtempSync']: make } = fs`, call of `make` | yes: no report |
+| nested binding name `const { promises: { mkdtemp: make } } = fs`, call of `make` | yes: no report |
+| `const fs = await import('node:fs')`, then `fs.mkdtempSync('x')` | yes: no report |
+| a reference stored inside `tmpDir` of helpers.ts | no: reported already |
+| a function nested in `tempDir` of command-lines.test.ts bearing the name `tempDir` | no: reported already (see the correction below) |
+| `(mkdtempSync)(prefix)` directly in `tempDir` of evals.test.ts, not reported | yes: reported as a reference |
+| `mkdtempSync!(prefix)` directly in `inTemp` of eval-test-temp.test.ts, not reported | yes: reported as a reference |
+| `import type { mkdtempSync } from 'node:fs'; type F = typeof mkdtempSync`, not reported | yes: reported as a reference |
+
+GREEN (c51ad6fd): a binding element's initializer is read (only its name and property name declare); destructuring of an fs object resolves a computed name given as a string and follows a nested pattern under `promises`; `await import('<fs module>')` is an fs object as `require` is; parentheses and non-null assertions around a callee are looked through; a type-only import declaration or specifier binds nothing. No data flow and no scope analysis were added (the non-goals).
+
+Correction (af94e449): the RED commit named the nested function `tmpDir`, which is not the helper allowed at command-lines.test.ts, so the revert of `fn.parent === sf` left the table green (actual run on c51ad6fd: exit 0, fail 0). The row now names it `tempDir`, the helper of that file; the revert below is red.
+
+Reverts (af94e449, each an actual run of acceptance 2 with one change, the file restored from memory after each; `git diff --stat HEAD` empty at the end):
+
+| Reverted | Result | |
+|---|---|---|
+| the binding default not read | exit 1, fail 1: -   'tests/forms/binding-default.ts:2 [module scope] reference of mkdtempSync' | red |
+| computed names not resolved | exit 1, fail 1: -   'tests/forms/computed.ts:3 [module scope] call of mkdtempSync' | red |
+| nested patterns not followed | exit 1, fail 1: -   'tests/forms/nested.ts:4 [nested] call of mkdtemp' | red |
+| the dynamic import not read | exit 1, fail 1: -   'tests/forms/dynamic.ts:2 [module scope] call of mkdtempSync' | red |
+| `called &&` removed from the exemption | exit 1, fail 1: -   'tests/infra/helpers.ts:3 [tmpDir] reference of mkdtempSync' | red |
+| `fn.parent === sf` removed from the exemption | exit 1, fail 1: -   'tests/surface/command-lines.test.ts:3 [tempDir] call of mkdtempSync' | red |
+| parentheses not looked through | exit 1, fail 1: +   'tests/surface/evals.test.ts:3 [tempDir] reference of mkdtempSync'; +   'tests/surface/eval-test-temp.test.ts:3 [inTemp] reference of mkdtempSync' | red |
+| type-only imports not excluded | exit 1, fail 1: +   'tests/forms/type-only.ts:2 [module scope] reference of mkdtempSync' | red |
+
+Rows red: 8/8.
+
+The 85 pairs (c51ad6fd, actual run): a scratch copy of `tests/` and `src/` at c51ad6fd under the gitignored `_local/`, with the 47 files restored to 3d3e9d31, gives 85 sites in acceptance 1, the same 85 file and line pairs as the `git grep` sweep and the same report lines as the scan of 928b23c9. Acceptance 1 passes on the real tree.
+
+DoD (af94e449, actual run, the card's `dod_command`): `npm run typecheck` exit 0, then tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0. Temporary directory (`aidlc-*`): 69479 before, 69290 after; 0 new entries, 189 gone, which the DoD does not remove (another process cleaned the temporary directory during the run).
+
+Full suite: not run in this round; the coordinator runs it on the final head.
+
 ### Size
-`git diff --shortstat origin/main...HEAD` at 61a51d81 (origin/main a087161e): 49 files changed, 445 insertions(+), 181 deletions(-), 626 lines; with this evidence update it is given in the report, against the budget of 700 (attempt evidence counted).
+`git diff --shortstat origin/main...HEAD` at af94e449 (origin/main 99fbde2d): 49 files changed, 472 insertions(+), 181 deletions(-), 653 lines before this evidence update; the total with it is given in the report, against the budget of 780 (attempt evidence counted).
