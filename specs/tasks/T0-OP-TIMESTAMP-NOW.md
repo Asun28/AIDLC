@@ -4,6 +4,7 @@ title: Every operation-ledger write from the card runner and the release runner 
 status: todo
 branch: T0-OP-TIMESTAMP-NOW
 worktree: D:\wt\AIDLC\T0-OP-TIMESTAMP-NOW
+superseded_by: T0-OP-TIMESTAMP-NOW-2
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 150 to 380 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; 22 changed source lines in two files and 2 fixture lines, the rest one behavioural test per changed ledger-write branch, the completeness scan and attempt evidence; raised from 380 to 400 by the coordinator on 2026-11-12 for the third fixture line and its evidence"
 allow_paths:
   - src/loop/card-runner.ts

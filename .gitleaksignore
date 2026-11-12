@@ -1,0 +1,6 @@
+# One verified false positive of the committed-history scan (card T0-GITLEAKS-LESSON-FP).
+# The text is a lesson line of docs/LESSONS.md, committed at 7265d106. It is prose: the word keys,
+# a colon and a card id, which the generic-api-key rule reads as a key assignment. It names no credential.
+# It sits in pushed history of main, which is not rewritten, so it is listed by its fingerprint
+# (commit, file, rule id, start line). tests/surface/gitleaks-ignore.test.ts pins this list.
+7265d10642001a051fa36ac3f9c061a72a4540b3:docs/LESSONS.md:generic-api-key:153
