@@ -181,9 +181,9 @@ Sessions bytes at PREPARE on 7097dfd9 (LF, heading to next heading): 13,556 byte
 
 RED, measured on 4c3dceef (source as on main 7097dfd9): tests/scenarios/unresolved-narration.test.ts fails 12 subtests (items 1, 2, 3, 4) on the assertion `narration` actual `Reconcile 1 operation(s) with unknown outcome before admitting any new mutation: run ...` against the expected new narration; the control and item 5 rows (a), (b), (d), (e), (f) pass, and item 5 (c) passes after its narration was compared with the one read at T0. tests/surface/prose.test.ts: 2 fail (`Sessions states sentence L once`, `paragraph N is its own paragraph directly after the Narration paragraph`), 16 pass.
 
-Revert table, measured on 4771cc60 (source restored byte for byte after each row, `git diff --stat` empty): 17 of 17 red.
+Revert table, measured on f137c13e (all 17 rows are revert runs, none a RED-commit observation: the text or source piece was removed or mutated in the working tree, the test run, the file restored with git checkout or by rewriting the original, git status clean afterwards): 17 of 17 red.
 
-| # | piece reverted or mutated | result |
+| # | piece reverted or mutated (rows 1 to 14: revert run on 4771cc60 with unresolved-narration.test.ts) | result |
 |---|---|---|
 | 1 | issued/running class dropped | red |
 | 2 | intended/UNKNOWN class dropped (all may still be running) | red |
@@ -199,9 +199,9 @@ Revert table, measured on 4771cc60 (source restored byte for byte after each row
 | 12 | reconcile step skipped | red |
 | 13 | grace expiry no longer stops | red |
 | 14 | pollSeconds changed | red |
-| 15 | sentence L reverted (RED commit state) | red |
-| 16 | paragraph N removed (RED commit state) | red |
-| 17 | CHANGELOG entry removed (RED commit state, same test as 16) | red |
+| 15 | sentence L removed from docs/OPERATIONS.md (revert run) | red: tests/surface/prose.test.ts:432, `Sessions states sentence L once` |
+| 16 | paragraph N removed from docs/OPERATIONS.md (revert run) | red: tests/surface/prose.test.ts:440, `paragraph N is its own paragraph directly after the Narration paragraph` |
+| 17 | CHANGELOG entry removed (revert run) | red: tests/surface/prose.test.ts:445, `the entry sits directly above T0-BOARD-OWNER-WAIT` |
 
 DoD on 4771cc60: `npm run typecheck` clean, then node --test of the seven files: tests 158, pass 158, fail 0, exit 0.
 
