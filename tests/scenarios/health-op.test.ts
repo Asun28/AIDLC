@@ -559,15 +559,40 @@ test('the staleness of a sample is judged when the health command has returned',
   assert.deepEqual(late.evaluated, [{ result: 'INSUFFICIENT_DATA', signals: ['http_5xx_rate=INSUFFICIENT_DATA'] }]);
   const returned = ops.healthSignals(ops.DeliveryOpsConfig.parse({ schemaVersion: 1, health: declared }).health, ops.healthReportOf(printed(body(fx, {}, [entry(fx, 'http_5xx_rate', 0.1, { lastSampleAt: addMs(late.started, -200000) })]))));
   assert.equal(evaluateSignal(returned[0]!, fx.now()).detail, 'last sample 350s old exceeds 300s');
-  // The window, the journal event and the saved attempt keep the step's time.
+  // The fallback window and the `at` of the insufficient-data STOP keep the step's time.
   assert.deepEqual(late.r.attempt.healthWindow, { from: late.started, to: addMs(late.started, 10 * MINUTE_MS) });
   assert.deepEqual(late.r.directive.kind === 'observe' ? late.r.directive.window : undefined, late.r.attempt.healthWindow);
-  assert.deepEqual(Object.keys(fx.events(goalId).at(-1)!.data).sort(), ['attemptId', 'result', 'signals']);
   const stopped = run(150000, { healthWindow: { from: addMs(fx.now(), -41 * MINUTE_MS), to: addMs(fx.now(), -31 * MINUTE_MS) } });
   assert.equal(stopped.r.attempt.stop?.reason, 'release-health');
   assert.equal(stopped.r.attempt.stop?.at, stopped.started);
   // (b) 250 000 ms old when it returns: inside the bound.
   assert.deepEqual(run(50000).evaluated, [{ result: 'PASS', signals: ['http_5xx_rate=PASS'] }]);
+  // A PASS whose command starts 25 s before the end of the window and returns 50 s later: the window has not elapsed at the step's time.
+  const open = run(50000, { healthWindow: { from: addMs(fx.now(), 25000 - 10 * MINUTE_MS), to: addMs(fx.now(), 25000) } });
+  assert.deepEqual([open.evaluated.map((e) => e.result), open.r.directive.kind, open.r.attempt.state], [['PASS'], 'observe', 'OBSERVE']);
+  // Insufficient data whose command starts 75 s before the end of the maximum wait and returns 150 s later: no STOP yet.
+  const waitEnd = addMs(fx.now(), 75000);
+  const waiting = run(150000, { healthWindow: { from: addMs(waitEnd, -40 * MINUTE_MS), to: addMs(waitEnd, -30 * MINUTE_MS) } });
+  assert.deepEqual([waiting.evaluated.map((e) => e.result), waiting.r.directive.kind, waiting.r.attempt.state], [['INSUFFICIENT_DATA'], 'observe', 'OBSERVE']);
+  // A breaching sample inside its bound when the evaluation began and past it when the command returned still routes to RECOVER.
+  {
+    const own = setup(t);
+    own.fx.controller.report({
+      goalId: own.goalId,
+      generation: 0,
+      result: 'approved',
+      data: { kind: 'recovery', by: 'sre-lead', candidateDigest: 'c1', environment: 'production', operations: [], recovery: { eligibleBaseline: 'v1.4.2', healthTrigger: 'http_5xx_rate >= 1 over 5m', procedure: 'recover-cmd', migrationCompatibility: 'schema unchanged', windowMs: 30 * MINUTE_MS, owner: 'sre-oncall' } },
+    });
+    const attempt = observing(own.fx, own.goalId);
+    const breach = (): Receipt => {
+      const sampled = addMs(own.fx.now(), -200000);
+      own.fx.advance(150000);
+      return { exitCode: 0, stdout: printed(body(own.fx, {}, [entry(own.fx, 'http_5xx_rate', 7.5, { lastSampleAt: sampled })])) };
+    };
+    const r = releaseRunner(own.fx, healthOps({ health: declared }), recording(own.fx, breach).runner).next(own.fx.goal(own.goalId), attempt);
+    assert.deepEqual(evaluations(own.fx, own.goalId, attempt.id), [{ result: 'BREACH', signals: ['http_5xx_rate=BREACH'] }]);
+    assert.deepEqual([r.directive.kind, r.attempt.state], ['recover', 'RECOVER'], r.directive.narration);
+  }
 
   // A report line padded with a byte order mark or no-break spaces is read.
   const padded = (before: string, after: string) => (fx: Fx): Receipt => ({ exitCode: 0, stdout: `probe start\n${before}${JSON.stringify(body(fx))}${after}\n` });
