@@ -295,3 +295,15 @@ Full suite: not run in this round; the coordinator runs it on the final head.
 
 ### Size
 `git diff --shortstat origin/main...HEAD` at af94e449 (origin/main 99fbde2d): 49 files changed, 472 insertions(+), 181 deletions(-), 653 lines before this evidence update; the total with it is given in the report, against the budget of 780 (attempt evidence counted).
+
+## Planner rulings on the points disclosed in the repair rounds (coordinator, before R3)
+
+The points of the first build report are ruled in the section "Planner rulings of 2026-11-12 after the build report". These are the points the implementer disclosed in the repair rounds after it; none is an edit the card forbids.
+
+| Disclosed point | Ruling |
+|---|---|
+| The table test writes each row to a directory of its own and compares the reports in row order, so that the file of an allowed helper can appear in more than one row; the expected results of the earlier rows are unchanged | Accepted. The rows on a stored reference and on a nested function need a file at a helper's path each |
+| One of the implementer's own new rows named its nested function `tmpDir` where the helper allowed in tests/surface/command-lines.test.ts is `tempDir`, so the revert of `fn.parent === sf` first stayed green; a later commit corrects the name and the revert is red | Accepted. A correction of a new row before any review, found by running the revert |
+| The 19 mutations of the first round were written against the scan as it was then; they were run again against the final scan, two with their text updated to the code that replaced what they changed | Accepted. The one revert table of the evidence names the commit each group ran on |
+| The merge commits of main into the branch carry messages amended once before anything was built on them | Noted. They were unpushed, and the ship squashes them |
+| The count of `aidlc-*` entries in the system temporary directory fell by 189 during one DoD run while this card's run added and removed none | Noted. Another process removed entries; the card's own figure is 0 new entries per DoD run |
