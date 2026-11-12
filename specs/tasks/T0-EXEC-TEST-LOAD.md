@@ -203,3 +203,17 @@ The six calibrated tests passed in 3 of 3 loaded candidate runs; on main each lo
 | scale in units of 750 ms, rounded up, 1 to 8; a failed calibration fails the test | `scaleFor`, acceptance 1 rows |
 | timeout and bounds main's times the scale; grace, backstop, 1500 ms kill, lower bound unchanged; sync bound never above the backstop | `boundsAt`, acceptance 1 `boundsAt(1)`, `(4)`, `(8)` |
 | `fixture not ready before the timeout at scale <n>` for exit (root alive at the kill call) and for acceptance 3, no-kill, runSync (sleeper pid file late) | `assertRootGone`, `assertSleeperExisted`, acceptance 1 message rows |
+
+### R9: the runner-handle test calibrates (RED 562cfa8d, code 2704ab12; merged origin/main at 1ab4fc22)
+RED (562cfa8d): acceptance 1 fails on `runnerExitBoundMs`: actual 0, expected 6500. Revert rows on 2704ab12, acceptance 1 red in each: the slack not scaled; the runner's 1500 ms replaced by the scaled `timeoutMs`; `TIMEOUT_GRACE_MS` scaled (3 of 3 red). DoD on 2704ab12 alone, `npm run typecheck && node --test tests/infra/exec.test.ts`: exit 0, tests 68, pass 68, fail 0, runner exited after 3647 ms at scale 1. The test also prints `runner exited after <n> ms` as a diagnostic, an addition to the card's list. The fixture's runner mode starts `stay`, whose root and sleeper live 60 000 ms (exec-tree.child.ts:24), above the 27 500 ms cap.
+
+Loaded runs on 2704ab12 under `load.sh 24 150` (same load and machine as above), after the table of e5d8a151:
+| Run | tests / pass / fail | Runner exited after (ms) | Runner test scale |
+|---|---|---|---|
+| file 1 | 68 / 68 / 0 | 6234 | 7 (4521 ms) |
+| file 2 | 68 / 68 / 0 | 6842 | 7 (4782 ms) |
+| file 3 | 68 / 68 / 0 | 5762 | 5 (3745 ms) |
+| runner test alone 1 | 1 / 1 / 0 | 5932 | 8 (5504 ms) |
+| runner test alone 2 | 1 / 1 / 0 | 6457 | 4 (2899 ms) |
+| runner test alone 3 | 1 / 1 / 0 | 5628 | 8 (5851 ms) |
+Bounds at those scales: 24 500 (scale 7), 18 500 (5), 27 500 (8), 15 500 (4); main's 6500 would have failed file 2 (6842 ms). The six other calibrated tests passed in all three file runs (scales 5 to 8).
