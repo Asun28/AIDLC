@@ -26,7 +26,8 @@ function functionName(fn: ts.SignatureDeclaration): string {
   const own = fn.name;
   if (own && (ts.isIdentifier(own) || ts.isPrivateIdentifier(own) || ts.isStringLiteral(own) || ts.isNumericLiteral(own))) return own.text;
   if (own && ts.isComputedPropertyName(own) && (ts.isStringLiteral(own.expression) || ts.isNumericLiteral(own.expression))) return own.expression.text;
-  // Without a name of its own: the callee, inside at most the one pair of parentheses the call needs, of the call that initializes a `const`.
+  // Without a name of its own: a function expression or arrow function that is the callee, inside at most the one pair of parentheses the call needs, of the call that initializes a `const`.
+  if (!ts.isFunctionExpression(fn) && !ts.isArrowFunction(fn)) return '<anonymous>';
   const callee = ts.isParenthesizedExpression(fn.parent) ? fn.parent : fn;
   const call = callee.parent;
   const decl = call.parent;
