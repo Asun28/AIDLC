@@ -740,7 +740,7 @@ Reverts, actual runs at ceeb79c5, each on a scratch copy of the test file (remov
 
 Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1621 changed lines (1610 added, 11 removed) against the budget of 1680: tests/surface/cli-cwd-paths.test.ts 916, this card 612, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
-Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1581 changed lines (1570 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 899, this card 589, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+The figure of the third repair round, kept for the record (measured at 51de3126, before this round; the figure above is the current one): `git diff --shortstat origin/main...HEAD` with this file gave 1581 changed lines (1570 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 899, this card 589, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
