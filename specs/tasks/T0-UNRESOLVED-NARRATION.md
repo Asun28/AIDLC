@@ -181,7 +181,7 @@ Sessions bytes at PREPARE on 7097dfd9 (LF, heading to next heading): 13,556 byte
 
 RED, measured on 4c3dceef (source as on main 7097dfd9): tests/scenarios/unresolved-narration.test.ts fails 12 subtests (items 1, 2, 3, 4) on the assertion `narration` actual `Reconcile 1 operation(s) with unknown outcome before admitting any new mutation: run ...` against the expected new narration; the control and item 5 rows (a), (b), (d), (e), (f) pass, and item 5 (c) passes after its narration was compared with the one read at T0. tests/surface/prose.test.ts: 2 fail (`Sessions states sentence L once`, `paragraph N is its own paragraph directly after the Narration paragraph`), 16 pass.
 
-Revert table, measured on f137c13e (all 17 rows are revert runs, none a RED-commit observation: the text or source piece was removed or mutated in the working tree, the test run, the file restored with git checkout or by rewriting the original, git status clean afterwards): 17 of 17 red.
+Revert table, measured on 4771cc60 for rows 1 to 14 and on f137c13e for rows 15 to 17, the two differ only in the card file (all 17 rows are revert runs, none a RED-commit observation: the text or source piece was removed or mutated in the working tree, the test run, the file restored with git checkout or by rewriting the original, git status clean afterwards): 17 of 17 red.
 
 | # | piece reverted or mutated (rows 1 to 14: revert run on 4771cc60 with unresolved-narration.test.ts) | result |
 |---|---|---|
