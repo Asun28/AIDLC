@@ -783,3 +783,11 @@ One point of the third repair round, raised by the implementer for a decision.
 | Point | Ruling |
 |---|---|
 | The commit 07cd849a of this branch holds a local constant named with a word the secret scan treats as a credential name, assigned from a property access; the next commit renames it. The implementer could not run the scanner and asked whether the history must be rewritten or the finding listed | Neither. The coordinator scanned the 16 commits of the branch that are not on main with the pinned gitleaks 8.30.1 (`origin/main..51de3126`): no leak found. Nothing is rewritten and `.gitleaksignore` is unchanged. The rename stays |
+
+## Planner ruling on the point disclosed in the fourth repair round (coordinator, before R3)
+
+One point of the fourth repair round, disclosed by the implementer.
+
+| Disclosed point | Ruling |
+|---|---|
+| Four rows of the earlier table now also break rule (d) and expect (c) and (d): the two `Object.defineProperty` texts on `process.env` and the two reads of `__proto__`. The planner's message had said two | Accepted. A row reports every rule its text breaks; four is the count the rules give |
