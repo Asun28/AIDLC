@@ -128,6 +128,12 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan reports every occurrence of the 
     ['tests/forms/computed-identifier.ts', "import fs from 'node:fs';\nconst label = 'build';\nclass C {\n  [label]() {\n    return fs.mkdtempSync('x');\n  }\n}\n", [[5, '<anonymous>', 'call', sync]]],
     ['tests/forms/assigned-arrow.ts', "import fs from 'node:fs';\nconst f = () => fs.mkdtempSync('x');\n", [[2, '<anonymous>', 'call', sync]]],
     ['tests/forms/await-using.ts', "import fs from 'node:fs';\nawait using probe = (() => {\n  return fs.mkdtempSync('x');\n})();\n", [[3, '<anonymous>', 'call', sync]]],
+    ['tests/forms/default-export.ts', "export default function () {\n  return 'mkdtempSync';\n}\n", [[2, '<anonymous>', 'reference', sync]]],
+    ['tests/forms/iife-pattern.ts', "import fs from 'node:fs';\nconst { x } = (() => {\n  return { x: fs.mkdtempSync('x') };\n})();\n", [[3, '<anonymous>', 'call', sync]]],
+    // Robustness: unusual but valid sources; the scan returns for each of them.
+    ['tests/forms/empty.ts', '', []],
+    ['tests/forms/comments-only.ts', "// mkdtempSync\n/* mkdtemp */\n/** mkdtempDisposableSync */\n", []],
+    ['tests/forms/unusual.ts', "import fs from 'node:fs';\nexport default class {\n  build() {\n    return fs.mkdtempSync('a');\n  }\n}\nclass S {\n  static {\n    fs.mkdtempSync('b');\n  }\n}\nconst o = {\n  get g() { return fs.mkdtempSync('c'); },\n  set s(v: string) { fs.mkdtempSync(v); },\n};\nmkdtempSync: for (;;) { break mkdtempSync; }\nenum E { mkdtemp = 1 }\n", [[4, 'build', 'call', sync], [9, 'module scope', 'call', sync], [13, 'g', 'call', sync], [14, 's', 'call', sync], [16, 'module scope', 'reference', sync], [16, 'module scope', 'reference', sync], [17, 'module scope', 'reference', base]]],
     ['tests/surface/test-temp.test.ts', own, []],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
