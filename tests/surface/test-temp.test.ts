@@ -150,13 +150,23 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan finds every form [R2]', () => {
     ['tests/forms/local.ts', "function mkdtempSync(p: string) { return p; }\nmkdtempSync('x');\n", []],
     ['tests/forms/separators.ts', `import { mkdtempSync } from 'node:fs';\nconst s = 'a${String.fromCharCode(0x2028)}b${String.fromCharCode(0x2029)}c';\nmkdtempSync(s);\n`, [[3, 'module scope', 'call', 'mkdtempSync']]],
     ['tests/forms/iife.ts', "import { mkdtempSync } from 'node:fs';\nconst probe = (() => {\n  return mkdtempSync('x');\n})();\n", [[3, 'probe (immediately invoked)', 'call', 'mkdtempSync']]],
+    ['tests/forms/binding-default.ts', "import { mkdtempSync } from 'node:fs';\nconst { make = mkdtempSync } = {};\nmake('x');\n", [[2, 'module scope', 'reference', 'mkdtempSync']]],
+    ['tests/forms/computed.ts', "import fs from 'node:fs';\nconst { ['mkdtempSync']: make } = fs;\nmake('x');\n", [[3, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/nested.ts', "import fs from 'node:fs';\nconst { promises: { mkdtemp: make } } = fs;\nasync function nested() {\n  await make('x');\n}\n", [[4, 'nested', 'call', 'mkdtemp']]],
+    ['tests/forms/dynamic.ts', "const fs = await import('node:fs');\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/infra/helpers.ts', "import { mkdtempSync } from 'node:fs';\nexport function tmpDir(prefix: string): string {\n  const make = mkdtempSync;\n  return make(prefix);\n}\n", [[3, 'tmpDir', 'reference', 'mkdtempSync']]],
+    ['tests/surface/command-lines.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction tempDir(prefix: string) {\n  function tmpDir(p: string) { return mkdtempSync(p); }\n  return tmpDir(prefix);\n}\n", [[3, 'tmpDir', 'call', 'mkdtempSync']]],
+    ['tests/surface/evals.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction tempDir(prefix: string) {\n  return (mkdtempSync)(prefix);\n}\n", []],
+    ['tests/surface/eval-test-temp.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction inTemp(prefix: string) {\n  return mkdtempSync!(prefix);\n}\n", []],
+    ['tests/forms/type-only.ts', "import type { mkdtempSync } from 'node:fs';\ntype F = typeof mkdtempSync;\nexport type { F };\n", []],
   ];
-  for (const [file, text] of rows) {
-    mkdirSync(path.dirname(path.join(scanRoot, file)), { recursive: true });
-    writeFileSync(path.join(scanRoot, file), text, 'utf8');
-  }
-  const expected = rows
-    .flatMap(([file, , sites]) => sites.map(([line, fn, kind, name]): Site => ({ file, line, fn, kind, name })))
-    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
-  assert.deepEqual(scanTests(scanRoot).map(show), expected.map(show));
+  // Each row in a directory of its own, so that a helper's file can appear in more than one row.
+  const actual = rows.flatMap(([file, text], i) => {
+    const root = path.join(scanRoot, String(i));
+    mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    writeFileSync(path.join(root, file), text, 'utf8');
+    return scanTests(root);
+  });
+  const expected = rows.flatMap(([file, , sites]) => sites.map(([line, fn, kind, name]): Site => ({ file, line, fn, kind, name })));
+  assert.deepEqual(actual.map(show), expected.map(show));
 });
