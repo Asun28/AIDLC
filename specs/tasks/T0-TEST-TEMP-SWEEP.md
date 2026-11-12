@@ -108,3 +108,110 @@ The line numbers of the `sweep` field are those of 6c1a6cfd and have moved in ma
 tests/infra/exec.test.ts changed since the card was written (T0-EXEC-TEST-LOAD): the tests R1 names keep their `finally` order (processes ended before their directory is removed), the runner-handle test is now calibrated, and the calibration and its rows already use `tmpDir`. Its five `mkdtempSync` calls are the five the sweep lists, at other lines. Under a parallel run that file can still fail its `runSync` row with the message `fixture not ready before the timeout at scale <n>` (a known limit of that card, on the follow-up list); for the full-suite run of R3, a failure of that row alone, or of tests/scenarios/mutants-review.test.ts or tests/surface/review-bench.test.ts under load, is reported with the file run alone afterwards, and is not a reason to change a test.
 
 R3 of this card asks for one full `npm test` on the candidate before the first review. That is this card's own requirement and the one exception to the standing rule that implementers do not run the full suite.
+
+## Attempt evidence
+
+Implementer attempt on branch T0-TEST-TEMP-SWEEP from ebd2892b. Commits: 3d3e9d31 (RED: tests/surface/test-temp.test.ts alone), 733a8434 (R1: the 85 sites), a2b45c16 (the scan counts lines by LF; see RED), 928b23c9 (a local of the scan renamed from `key` to `prop`), then this evidence commit, which changes only this card.
+
+Sweep before any edit (ebd2892b, actual run): `git grep -n "mkdtemp[A-Za-z]*(" -- tests` gives 90 lines; minus the four helpers of R2 and the string at tests/surface/eval-test-temp.test.ts:56, 85 calls in 47 files, as the planner note says. After 928b23c9 (actual run): the same grep finds only the four helpers, that string and the table strings of tests/surface/test-temp.test.ts. `git grep -c "mkdtemp" -- tests` names five files: the files of the four helpers (their own calls, imports, test names and the string above) and tests/surface/test-temp.test.ts, where every occurrence is inside a string literal; 0 occurrences elsewhere.
+
+### RED (3d3e9d31, actual run, `node --test tests/surface/test-temp.test.ts`)
+- Acceptance 1: fails (exit 1, pass 1, fail 1) with the AssertionError message `85 sites outside the four helpers:` followed by one line per site, `<file>:<line> [<enclosing function>] call of mkdtempSync`.
+- The RED scan counted lines as the compiler does, which also ends a line at U+2028 and U+2029; tests/infra/github-ship.test.ts:533 holds both in a string, so its second site was reported as :1393 where git grep shows :1391. a2b45c16 counts lines by LF. Actual run on 928b23c9 with the 47 files restored to 3d3e9d31: 85 sites, and their file:line list equals the git grep list of the sweep line for line.
+- Acceptance 2: passes on 3d3e9d31 (the scan exists in the RED commit; the card lets it pass on its own rows). Its rows are shown to bite by the revert table.
+
+### Migrated sites (928b23c9, current line, enclosing function): 85 in 47 files
+- tests/core/ci-policy.test.ts: 241 [callback of test], 257 [callback of test], 271 [callback of test], 607 [callback of test]
+- tests/core/journal-event-types.test.ts: 25 [written]
+- tests/infra/base-sync.test.ts: 34 [cloneOfOrigin], 214 [promisorClone]
+- tests/infra/exec.test.ts: 518 [raceFixture], 664 [callback of it], 742 [callback of it], 975 [callback of it], 1013 [callback of it]
+- tests/infra/git.test.ts: 155 [callback of it]
+- tests/infra/github-ship-merge-refused.test.ts: 35 [refusedShip]
+- tests/infra/github-ship.test.ts: 33 [fixture], 1391 [callback of test]
+- tests/infra/init.test.ts: 25 [callback of test], 53 [callback of test], 78 [callback of test], 94 [upgrade], 129 [callback of test], 217 [tempTarget]
+- tests/scenarios/board-watch.test.ts: 43 [fixture]
+- tests/scenarios/candidate-withdraw.test.ts: 385 [callback of test]
+- tests/scenarios/context-pack.test.ts: 48 [callback of test], 106 [callback of test], 198 [callback of test]
+- tests/scenarios/evidence-id.test.ts: 26 [tempDir]
+- tests/scenarios/manifest-lock.test.ts: 29 [tempDir]
+- tests/scenarios/mutants-review.test.ts: 178 [callback of withSetup], 191 [callback of withSetup], 280 [callback of withSetup], 296 [callback of withSetup]
+- tests/scenarios/pre-existing.test.ts: 97 [callback of test]
+- tests/scenarios/t1-plan.test.ts: 118 [callback of test]
+- tests/surface/approver.test.ts: 34 [fixture]
+- tests/surface/bench.test.ts: 29 [withTemp]
+- tests/surface/bounds.test.ts: 42 [callback of test]
+- tests/surface/card.test.ts: 167 [callback of test], 198 [callback of test], 454 [callback of test], 480 [callback of test]
+- tests/surface/config.test.ts: 310 [callback of test], 349 [inCheckout]
+- tests/surface/fix-task-clear.test.ts: 22 [repo]
+- tests/surface/hook-git-prefetch.test.ts: 27 [withTemp]
+- tests/surface/hook-lazy.test.ts: 34 [withTemp]
+- tests/surface/hook-name.test.ts: 17 [tempDir]
+- tests/surface/incident.test.ts: 52 [callback of test], 75 [callback of test], 92 [callback of test], 100 [callback of test]
+- tests/surface/init-base-ci.test.ts: 27 [tempDir]
+- tests/surface/init-no-package.test.ts: 31 [tempDir]
+- tests/surface/lease-heartbeat.test.ts: 31 [withState]
+- tests/surface/lesson-match.test.ts: 16 [withFile], 96 [repo], 218 [callback of test]
+- tests/surface/lessons.test.ts: 16 [dir], 158 [repoAtClose]
+- tests/surface/manifest.test.ts: 11 [callback of test], 36 [callback of test]
+- tests/surface/mutants.test.ts: 67 [callback of before], 84 [repo], 169 [SYMLINK_OK (immediately invoked)], 928 [cliFixture]
+- tests/surface/ops-intent.test.ts: 19 [repo]
+- tests/surface/outcome-github.test.ts: 19 [tempDir]
+- tests/surface/outcome-ingest.test.ts: 17 [tempDir]
+- tests/surface/outcome-usage.test.ts: 21 [tempDir]
+- tests/surface/ps-guard-read.test.ts: 27 [context]
+- tests/surface/ps-guard-wire.test.ts: 26 [tempDir]
+- tests/surface/r2-pass-notes.test.ts: 33 [readAnswer]
+- tests/surface/readme.test.ts: 60 [callback of test]
+- tests/surface/review-bench-export.test.ts: 60 [repo]
+- tests/surface/review-bench.test.ts: 42 [fixture], 148 [callback of test], 158 [callback of test], 425 [callback of test], 774 [callback of test]
+- tests/surface/reviewer-env.child.ts: 22 [tempDir]
+- tests/surface/reviewer-env.test.ts: 16 [tempDir]
+- tests/surface/security-check.test.ts: 20 [callback of test]
+- tests/surface/stats.test.ts: 451 [callback of test], 578 [callback of test]
+
+Lines move by -1, 0 or +1 against 3d3e9d31, from the import lines removed (`node:os`, and `path` in readme.test.ts) and the helpers import line added.
+`callback of <name>` is a function passed to that call; `SYMLINK_OK (immediately invoked)` is the module-scope IIFE the sweep field calls [module scope].
+
+### Revert table (each row an actual run on 928b23c9 with one change, restored after; `git diff --stat HEAD -- tests` empty at the end)
+| Reverted or mutated | Test run | Result | |
+|---|---|---|---|
+| named and aliased imports not bound | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| an aliased import bound by its local name | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| namespace import not an fs object | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| default import not an fs object | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| fs.promises not followed | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| fs/promises modules not listed | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| destructuring from an fs object not bound | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| element access not read | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| require not an fs object | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| mkdtempDisposableSync not a target | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| an uncalled reference not reported | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| exemption by function name in any file | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| exemption by any enclosing function, not the nearest | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| no exemption | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| any identifier with a target name is a target (local function) | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| a text scan instead of the AST (strings and comments) | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| enclosing function not named | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| line counted from 0 | acceptance 2 | exit 1, pass 0, fail 1 | red |
+| acceptance 1 with no exemption (the four helpers reported) | acceptance 1 | exit 1, pass 0, fail 1 | red |
+| R1: tests/surface/review-bench.test.ts:158 back to `mkdtempSync(path.join(dir, 'bad-'))` | acceptance 1 | exit 1, fail 1, names `tests/surface/review-bench.test.ts:158 [callback of test]` | red |
+| R1: tests/surface/reviewer-env.child.ts as at 3d3e9d31 | acceptance 1 | exit 1, fail 1, names `tests/surface/reviewer-env.child.ts:22 [tempDir]` | red |
+| R1: tests/surface/review-bench.test.ts as at 3d3e9d31 | acceptance 1 | exit 1, fail 1, names its 5 sites | red |
+| R1: all 47 files as at 3d3e9d31 | acceptance 1 | exit 1, fail 1, `85 sites outside the four helpers` | red |
+| R1 imports: an unused `import { tmpdir } from 'node:os'` left in tests/surface/stats.test.ts | `npm run typecheck` | exit 2, TS6133 'tmpdir' is declared but its value is never read | red |
+
+Rows red: 24/24. No row covers the LF line count of a2b45c16 (no table row holds U+2028); the restored-files run above shows it. The `finally` order of tests/infra/exec.test.ts (processes ended before `rmSync` of their directory, the `finally` blocks at :682, :763, :993, :1020) has no revert row: no test observes that order, and 733a8434 changes only the `mkdtempSync` line of each of those tests (`git diff 3d3e9d31 733a8434 -- tests/infra/exec.test.ts`: 6 lines, the import and the 5 sites).
+
+### Acceptance 3
+`git diff -U0 3d3e9d31 733a8434`, every changed line outside tests/surface/test-temp.test.ts is an import line or a site line (checked by filtering the diff: no other `+`/`-` line). No assertion, test name or test call changes, so no test count changes.
+
+### DoD (actual runs, the card's `dod_command` from the worktree root)
+- 928b23c9: `npm run typecheck` exit 0, then `node --test` over the 48 files: tests 1013, suites 81, pass 1004, fail 0, cancelled 0, skipped 9, exit 0.
+- 733a8434 and a2b45c16: the same counts, exit 0.
+- Temporary directory (`os.tmpdir()`, entries starting `aidlc-`), each run: 72480 before, 72480 after, 0 new and 0 gone entries (`comm` of the two listings); no `could not remove` line in either output.
+
+### Full suite, R3 / acceptance 4 (733a8434, actual run, `npm test`, nothing else started beside it)
+tests 3462, suites 247, pass 3440, fail 0, cancelled 0, skipped 22, duration_ms 380702, exit 0. No file failed, so no file was rerun alone. Raw output kept by the implementer outside the repository (4019 lines). Not rerun on a2b45c16 and 928b23c9, which change only tests/surface/test-temp.test.ts (the line count, a local name); the DoD on 928b23c9 runs that file.
+
+### Size
+`git diff --shortstat origin/main...HEAD` at 928b23c9: 48 files changed, 336 insertions(+), 181 deletions(-), 517 lines against the budget of 520. This evidence section adds 107 lines of card text, 624 lines in all.
