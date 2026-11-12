@@ -71,8 +71,8 @@ function scanSource(file: string, text: string): Site[] {
       if (ts.isIdentifier(node.name)) fsObjects.add(node.name.text);
       else if (ts.isObjectBindingPattern(node.name)) {
         for (const el of node.name.elements) {
-          const key = el.propertyName ?? el.name;
-          if (ts.isIdentifier(el.name) && (ts.isIdentifier(key) || ts.isStringLiteral(key))) bindName(el.name.text, key.text);
+          const prop = el.propertyName ?? el.name;
+          if (ts.isIdentifier(el.name) && (ts.isIdentifier(prop) || ts.isStringLiteral(prop))) bindName(el.name.text, prop.text);
         }
       }
     }
