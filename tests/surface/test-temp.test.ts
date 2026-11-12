@@ -7,130 +7,57 @@ import ts from 'typescript';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
-const FS_MODULES = new Set(['fs', 'node:fs', 'fs/promises', 'node:fs/promises']);
-const TARGETS = new Set(['mkdtempSync', 'mkdtemp', 'mkdtempDisposableSync']);
+/** The three names of R2, built from parts so that this file holds no occurrence of them. */
+const BASE = ['mk', 'dtemp'].join('');
+const NAMES = new Set([`${BASE}Sync`, BASE, `${BASE}DisposableSync`]);
 /** The four helpers of R2 (file relative to the root, top-level function): each records its directory at creation. */
 const ALLOWED = new Set(['tests/infra/helpers.ts#tmpDir', 'tests/surface/evals.test.ts#tempDir', 'tests/surface/command-lines.test.ts#tempDir', 'tests/surface/eval-test-temp.test.ts#inTemp']);
+const HELPER_FILES = new Set([...ALLOWED].map((a) => a.slice(0, a.indexOf('#'))));
 
 interface Site { file: string; line: number; fn: string; kind: 'call' | 'reference'; name: string }
 const show = (s: Site): string => `${s.file}:${s.line} [${s.fn}] ${s.kind} of ${s.name}`;
 
-const stringValue = (node: ts.Node): string | undefined => (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : undefined);
-/** The member name of `x.name` or `x['name']`, else undefined. */
-const memberName = (node: ts.Node): string | undefined =>
-  ts.isPropertyAccessExpression(node) ? node.name.text : ts.isElementAccessExpression(node) ? stringValue(node.argumentExpression) : undefined;
-/** Removes parentheses, `as`, angle-bracket and non-null assertions and `satisfies` around an expression, through the public node tests. */
-const skipOuter = (node: ts.Node): ts.Node => {
-  while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) || ts.isSatisfiesExpression(node)) node = node.expression;
-  return node;
-};
-const isFunctionLike =(node: ts.Node): node is ts.SignatureDeclaration =>
+const isFunctionLike = (node: ts.Node): node is ts.SignatureDeclaration =>
   ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node);
 
-/** The name a report gives a function: its declared or bound name, `callback of <callee>` for an argument, `<name> (immediately invoked)`, else `<anonymous>`. */
-function functionName(fn: ts.SignatureDeclaration, sf: ts.SourceFile): string {
+/** The name a report gives a function: its name, `<constant> (immediately invoked)`, else `<anonymous>`. */
+function functionName(fn: ts.SignatureDeclaration): string {
   if (fn.name && (ts.isIdentifier(fn.name) || ts.isStringLiteral(fn.name))) return fn.name.text;
-  const parent = fn.parent;
-  if (ts.isParenthesizedExpression(parent) && ts.isCallExpression(parent.parent) && parent.parent.expression === parent) {
-    const holder = parent.parent.parent;
-    return `${ts.isVariableDeclaration(holder) && ts.isIdentifier(holder.name) ? holder.name.text : '<anonymous>'} (immediately invoked)`;
+  // The parentheses an arrow function needs to be called are not a wrapper; anything else between it and the call is.
+  const callee = ts.isParenthesizedExpression(fn.parent) ? fn.parent : fn;
+  const call = callee.parent;
+  if (ts.isCallExpression(call) && call.expression === callee) {
+    const decl = call.parent;
+    if (ts.isVariableDeclaration(decl) && ts.isIdentifier(decl.name) && (decl.parent.flags & ts.NodeFlags.Const) !== 0) return `${decl.name.text} (immediately invoked)`;
+    return '<anonymous>';
   }
+  const parent = fn.parent;
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) return parent.name.text;
   if ((ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent)) && ts.isIdentifier(parent.name)) return parent.name.text;
-  if (ts.isCallExpression(parent) && parent.arguments.includes(fn as ts.Expression)) return `callback of ${parent.expression.getText(sf)}`;
   return '<anonymous>';
 }
 
-/** Every call of a TARGETS function of fs in `text`, and every reference to one that is not called, outside the four helpers of R2. */
+/** Every occurrence of one of the three names in `text`: an identifier in any position, or a string or substitution-free template literal equal to the name; nothing is resolved. */
 function scanSource(file: string, text: string): Site[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const fsObjects = new Set<string>();
-  const bound = new Map<string, string>();
-  const isRequireOfFs = (node: ts.Node): boolean =>
-    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'require' && node.arguments.length === 1 && FS_MODULES.has(stringValue(node.arguments[0]!) ?? '');
-  /** An fs module object: a bound name, `.promises` or `.default` of one, `await import(m)` or `require(m)`. The caller skips outer expressions. */
-  const isFsObject = (node: ts.Node): boolean => {
-    if (ts.isIdentifier(node)) return fsObjects.has(node.text);
-    const member = memberName(node);
-    if (member === 'promises' || member === 'default') return isFsObject(skipOuter((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression));
-    if (ts.isAwaitExpression(node)) return isImportOfFs(skipOuter(node.expression));
-    return isRequireOfFs(node);
-  };
-  /** `import('<fs module>')`, read as `require` is when awaited. */
-  const isImportOfFs = (node: ts.Node): boolean =>
-    ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword && node.arguments.length >= 1 && FS_MODULES.has(stringValue(node.arguments[0]!) ?? '');
-  /** The fs function an expression resolves to, else undefined. */
-  const target = (node: ts.Node): string | undefined => {
-    if (ts.isIdentifier(node)) return bound.get(node.text);
-    const name = memberName(node);
-    return name !== undefined && TARGETS.has(name) && isFsObject(skipOuter((node as ts.PropertyAccessExpression | ts.ElementAccessExpression).expression)) ? name : undefined;
-  };
-  const bindName = (local: string, imported: string): void => {
-    if (TARGETS.has(imported)) bound.set(local, imported);
-    else if (imported === 'promises') fsObjects.add(local);
-  };
-  /** Binds the names a destructuring of an fs object declares; `default` is the module itself, and a nested pattern under `promises` or `default` destructures an fs object too. */
-  const bindPattern = (pattern: ts.ObjectBindingPattern): void => {
-    for (const el of pattern.elements) {
-      const prop = el.propertyName ?? el.name;
-      const member = ts.isIdentifier(prop) || ts.isStringLiteral(prop) ? prop.text : ts.isComputedPropertyName(prop) ? stringValue(prop.expression) : undefined;
-      if (member === undefined) continue;
-      if (ts.isIdentifier(el.name)) {
-        if (member === 'default') fsObjects.add(el.name.text);
-        else bindName(el.name.text, member);
-      } else if (ts.isObjectBindingPattern(el.name) && (member === 'promises' || member === 'default')) bindPattern(el.name);
-    }
-  };
-  const collect = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && FS_MODULES.has(stringValue(node.moduleSpecifier) ?? '') && node.importClause) {
-      const { name, namedBindings } = node.importClause;
-      if (name) fsObjects.add(name.text);
-      if (namedBindings && ts.isNamespaceImport(namedBindings)) fsObjects.add(namedBindings.name.text);
-      if (namedBindings && ts.isNamedImports(namedBindings)) {
-        for (const el of namedBindings.elements) {
-          const imported = (el.propertyName ?? el.name).text;
-          if (imported === 'default') fsObjects.add(el.name.text);
-          else bindName(el.name.text, imported);
-        }
-      }
-    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && FS_MODULES.has(stringValue(node.moduleReference.expression) ?? '')) {
-      fsObjects.add(node.name.text);
-    } else if (ts.isVariableDeclaration(node) && node.initializer && isFsObject(skipOuter(node.initializer))) {
-      if (ts.isIdentifier(node.name)) fsObjects.add(node.name.text);
-      else if (ts.isObjectBindingPattern(node.name)) bindPattern(node.name);
-    }
-    ts.forEachChild(node, collect);
-  };
-  for (let size = -1; size !== fsObjects.size + bound.size; ) {
-    size = fsObjects.size + bound.size;
-    collect(sf);
-  }
-  /** An identifier that names a binding rather than reading one. */
-  const declares = (id: ts.Identifier): boolean => {
-    const p = id.parent;
-    return ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p)
-      || (ts.isBindingElement(p) && (p.name === id || p.propertyName === id))
-      || ((ts.isVariableDeclaration(p) || ts.isFunctionDeclaration(p) || ts.isParameter(p) || ts.isPropertyAssignment(p) || ts.isPropertyAccessExpression(p)) && p.name === id);
-  };
   const sites: Site[] = [];
   const visit = (node: ts.Node): void => {
-    // An identifier in a type position or a type query is not a runtime reference.
-    const typeOnly = (id: ts.Identifier): boolean => ts.isPartOfTypeNode(id) || ts.findAncestor(id, ts.isTypeQueryNode) !== undefined;
-    const name = ts.isIdentifier(node) && (declares(node) || typeOnly(node)) ? undefined : target(node);
+    const literal = ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node);
+    // `text` holds an identifier or a literal after its escapes are decoded.
+    const name = (ts.isIdentifier(node) || literal) && NAMES.has(node.text) ? node.text : undefined;
     if (name !== undefined) {
-      // The callee of a call is read after skipOuter: `(f)(x)`, `f!(x)` and `(f as F)(x)` call f.
-      let callee: ts.Node = node;
-      while (skipOuter(callee.parent) === node) callee = callee.parent;
-      const called = ts.isCallExpression(callee.parent) && callee.parent.expression === callee;
-      let fn: ts.Node | undefined = node.parent;
+      // The name of a function lies in the scope around it.
+      let fn: ts.Node | undefined = isFunctionLike(node.parent) && node.parent.name === node ? node.parent.parent : node.parent;
       while (fn && !isFunctionLike(fn)) fn = fn.parent;
-      const exempt = called && fn !== undefined && ts.isFunctionDeclaration(fn) && fn.parent === sf && ALLOWED.has(`${file}#${fn.name?.text}`);
-      if (!exempt) {
+      const inHelper = fn !== undefined && ts.isFunctionDeclaration(fn) && fn.parent === sf && ALLOWED.has(`${file}#${fn.name?.text}`);
+      const helperImport = HELPER_FILES.has(file) && ts.isImportSpecifier(node.parent) && node.parent.parent.parent.parent.parent === sf;
+      if (!inHelper && !helperImport) {
+        const access = (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) || (ts.isElementAccessExpression(node.parent) && node.parent.argumentExpression === node) ? node.parent : node;
+        const called = ts.isCallExpression(access.parent) && access.parent.expression === access;
         // Lines counted by LF, as git grep and editors count them; the compiler also breaks lines at U+2028 and U+2029.
         const line = text.slice(0, node.getStart(sf)).split('\n').length;
-        sites.push({ file, line, fn: fn ? functionName(fn as ts.SignatureDeclaration, sf) : 'module scope', kind: called ? 'call' : 'reference', name });
+        sites.push({ file, line, fn: fn ? functionName(fn as ts.SignatureDeclaration) : 'module scope', kind: called ? 'call' : 'reference', name });
       }
-      return;
     }
     ts.forEachChild(node, visit);
   };
