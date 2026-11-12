@@ -140,3 +140,8 @@ After the pre-review of c2599307 (coordinator edits at 438b4def, documents and e
 | every ledger write of the card runner and release runner passes the injected clock; times and id prefix come from `now` | the 11 lines above; op-clock.test.ts acceptance 1 and 2 |
 | before, eleven calls left the time out | the RED runs (18c22766 and f98c8d95) listing 11 calls |
 | a fixture's fixed clock decides the record times, the time prefix of the ids and the first sort key of the ledger, not the order of two records of one instant; three tests advance 1 ms, no assertion changed | the three `advance(1)` lines; revert rows 13-15 |
+
+Coordinator verification:
+- At 256e0e1f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/op-clock.test.ts, tests/scenarios/review-admit-foreign.test.ts, tests/scenarios/ship-effect-unknown.test.ts, tests/scenarios/ship-throw.test.ts): tests 35, pass 35, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1803 # pass 1792 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
