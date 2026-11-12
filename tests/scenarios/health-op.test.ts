@@ -11,6 +11,7 @@ import { cleanup } from '../infra/helpers.ts';
 import { ReleaseRunner } from '../../src/loop/release-runner.ts';
 import * as ops from '../../src/delivery/ops.ts';
 import { ReleaseAttempt, HOUR_MS, MINUTE_MS, addMs, type HealthSignal } from '../../src/core/types.ts';
+import { evaluateSignal } from '../../src/core/health.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { Journal } from '../../src/state/journal.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
@@ -384,9 +385,17 @@ test("the health command runs once per call with the attempt's environment, and 
   const rec = recording(fx, () => passing(fx));
   const runner = releaseRunner(fx, healthOps({ binding: { cwd: 'ops', idempotencyKeyArg: '--idempotency-key' } }), rec.runner, { leases });
   let attempt = observing(fx, goalId);
-  for (const step of [0, 1, 1]) {
-    fx.advance(step * MINUTE_MS);
-    attempt = runner.next(fx.goal(goalId), attempt).attempt;
+  // `targetSelection: 'arg'` leaves the inherited environment as it is: the calls run with the variable unset.
+  const inheritedTarget = process.env['AIDLC_TARGET_ENV'];
+  delete process.env['AIDLC_TARGET_ENV'];
+  try {
+    for (const step of [0, 1, 1]) {
+      fx.advance(step * MINUTE_MS);
+      attempt = runner.next(fx.goal(goalId), attempt).attempt;
+    }
+  } finally {
+    if (inheritedTarget === undefined) delete process.env['AIDLC_TARGET_ENV'];
+    else process.env['AIDLC_TARGET_ENV'] = inheritedTarget;
   }
   assert.deepEqual(rec.calls, [0, 1, 2].map(() => ({ command: 'health-cmd', args: ['--env', 'production'], cwd: path.resolve(fx.tmp, 'ops'), target: undefined, timeoutMs: 60000, killTree: true })));
   assert.deepEqual(leases.counts, {});
@@ -528,4 +537,52 @@ test('aidlc release next closes an observed attempt from the bound health comman
   const saved = fx.store.getRelease(attempt.id)!;
   assert.deepEqual([saved.state, saved.healthResult], ['CLOSE', 'PASS'], JSON.stringify(saved.stop));
   assert.equal((JSON.parse(res.stdout) as { attempt: { state: string } }).attempt.state, 'CLOSE');
+});
+
+test('the staleness of a sample is judged when the health command has returned', (t) => {
+  const { fx, goalId } = setup(t);
+  const declared = [{ ...DECLARED[0]!, maxStalenessMs: 300000 }];
+  // The command takes `ms` of fixture time; its sample was taken 200 000 ms before it started.
+  const slow = (ms: number) => (): Receipt => {
+    const sampled = addMs(fx.now(), -200000);
+    fx.advance(ms);
+    return { exitCode: 0, stdout: printed(body(fx, {}, [entry(fx, 'http_5xx_rate', 0.1, { lastSampleAt: sampled })])) };
+  };
+  const run = (ms: number, overrides: Partial<ReleaseAttempt> = {}) => {
+    const started = fx.now();
+    const attempt = observing(fx, goalId, overrides);
+    const r = releaseRunner(fx, healthOps({ health: declared }), recording(fx, slow(ms)).runner).next(fx.goal(goalId), attempt);
+    return { started, attempt, r, evaluated: evaluations(fx, goalId, attempt.id) };
+  };
+  // (a) 350 000 ms old when the command returns: past the 300 000 ms bound.
+  const late = run(150000, { healthWindow: undefined });
+  assert.deepEqual(late.evaluated, [{ result: 'INSUFFICIENT_DATA', signals: ['http_5xx_rate=INSUFFICIENT_DATA'] }]);
+  const returned = ops.healthSignals(ops.DeliveryOpsConfig.parse({ schemaVersion: 1, health: declared }).health, ops.healthReportOf(printed(body(fx, {}, [entry(fx, 'http_5xx_rate', 0.1, { lastSampleAt: addMs(late.started, -200000) })]))));
+  assert.equal(evaluateSignal(returned[0]!, fx.now()).detail, 'last sample 350s old exceeds 300s');
+  // The window, the journal event and the saved attempt keep the step's time.
+  assert.deepEqual(late.r.attempt.healthWindow, { from: late.started, to: addMs(late.started, 10 * MINUTE_MS) });
+  assert.deepEqual(late.r.directive.kind === 'observe' ? late.r.directive.window : undefined, late.r.attempt.healthWindow);
+  assert.deepEqual(Object.keys(fx.events(goalId).at(-1)!.data).sort(), ['attemptId', 'result', 'signals']);
+  const stopped = run(150000, { healthWindow: { from: addMs(fx.now(), -41 * MINUTE_MS), to: addMs(fx.now(), -31 * MINUTE_MS) } });
+  assert.equal(stopped.r.attempt.stop?.reason, 'release-health');
+  assert.equal(stopped.r.attempt.stop?.at, stopped.started);
+  // (b) 250 000 ms old when it returns: inside the bound.
+  assert.deepEqual(run(50000).evaluated, [{ result: 'PASS', signals: ['http_5xx_rate=PASS'] }]);
+
+  // A report line padded with a byte order mark or no-break spaces is read.
+  const padded = (before: string, after: string) => (fx: Fx): Receipt => ({ exitCode: 0, stdout: `probe start\n${before}${JSON.stringify(body(fx))}${after}\n` });
+  assertPass(runRow(fx, goalId, { label: 'BOM', answer: padded('﻿', '') }), 'a line that begins with U+FEFF');
+  assertPass(runRow(fx, goalId, { label: 'NBSP', answer: padded('  ', ' ') }), 'a line padded with U+00A0');
+  // Many blank lines before the report.
+  assertPass(runRow(fx, goalId, { label: 'blank lines', answer: (fx) => ({ exitCode: 0, stdout: `probe start\n${'\n'.repeat(200000)}${JSON.stringify(body(fx))}\n` }) }), '200 000 blank lines before the report');
+  // A declared `A` reads no entry whose name differs in letter case or padding only.
+  for (const name of ['a', ' A', ' A ']) {
+    const out = runRow(fx, goalId, { label: name, ops: { health: [{ name: 'A', source: 's', threshold: { op: '<', value: 1 }, minSamples: 1 }] }, answer: (fx) => ({ exitCode: 0, stdout: printed(body(fx, {}, [entry(fx, name, 0.5)])) }) });
+    assert.deepEqual(out.evaluated.map((e) => e.signals), [['A=INSUFFICIENT_DATA']], JSON.stringify(name));
+  }
+  // The exported schema refuses an empty environment and an empty candidate.
+  const report = { environment: 'production', candidate: 'c1', signals: [] };
+  assert.equal(ops.HealthReport.safeParse(report).success, true);
+  assert.equal(ops.HealthReport.safeParse({ ...report, environment: '' }).success, false);
+  assert.equal(ops.HealthReport.safeParse({ ...report, candidate: '' }).success, false);
 });
