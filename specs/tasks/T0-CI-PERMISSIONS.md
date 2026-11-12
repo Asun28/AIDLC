@@ -1,7 +1,7 @@
 ---
 id: T0-CI-PERMISSIONS
 title: ci.yml sets permissions contents read at the top level as the other four workflows do, and a test requires that of every workflow and the exact block of ci.yml
-status: todo
+status: merged
 branch: T0-CI-PERMISSIONS
 worktree: D:\wt\AIDLC\T0-CI-PERMISSIONS
 allow_paths:
@@ -109,3 +109,17 @@ Coordinator verification:
 - At 391864c3, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/workflow-permissions.test.ts): tests 3, pass 3, fail 0, skipped 0.
 - Windows, docpins: 73 test files reading 1 changed documents: # tests 1803 # pass 1791 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+PR 287 merged as 0cb391b9 on 2026-11-12T00:39:35Z. Its required checks ran `.github/workflows/ci.yml` with the new block `permissions: contents: read` (run 43126894276) and all passed: build-test, check (ubuntu-latest, 22), check (windows-latest, 22), bench, and Gitleaks (committed history).
+
+The setup-node cache steps of that run, which R1 names as the confirmation:
+
+| Job | actions/setup-node@v4 | npm ci | Post step |
+|---|---|---|---|
+| check (ubuntu-latest, 22) | cache hit, `Cache restored successfully` | added 13 packages in 2 s | hit on the primary entry, nothing to save |
+| check (windows-latest, 22) | cache hit, `Cache restored successfully` | added 13 packages in 4 s | hit on the primary entry, nothing to save |
+| bench | cache hit, `Cache restored successfully` | added 13 packages in 1 s | hit on the primary entry, nothing to save |
+
+What this shows and what it does not. With the token limited to `contents: read`, the cache restore and `npm ci` work in every job. The run did not save a cache entry, because each job hit the existing one, so the save path under the new block is not exercised by this run; it will be at the next change of package-lock.json, and a failing save does not fail the job. The log lines are retained whole as evidence `ci-cache-T0-CI-PERMISSIONS`; the names of the cache entries are left out here.
