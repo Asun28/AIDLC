@@ -271,6 +271,7 @@ test('after a reconcile the card ships again without a second effect [R6]', () =
       next();
       const first = mergeOps(fx)[0]!;
       reconcile(fx, goal.id, first.id, status);
+      fx.advance(1);
       const r = next();
       if (status === 'running' || status === 'UNKNOWN') {
         assert.equal(r.directive.kind, 'wait', status);
