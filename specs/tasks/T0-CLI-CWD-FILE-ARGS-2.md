@@ -659,3 +659,13 @@ The implementer disclosed five points where the card gave no rule or where it ch
 | The carried helper `childEnv` of the test file keeps `NODE_OPTIONS` and sets no state directory per child, where the implementer brief's standing check asks for both | Kept as carried. The tests of this file select the state directory per case, and several of them need `AIDLC_STATE_DIR` unset (acceptance 11 and the behaviour row of acceptance 13); the predecessor's four formal decisions raised nothing on it. The pre-review is asked to check that no test of the file depends on the caller's environment |
 
 Three revert rows (5, 10 and 38) are green on Windows because their cases exist on POSIX only; they were red in the predecessor's Linux run at 516d8739, and the coordinator's Linux run of this card's test file is recorded below.
+
+## Planner rulings on the points disclosed in the repair round (coordinator, before R3)
+
+The implementer disclosed three points in the repair round; the planner rules on each before the formal review.
+
+| Disclosed point | Ruling |
+|---|---|
+| `globalThis.process` and `global.process` are expected to break rules (b) and (d), where the rulings section lists them under (d) alone: in both, `process` is the name accessed and not the object of an access | Accepted. A row reports every rule the text breaks; the rulings section named the rule each row was added for |
+| Three rows of the first table report one more rule under the restated rules: `process.chdir(at)` breaks (a) and (b), since `chdir` is not one of the ten names; `Reflect.set(process.env, 'X', v)` breaks (c) and (d); `globalThis.process.env.X = v` breaks (b) and (d) | Accepted. The table section of this card was written before rules (b) and (d) changed; where it and the test differ in the rules a row names, the test follows the rules as they now read |
+| A `this` expression is found by its node kind (`ts.SyntaxKind.ThisKeyword`), there being no public helper function for it | Accepted. The node kind is public API |
