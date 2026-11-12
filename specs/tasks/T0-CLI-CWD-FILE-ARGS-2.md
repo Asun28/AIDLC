@@ -660,6 +660,32 @@ Reverts, actual runs at d47fd254, each on a scratch copy of the test file (tests
 
 Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1468 changed lines (1457 added, 11 removed) against the budget of 1540: tests/surface/cli-cwd-paths.test.ts 849, this card 526, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
+### Second repair round, after the second pre-review
+Measured: the implementer's runs on a Windows host (Node v22.23.1), on the commits named. The merge 9a6e69ed brings main at 29ea7758; the only conflict was this file, resolved as in the first round.
+
+RED, 5c86bdcf (the test file alone; it adds the empty file `GIT_CONFIG` in a `tempDir` directory, removed by the `after` hook): the six tests of the child environment and acceptance 13 run, 4 fail. The unit row of `childEnv` (now with `NODE_DEBUG`, `node_path`, `NODE_V8_COVERAGE` in the source, and `GIT_CONFIG_NOSYSTEM` and `GIT_CONFIG_GLOBAL` in the result) is red; the new behaviour row is red: with `NODE_DEBUG: 'module'` the refusal's stderr gains `MODULE <pid>: load built-in module fs` and the following lines; the child-environment test of attempt 5 is red, since its expected dump of `GIT_` variables now holds the two git configuration variables (an existing assertion, changed by this ruling, compared as an object so the order of the dump does not count); the table is red at the 4 new failing rows of `process.once` (no violation). The new passing row (`if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c))`) passes already; the first statement of main.ts was a passing row since the first repair round. The unit row's title now names the `NODE_` class and the git configuration.
+
+GREEN, cf61a3fa: `childEnv` drops a variable whose upper-cased name starts with `NODE_`, and sets `GIT_CONFIG_NOSYSTEM` to `1` and `GIT_CONFIG_GLOBAL` to `GIT_CONFIG`; rule (b) reports `process.once` unless `isDiscardedCall` (the callee of a call that is the `expression` of an `ExpressionStatement`, `ts.isExpressionStatement` in typescript.d.ts). The whole file at cf61a3fa: 25 tests, 22 pass, 0 fail, 3 skipped (the three of this host): every `git init` of the fixtures and every git call of the CLI children works with no system and an empty global configuration; no fixture commits, so none needs a user name.
+
+Reverts, actual runs at cf61a3fa, each on a scratch copy of the test file (removed after each run), the three child-environment tests and the three tests of acceptance 13 run:
+
+| Mutation | Red |
+|---|---|
+| `process.once` allowed in any position | the table (`process.once('beforeExit', () => {}).env.X = 'v'`) |
+| `process.once` allowed as any call | the table (the same row) |
+| the `NODE_` prefix narrowed to `NODE_OPTIONS` | the unit row and the `NODE_DEBUG` row |
+| the prefix compared case-sensitively (`k.startsWith('NODE_')`) | the unit row |
+| `GIT_CONFIG_NOSYSTEM` not set | the unit row and the child-environment test |
+| `GIT_CONFIG_GLOBAL` not set | the unit row and the child-environment test |
+
+6 runs, 6 red. Rerun on the moved code, the 19 earlier reverts of the guard (the 11 of the first round and the 8 of rule (b) and (d) of the second; its two `NODE_OPTIONS` rows are replaced by the prefix rows above): 19 red, with the first messages of the earlier tables.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given, at cf61a3fa (the next commit changes only this card file) | exit 0: typecheck clean; 259 tests, 253 pass, 0 fail, 6 skipped (the same six as above), 18 suites |
+
+Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1531 changed lines (1520 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 876, this card 562, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
 The implementer disclosed five points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
