@@ -1,7 +1,7 @@
 ---
 id: T0-GITLEAKS-LESSON-FP
 title: The committed-history secret scan passes again - one verified false positive in a lesson line of main is listed by its fingerprint in .gitleaksignore, and a test pins that list and the allowlist
-status: todo
+status: merged
 branch: T0-GITLEAKS-LESSON-FP
 worktree: D:\wt\AIDLC\T0-GITLEAKS-LESSON-FP
 allow_paths:
