@@ -135,3 +135,89 @@ npm run typecheck && node --test tests/scenarios/registry-per-call.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; every existing file listed passes unchanged.
+
+## Attempt evidence
+
+Commits: RED `db7d54a3` (tests/scenarios/registry-per-call.test.ts only, on main 5fb42bf2), GREEN `27097644` (src, docs, CHANGELOG).
+
+### Loader sites at PREPARE (main 5fb42bf2, after PR 283) and on 27097644
+PR 283 changed controller.ts in 2 lines (the `goalGeneration` of the intake records of `createGoal` and of the `approved` record of `report`), no loader site. The sites, found by content on 5fb42bf2: `createGoal` :124, `nextInCards` :289, `nextInRun` :347, `report` `cards-projected` :559, `unmergedCards` :804, `computeRevision` :819, `writeBoard` :900. On 27097644 each reads `this.cardRegistry()`: :130, :299, :357, :573, :836, :851, :932; `this.registryLoader()` is called only by the accessor (:801, :802). The `aidlc board` load of main.ts :519-521 is removed; the command calls `c.controller.writeBoard(goalRec)` at :520.
+
+### RED on 5fb42bf2 + db7d54a3 (`node --test tests/scenarios/registry-per-call.test.ts`, exit 1, 3 pass, 14 fail)
+| Item | Result on main | Assertion |
+|---|---|---|
+| 1 | fail | loads expected 1, actual 2 |
+| 2 a, b, c, d | fail | actual 4, 5, 3, 2 |
+| 3 | fail | actual 2 |
+| 4 | fail | second `next`: actual 2 |
+| 5 a, b, c | fail | second call: actual 4, 2, 2 |
+| 5 d | pass | as the card says |
+| 6, 7 | pass | as the card says |
+| 8 | fail | count file expected '1', actual '2' |
+| 9 | fail | actual 3 |
+
+### Revert table (19 rows, 19 red; each mutant applied alone to 27097644, `git diff --stat` empty after each restore and at the end)
+Run: the new test file (row L1 also tests/scenarios/arc-reentry.test.ts).
+| # | Mutant | Red tests |
+|---|---|---|
+| S1 | `createGoal` site calls `this.registryLoader()` | 1, 5b |
+| S2 | `nextInCards` site direct | 2a, 2b, 5a, 9 |
+| S3 | `nextInRun` site direct | 2a, 2b, 3, 4, 5a, 5c, 9 |
+| S4 | `report` `cards-projected` site direct | 2a, 2b, 5a |
+| S5 | `unmergedCards` site direct | 2c, 3 |
+| S6 | `computeRevision` site direct | 2d |
+| S7 | `writeBoard` site direct | 1, 2a-d, 4, 5a-c, 9 |
+| F1 | `createGoal` closes its scope on return only | 5b |
+| F2 | `next` closes its scope on return only | 5c |
+| F3 | `report` closes its scope on return only | 5a |
+| F4 | the shared wrapper closes on return only | 5a, 5b, 5c |
+| K1 | scope never dropped (kept between calls) | 2a, 2b, 4, 5a-c, 6, 7 |
+| N1 | a nested call opens its own scope | 2a, 2b, 2c, 5a, 9 |
+| L1 | the scope loads when it opens | 6, 7, 9, arc-reentry "cards-projected is refused in VERIFY_ARC, DELIVER and CLOSE before the registry is loaded" |
+| E1 | a failed load marks the scope loaded | 6 |
+| E2 | a failed load's error is kept and rethrown | 6 |
+| O1 | a load before the `PLAN_INVOKED` append | 9 |
+| O2 | a load after the append, before the goal save | 9 |
+| B1 | `aidlc board` keeps its own load (main.ts) | 8 |
+
+### DoD on 27097644
+`npm run typecheck && node --test <the eight files of dod_command>` from the worktree root: typecheck clean, exit 0, tests 67, pass 67, fail 0, skipped 0.
+
+### Document sentences
+| Sentence | Code | Test |
+|---|---|---|
+| A (docs/ARCHITECTURE.md, after "STOP and DONE accept") | `inRegistryScope`, `cardRegistry` (controller.ts:787-808 on ad9d8bba) | 1-7, 9 |
+| B (docs/OPERATIONS.md, after "After VERIFY_ARC a new card enters only through that repair cycle") | as A; `aidlc goal new` runs two calls (main.ts, unchanged) | 1, 2, 4, 5, 6 |
+| CHANGELOG: one accessor, reuse, drop on return or throw | as A | 2, 4, 5 a-c |
+| CHANGELOG: a throwing load is not kept, error unchanged, boardError NOTE | `??=` assigns only a returned registry; `persistStopValue` unchanged | 5d, 6 |
+| CHANGELOG: starting a call loads nothing | `inRegistryScope` opens `{}` | 7, 9, arc-reentry |
+| CHANGELOG: `writeBoard` outside a scope 1 or 0 | `cardRegistry` without a scope calls the loader | 4 |
+| CHANGELOG: `aidlc board` one load, none for an unknown goal | main.ts:519-520; `mustGoal` comes first | 8 |
+| CHANGELOG: counts 2/4/5/3/2/2/2 to 1 | as A | 1, 2a-d, 3, 8 (RED counts above) |
+| CHANGELOG: unchanged commands | main.ts outside :519-520 untouched | 10 (existing files) |
+
+### Changed lines
+`git diff --shortstat main...HEAD` before this section: 6 files, 383 insertions, 11 deletions (394) against the budget of 500; this section adds about 70.
+
+### Repair round after the pre-review of 1bfdd15e (card be05849f, budget 540)
+Commits: merge of origin/main `7f1af3fa`; RED `9cf0a67e` (acceptance 12 only); fix `ad9d8bba` (accessor, sentences A and B, CHANGELOG).
+- Accessor (controller.ts:802-808): `if (scope.registry) return scope.registry; const loaded = this.registryLoader(); return (scope.registry ??= loaded);`. The guard line is needed besides the two lines of the hygiene: without it every site loads (13 of 18 tests red when tried).
+- RED of acceptance 12: on 7f1af3fa + 9cf0a67e (accessor `scope.registry ??= this.registryLoader()`) and with the src of main, the outer `next` returns `stop` (expected `run-card`), exit 1 both.
+- Loader sites on ad9d8bba: :130, :299, :357, :573, :841, :856, :937.
+- Documents: sentences A and B replaced word for word by the amended Exact text. CHANGELOG: zero loads only for a `cards-projected` refused before the lookup (VERIFY_ARC, DELIVER, CLOSE, empty list), the unknown card loads once and is refused (acceptance 5a); the first completed load is kept (acceptance 12); a change after a call's successful load becomes visible to a later call that loads the registry (acceptance 4, 5).
+
+Revert table rerun on ad9d8bba: 20 rows, 20 red, `git status` clean after each restore and at the end. Rows S1-S7, F1-F4, K1, N1, L1, O1, O2, B1 red on the same tests as above, and S3, N1 and L1 also on 12; E1 and E2 on 6 and 12; new row R12 (the loader called inside the `??=`, `return (scope.registry ??= this.registryLoader());`) on 12 only.
+
+DoD on ad9d8bba (`dod_command`, no pipe): typecheck clean, exit 0, tests 68, pass 68, fail 0, skipped 0.
+
+Changed lines: `git diff --shortstat origin/main...HEAD` on ad9d8bba: 7 files, 476 insertions, 11 deletions (487) against the budget of 540; this subsection adds about 15.
+
+Coordinator verification:
+- At 409dd712, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/registry-per-call.test.ts): tests 18, pass 18, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 3 changed documents: # tests 1888 # pass 1875 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At b29a37cf, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/registry-per-call.test.ts): tests 18, pass 18, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 3 changed documents: # tests 1888 # pass 1876 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
