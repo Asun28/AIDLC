@@ -346,7 +346,7 @@ DoD (15857cdf, actual run, the card's `dod_command`): `npm run typecheck` exit 0
 Full suite: not run by the implementer in this round; the coordinator runs it on the final head.
 
 ### Size
-`git diff --shortstat origin/main...HEAD` at 15857cdf (origin/main f7b82925): before this evidence update; the total with it is given in the report, against the budget of 880 (attempt evidence counted).
+`git diff --shortstat origin/main...HEAD` at 15857cdf (origin/main f7b82925): 49 files changed, 536 insertions(+), 181 deletions(-), 717 lines before this evidence update; at b5959612, with the evidence update that replaced the tables of the resolving scan by pointers: 506 insertions(+), 181 deletions(-), 687 lines; against the budget of 880 (attempt evidence counted).
 
 ## Planner rulings on the points disclosed in the repair rounds (coordinator, before R3)
 
