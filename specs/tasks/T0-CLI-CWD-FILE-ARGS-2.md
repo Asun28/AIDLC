@@ -618,6 +618,34 @@ Documents: docs/OPERATIONS.md and the CHANGELOG carry the predecessor's sentence
 
 Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1391 changed lines (1380 added, 11 removed) against the budget of 1400: tests/surface/cli-cwd-paths.test.ts 814, this card 484, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
+### Repair round after the pre-review of f9b50cf1
+Measured: the implementer's runs on a Windows host (Node v22.23.1), on the commits named. The merge 4515a453 brings main at 83791bf5 (acceptance 13 restated, the rulings section); the only conflict was this file, resolved with main's sections above this Attempt evidence and the coordinator's sections after it.
+
+Check before RED: src/cli/main.ts at 4515a453, parsed by the new rules (the source pin of d47fd254 is green on it): `process` is used only with the ten properties, and there is no `this` and none of `eval`, `Function`, `globalThis`, `global`, `Reflect` in code (the words occur only in strings and comments). Nothing to stop for.
+
+RED, 61f8186f (the test file alone; `childEnv` gains its `source` parameter, its behaviour unchanged): the NODE_OPTIONS row and the three tests of acceptance 13 run, 4 tests, 2 fail. "every child starts without NODE_OPTIONS of the test process, in any letter case" is red: `NODE_OPTIONS` and `node_options` reach the result. The table is red at 14 rows: the 11 new failing rows (`process.valueOf()` twice, `mainModule`, `binding`, `emit`, the `this` listener, `eval`, `new Function`, `Reflect.get` with no violation; `globalThis.process` and `global.process` with b only), and three existing rows whose rules the restated (b) and the new (d) change: `process.chdir(at)` is now a and b (chdir is not one of the ten), `Reflect.set(process.env, 'X', v)` now c and d, `globalThis.process.env.X = v` now b and d. The six new passing rows pass already; the source pin and the session-token row pass.
+
+GREEN, d47fd254: `childEnv` drops a variable whose upper-cased name is `NODE_OPTIONS`; rule (b) takes `PROCESS_PROPERTIES` (the ten names); rule (d) reports an identifier of `HIDDEN_ACCESS` (the five names) and a node of kind `ts.SyntaxKind.ThisKeyword` (in typescript.d.ts). The table holds 17 passing and 42 failing texts. `globalThis.process` and `global.process` expect b and d, not d alone as the rulings list them: `process` there is the name of a property access, not its object, so the restated (b) applies too.
+
+Reverts, actual runs at d47fd254, each on a scratch copy of the test file (tests/surface/cli-cwd-paths.mut13.test.ts, removed after each run), the NODE_OPTIONS row and the three tests of acceptance 13 run:
+
+| Mutation | Red (first message) |
+|---|---|
+| the list of ten widened to any property | the table (`process.chdir(at)`) |
+| `valueOf` added to the list | the table (`const p = process.valueOf()`) |
+| the `this` rule removed | the table (the `this` listener) |
+| `eval`, `Function`, `globalThis`, `global`, `Reflect` each removed from (d), five runs | the table in each (`eval(...)`, `new Function(...)`, `globalThis.process.env.X = v`, `global.process`, `Reflect.set(...)`) |
+| `NODE_OPTIONS` kept by `childEnv` | the NODE_OPTIONS row |
+| the comparison of the variable name case-sensitive (`k === 'NODE_OPTIONS'`) | the NODE_OPTIONS row (`node_options` kept) |
+
+10 runs, 10 red. The 11 reverts of acceptance 13 of the previous round, rerun on the moved code: 11 red, with the tests and first messages of the earlier table, except "rule (b) removed", whose first message is now `process.chdir(at)`.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given, at d47fd254 (the next commit changes only this card file) | exit 0: typecheck clean; 258 tests, 252 pass, 0 fail, 6 skipped (the same six as above), 18 suites |
+
+Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1468 changed lines (1457 added, 11 removed) against the budget of 1540: tests/surface/cli-cwd-paths.test.ts 849, this card 526, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
 
 The implementer disclosed five points where the card gave no rule or where it chose a form. The planner rules on each before the formal review; none is an edit the card forbids.
