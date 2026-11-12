@@ -1,7 +1,7 @@
 ---
 id: T0-DOD-RECEIPT-REQUIRED
 title: A successful attempt without a DoD receipt, or with a blank one, is refused after every existing refusal and before anything of the attempt is recorded, from the CLI and every library caller; the build directives, the skill file and the help name --dod-receipt
-status: todo
+status: merged
 branch: T0-DOD-RECEIPT-REQUIRED
 worktree: D:\wt\AIDLC\T0-DOD-RECEIPT-REQUIRED
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: about 14 changed source lines (src/loop/card-runner.ts 12: the refusal and its comment, the default removed, the two narrations, the two-line heartbeat comment; src/cli/main.ts 2: the option description), 54 lines of the two card-loop.md copies (13 lines removed and 14 added in each, most of them the byte cut that makes room under the 6,500-byte cap), 4 document lines (docs/OPERATIONS.md 2, CHANGELOG.md 2), 4 lines of the verify skill at CLOSE (its two sync-commit references), about 430 lines of tests/scenarios/dod-receipt-required.test.ts (the input classes, nine neighbour rows and the probe rows on a scripted git fixture for two ship paths, the owed-delivery retry, the narrations, the CLI children with and without a run, the preservation rows and the document checks) and about 100 lines of attempt evidence; budget counts added plus deleted lines (tests/surface/budget-doc.test.ts:13)"
