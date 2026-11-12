@@ -130,6 +130,7 @@ describe('T0-REVIEW-ADMIT-FOREIGN: a card is admitted only for its own request a
     const other = foreignRunning(c, reviewer);
     assert.equal(waitOn(next(c, Y).directive), 'review-pool:default:busy');
     assert.equal(waitOn(next(c, Z).directive), 'review-pool:default:busy');
+    c.fx.advance(1);
     c.fx.queue.complete(other.key, 'verdict:x', c.fx.now());
     const yRequest = requestOf(c, Y, reviewer);
     const behind = next(c, Z).directive;

@@ -504,7 +504,7 @@ export class ReleaseRunner {
     let held = false;
     const admit = (): void => {
       matches = this.ops.list().filter((o) => releaseOperationOf(o, attempt, stepName));
-      if (!matches.length && binding && !unauthorizedPublication && directoryExists) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
+      if (!matches.length && binding && !unauthorizedPublication && directoryExists) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible }, now);
     };
     if (!environment) {
       // No environment: the section and the intent as before this card (an absent name throws in `resourceKeys.environment`, an
