@@ -148,6 +148,8 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan finds every form [R2]', () => {
     ['tests/forms/elsewhere.ts', "import { mkdtempSync } from 'node:fs';\nfunction tmpDir(prefix: string) {\n  return mkdtempSync(prefix);\n}\n", [[3, 'tmpDir', 'call', 'mkdtempSync']]],
     ['tests/forms/text.ts', "import { mkdtempSync } from 'node:fs';\nconst s = 'mkdtempSync(';\n// mkdtempSync('x')\n/* fs.mkdtempSync('y') */\nvoid s;\n", []],
     ['tests/forms/local.ts', "function mkdtempSync(p: string) { return p; }\nmkdtempSync('x');\n", []],
+    ['tests/forms/separators.ts', `import { mkdtempSync } from 'node:fs';\nconst s = 'a${String.fromCharCode(0x2028)}b${String.fromCharCode(0x2029)}c';\nmkdtempSync(s);\n`, [[3, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/iife.ts', "import { mkdtempSync } from 'node:fs';\nconst probe = (() => {\n  return mkdtempSync('x');\n})();\n", [[3, 'probe (immediately invoked)', 'call', 'mkdtempSync']]],
   ];
   for (const [file, text] of rows) {
     mkdirSync(path.dirname(path.join(scanRoot, file)), { recursive: true });
