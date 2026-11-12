@@ -227,6 +227,7 @@ test('T0-SHIP-THROW-SLOT-2 acceptance 4: after the throw nothing ships until the
     assert.equal(next().directive.kind, 'wait');
     assert.equal(ship.requests.length, 0);
     fx.ops.reconcile(thrownOperation(fx)!.id, () => ({ status: 'failed', detail: 'looked up: the PR is open and unmerged' }));
+    fx.advance(1);
     assert.equal(next().directive.kind, 'close');
     assert.equal(ship.requests.length, 1);
     assert.deepEqual(fx.ops.list({ cardId: CARD }).filter((o) => o.kind === 'merge').map((o) => o.status), ['failed', 'succeeded']);

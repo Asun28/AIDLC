@@ -1,7 +1,7 @@
 ---
 id: T0-OP-TIMESTAMP-NOW-2
 title: (replaces T0-OP-TIMESTAMP-NOW) Every operation-ledger write from the card runner and the release runner carries the injected clock, so operation timestamps and ids follow `now`
-status: todo
+status: merged
 branch: T0-OP-TIMESTAMP-NOW-2
 worktree: D:\wt\AIDLC\T0-OP-TIMESTAMP-NOW-2
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 150 to 380 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; 22 changed source lines in two files and 2 fixture lines, the rest one behavioural test per changed ledger-write branch, the completeness scan and attempt evidence; raised from 380 to 400 by the coordinator on 2026-11-12 for the third fixture line and its evidence; raised from 400 to 460 by the coordinator on 2026-11-12 for the replacement card: the carried candidate 75657155 is 322 changed lines, and the moved evidence gains a History line, a note of where each figure was measured, the DoD of this card on its own branch and the coordinator's verification block"
@@ -65,3 +65,93 @@ At CLOSE the coordinator moves both references of the sync commit in .claude/ski
 ## Replacement note of 2026-11-12
 
 T0-OP-TIMESTAMP-NOW-2 carries the reviewed candidate of T0-OP-TIMESTAMP-NOW (75657155, PR 285). That card passed its formal review and stopped at SHIP because the history secret scan was red on main for a cause outside its diff (card T0-GITLEAKS-LESSON-FP). A risk stop has no clearing command, so the candidate ships under this card, as T0-DIRTY-SUCCESS-2 and T0-STAGING-LEASE-RELEASE-2 did. The front-matter field `hygiene` states exactly what differs from the predecessor's diff: four renamed places and the moved evidence.
+
+## Attempt evidence
+
+History: this card carries the candidate 75657155 of T0-OP-TIMESTAMP-NOW (branch T0-OP-TIMESTAMP-NOW, PR 285), which passed R3 and stopped at SHIP for risk on a history scan finding outside its diff. The figures under "Predecessor" were measured on commits of the branch T0-OP-TIMESTAMP-NOW, each named at its figure; the figures under "This card" were measured on this branch.
+
+### This card
+- RED `f98c8d95` (tests/scenarios/op-clock.test.ts alone, renamed in its three places, on the sources of main at 19a47a85), `node --test tests/scenarios/op-clock.test.ts`, Windows: exit 1, tests 13, pass 0, fail 13, each an AssertionError (the 12 branch tests on the wall-clock time against the fixture time, the scan listing the 11 calls without a time).
+- Carry `db68ad66`: the diff of `origin/main...75657155` for src/loop/card-runner.ts, src/loop/release-runner.ts and the three fixture lines applied unchanged with `git apply`; the CHANGELOG entry inserted directly above `- T0-SCAN-SETUP-STEP-2` with its first words renamed. The card's own delta (`git diff origin/main...75657155` against `git diff origin/main...HEAD` for src, tests and CHANGELOG.md) differs in the four renamed places only; a two-dot `git diff 75657155 HEAD` also shows what main gained since (T0-GITLEAKS-LESSON-FP and T0-CI-PERMISSIONS: two CHANGELOG entries, tests/surface/gitleaks-ignore.test.ts, tests/surface/workflow-permissions.test.ts).
+- Ledger calls on this branch at db68ad66: the same 17 at the same lines as the table below (`git grep` of the five methods in src/loop).
+- DoD on db68ad66, Windows: `dod_command` exit 0; typecheck clean; tests 172, pass 169, fail 0, skipped 3; fault-points.test.ts unchanged and passing, no new pin.
+- Size: `git diff --shortstat origin/main...HEAD` at db68ad66: 7 files, 235 insertions, 11 deletions (246) against the budget of 460, before this section.
+
+### Predecessor (branch T0-OP-TIMESTAMP-NOW)
+Commits there: RED `18c22766` (on base 93ca9a7d), GREEN `a239a530`, merge `933988f1`, third fixture line `6cfc93e0`, documents `438b4def`, merge `d182ccfd`, evidence `75657155`.
+
+Ledger calls in src/loop (17; `git grep` and the scan of acceptance 2 agree; read at 6cfc93e0):
+| Call | Time on main | Now |
+|---|---|---|
+| card-runner.ts:1205 `recordIntent` (merge) | none | `now` |
+| card-runner.ts:1235 `markResult` cancelled (joined) | none | `now` |
+| card-runner.ts:1242 `markResult` cancelled (not admitted) | none | `now` |
+| card-runner.ts:1270 `markResult` cancelled (arming read throws) | none | `now` |
+| card-runner.ts:1292 `markResult` cancelled (drift) | none | `now` |
+| card-runner.ts:1313 `markIssued` | `now` | unchanged |
+| card-runner.ts:1343 `markResult` UNKNOWN (`settleThrownShip`) | none | `this.clock()` |
+| card-runner.ts:2760 `markResult` (in flight) | none | `now` |
+| card-runner.ts:2812 `markResult` failed (merge-unconfirmed) | none | `now` |
+| card-runner.ts:2821 `markResult` succeeded / UNKNOWN | none | `now` |
+| card-runner.ts:2832 `markResult` UNKNOWN (effect-unknown) | `now` | unchanged |
+| card-runner.ts:2838 `markResult` failed | none | `now` |
+| release-runner.ts:295 `reconcile` | `now` | unchanged |
+| release-runner.ts:507 `recordIntent` (deploy/recovery) | none | `now` |
+| release-runner.ts:543 `markIssued` | `now` | unchanged |
+| release-runner.ts:550 `markRunning` | `now` | unchanged |
+| release-runner.ts:551 `markResult` | `now` | unchanged |
+
+R2: the branch changes no other line of src/loop (`git diff origin/main...HEAD -- src/loop`, against the merge base, is the 11 lines above).
+
+RED (on 18c22766, Windows: 13 tests, 0 pass, 13 fail). Each acceptance 1 test failed on its time assertion, the wall clock (2026-11-11T22:45Z) against the fixture time: merge intent (`intentRecordedAt` and `op-20261111224509-` against `op-20260911000100-`), joined, not admitted, arming read throws, drift, ship throws, in flight, merge-unconfirmed not merged, merged succeeded, merged UNKNOWN, dod-failed (each `finishedAt`), release deploy (`intentRecordedAt` and `op-20261111224511-` against `op-20260911001200-`). Acceptance 2 failed listing the 11 calls marked "none" above.
+
+Revert table (on 6cfc93e0, Windows, the implementer's revert runs; 15 rows, 15 red; each piece reverted alone, then restored, `git status` clean afterwards):
+| Reverted | Branch test | Scan (acceptance 2) |
+|---|---|---|
+| card-runner.ts:1205 time argument | merge intent: red | red |
+| :1235 | joined: red | red |
+| :1242 | not admitted: red | red |
+| :1270 | arming read throws: red | red |
+| :1292 | drift: red | red |
+| :1343 | ship throws: red | red |
+| :2760 | in flight: red | red |
+| :2812 | merge-unconfirmed not merged: red | red |
+| :2821 | merged succeeded: red | red |
+| :2821 | merged UNKNOWN: red | red |
+| :2838 | dod-failed: red | red |
+| release-runner.ts:507 | release deploy: red | red |
+| review-admit-foreign.test.ts `c.fx.advance(1)` removed | acceptance 4: red in 4 of 8 runs | n/a |
+| ship-throw.test.ts `fx.advance(1)` removed | acceptance 4: red in 6 of 8 runs | n/a |
+| ship-effect-unknown.test.ts `fx.advance(1)` removed | "after a reconcile ...": red in 8 of 8 runs | n/a |
+
+ship-effect-unknown "after a reconcile the card ships again" alone, 8 runs each (Windows): R1 without the line 6 fail (at a239a530, before the amendment), base source 0 fail (sources of 93ca9a7d), R1 with the line 0 fail (6cfc93e0).
+
+Full suite (`npm test` on 6cfc93e0, Windows, the implementer's run): exit 0, 3321 tests, 3299 pass, 0 fail, 22 skipped. No other ordering-related failure was observed in this run (tests such as tests/scenarios/op-intent-dup.test.ts:204 and tests/scenarios/release-reissue.test.ts:283 read ledger order on purpose and pass). tests/infra/exec.test.ts passed in this run and alone (61/61); in an earlier full run (at a239a530, before the third line) its acceptance 4 failed once on load timing.
+
+DoD (on 6cfc93e0, Windows): `dod_command` exit 0; typecheck clean; 172 tests, 169 pass, 0 fail, 3 skipped; fault-points.test.ts unchanged and passing, no new pin.
+
+Coordinator runs on the predecessor branch (at d182ccfd, before the review): Linux (WSL Ubuntu, Node v22.23.4), the test files the branch adds or changes (op-clock, review-admit-foreign, ship-effect-unknown, ship-throw): tests 35, pass 35, fail 0, skipped 0. Windows doc-pin run, 73 test files reading 1 changed document: tests 1803, pass 1791, fail 1; the failure was tests/infra/exec.test.ts in the parallel run, which passes alone (61 pass), a load failure.
+
+After the pre-review of c2599307 (coordinator edits at 438b4def, documents and evidence only): a Codex pre-review found all seventeen ledger calls passing the injected clock, no write added, removed or reordered, the three fixture lines honest (they establish the order their assertions need; the order of two records of one instant stays out of scope) and four sentences to correct; the planner changed R4 on main and the coordinator edited the rest. No source or test changes. (1) CHANGELOG.md and the sentence table: the clock decides the record times, the time prefix of the id and the first sort key of the ledger; two records of one instant keep a random id suffix and no fixed order. (2) The R2 evidence cites the three-dot diff against the merge base. (3) The full-suite sentence says what was observed. (4) The scan of acceptance 2 is a completeness check over calls written as a property access on an expression that ends in `ops`, as the card defines it; a call through an alias of the ledger or a computed member name is outside it, and acceptance 1 stays the behavioural proof. In production the clock is the wall clock read once at the entry of the method, so a record now carries that time where it carried a later read; no gate reads the difference.
+
+### Document sentences
+| CHANGELOG sentence | Made true by |
+|---|---|
+| every ledger write of the card runner and release runner passes the injected clock; times and id prefix come from `now` | the 11 lines above; op-clock.test.ts acceptance 1 and 2 |
+| before, eleven calls left the time out | the RED runs (18c22766 and f98c8d95) listing 11 calls |
+| a fixture's fixed clock decides the record times, the time prefix of the ids and the first sort key of the ledger, not the order of two records of one instant; three tests advance 1 ms, no assertion changed | the three `advance(1)` lines; revert rows 13-15 |
+
+Coordinator verification:
+- At 256e0e1f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/op-clock.test.ts, tests/scenarios/review-admit-foreign.test.ts, tests/scenarios/ship-effect-unknown.test.ts, tests/scenarios/ship-throw.test.ts): tests 35, pass 35, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1803 # pass 1792 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Closing note (coordinator, CLOSE)
+
+PR 289 merged as b3df78d7 on 2026-11-12T01:25:22Z with its five checks green. PR 285, the pull request of the superseded card T0-OP-TIMESTAMP-NOW, is closed in favour of it.
+
+The carried candidate. The coordinator compared `git diff origin/main...75657155` with `git diff origin/main...HEAD` for src, tests and CHANGELOG.md line by line before the review: the four renamed lines of the hygiene are the only difference. R3 passed at decision 1 and at the second pass with no block.
+
+The ship ran twice. The first run pushed the branch, opened PR 289 and was waiting for its checks when, at about 01:14Z, an implementer agent of another card ended every node.exe process on the machine while removing its own load processes. That ended the ship process before `gh pr merge` was issued and left the merge operation `issued` and the review pool slot held. The coordinator followed docs/OPERATIONS.md (the ship's `OPERATION_ISSUED` case): it looked up PR 289 (open, not merged, head the reviewed candidate), recorded the operation as cancelled with that detail (`aidlc ops reconcile op-20261112010750-fda3f87a --status cancelled`), released the slot of the dead process with the reason (`aidlc review release`), and ran the ship again, which reused PR 289 and merged it. `aidlc doctor` reported no interrupted write. The implementer brief now forbids ending processes by name or image.
+
+The verify-card-run-writes skill: this card changes src/loop/card-runner.ts, which its coverage record names. The change adds, removes and reorders no write (the fault-point check added no pin in the DoD on main), so the check is in sync and both references of the sync commit move to the merge commit with this close.

@@ -1202,7 +1202,7 @@ export class CardRunner {
             .list({ goalId: goal.id, cardId: card.id, kind: 'merge', status: 'intended' })
             .find((r) => r.target === intent.target && r.candidateDigest === candidateDigest && r.ownerGeneration === intent.ownerGeneration);
           if (!op) {
-            op = this.ops.recordIntent({ ...intent, timeoutMs: 60 * 60 * 1000, effects: ['push', 'pr', 'review', 'ci', 'merge'] });
+            op = this.ops.recordIntent({ ...intent, timeoutMs: 60 * 60 * 1000, effects: ['push', 'pr', 'review', 'ci', 'merge'] }, now);
             recorded = true;
           }
         }
@@ -1232,14 +1232,14 @@ export class CardRunner {
     }
     this.journal(goal.id).append({ type: 'REVIEW_REQUESTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, status: enq.status } });
     if (enq.status === 'joined' && enq.request.state === 'running') {
-      if (recorded) this.ops.markResult(op.id, 'cancelled', { error: 'joined running review request' });
+      if (recorded) this.ops.markResult(op.id, 'cancelled', { error: 'joined running review request' }, now);
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review:${key}`, pollSeconds: 60, narration: 'A matching review is already running in the shared pool; join it instead of launching another.' } };
     }
     const admit = this.admitReview(goal, card, key, now);
     // `admitReview` asks with its key, so an admission is always this request's own.
     if (admit.status !== 'admitted') {
-      if (recorded) this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` });
+      if (recorded) this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` }, now);
       const next = this.save({ ...run, state: 'WAIT' });
       const until = admit.status === 'reset-pending' ? ` until ${admit.resetAt}` : admit.status === 'behind' ? ` the request of ${admit.ahead.requesters.join(', ')}` : '';
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review-pool:${goal.reviewPool}:${admit.status}`, pollSeconds: 120, narration: `Review pool ${goal.reviewPool} is ${admit.status}${until}; waiting holds no active slot. Continue independent work within limits.` } };
@@ -1267,7 +1267,7 @@ export class CardRunner {
       // failure or skips the next; the failure is the caller's.
       const reason = `ship not dispatched: ${(err as Error).message}`;
       try {
-        this.ops.markResult(op.id, 'cancelled', { error: reason });
+        this.ops.markResult(op.id, 'cancelled', { error: reason }, now);
       } catch {
         /* the operation is reconciled from the ledger */
       }
@@ -1289,7 +1289,7 @@ export class CardRunner {
       // next or hides the drift; a step that failed is named in the directive and reconciled from its ledger.
       const failures: string[] = [];
       try {
-        this.ops.markResult(op.id, 'cancelled', { error: `ship not dispatched: ${drift}` });
+        this.ops.markResult(op.id, 'cancelled', { error: `ship not dispatched: ${drift}` }, now);
       } catch (err) {
         failures.push(`operation ${op.id} not marked cancelled (${(err as Error).message})`);
       }
@@ -1340,7 +1340,7 @@ export class CardRunner {
       }
     };
     const owed = attempt(() => this.store.updateCardRun(goal.id, card.id, (run) => ({ ...run!, journalOwed: this.owedWith(goal.id, run!, result) })));
-    attempt(() => this.ops.markResult(operationId, 'UNKNOWN', { error }));
+    attempt(() => this.ops.markResult(operationId, 'UNKNOWN', { error }, this.clock()));
     attempt(() => this.queue.cancel(key, error, this.clock()));
     attempt(() => {
       if (owed) this.deliverOwed(goal, card, this.store.getCardRun(goal.id, card.id)!, { keys: [result.key] });
@@ -2757,7 +2757,7 @@ export class CardRunner {
       if (!history.superseded && !history.stopped) return then(saved);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
       const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' || result.outcome === 'effect-unknown' ? 'UNKNOWN' : 'failed';
-      this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
+      this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` }, now);
       this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status, outcome: result.outcome, superseded: history.superseded, stoppedMeanwhile: history.stopped } });
       const merged = status === 'UNKNOWN' ? ', and its merge is an unresolved operation to reconcile' : '';
       if (history.stopped) {
@@ -2809,7 +2809,7 @@ export class CardRunner {
         const seen = answered;
         const stop = makeStop('tool', `ship exited 0 without its merge contract and gh reads PR #${pr} as ${seen.state} at ${seen.headRefOid !== undefined ? JSON.stringify(seen.headRefOid) : 'an unreported head'}, not merged at the candidate ${sha ?? '(no candidate sha)'}`, `merge PR #${pr} by hand once its head is the candidate, or find why the ship path exited 0 without merging`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
         return finish(() => ({ state: 'STOP', stop }), (next) => {
-          this.ops.markResult(operationId, 'failed', { evidenceRef: `ship-${operationId}`, error: `merge-unconfirmed: PR #${pr} ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}` });
+          this.ops.markResult(operationId, 'failed', { evidenceRef: `ship-${operationId}`, error: `merge-unconfirmed: PR #${pr} ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}` }, now);
           this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
           return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         });
@@ -2818,7 +2818,7 @@ export class CardRunner {
       const owedResult = this.owe(goal, 'OPERATION_RESULT', { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts });
       return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && mergeVerified ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
         const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
-        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
+        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` }, now);
         this.deliverOwed(goal, card, next, { keys: [owedResult.key] });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: `Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE${noSha}.` } };
       });
@@ -2835,7 +2835,7 @@ export class CardRunner {
       });
     }
 
-    this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` });
+    this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` }, now);
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
     const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}) => finish(() => ({ ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
     const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? next.effort?.attempts.find((a) => a.outcome === 'running')?.n ?? (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
