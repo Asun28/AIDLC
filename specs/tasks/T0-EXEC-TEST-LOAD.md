@@ -311,3 +311,7 @@ Coordinator verification:
 ### Repair after R3 decision 1 (code fd323493)
 Finding: `t.diagnostic('runner exited after <n> ms')` in the runner-handle test is an edit beyond R9. Removed; nothing fed only that call (`elapsedMs` is used by the two assertions that follow). The test now differs from main in what R9 names: `async (t)`, `calibratedBounds(t)`, `b.runnerExitBoundMs` in place of `boundMs`, and the comment above the bound. `git diff origin/main` has no hunk inside the doc test (main :415-428), the overflow test or the timeout refusal tests (main :663-730); the hunks end at main line 455. The "runner exited after" figures in the earlier tables were printed by that diagnostic at the commits named there (2704ab12 to 64447fcd) and are kept as measured; the final code prints no such line. DoD on fd323493: `npm run typecheck && node --test tests/infra/exec.test.ts` exit 0, tests 70, pass 70, fail 0.
 
+Coordinator verification:
+- At 468549fd, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/exec.test.ts): tests 70, pass 70, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1814 # pass 1803 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
