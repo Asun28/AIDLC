@@ -725,6 +725,21 @@ Reverts, actual runs at 07cd849a, each on a scratch copy of the test file (remov
 
 After the DoD, the local variable of `variableName` that held the element key was renamed from a word the history secret scan matches when followed by `=` to `arg`; the commit after 07cd849a holds that rename and this line, and 07cd849a itself keeps the old line in the branch history. At the rename: typecheck clean, tests/surface/cli-cwd-paths.test.ts 25 tests, 22 pass, 0 fail, 3 skipped, and the revert "a key that is not a string literal accepted" rerun red (`process.env[k] === '1'`); the DoD was not run again.
 
+### Fourth repair round, after the fourth pre-review
+Measured: the implementer's runs on a Windows host (Node v22.23.1), on the commits named. The merge 5640dd6c brings main at ee14fb27; the only conflict was this file, resolved as before.
+
+RED, 6a16635f (the test file alone): the table is red at 13 rows: the 9 new failing rows of (d) (the `Object.getPrototypeOf` text of the pre-review, `Object.prototype.X = v`, `({}).__proto__.X = v`, `o['__proto__'].X = v`, `Object.setPrototypeOf(o, p)`, `Object.defineProperty(o, 'X', d)`, `Object.defineProperties(o, d)`, `o.__defineGetter__('X', f)`, `o.__defineSetter__('X', f)`), each with no violation, and four existing rows that now also break (d), each expected c and d where it was c: `Object.defineProperty(process.env, 'X', d)`, `Object.defineProperty (process.env, 'X', d)`, `process.env.__proto__ || {}`, `process.env['__proto__'] || {}` (the ruling counted two of them). The two new passing rows (`// Object.prototype.X = v`, and a longer string holding `__proto__` and `defineProperty`) pass already; the source pin and the session-token row pass.
+
+GREEN, ceeb79c5: rule (d) reports an identifier or a string or substitution-free template literal whose text is one of `PROTOTYPE_NAMES` (the eight names). The source pin stays green: main.ts uses none of them in code. The table holds 23 passing and 62 failing texts.
+
+Reverts, actual runs at ceeb79c5, each on a scratch copy of the test file (removed after each run), the three child-environment tests and the three tests of acceptance 13 run: the eight names removed from rule (d), red (the table, `Object.defineProperty(process.env, 'X', d)`); the string-literal form of them not read, red (the table, `process.env['__proto__'] || {}`). Rerun on the moved code, the 28 earlier reverts of the guard and the child environment: 28 red, with the first messages of the earlier tables.
+
+| Item | Test or command | Result |
+|---|---|---|
+| DoD | `dod_command` as given, at ceeb79c5 (the next commit changes only this card file) | exit 0: typecheck clean; 259 tests, 253 pass, 0 fail, 6 skipped (the same six as above), 18 suites |
+
+Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1621 changed lines (1610 added, 11 removed) against the budget of 1680: tests/surface/cli-cwd-paths.test.ts 916, this card 612, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
+
 Changed lines, `git diff --shortstat origin/main...HEAD` with this file: 1581 changed lines (1570 added, 11 removed) against the budget of 1620: tests/surface/cli-cwd-paths.test.ts 899, this card 589, src/cli/main.ts 89, docs/OPERATIONS.md 2, CHANGELOG.md 2.
 
 ## Planner rulings on the disclosed deviations (coordinator, before R3)
