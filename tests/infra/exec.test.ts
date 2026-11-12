@@ -676,7 +676,6 @@ describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the boun
         new Promise<boolean>((r) => (bound = setTimeout(() => r(false), boundMs))),
       ]);
       const elapsedMs = Date.now() - started;
-      t.diagnostic(`runner exited after ${elapsedMs} ms`);
       assert.equal(exited, true, `the runner process is still running ${elapsedMs} ms after its start`);
       assert.ok(elapsedMs <= boundMs, `the runner exited after ${elapsedMs} ms, past the ${boundMs} ms bound`);
       assert.equal(existsSync(`${pidFile}.receipt`) ? readFileSync(`${pidFile}.receipt`, 'utf8') : 'no receipt', 'resolved timedOut=true exitCode=null root=alive');
