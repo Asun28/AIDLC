@@ -172,6 +172,21 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan finds every form [R2]', () => {
     ['tests/surface/evals.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction tempDir(prefix: string) {\n  return (mkdtempSync)(prefix);\n}\n", []],
     ['tests/surface/eval-test-temp.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction inTemp(prefix: string) {\n  return mkdtempSync!(prefix);\n}\n", []],
     ['tests/forms/type-only.ts', "import type { mkdtempSync } from 'node:fs';\ntype F = typeof mkdtempSync;\nexport type { F };\n", []],
+    ['tests/forms/non-null.ts', "import fs from 'node:fs';\nfs!.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/as.ts', "import fs from 'node:fs';\n(fs as typeof fs).mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/angle.ts', "import fs from 'node:fs';\n(<typeof fs>fs).mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/satisfies.ts', "import fs from 'node:fs';\n(fs satisfies typeof fs).mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/optional.ts', "import fs from 'node:fs';\nfs?.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/default-specifier.ts', "import { default as fs } from 'node:fs';\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/default-pattern.ts', "const { default: fs } = await import('node:fs');\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/default-property.ts', "(await import('node:fs')).default.mkdtempSync('x');\n", [[1, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/import-equals.ts', "import fs = require('node:fs');\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/type-position.ts', "import { mkdtempSync } from 'node:fs';\nexport type F = typeof mkdtempSync;\n", []],
+    ['tests/forms/require-variable.ts', "const fs = require('node:fs');\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/alias-declaration.ts', "import fs from 'node:fs';\nconst other = fs;\nother.mkdtempSync('x');\n", [[3, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/fs-promises-namespace.ts', "import * as fsp from 'fs/promises';\nawait fsp.mkdtemp('x');\n", [[2, 'module scope', 'call', 'mkdtemp']]],
+    ['tests/forms/nested-default.ts', "const { default: { mkdtempSync: make } } = await import('node:fs');\nmake('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
+    ['tests/forms/pattern-default-value.ts', "import fs from 'node:fs';\nconst fallback = (p: string) => p;\nconst { mkdtempSync: make = fallback } = fs;\nmake('x');\n", [[4, 'module scope', 'call', 'mkdtempSync']]],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
   const actual = rows.flatMap(([file, text], i) => {
