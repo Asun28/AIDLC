@@ -168,7 +168,7 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan finds every form [R2]', () => {
     ['tests/forms/nested.ts', "import fs from 'node:fs';\nconst { promises: { mkdtemp: make } } = fs;\nasync function nested() {\n  await make('x');\n}\n", [[4, 'nested', 'call', 'mkdtemp']]],
     ['tests/forms/dynamic.ts', "const fs = await import('node:fs');\nfs.mkdtempSync('x');\n", [[2, 'module scope', 'call', 'mkdtempSync']]],
     ['tests/infra/helpers.ts', "import { mkdtempSync } from 'node:fs';\nexport function tmpDir(prefix: string): string {\n  const make = mkdtempSync;\n  return make(prefix);\n}\n", [[3, 'tmpDir', 'reference', 'mkdtempSync']]],
-    ['tests/surface/command-lines.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction tempDir(prefix: string) {\n  function tmpDir(p: string) { return mkdtempSync(p); }\n  return tmpDir(prefix);\n}\n", [[3, 'tmpDir', 'call', 'mkdtempSync']]],
+    ['tests/surface/command-lines.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction tempDir(prefix: string) {\n  function tempDir(p: string) { return mkdtempSync(p); }\n  return tempDir(prefix);\n}\n", [[3, 'tempDir', 'call', 'mkdtempSync']]],
     ['tests/surface/evals.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction tempDir(prefix: string) {\n  return (mkdtempSync)(prefix);\n}\n", []],
     ['tests/surface/eval-test-temp.test.ts', "import { mkdtempSync } from 'node:fs';\nfunction inTemp(prefix: string) {\n  return mkdtempSync!(prefix);\n}\n", []],
     ['tests/forms/type-only.ts', "import type { mkdtempSync } from 'node:fs';\ntype F = typeof mkdtempSync;\nexport type { F };\n", []],
