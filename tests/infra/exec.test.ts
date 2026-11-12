@@ -423,21 +423,38 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     it('a root whose detached sleeper writes the pid file 1000 ms after it saw the root gone: undefined, the late sleeper ended', async (t) => {
       const ended: number[] = [];
       let pidFile = '';
-      // The sleeper records its own pid in <pidFile>.late at its start, polls the root with signal 0 until ESRCH (the root was ended at
-      // the limit), waits 1000 ms and writes the pid file. The write follows the time-limit callback however late that ran, and
-      // the wait lasts 5000 ms from the callback, so it holds unless the write is delayed by more than about 4000 ms.
-      const sleeper = "const fs = require('fs'); fs.writeFileSync(process.argv[1] + '.late', String(process.pid)); const poll = setInterval(() => { try { process.kill(Number(process.argv[2]), 0); } catch { clearInterval(poll); setTimeout(() => fs.writeFileSync(process.argv[1], String(process.pid)), 1000); } }, 50); setTimeout(() => process.exit(), 30_000)";
+      let sleeperPid: number | undefined;
+      // The sleeper waits for <pidFile>.root, then for the root to be gone (signal 0 gives ESRCH, the root is ended at the limit),
+      // then 1000 ms, and writes the pid file; it ends by itself after 60 s in any case. The write follows the time-limit callback
+      // however late that ran, and the 5000 ms wait from the callback holds unless the write is delayed by more than about 4000 ms.
+      const sleeper = [
+        "const fs = require('fs'); const rootFile = process.argv[1] + '.root';",
+        'const wait = setInterval(() => {',
+        '  if (!fs.existsSync(rootFile) || !(Number(fs.readFileSync(rootFile, "utf8")) > 0)) return;',
+        '  clearInterval(wait);',
+        '  const root = Number(fs.readFileSync(rootFile, "utf8"));',
+        '  const poll = setInterval(() => {',
+        '    try { process.kill(root, 0); } catch { clearInterval(poll); setTimeout(() => fs.writeFileSync(process.argv[1], String(process.pid)), 1000); }',
+        '  }, 50);',
+        '}, 50);',
+        'setTimeout(() => process.exit(), 60_000);',
+      ].join(' ');
       const command = (file: string): [string, string[]] => {
         pidFile = file;
-        const root = `require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}, process.argv[1], String(process.pid)], { detached: true, stdio: 'ignore' }).unref(); setTimeout(() => {}, 30_000)`;
-        return [process.execPath, ['-e', root, file]];
+        const child = spawn(process.execPath, ['-e', sleeper, file], { detached: true, stdio: 'ignore', windowsHide: true, env: fixtureEnv(dirname(file)) });
+        sleeperPid = child.pid;
+        child.unref();
+        return [process.execPath, ['-e', "require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); setTimeout(() => {}, 30_000)", file]];
       };
       try {
         assert.equal(await calibrate(t, FIXTURE, ended, command, 6000), undefined);
-        assert.equal(ended.length, 1);
-        assert.equal(probe(ended[0]!), 'ESRCH');
+        assert.ok(sleeperPid !== undefined, 'the sleeper was spawned');
+        assert.deepEqual(ended, [sleeperPid]);
+        assert.equal(probe(sleeperPid), 'ESRCH');
       } finally {
-        await endRecorded(`${pidFile}.root`, `${pidFile}.late`);
+        const pids = [sleeperPid, readPid(`${pidFile}.root`)];
+        pids.forEach(end);
+        for (const pid of pids) if (pid !== undefined) await assertGoneWithin(pid, 3000);
       }
     });
     it('a child that exits 0 without writing the pid file', async (t) => {
