@@ -14,11 +14,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
-import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
+import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -146,6 +146,16 @@ const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table i
 
 /** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
 const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines. List in the attempt evidence each input form and failure path the repair hunks handle (for a parser, each kind of value it can be given; for I/O, each error it can raise), each with the test that covers it.';
+
+/**
+ * The `Attempt <n>` label of a build narration (card T0-ATTEMPT-NUMBER): `ladder`, the ladder number of the attempt at
+ * `index`, and its record number (the stored `n`, or the length plus one for an attempt not opened) when the two differ.
+ */
+function attemptLabel(ladder: number, episode: EffortEpisode, index: number): string {
+  const record = episode.attempts[index]?.n ?? episode.attempts.length + 1;
+  if (record === ladder) return `Attempt ${ladder}`;
+  return `Attempt ${ladder} (record ${record} of this run; ${episode.attempts.slice(0, index).filter((a) => a.outcome === 'not-counted').length} not counted)`;
+}
 
 /** A formal result recovered from a reservation: it always names the pool request to settle. */
 type RetainedFormalResult = FormalResult & { key: string };
@@ -756,7 +766,7 @@ export class CardRunner {
           }
           if (action.action === 'attempt') {
             episode = startAttempt(episode, action.effort, now);
-            attemptNote = ` Attempt ${action.n} at effort ${action.effort}${action.escalated ? ' (escalated)' : ''}.`;
+            attemptNote = ` ${attemptLabel(action.n, episode, episode.attempts.length - 1)} at effort ${action.effort}${action.escalated ? ' (escalated)' : ''}.`;
             started = this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, reason: 'review-fix', startedAt: now });
           }
         }
@@ -783,7 +793,7 @@ export class CardRunner {
             redReceipt: run.redReceipt,
             dodCommand: card.dod_command,
             effort: running?.effort ?? episode?.baseline ?? 'medium',
-            attempt: running?.n ?? (episode?.attempts.length ?? 0),
+            attempt: running && episode ? ladderNumber(episode, episode.attempts.indexOf(running)) : 1,
             skills: this.buildSkills(goal, card),
             narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
           },
@@ -992,7 +1002,8 @@ export class CardRunner {
     const ladder = profile?.supportedEfforts ?? ['low', 'medium', 'high'];
     let episode = run.effort ?? createEpisode(card.id, 'implementer', effortOverride ?? (ladder.includes('medium') ? 'medium' : ladder[0]!), ladder);
     const running = episode.attempts.find((a) => a.outcome === 'running');
-    let attemptNo = running?.n ?? episode.attempts.length + 1;
+    const attemptIndex = running ? episode.attempts.indexOf(running) : episode.attempts.length;
+    let attemptNo = ladderNumber(episode, attemptIndex);
     let effort: EffortLevel = running?.effort ?? episode.baseline;
     let started: OwedEvent | undefined;
     if (!running) {
@@ -1033,8 +1044,8 @@ export class CardRunner {
         attempt: attemptNo,
         skills: run.pendingRepair?.kind === 'merge-conflict' ? ['merge-conflicts', ...this.buildSkills(goal, card)] : this.buildSkills(goal, card),
         narration: card.tdd && !redReceipt
-          ? `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
-          : `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`,
+          ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
+          : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`,
       },
     };
   }
@@ -1486,7 +1497,7 @@ export class CardRunner {
         const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined, effort: run.effort ? reopenAfterReviewBlock(run.effort, 'pre-review block still pending') : run.effort, blockedReceipt: this.keepReceipt(run, { stage: 'pre', cycle, round: last.round, candidateSha: run.candidate?.sha }) });
         const admitted = run.effort ? repairAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the round runs on the unchanged candidate once every finding of the block is disputed.` : '';
-        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: admitted?.action === 'attempt' ? admitted.n : (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${quotedList(last.reasons) || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.${ids}` } };
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: admitted?.action === 'attempt' ? admitted.n : run.effort ? ladderNumber(run.effort, run.effort.attempts.length) : 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${quotedList(last.reasons) || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.${ids}` } };
       }
       disputedNote = ` Every finding of round ${last.round} is disputed; the round runs on the unchanged candidate with the author's notes.`;
     }
@@ -2840,7 +2851,10 @@ export class CardRunner {
     this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` }, now);
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
     const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}) => finish(() => ({ ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
-    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? next.effort?.attempts.find((a) => a.outcome === 'running')?.n ?? (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
+    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => {
+      const runningIndex = next.effort?.attempts.findIndex((a) => a.outcome === 'running') ?? -1;
+      return { kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? (next.effort ? ladderNumber(next.effort, runningIndex >= 0 ? runningIndex : next.effort.attempts.length) : 1), skills: skills ?? this.buildSkills(goal, card), narration };
+    };
     const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
     // A ship that fails on the candidate's own code (T0-SHIP-REPAIR-ATTEMPT): the success that bound the candidate is a
     // counted failure whose cause names the outcome, the episode reopens, and the next step is the ladder's on the locked
@@ -2858,7 +2872,7 @@ export class CardRunner {
       // The running repair the step promoted is journaled at its new effort, so its latest start matches the episode.
       if (step?.promoted && step.action.action === 'attempt') this.journal(goal.id).append({ type: 'ATTEMPT_STARTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: step.promoted.n, effort: step.promoted.effort, escalated: step.action.escalated, promoted: true, from: step.promoted.from, reason: 'ship-failure' } });
       if (next.state === 'STOP' && next.stop) return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop, narration: next.stop.detail } };
-      // The ladder's step names the attempt (the running repair's number when one runs), the one build() names next
+      // The ladder's step names the attempt (the running repair's ladder number when one runs), the one build() names next
       // (T0-SHIP-NOTHING-REFUTED); only a refuted success is a counted failure.
       const attempt = step?.action.action === 'attempt' ? step.action : undefined;
       const counted = step?.refuted ? 'The failure counts as a failed attempt on the effort ladder.' : 'The ship failure refuted no recorded success, so it counts no attempt on the effort ladder.';
