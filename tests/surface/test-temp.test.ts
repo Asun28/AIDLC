@@ -129,6 +129,9 @@ test('T0-TEST-TEMP-SWEEP acceptance 2: the scan reports every occurrence of the 
     ['tests/surface/evals.test.ts', "import fs from 'node:fs';\nconst { mkdtempSync } = fs;\nfunction tempDir(prefix: string) {\n  return mkdtempSync(prefix);\n}\n", [[2, 'module scope', 'reference', sync]]],
     ['tests/surface/command-lines.test.ts', "import { mkdtempSync } from 'node:fs';\nexport { mkdtempSync };\n", [[2, 'module scope', 'reference', sync]]],
     ['tests/forms/methods.ts', "import fs from 'node:fs';\nclass C {\n  #make() {\n    return fs.mkdtempSync('a');\n  }\n  ['build']() {\n    return fs.mkdtempSync('b');\n  }\n  42() {\n    return fs.mkdtempSync('c');\n  }\n}\n", [[4, '#make', 'call', sync], [7, 'build', 'call', sync], [10, '42', 'call', sync]]],
+    ['tests/forms/computed-identifier.ts', "import fs from 'node:fs';\nconst label = 'build';\nclass C {\n  [label]() {\n    return fs.mkdtempSync('x');\n  }\n}\n", [[5, '<anonymous>', 'call', sync]]],
+    ['tests/forms/assigned-arrow.ts', "import fs from 'node:fs';\nconst f = () => fs.mkdtempSync('x');\n", [[2, '<anonymous>', 'call', sync]]],
+    ['tests/forms/await-using.ts', "import fs from 'node:fs';\nawait using probe = (() => {\n  return fs.mkdtempSync('x');\n})();\n", [[3, '<anonymous>', 'call', sync]]],
     ['tests/surface/test-temp.test.ts', own, []],
   ];
   // Each row in a directory of its own, so that a helper's file can appear in more than one row.
