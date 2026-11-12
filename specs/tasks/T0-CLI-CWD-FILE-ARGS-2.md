@@ -709,3 +709,13 @@ The implementer disclosed three points in the repair round; the planner rules on
 | `globalThis.process` and `global.process` are expected to break rules (b) and (d), where the rulings section lists them under (d) alone: in both, `process` is the name accessed and not the object of an access | Accepted. A row reports every rule the text breaks; the rulings section named the rule each row was added for |
 | Three rows of the first table report one more rule under the restated rules: `process.chdir(at)` breaks (a) and (b), since `chdir` is not one of the ten names; `Reflect.set(process.env, 'X', v)` breaks (c) and (d); `globalThis.process.env.X = v` breaks (b) and (d) | Accepted. The table section of this card was written before rules (b) and (d) changed; where it and the test differ in the rules a row names, the test follows the rules as they now read |
 | A `this` expression is found by its node kind (`ts.SyntaxKind.ThisKeyword`), there being no public helper function for it | Accepted. The node kind is public API |
+
+## Planner rulings on the points disclosed in the second repair round (coordinator, before R3)
+
+The implementer disclosed three changes to existing test lines in the second repair round; the planner rules on each before the formal review.
+
+| Disclosed point | Ruling |
+|---|---|
+| The carried test of the child environment (the dump of the `GIT_` variables a child sees) now expects `GIT_CONFIG_NOSYSTEM` and `GIT_CONFIG_GLOBAL` beside `GIT_CEILING_DIRECTORIES`, compared as an object | Accepted. The ruling sets both variables for every child, so the carried expectation of one variable could not hold; the test still proves that no `GIT_` variable of the caller reaches a child |
+| The unit row of the helper is renamed to say what it now checks (no `NODE_` variable of the test process in any letter case, no system or global git configuration) | Accepted |
+| One passing row was added for `process.once` (the `if` without braces); the other statement of main.ts has been a passing row since the first repair round | Accepted. Both statements of main.ts are rows |
