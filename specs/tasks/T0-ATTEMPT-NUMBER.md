@@ -167,7 +167,7 @@ npm run typecheck && node --test tests/core/effort.test.ts tests/scenarios/dispu
 
 ## Attempt evidence
 
-Commits on branch T0-ATTEMPT-NUMBER (base d327a20e): ef9d8e1a (RED seam: `ladderNumber` returns `index + 1`, called by nothing), 19ee1b81 (RED tests), 36628a8e (GREEN: source and documents), a885074c (test imports moved to new lines so no existing import line changes; no assertion changed), then this evidence commit (card file only).
+Commits on branch T0-ATTEMPT-NUMBER (base d327a20e): ef9d8e1a (RED seam: `ladderNumber` returns `index + 1`, called by nothing), 19ee1b81 (RED tests), 36628a8e (GREEN: source and documents), a885074c (test imports moved to new lines so no existing import line changes; no assertion changed), 63fd38c8 (evidence), 72be08e8 (planner rulings: the review-fix field keeps main's value with an episode and nothing running; the unit row with stored numbers that do not follow their positions), then this evidence commit (card file only).
 
 Narration literals: the numberless narrations (review-fix, pre-review hand-back, merge-conflict, rejected-RED, dod-failed) and the pending-repair prefixes were captured from the code at ef9d8e1a (main plus the uncalled seam) before any source change, by running the new scenarios with their assertions disabled in a temporary copy of the test file, which was deleted afterwards. The two build() templates match main's narrations at card-runner.ts:1036-1037 apart from the label; the card's Narration templates text matched main, so no wording was chosen.
 
@@ -191,7 +191,7 @@ Narration literals: the numberless narrations (review-fix, pre-review hand-back,
 
 Item 13 was not run on main by this attempt; it passes in the DoD runs below.
 
-### Revert table (31 rows, 31 red)
+### Revert table (33 rows, 33 red)
 
 Each row is an actual revert run: the one change applied to the worktree source (or document) alone, the named test run with `--test-name-pattern`, the file restored; afterwards `git status --short` was empty (byte-identical to 36628a8e). Script: an-mutate.py and an-docmut.py in the session scratchpad.
 
@@ -229,12 +229,16 @@ Each row is an actual revert run: the one change applied to the worktree source 
 | D1 | R7 docs/OPERATIONS.md sentence | sentence removed | dispute "state the ladder number" | red ('the ship repair attempt paragraph ends with the ladder sentence') |
 | D2 | R7 docs/ARCHITECTURE.md sentence | sentence removed | dispute "state the ladder number" | red ('the src/core/ paragraph states ...') |
 | D3 | R7 CHANGELOG entry | entry and its blank line removed | dispute "state the ladder number" | red ('the CHANGELOG Unreleased section holds the entry') |
+| M26a | R2 repairAction: the index comes from the array, never from the stored n | `ladderNumber(episode, running.n - 1)` | effort "repairAction and afterShipFailure name" (episode [n 1 not-counted, n 5 running]) | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
+| M26b | R2 afterShipFailure with nothing settled: the same | `ladderNumber(episode, running.n - 1)` | the same test and episode | red (ERR_ASSERTION, `n: 2` actual, `n: 1` expected) |
 
-Not testable as a separate row: R2's "index taken from the array, never derived from the stored n". With stored numbers that follow positions (the only episodes the card covers; non_goals exclude the rest) `running.n - 1` and `indexOf(running)` give the same index, so no test can tell them apart.
+Rows M26a and M26b (actual revert runs, added after the planner's ruling on R2) use an episode whose stored numbers do not follow their positions, `[{ n: 1, not-counted }, { n: 5, running }]`: the index from the array is 1 and gives `n: 1`, an index derived from the stored n (4) counts the running record and gives 2. The branch of `afterShipFailure` with a settled attempt and a running repair (effort.ts:171) is not served by that episode and has no such row.
+
+Review-fix `attempt` field (R3 (b)): with an effort episode and no attempt running the field keeps main's value, `episode.attempts.length` (planner ruling). I read that case as not reachable: when nothing runs, the REVIEW_FIX step first reopens a succeeded episode, then `nextEffortAction` either answers `stop`, which returns a stop directive before the field is built, or `attempt`, which opens an attempt; `done` cannot follow `reopenAfterReviewBlock`. A terminal episode other than succeeded answers `stop`. No test pins this case.
 
 ### DoD
 
-`dod_command` on a885074c (source and tests final; the later commit changes only this card file): exit 0, tests 402, suites 34, pass 402, fail 0, cancelled 0, skipped 0. Earlier run on 36628a8e: exit 0, tests 402, pass 402, fail 0.
+`dod_command` on 72be08e8 (source and tests final; the later commit changes only this card file, whose final text the run read): exit 0, tests 402, suites 34, pass 402, fail 0, cancelled 0, skipped 0. Earlier runs: a885074c and 63fd38c8, exit 0, 402 of 402; 36628a8e, exit 0, 402 of 402.
 
 ### Documents against code and tests
 
@@ -250,11 +254,8 @@ Not testable as a separate row: R2's "index taken from the array, never derived 
 
 ### Changed lines
 
-`git diff --shortstat origin/main...HEAD` (merge base d327a20e) on a885074c: 7 files changed, 317 insertions(+), 29 deletions(-), 346 lines; with this section: 8 files changed, 411 insertions(+), 29 deletions(-), 440 lines, against the budget 500.
+`git diff --shortstat origin/main...HEAD` (merge base d327a20e) with this section: 8 files changed, 419 insertions(+), 29 deletions(-), 448 lines, against the budget 500.
 
-### Open points for the coordinator
+### Not run by this attempt
 
-- R3 (b): an effort episode with nothing running after the review-fix step is not reachable (a stop returns before, `done` cannot follow `reopenAfterReviewBlock`); the field names 1 there (`running && episode ? ladderNumber(...) : 1`), where main named `attempts.length`.
-- `buildDirective` changed from an expression arrow to a block body to compute the running index once; no other behaviour.
-- `ladderNumber` and `attemptLabel` carry JSDoc of their own; the size exception names the helpers, not these two comments.
-- Not run by this attempt: the verify-card-run-writes skill, the Linux run of the two test files, and acceptance 13 on main.
+The verify-card-run-writes skill, the Linux run of the two test files, and acceptance 13 on main.
