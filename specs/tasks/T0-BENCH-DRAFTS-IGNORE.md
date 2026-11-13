@@ -4,6 +4,7 @@ title: Git ignores the reviewer bench case files under evals/review, so the unco
 status: todo
 branch: T0-BENCH-DRAFTS-IGNORE
 worktree: D:\wt\AIDLC\T0-BENCH-DRAFTS-IGNORE
+superseded_by: T0-BENCH-DRAFTS-IGNORE-2
 allow_paths:
   - .gitignore
   - evals/review/README.md
