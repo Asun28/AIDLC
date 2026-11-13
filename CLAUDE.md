@@ -161,6 +161,12 @@ refuses SHIP without a DoD receipt; the Stop hook only reminds.
 - Maker/checker deadlock: after two rounds of mutual non-acceptance, stop
   for a human ruling; do not fan out reviewers or switch accounts.
 - A review ruling (`aidlc review rule`) is recorded only on the owner's instruction in the session.
+- Review a candidate only through the configured gates (`aidlc review r3`,
+  and `aidlc review pre` first where `preReview.command` is set); run no
+  other review of it.
+- After a card run starts, do not edit the card's requirements, acceptance
+  or budget. A point the card does not cover becomes a follow-up issue, not
+  a ruling in the card.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
 
 ### Docs
