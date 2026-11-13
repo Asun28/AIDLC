@@ -136,7 +136,8 @@ test('acceptance 1 to 4: review rule records a ruling and a FINDING_RULED event 
       finding(after, id)['revision'] -= 1;
     }
     assert.deepEqual({ ...after, revision: before['revision'], updatedAt: before['updatedAt'] }, before);
-    assert.deepEqual([after['state'], after['stop'].reason, finding(after, 'F1')['disposition']], ['STOP', 'review', 'disputed']);
+    // Decision 2 re-raised the disputed F1 and F2, which reopened them; F3 keeps the dispute recorded while it ran.
+    assert.deepEqual([after['state'], after['stop'].reason, ...after['findings'].map((f: Stored) => f['disposition'])], ['STOP', 'review', 'open', 'open', 'disputed']);
     assert.deepEqual(stopOf(), stopBefore, 'card next returns the same stop');
   } finally {
     fx.cleanup();
