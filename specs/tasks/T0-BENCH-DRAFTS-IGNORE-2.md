@@ -165,3 +165,8 @@ Rows red: 18 of 18.
 ### Changed lines against the budget of 260
 - Without this evidence commit (`git diff --shortstat origin/main...HEAD` at fae40df2): 5 files changed, 98 insertions(+).
 - With this evidence commit: 6 files changed, 160 insertions(+) (98 + 62 lines of this section), under the budget of 260.
+
+Coordinator verification:
+- At 438764a4, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/bench-drafts-ignore.test.ts, tests/surface/review-bench.test.ts): tests 31, pass 31, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 2041 # pass 2026 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 70): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
