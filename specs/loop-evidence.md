@@ -19,8 +19,9 @@ From intent: intent/loop-evidence.md. Status: draft. Skills applied: (none).
   status` shall show it and say when the exit differs from `dod_exit`.
 - R3. IF the DoD does not end within the timeout, THEN the loop shall stop its process tree and
   record a timeout in place of an exit code.
-- R4. The R3 prompt and REVIEW.md shall not contain "actively try to disprove", "when uncertain,
-  block" or "be exhaustive", and shall require that a blocking finding cite a file and line of the
+- R4. The reviewer instructions the R3 prompt builder writes, and REVIEW.md, shall not contain
+  "actively try to disprove", "when uncertain, block" or "be exhaustive" (card, diff and finding
+  text quoted into a prompt are evidence and may contain them), and shall require that a blocking finding cite a file and line of the
   candidate and state either an observable failure (input, then wrong result or crash) or the
   stated requirement, acceptance item or forbid item it breaks; anything else is a question or a
   suggestion and does not block. The hard boundaries (security, secrets, data loss, forbid items,
