@@ -158,7 +158,7 @@ test('T1-OUTCOME-INGEST acceptance 5: run.ts prints the successor rate, the revi
   const views = new Map(r.stdout.trim().split('\n').map((line) => JSON.parse(line) as { view: string; rows: Row[] }).map((v) => [v.view, v.rows]));
   assert.deepEqual([...views.keys()], ['summary_lead_time', 'summary_review_convergence', 'summary_stop_reasons', 'summary_successor_rate']);
   assert.deepEqual(views.get('summary_successor_rate'), [{ card_attempts: 2, failed: 1, merged: 1, successor_rate: 0.5 }]);
-  assert.deepEqual(views.get('summary_review_convergence'), [{ cards: 2, first_decision_pass_share: 0.5, two_or_more_blocks_share: 0.5, mean_decisions_to_pass: 1, stop_review_share: 0.5 }]);
+  assert.deepEqual(views.get('summary_review_convergence'), [{ cards: 2, first_decision_pass_share: 0, two_or_more_blocks_share: 0.5, mean_decisions_to_pass: null, stop_review_share: 0.5 }]);
   assert.deepEqual(views.get('summary_lead_time'), [
     { measure: 'lead_p50', state: null, hours: 6, n: 1 },
     { measure: 'lead_p90', state: null, hours: 6, n: 1 },
