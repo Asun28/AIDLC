@@ -162,6 +162,12 @@ refuses SHIP without a DoD receipt; the Stop hook only reminds.
   for a human ruling; do not fan out reviewers or switch accounts.
 - A review ruling (`aidlc review rule`) is recorded only on the owner's instruction in the session.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
+- Never feed a script to an interpreter on standard input (`python -`, a
+  heredoc into `node`): write it to a file outside the worktree and run the
+  file.
+- Leave no process running: before you report, find any process you started
+  that has not ended, check it is that process, stop its tree by pid (never
+  by name) and name it in the report.
 
 ### Docs
 When adding, removing or renaming files, commands or flags, grep `docs/` and
