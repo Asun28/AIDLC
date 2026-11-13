@@ -188,6 +188,8 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
       ['without doctor', JSON.stringify([CLAUDE])],
     ];
     for (const [label, stdout] of rows) assert.equal((await winReport(stdout)).value, UNREADABLE, label);
+    // The parser itself refuses a top level that is neither a list nor an object, not only the report's check for doctor.
+    for (const stdout of ['"text"', '42', 'true', 'null']) assert.equal(await listProcesses(recorder({ stdout }).runner, 'win32', {}, T), UNREADABLE, stdout);
   });
 
   test('a ps listing is read in each form it takes [R3] [R8] [R9]', async () => {
@@ -245,6 +247,9 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
       ['without doctor', psText([P_BASE[0]!])],
     ];
     for (const [label, stdout] of rows) assert.equal((await psReport(stdout)).value, UNREADABLE, label);
+    // The parser itself refuses a listing with no line left, and a start time that is not finite (here from the clock).
+    for (const stdout of ['', '\n\n', '  \n \n']) assert.equal(await listProcesses(recorder({ stdout }).runner, 'linux', {}, T), UNREADABLE, JSON.stringify(stdout));
+    assert.equal(await listProcesses(recorder({ stdout: psText(P_BASE) }).runner, 'linux', {}, Infinity), UNREADABLE);
   });
 
   test('a listing that fails, times out, throws or rejects gives unknown, never none [R4]', async () => {
@@ -315,6 +320,16 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
     const psNone = await psReport(psText(P_BASE), { mainRoot: '/', config: ProjectConfig.parse({ worktreeRoot: '' }) });
     assert.equal(psNone.value, 'n/a (no usable root)');
     assert.equal(psNone.calls.length, 0);
+    // A share root is a filesystem root in every spelling, as worktree root and as main root; a path below a share is not.
+    for (const share of ['\\\\srv\\share\\', '\\\\srv\\share', '//srv/share/', '//srv/share']) {
+      const asWorktree = await winReport(JSON.stringify(BASE), { mainRoot: 'D:\\', config: ProjectConfig.parse({ worktreeRoot: share }) });
+      assert.equal(asWorktree.value, 'n/a (no usable root)', share);
+      assert.equal(asWorktree.calls.length, 0, share);
+      const asMain = await win([w(5901, 3999, OLD, '\\\\srv\\share\\x'), w(5902, 3999, OLD, 'E:\\wt\\T0-X')], { mainRoot: share, config: ProjectConfig.parse({ worktreeRoot: 'E:\\wt' }) });
+      notListed(asMain, 5901);
+      listed(asMain, 5902);
+    }
+    listed(await winCmd('\\\\srv\\share\\wt\\T0-X', { mainRoot: 'D:\\', config: ProjectConfig.parse({ worktreeRoot: '\\\\srv\\share\\wt\\' }) }), 5900);
     // A step that throws against the typed precondition gives the caught-error value.
     assert.equal((await winReport(JSON.stringify(BASE), { mainRoot: 42 as never })).value, UNREADABLE);
   });
@@ -427,6 +442,13 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
     assert.equal(await line('29:59'), 'none');
     listed(await line('30:00', '15:00'), 5800);
     assert.equal(await line('30:00', '14:59'), 'none');
+    // A fraction of a second keeps every digit: the CPU boundary at half the age, both sides, with `.` and with `,`.
+    for (const sep of ['.', ',']) {
+      assert.equal(await line(`30:00${sep}0009`, `15:00${sep}0004`), 'none', sep);
+      listed(await line(`30:00${sep}0007`, `15:00${sep}0004`), 5800);
+      listed(await line(`30:00${sep}001`, `15:00${sep}0005`), 5800);
+      assert.equal(await line(`30:00${sep}001`, `15:00${sep}0004`), 'none', sep);
+    }
     assert.equal(await win([w(5800, 3999, OLD, 'D:\\wt\\AIDLC\\x')], { now: 'not a date' }), UNREADABLE);
     assert.equal(STRAY_AGE_MS, 1_800_000);
     assert.equal(STRAY_CPU_RATIO, 0.5);
