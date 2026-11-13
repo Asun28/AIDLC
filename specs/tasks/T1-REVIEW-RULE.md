@@ -2,6 +2,7 @@
 id: T1-REVIEW-RULE
 title: "`aidlc review rule` records the owner's ruling (rejected or deferred) on a merge-blocking finding of the R3 decision that stopped a card, and changes nothing else"
 status: todo
+superseded_by: T1-REVIEW-RULE-2
 branch: T1-REVIEW-RULE
 worktree: D:\wt\AIDLC\T1-REVIEW-RULE
 plan_ref: plans/review-ruling.md#order-of-work
