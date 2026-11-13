@@ -15,7 +15,7 @@
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
 import { detectQuotaHold, quotaOutput } from './parse-guard.ts';
-import { DisputeKind, FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingDisposition, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
+import { DisputeKind, FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type CardRun, type FindingDisposition, type FindingRuling, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
 export type ReviewOutcomeClass = 'pass' | 'block-defect' | 'block-advisory' | 'no-verdict' | 'quota-hold' | 'routed-skip';
 
@@ -567,6 +567,33 @@ export function findingsOfRound(findings: ReviewFinding[], round: { stage: Findi
 /** The findings a stage raised or re-raised on one candidate; the formal stage is keyed this way, never by a run-wide decision counter. */
 export function findingsOfCandidate(findings: ReviewFinding[], stage: FindingStage, candidateSha: string): ReviewFinding[] {
   return findings.filter((f) => (f.stage === stage && f.candidateSha === candidateSha) || f.reraised.some((r) => r.stage === stage && r.candidateSha === candidateSha));
+}
+
+/** The flags of `aidlc review rule` as a ruling without its time (card T1-REVIEW-RULE, R1); each refusal names the flag. */
+export function parseRuling(o: { reject?: boolean; defer?: boolean; by?: string; reason?: string; issue?: string }): Omit<FindingRuling, 'at'> {
+  if (Boolean(o.reject) === Boolean(o.defer)) throw new Error('a ruling takes exactly one of --reject and --defer');
+  if (!o.by?.trim()) throw new Error('--by is blank: name who rules');
+  if (!o.reason?.trim()) throw new Error('--reason is blank: say why');
+  if (o.issue !== undefined && !o.defer) throw new Error('--issue is given only with --defer');
+  if (o.issue !== undefined && !(/^\d+$/.test(o.issue) && Number(o.issue) > 0 && Number.isSafeInteger(Number(o.issue)))) throw new Error('--issue is digits only, above 0');
+  return { by: o.by.trim(), decision: o.defer ? 'deferred' : 'rejected', reason: o.reason.trim(), ...(o.issue !== undefined ? { issue: Number(o.issue) } : {}) };
+}
+
+/**
+ * The owner rules on a finding of the R3 decision that stopped the card (card T1-REVIEW-RULE, R2): the latest formal invocation
+ * with `stopReview`. Each condition that does not hold throws; only the finding's `ruling` and `revision` change, its disposition stays.
+ */
+export function ruleFinding(run: Pick<CardRun, 'state' | 'stop' | 'review' | 'candidate' | 'findings'>, id: string, ruling: FindingRuling): ReviewFinding[] {
+  if (run.state !== 'STOP' || run.stop?.reason !== 'review') throw new Error(`the card run ${run.state === 'STOP' ? `is stopped for ${run.stop?.reason ?? 'no recorded reason'}` : `is in ${run.state}`}, not stopped for review: a ruling needs a card that R3 stopped`);
+  const stopping = run.review.invocations.filter((i) => i.stopReview).at(-1);
+  if (!stopping) throw new Error('no R3 decision of the run carries stopReview: this stop for review has no finding to rule on');
+  if (run.candidate?.digest !== stopping.candidateDigest) throw new Error(`the run's candidate digest ${run.candidate?.digest ?? '(none)'} is not that of the stopping decision (${stopping.candidateDigest})`);
+  const f = findingOrThrow(run.findings, id);
+  if (!stopping.candidateSha || !findingsOfCandidate(run.findings, 'formal', stopping.candidateSha).includes(f)) throw new Error(`${f.id} is not a finding the stopping decision raised or re-raised`);
+  if (f.advisory) throw new Error(`${f.id} is advisory: it blocks no merge and takes no ruling`);
+  if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later decision re-raised it); nothing to rule on`);
+  if (f.ruling) throw new Error(`${f.id} is already ruled (${f.ruling.decision}); a ruling is not withdrawn or changed`);
+  return run.findings.map((x) => (x === f ? { ...x, ruling, revision: x.revision + 1 } : x));
 }
 
 /** A pre-review round (cycle + round) or the formal decisions on one candidate. */

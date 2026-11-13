@@ -56,7 +56,7 @@ import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '.
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
 import { Goal, OperationKind, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
-import { disputeKindOf, parseDisputeKind } from '../core/review-policy.ts';
+import { disputeKindOf, parseDisputeKind, parseRuling } from '../core/review-policy.ts';
 
 interface Ctx {
   root: string;
@@ -1010,6 +1010,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
       const shipPathNote = f.stage === 'formal' && !c.config.formalReview.command.length ? '\nnote: the ship-path reviewer re-reads a verdict file and receives no notes; the dispute is recorded for the human adjudicator, and the candidate ships again only once it changes' : '';
       out(c, { cardId, finding: f }, () => `${findingLine(f)}${shipPathNote}\nnext: dispute or repair the other open findings, then \`aidlc card next ${cardId}\``);
+    });
+  review
+    .command('rule <cardId> <findingId>')
+    .description("record the owner's ruling on a merge-blocking finding of the R3 decision that stopped the card; the card stays stopped")
+    .option('--reject', 'the finding does not hold')
+    .option('--defer', 'the finding holds and is left to follow-up work')
+    .requiredOption('--by <who>', 'who rules, as recorded')
+    .requiredOption('--reason <text>', 'why')
+    .option('--issue <n>', 'the follow-up issue number, only with --defer')
+    .option('--goal <id>')
+    .action((cardId: string, findingId: string, o: { reject?: boolean; defer?: boolean; by: string; reason: string; issue?: string; goal?: string }) => {
+      // Refused before any record is read. The run is read under its lock and never created, and no board is written.
+      const ruling = parseRuling(o);
+      const c = ctx(g());
+      const goalRec = checkedGoal(c, cardId, o.goal);
+      const next = runnerFor(c).ruleFinding(goalRec, cardOf(c, cardId).card, findingId, ruling);
+      const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
+      out(c, { cardId, finding: f }, () => `${f.id} ruled ${f.ruling?.decision}${f.ruling?.issue ? ` (issue ${f.ruling.issue})` : ''}; the card run stays stopped: this command lifts no stop`);
     });
   review
     .command('repro <cardId> <findingId>')

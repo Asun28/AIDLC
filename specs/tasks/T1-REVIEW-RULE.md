@@ -61,3 +61,12 @@ npm run typecheck && node --test tests/scenarios/review-rule.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every test of both files passes and the typecheck reports no error.
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `node --test tests/scenarios/review-rule.test.ts`: the CLI rules `f2 --defer --issue 12`; `CardRunner.ruleFinding` rules `f1` as rejected, with `at` equal to the fixture clock. The CLI has no clock to inject, so its `at` is checked for ISO form only. | pass |
+| 2 | Same test: one more journal event after each ruling, `FINDING_RULED` with the card id, the finding id and the ruling. | pass |
+| 3 | Same test, one table of 16 rows through the CLI: the 15 rows of the item and a run with no `stopReview`; each exits 1, names its condition and leaves both files byte-identical. | pass |
+| 4 | Same test: the stored run after both rulings deep-equals the run before, apart from the two findings' `ruling` and `revision` and the run's own `revision` and `updatedAt`, which every store write moves; `aidlc card next` returns the same stop directive. | pass |
+| 5 | `node --test tests/scenarios/fault-points.test.ts` passes. `allow_paths` does not list that file, so the check does not drive the command; the skill's coverage record names `CardRunner.ruleFinding`, its write and its append under Not covered. | pass, with that limit |
+| 6 | `docs/OPERATIONS.md`, Findings and dispositions, paragraph Rulings; `CHANGELOG.md`, entry T1-REVIEW-RULE (reviewer-verified against the diff). | written |

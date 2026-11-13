@@ -10,9 +10,7 @@ description: >-
 ---
 # verify-card-run-writes
 
-This repository only; `aidlc init` never installs it. The check is the
-fault-point test; this file says what it proves, what it leaves out and
-how to keep it matched to the code.
+This repository only; `aidlc init` never installs it.
 
 ## Property
 Property: after any single failed card-run record write or goal journal append and the card's next step, the stored card run and the goal journal agree and the run reaches the end state of the fault-free run.
@@ -60,11 +58,13 @@ runs it, so CI runs it on every push.
 - Card-run commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
+  `tests/scenarios/candidate-withdraw.test.ts`), `CardRunner.ruleFinding`
+  (card T1-REVIEW-RULE: one `GoalStore.updateCardRun` write, then one
+  `FINDING_RULED` journal append, whose failure leaves the ruling without
+  its event), `aidlc review repro`
   (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
   `GoalStore.updateCardRun` write of the finding's `repro` after both runs
-  and no journal append, so a failed write throws, exits 1 and leaves the
-  run and the journal as they were), failed and
+  and no journal append), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
   BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
   and no worktree path, card T0-PREPARE-WORKTREE).
