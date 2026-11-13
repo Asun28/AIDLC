@@ -489,3 +489,8 @@ Each row changes one clause in the worktree, runs `node --test-reporter=tap test
 ### Changed lines
 
 `git diff --shortstat origin/main...HEAD` on 9982bc19: 11 files changed, 1005 insertions, 2 deletions (1007 changed lines) before this section; with its 204 lines, 1211 of the budget of 1400.
+
+Coordinator verification:
+- At b21e5a16, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/stray-processes.test.ts): tests 21, pass 19, fail 0, skipped 2.
+- Windows, docpins: 87 test files reading 7 changed documents: # tests 2097 # pass 2082 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
