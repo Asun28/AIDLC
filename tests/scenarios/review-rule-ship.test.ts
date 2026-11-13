@@ -138,11 +138,13 @@ async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], d
   };
   /** `review r3` run by hand on the stored run. */
   const review = () => runner.formalReview(g(), card, persisted());
+  /** `review pre` run by hand on the stored run. */
+  const pre = () => runner.preReview(g(), card, persisted());
   /** `card attempt`: a success that records candidate `sha`, as the loop records sha-1 and sha-2. */
   const attempt = (sha: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
   /** `card ci-reconcile`: the rerun of CI run `runId` succeeded. */
   const reconcile = (runId: string) => runner.ciReconcile(g(), card, persisted(), runId, () => ({ status: 'completed', conclusion: 'success', attempt: 2 }));
-  return { ship, persisted, reviews, bytes, stored, seed, events, rulingEvents, cli, rule, next, review, attempt, reconcile, assertShipped };
+  return { ship, persisted, reviews, bytes, stored, seed, events, rulingEvents, cli, rule, next, review, pre, attempt, reconcile, assertShipped };
 }
 
 test('acceptance 1, 2, 4 and 5: on a run stopped at R3 decision 4 with two findings, the first ruling leaves the stop and the second lifts it, moves no counter, receipt or deadline, owes one REVIEW_DECIDED, and the unchanged candidate ships with its canonical pass [R1] [R2] [R3] [R4] [R5] [R6]', async () => {
@@ -433,10 +435,11 @@ test('R3 decision 3, F3: with R2 configured and its rounds exhausted (onExhauste
     const fx = makeFixture({ config: { ...CONFIG.config, preReview: { command: ['fake-r2', '{instructions}'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false } } });
     try {
       const ship = new InjectedShipPath([outcome], CODE_DEFECT);
-      const { persisted, reviews, rule, next, attempt } = await stopped(fx, blocks, ['F2'], ship);
+      const { persisted, reviews, rule, next, pre, attempt } = await stopped(fx, blocks, ['F2'], ship);
       // The candidate reached the stopping decision with no R2 pass, and that block opened R2 cycle 2, which holds no round.
       assert.deepEqual([persisted().preReview.rounds.map((x) => [x.cycle, x.outcome, x.candidateSha]), persisted().review.substantiveBlocks], [[[0, 'block', 'sha-1'], [1, 'block', 'sha-2']], 2]);
       rule('F2', 'rejected');
+      await assert.rejects(pre(), /candidate sha-2 passed by ruling; no review may run/, 'no pre-review round by hand either');
       const first = next();
       assert.deepEqual([first.directive.kind, ship.requests.map((q) => q.candidateSha), reviews.pre, reviews.count], [outcome === 'merged' ? 'close' : 'build', ['sha-2'], 2, 2], first.directive.narration);
       if (outcome === 'merged') continue;

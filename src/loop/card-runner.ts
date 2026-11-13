@@ -334,6 +334,8 @@ export class CardRunner {
   private preReviewEligibility(run: CardRun, candidateDigest: string): { eligible: boolean; reason: string; exhausted?: boolean } {
     const cfg = this.config.preReview;
     if (!cfg.command.length) return { eligible: true, reason: 'pre-review not configured' };
+    // A candidate digest that passed by ruling needs no pre-review round (card T1-REVIEW-RULE-SHIP); another digest gets nothing from it.
+    if (run.review.invocations.some((i) => i.ruled && i.candidateDigest === candidateDigest)) return { eligible: true, reason: 'the candidate passed by ruling' };
     const cycle = run.review.substantiveBlocks;
     const passed = [...run.preReview.rounds].reverse().find((r) => r.candidateDigest === candidateDigest && r.outcome === 'pass');
     if (passed) return { eligible: true, reason: `pre-review round ${passed.round} of cycle ${passed.cycle} passed` };
@@ -1491,6 +1493,9 @@ export class CardRunner {
         return { run, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The card run changed while the ship gate ran (${run.candidate?.digest !== digest ? 'the candidate' : 'the review cycle'} moved on); run \`aidlc card next ${card.id}\` again.` } };
       }
     }
+    // A ruled candidate takes no pre-review round: the stopping R3 block opened a cycle that holds none, and a candidate handed
+    // to R3 by exhausted rounds holds no pass. The in-flight check above stays; the formal gate admits the ship (card T1-REVIEW-RULE-SHIP).
+    if (this.ruledPass(run)) return { run };
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
     const decided = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block');
     const blocks = decided.filter((r) => r.outcome === 'block');
@@ -2491,6 +2496,8 @@ export class CardRunner {
   private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number; reviewer: PreReviewer } {
     const cfg = this.config.preReview;
     if (current.stop || current.state === 'STOP') throw new Error(`card run is stopped (${current.stop?.reason ?? 'STOP'}); no review may run: ${current.stop?.nextAction ?? 'resolve the stop first'}`);
+    // As for R3 (`formalAdmission`): a candidate that passed by ruling takes no pre-review round, so none can be in flight or block it (card T1-REVIEW-RULE-SHIP).
+    if (this.ruledPass(current)) throw new Error(`candidate ${candidateSha.slice(0, 12)} passed by ruling; no review may run: ship it with \`aidlc card next ${card.id}\``);
     const cycle = current.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
     const forCandidate = current.preReview.rounds.filter((r) => (r.candidateSha ?? r.candidateDigest) === candidateSha || r.candidateDigest === candidateDigest);
     const inFlight = this.inFlight(current, 'pre');
