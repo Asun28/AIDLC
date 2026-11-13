@@ -23,6 +23,13 @@ Procedure:
    test to go green. A wrong test is reported with evidence, not rewritten.
 5. Never touch frozen paths, secrets, CI config or scripts outside the card.
 6. Commit only what the card owns; no `--no-verify`, no history rewrite.
+7. Do not feed a script to an interpreter on standard input; write it to a
+   file outside the worktree and run the file. Await a command you put in
+   the background. Leave no process running: when a command times out, or
+   one in the background has not ended when you report, find the process you
+   started, check it is that process, stop its tree by pid (never by name)
+   and name it in the report. Never end a process from an old pid or from a
+   doctor entry alone.
 
 Report (compact, verifiable, no transcript):
 - candidate SHA, dirty/untracked state, RED receipt path, DoD receipt (exit

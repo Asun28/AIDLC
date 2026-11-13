@@ -17,6 +17,7 @@ import { GitProbe, oneLine } from '../probes/git.ts';
 import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
 import { hookWiringReport } from '../probes/hook-wiring.ts';
+import { strayProcessesReport } from '../probes/processes.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
@@ -310,7 +311,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const blocking = [...validation.values()].flat().filter((f) => f.severity === 'block').length;
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
-      const [gitVersion, ghVersion, pwshVersion, avail] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available()]);
+      const [gitVersion, ghVersion, pwshVersion, avail, strayProcesses] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available(), strayProcessesReport({ isGit: c.repo.isGit, mainRoot: c.repo.mainRoot, config: c.config, runner: run, now: nowIso() })]);
       // The session line names the source token (env, claude, default) and what it means; default is a warning.
       const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
         source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
@@ -324,6 +325,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         shipPath: c.config.shipPath,
         stateDir: c.paths.root,
         interruptedWrites: interruptedWritesReport(c.paths),
+        strayProcesses,
         cards: `${registry.cards.length} cards, ${registry.errors.length} unparseable, ${blocking} blocking findings`,
         deliveryOps: ops.status === 'configured' ? `configured (${ops.config.operations.length} operations)` : ops.status === 'unreadable' ? `UNREADABLE: ${ops.error}` : 'NOT CONFIGURED (development-only is fine)',
         provider: `${provider.name}: ${avail.ok ? 'ok' : avail.detail}`,
