@@ -100,7 +100,27 @@ test('T1-OUTCOME-FIRST-DECISION acceptance 1: summary_review_convergence gives e
   });
 });
 
-test('T1-OUTCOME-FIRST-DECISION acceptance 2: summary_review_convergence over the ten fixture cards together [R3] [R4]', { skip }, () => {
+// Repair of R3 decision 2 (F1 to F3): each card alone isolates one ordering key of R2 or one excluded block of R1.
+test('T1-OUTCOME-FIRST-DECISION acceptance 1: an absent number, goalId and outcome each order tied decisions, and an excluded block before a pass is no decision [R1] [R2]', { skip }, () => {
+  const t = '2026-01-10T00:00:00Z';
+  const cases: Record<string, Row[]> = {
+    'absent number last': [decision('T1-NULL', 'g-n', 'pass', t), decision('T1-NULL', 'g-n', 'block', t, { decision: 1 })],
+    'goalId ascending': [decision('T1-GOAL', 'g-b', 'pass', t, { decision: 1 }), decision('T1-GOAL', 'g-a', 'block', t, { decision: 1 })],
+    'outcome ascending': [decision('T1-OUT', 'g-o', 'pass', t, { decision: 1 }), decision('T1-OUT', 'g-o', 'block', t, { decision: 1 })],
+    'second-pass block first': [decision('T1-SP', 'g-p', 'block', t, { decision: 1, secondPass: true }), decision('T1-SP', 'g-p', 'pass', '2026-01-10T01:00:00Z', { decision: 2 })],
+    'base-sync block first': [decision('T1-BS', 'g-q', 'block', t, { decision: 1, baseSync: true }), decision('T1-BS', 'g-q', 'pass', '2026-01-10T01:00:00Z', { decision: 2 })],
+  };
+  const actual = Object.fromEntries(Object.entries(cases).map(([name, rows]) => [name, convergence(rows)]));
+  assert.deepEqual(actual, {
+    'absent number last': [row(0, 0, 2, 0)],
+    'goalId ascending': [row(0, 0, 2, 0)],
+    'outcome ascending': [row(0, 0, 2, 0)],
+    'second-pass block first': [row(1, 0, 1, 0)],
+    'base-sync block first': [row(1, 0, 1, 0)],
+  });
+});
+
+test('T1-OUTCOME-FIRST-DECISION acceptance 2:summary_review_convergence over the ten fixture cards together [R3] [R4]', { skip }, () => {
   assert.deepEqual(convergence(Object.values(entries).flat()), [
     { cards: 10, first_decision_pass_share: 0.4, two_or_more_blocks_share: 0.2, mean_decisions_to_pass: 1.875, stop_review_share: 0.2 },
   ]);
