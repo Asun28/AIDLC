@@ -76,5 +76,25 @@ R2 and the ship-path reviewer are not touched.
 - Shipping a ruled, unchanged candidate without a successor card is not part
   of this goal.
 
+## Decisions (owner, 2026-11-14)
+- Rule 1 (Proposed outcome 1) is dropped with its card T1-R3-MISS-ADVISORY,
+  before any run of the card started. Rule 2 stays as merged
+  (T0-R3-SECOND-PASS-ROOM).
+- Reason 1: `aidlc review rule` (`plans/review-ruling.md`, merged
+  2026-11-13) lets the owner reject or defer one finding of the decision that
+  stopped a card, and the candidate ships. A first-round miss is then settled
+  by a recorded decision on that finding; rule 1 would make every such
+  finding advisory with no one reading it.
+- Reason 2: the cost the spec states. Of the 40 new findings on unchanged
+  lines in later blocks, the cited file changed afterwards for 26.
+- Reach since this intent, read from the card-run records on 2026-11-14: 65
+  card runs since 2026-11-10, 32 formal findings raised after decision 1, 4
+  of them with the engine's `outsideDelta` mark. The mark is by file, so it
+  leaves out a finding on an unchanged line of a file the repair changed: 4
+  of 32 is a lower bound of what rule 1 would have covered. No line-level
+  figure exists for this period; the figure above (12 of 57 later blocks) is
+  the only one, from one run of an unmerged script.
+- The successor of T1-OUTCOME-HISTORY no longer waits for rule 1.
+
 ## Open questions
 - (none)
