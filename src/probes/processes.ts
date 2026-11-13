@@ -94,7 +94,9 @@ function parseCim(stdout: string): ProcessRow[] | undefined {
 function duration(text: string): number | undefined {
   const m = PS_TIME.exec(text);
   if (!m) return undefined;
-  const fraction = Number(`${m[5] ?? ''}000`.slice(0, 3));
+  // Every digit of the fraction counts: whole milliseconds from the first three, the rest as a fraction of one.
+  const digits = m[5] ?? '';
+  const fraction = Number(`${digits}000`.slice(0, 3)) + (digits.length > 3 ? Number(`0.${digits.slice(3)}`) : 0);
   const ms = Number(m[1] ?? 0) * 86_400_000 + Number(m[2] ?? 0) * 3_600_000 + Number(m[3]) * 60_000 + Number(m[4]) * 1000 + fraction;
   return Number.isFinite(ms) ? ms : undefined;
 }
@@ -173,10 +175,13 @@ interface Root {
   prefixes: string[];
 }
 
-/** The prefixes of a root, or undefined for a filesystem root (`D:\`, `/`), which would match every path on the drive. */
+/** The prefixes of a root, or undefined for a filesystem root (`D:\`, `/`, `\\srv\share`), which would match every path on it. */
 function rootOf(shown: string, platform: NodeJS.Platform): Root | undefined {
+  // A filesystem root is the root the platform's path module parses, its trailing separators set aside.
+  const trailing = platform === 'win32' ? /[\\/]+$/ : /\/+$/;
+  const bare = shown.replace(trailing, '');
+  if (bare === '' || (platform === 'win32' ? path.win32 : path.posix).parse(shown).root.replace(trailing, '') === bare) return undefined;
   const norm = normalize(shown, platform).replace(/\/$/, '');
-  if (norm === '' || (platform === 'win32' && /^[a-z]:$/.test(norm))) return undefined;
   const drive = platform === 'win32' ? /^([a-z]):\/(.+)$/.exec(norm) : null;
   // The drive form, the Git Bash form and the WSL form.
   return { shown, prefixes: drive ? [norm, `/${drive[1]}/${drive[2]}`, `/mnt/${drive[1]}/${drive[2]}`] : [norm] };
