@@ -193,3 +193,154 @@ A scratch script moves the lines of CHANGELOG.md from `## 0.2.0 - 2026-11-14` to
 The CHANGELOG entry, one line, the first entry under `## 0.2.0 - 2026-11-14`. It holds no two hashes followed by a blank, since seven places of tests/surface/templates.test.ts end their slice at the first `## 0.1.0` of the file (lesson of T0-ACCEPT-TABLE).
 
 "- T0-RELEASE-0-2-0 (audit item H12): release section 0.2.0, dated 2026-11-14. Every entry written since release 0.1.0 stands under it, and a new entry goes under the Unreleased heading above it, as before. The version is 0.2.0 in `package.json`, `package-lock.json`, the output of `aidlc --version`, the `aidlc` member of the host a manifest is sealed with, and README.md; no tag was created and nothing was published. The 69 test files that cut the changelog at the heading after Unreleased now read it with `changelogSince010` (`tests/infra/changelog.ts`), from the Unreleased heading down to the heading of release 0.1.0, so an entry stays pinned when a release heading is put above it. `tests/surface/release-version.test.ts` pins the section and requires the same version in the five places."
+
+## Attempt evidence
+
+Commits on branch T0-RELEASE-0-2-0, cut from origin/main e6566c68: 7179afc7 (commit 1, helper and new tests), a9383e03 (commit 2, R3 and R4), 655397c0 (commit 3, the conversion of R2). Counts are the `# fail` lines of `node --test --test-reporter=tap <file>`, which count a failing suite as well as its failing tests.
+
+### RED of commit 1 (measured on 7179afc7, CHANGELOG.md and the versions as on main)
+- tests/infra/changelog.test.ts: 17 tests, 15 pass, 2 fail. The 15 input rows pass; the row "the repository's CHANGELOG.md" fails by assertion (`the part holds the release heading line 0.2.0`, expected true, actual false) and with it its parent "changelogSince010 on each input class".
+- tests/surface/release-version.test.ts: 3 tests, 3 fail, each by assertion: the heading list deep-equals `['## Unreleased', '## 0.1.0 - 2026-09-11']` (no 0.2.0 line); `package.json` version `'0.1.0'` !== `'0.2.0'`; `aidlc --version` prints `'0.1.0\n'`, expected `'0.2.0\n'` (exit 0).
+- `npx tsc -p tsconfig.test.json --noEmit` exit 0.
+
+### RED of the conversion (measured on a9383e03: R3, R4 and the new tests, no conversion)
+Each of the 69 files run alone with `node --test`; columns: file, tests, fail.
+
+| File | Tests | Fail |
+|---|---|---|
+| tests/core/ci-policy.test.ts | 46 | 1 |
+| tests/core/effort.test.ts | 37 | 1 |
+| tests/core/journal-event-types.test.ts | 3 | 1 |
+| tests/core/parse-guard.test.ts | 26 | 1 |
+| tests/core/roles.test.ts | 12 | 1 |
+| tests/infra/build-atomic.test.ts | 7 | 1 |
+| tests/infra/exec-sync-tree.test.ts | 23 | 1 |
+| tests/infra/exec.test.ts | 70 | 1 |
+| tests/infra/github-ship-merge-refused.test.ts | 12 | 1 |
+| tests/infra/github-ship.test.ts | 65 | 4 |
+| tests/infra/init.test.ts | 11 | 1 |
+| tests/infra/ops.test.ts | 13 | 1 |
+| tests/infra/ship.test.ts | 25 | 1 |
+| tests/infra/stray-processes.test.ts | 22 | 1 |
+| tests/scenarios/base-sync-review.test.ts | 11 | 2 |
+| tests/scenarios/candidate-pins.test.ts | 16 | 1 |
+| tests/scenarios/card-close-cleanup.test.ts | 41 | 2 |
+| tests/scenarios/card-goal.test.ts | 6 | 1 |
+| tests/scenarios/dispute-running-attempt.test.ts | 24 | 2 |
+| tests/scenarios/extend-reason.test.ts | 3 | 1 |
+| tests/scenarios/extend-running-card.test.ts | 7 | 1 |
+| tests/scenarios/fault-points.test.ts | 28 | 2 |
+| tests/scenarios/goal-card-count.test.ts | 7 | 2 |
+| tests/scenarios/journal-owed.test.ts | 41 | 3 |
+| tests/scenarios/lesson-dup.test.ts | 4 | 1 |
+| tests/scenarios/merge-unconfirmed.test.ts | 23 | 1 |
+| tests/scenarios/mutants-review.test.ts | 17 | 1 |
+| tests/scenarios/op-intent-dup.test.ts | 27 | 2 |
+| tests/scenarios/r3-fallback.test.ts | 38 | 1 |
+| tests/scenarios/repair-check.test.ts | 4 | 1 |
+| tests/scenarios/review-admit-foreign.test.ts | 8 | 2 |
+| tests/scenarios/review-admit-strand.test.ts | 8 | 2 |
+| tests/scenarios/review-release.test.ts | 32 | 2 |
+| tests/scenarios/review-resolve.test.ts | 91 | 1 |
+| tests/scenarios/t0-flow.test.ts | 110 | 8 |
+| tests/scenarios/two-windows.test.ts | 39 | 1 |
+| tests/scenarios/worktree-reclaim.test.ts | 45 | 1 |
+| tests/surface/base-sync-jsdoc.test.ts | 4 | 1 |
+| tests/surface/bench.test.ts | 7 | 1 |
+| tests/surface/card.test.ts | 36 | 2 |
+| tests/surface/claude-md-size.test.ts | 4 | 1 |
+| tests/surface/command-lines.test.ts | 12 | 3 |
+| tests/surface/config.test.ts | 52 | 6 |
+| tests/surface/edge-scope.test.ts | 3 | 1 |
+| tests/surface/fix-task-clear.test.ts | 3 | 1 |
+| tests/surface/hook-git-prefetch.test.ts | 9 | 1 |
+| tests/surface/hook-lazy.test.ts | 5 | 1 |
+| tests/surface/hook-name.test.ts | 5 | 1 |
+| tests/surface/hooks.test.ts | 51 | 4 |
+| tests/surface/init-base-ci.test.ts | 58 | 1 |
+| tests/surface/init-no-package.test.ts | 38 | 1 |
+| tests/surface/lessons.test.ts | 13 | 1 |
+| tests/surface/mutant-gen.test.ts | 59 | 1 |
+| tests/surface/mutants.test.ts | 63 | 1 |
+| tests/surface/pre-review.test.ts | 74 | 6 |
+| tests/surface/prose.test.ts | 18 | 3 |
+| tests/surface/ps-guard-read.test.ts | 164 | 1 |
+| tests/surface/ps-guard-wire.test.ts | 11 | 1 |
+| tests/surface/r2-pass-notes.test.ts | 7 | 2 |
+| tests/surface/readme.test.ts | 5 | 2 |
+| tests/surface/removed-surface.test.ts | 10 | 3 |
+| tests/surface/review-bench-export.test.ts | 38 | 1 |
+| tests/surface/review-bench.test.ts | 27 | 1 |
+| tests/surface/reviewer-env.test.ts | 4 | 1 |
+| tests/surface/templates.test.ts | 39 | 7 |
+| tests/surface/tsconfig-gate.test.ts | 2 | 1 |
+| tests/surface/unattended.test.ts | 6 | 2 |
+| tests/surface/verifier-binding.test.ts | 6 | 1 |
+| tests/surface/verifier.test.ts | 20 | 2 |
+
+69 of 69 files have a failing test; 120 failures in all. 119 are changelog reads, the number measured for this card on main at d4c878fc. The 120th is tests/scenarios/review-release.test.ts "acceptance 6: a failed write of the pool leaves the request running ..." (error `aidlc: review request ... is still running as pid 51564`): the fixture's `deadPid()` names a pid that another process held by the time the CLI child ran, which has nothing to do with the changelog. It passed in the DoD and in both 69-file revert rows.
+
+The other 11 test files that name CHANGELOG, run alone on a9383e03, all pass (tests / pass / fail): tests/infra/changelog.test.ts 17/17/0, tests/scenarios/base-sync-committed.test.ts 2/2/0, tests/scenarios/dirty-success.test.ts 34/33/0 (1 skipped), tests/scenarios/dod-receipt-required.test.ts 25/25/0, tests/scenarios/narration-quote.test.ts 21/21/0, tests/scenarios/ship-throw.test.ts 10/10/0, tests/scenarios/t1-plan.test.ts 4/4/0, tests/scenarios/takeover-foreign-line.test.ts 6/6/0, tests/surface/bench-drafts-ignore.test.ts 4/4/0, tests/surface/lesson-match.test.ts 17/16/0 (1 skipped), tests/surface/release-version.test.ts 3/3/0.
+
+### Conversion (commit 3, 655397c0)
+The 114 places by row of acceptance detail 3: row 1, 53 and row 2, 5 (by a scratch script, its result read file by file); row 3, 45 (33 by the script in two shapes, a `start` constant and a slice, or those with an `end` constant and the guard `end === -1`; 12 by hand); rows 4 to 8, 1 + 2 + 3 + 4 + 1 by hand. Every place fit a row of the table; there is no place outside it. tests/core/ci-policy.test.ts is one place with two slice expressions, so the diff adds 115 calls of `changelogSince010`. Nothing is converted in tests/surface/templates.test.ts at the seven slices that end at `'## 0.1.0'`, in tests/surface/bench-drafts-ignore.test.ts, or in the base-sync fixtures and patterns of tests/infra/github-ship.test.ts and tests/infra/github-ship-merge-refused.test.ts.
+
+Constants kept, because a reader remains: `start` in tests/infra/ops.test.ts:252 (read by `assert.ok(start >= 0, 'CHANGELOG.md has an Unreleased section')`) and in tests/infra/stray-processes.test.ts:663 (read by the condition `start >= 0 && ...` of `holdsC1`).
+
+Guards and checks that no longer run for the CHANGELOG text (R2: the helper returns the empty string without either heading line, and every requirement on the part then fails):
+- `start < 0 ? '' :` in tests/infra/build-atomic.test.ts and tests/scenarios/lesson-dup.test.ts (with its `end < 0` guard);
+- `if (start < 0) return false;` in `hasChangelogEntry` of tests/infra/init.test.ts; `if (start < 0) return '';` and `end < 0 ? undefined : end` in `unreleasedOf` of tests/scenarios/op-intent-dup.test.ts, review-admit-foreign.test.ts and review-admit-strand.test.ts (the function stays, its body is `return changelogSince010(changelog);`);
+- `end === -1 ? X.length : end` in tests/infra/github-ship-merge-refused.test.ts, tests/scenarios/goal-card-count.test.ts (two places), tests/surface/base-sync-jsdoc.test.ts and tests/surface/unattended.test.ts (two places);
+- the heading assertion inside `section` of tests/scenarios/review-release.test.ts and review-resolve.test.ts, and the `start < 0` return of `section` in tests/scenarios/journal-owed.test.ts and tests/surface/verifier-binding.test.ts, for the CHANGELOG call only; `section` stays for the other documents;
+- tests/surface/verifier.test.ts, row 8: the local `section` gains one line after it reads the file, `if (file.join('/') === 'CHANGELOG.md') return changelogSince010(text);`, so its heading assertion no longer runs for that row; the other rows are read as before.
+In tests/surface/verifier-binding.test.ts the test reads CHANGELOG.md as `section` does (`readFileSync(path.resolve('CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n')`) and gives the text to the helper. `?.` (tests/surface/readme.test.ts) and `?? ''` (card-close-cleanup, worktree-reclaim) after the converted expression stay as they were.
+
+### Revert table (20 rows, 20 red; scratch changes made by a script and restored after each row; `git diff --stat` empty afterwards, measured on 655397c0)
+
+| # | Scratch change | Test run | Result |
+|---|---|---|---|
+| 1 | line-start condition removed for `## Unreleased` | tests/infra/changelog.test.ts | red: row "U with a leading blank" |
+| 2 | line-end condition removed for `## Unreleased` | same | red: "U with a suffix" |
+| 3 | line-start condition removed for the 0.1.0 heading | same | red: "F with a leading blank" |
+| 4 | line-end condition removed for the 0.1.0 heading | same | red: "F with a suffix" |
+| 5 | refusal of a second `## Unreleased` line removed | same | red: "U twice as a line" |
+| 6 | refusal of a second 0.1.0 line removed | same | red: "F twice as a line" |
+| 7 | order condition removed | same | red: "F before U" |
+| 8 | end at the next heading | same | red: "a release heading between the two", "the repository's CHANGELOG.md" |
+| 9 | end at the 0.1.0 heading itself | same | red: "both headings in order" and 4 other rows |
+| 10 | package.json version 0.1.0 | tests/surface/release-version.test.ts | red: the version test |
+| 11 | package-lock.json `version` 0.1.0 | same | red: the version test |
+| 12 | package-lock.json `packages[""].version` 0.1.0 | same | red: the version test |
+| 13 | README.md `Version 0.1.0.` | same | red: the version test |
+| 14 | src/cli/main.ts `.version('0.1.0')` | same | red: the version test and "aidlc --version prints the version" |
+| 15 | src/cli/main.ts `aidlc: '0.1.0'` | same | red: the version test |
+| 16 | release heading dated 2026-11-15 | same | red: the section test |
+| 17 | release heading line and its blank line removed | same | red: the section test |
+| 18 | this card's entry swapped with the next entry | same | red: the section test |
+| 19 | detail 4: the lines from `## 0.2.0 - 2026-11-14` to the blank line before the 0.1.0 heading moved to the end of the file | the 69 files and the release test, each alone, 6 at a time | red: 70 of 70 files have a failing test, 127 failures; every test that failed in the RED above fails again except the pid failure of review-release acceptance 6; the release section test fails; the other new failures are the seven slices of tests/surface/templates.test.ts that end at `## 0.1.0` |
+| 20 | the helper returns the old reading, `text.slice(text.indexOf('## Unreleased'), text.indexOf('\n## ', text.indexOf('## Unreleased') + 1))` | the 69 files, each alone, 6 at a time | red: 69 of 69 files have a failing test, 120 failures; every RED failure fails again except the pid failure; the two extra failures are the load-sensitive tests of tests/infra/exec.test.ts under the parallel run |
+
+Per-file fail counts of row 19: core/ci-policy=1 core/effort=1 core/journal-event-types=1 core/parse-guard=1 core/roles=1 infra/build-atomic=1 infra/exec-sync-tree=1 infra/exec=1 infra/github-ship-merge-refused=1 infra/github-ship=4 infra/init=1 infra/ops=1 infra/ship=1 infra/stray-processes=1 scenarios/base-sync-review=2 scenarios/candidate-pins=1 scenarios/card-close-cleanup=2 scenarios/card-goal=1 scenarios/dispute-running-attempt=2 scenarios/extend-reason=1 scenarios/extend-running-card=1 scenarios/fault-points=2 scenarios/goal-card-count=2 scenarios/journal-owed=3 scenarios/lesson-dup=1 scenarios/merge-unconfirmed=1 scenarios/mutants-review=1 scenarios/op-intent-dup=2 scenarios/r3-fallback=1 scenarios/repair-check=1 scenarios/review-admit-foreign=2 scenarios/review-admit-strand=2 scenarios/review-release=1 scenarios/review-resolve=1 scenarios/t0-flow=8 scenarios/two-windows=1 scenarios/worktree-reclaim=1 surface/base-sync-jsdoc=1 surface/bench=1 surface/card=2 surface/claude-md-size=1 surface/command-lines=3 surface/config=6 surface/edge-scope=1 surface/fix-task-clear=1 surface/hook-git-prefetch=1 surface/hook-lazy=1 surface/hook-name=1 surface/hooks=4 surface/init-base-ci=1 surface/init-no-package=1 surface/lessons=1 surface/mutant-gen=1 surface/mutants=1 surface/pre-review=6 surface/prose=3 surface/ps-guard-read=1 surface/ps-guard-wire=1 surface/r2-pass-notes=2 surface/readme=2 surface/removed-surface=3 surface/review-bench-export=1 surface/review-bench=1 surface/reviewer-env=1 surface/templates=14 surface/tsconfig-gate=1 surface/unattended=2 surface/verifier-binding=1 surface/verifier=2 surface/release-version=1
+
+Per-file fail counts of row 20: core/ci-policy=1 core/effort=1 core/journal-event-types=1 core/parse-guard=1 core/roles=1 infra/build-atomic=1 infra/exec-sync-tree=1 infra/exec=2 infra/github-ship-merge-refused=1 infra/github-ship=4 infra/init=1 infra/ops=1 infra/ship=1 infra/stray-processes=1 scenarios/base-sync-review=2 scenarios/candidate-pins=1 scenarios/card-close-cleanup=2 scenarios/card-goal=1 scenarios/dispute-running-attempt=2 scenarios/extend-reason=1 scenarios/extend-running-card=1 scenarios/fault-points=2 scenarios/goal-card-count=2 scenarios/journal-owed=3 scenarios/lesson-dup=1 scenarios/merge-unconfirmed=1 scenarios/mutants-review=1 scenarios/op-intent-dup=2 scenarios/r3-fallback=1 scenarios/repair-check=1 scenarios/review-admit-foreign=2 scenarios/review-admit-strand=2 scenarios/review-release=1 scenarios/review-resolve=1 scenarios/t0-flow=8 scenarios/two-windows=1 scenarios/worktree-reclaim=1 surface/base-sync-jsdoc=1 surface/bench=1 surface/card=2 surface/claude-md-size=1 surface/command-lines=3 surface/config=6 surface/edge-scope=1 surface/fix-task-clear=1 surface/hook-git-prefetch=1 surface/hook-lazy=1 surface/hook-name=1 surface/hooks=4 surface/init-base-ci=1 surface/init-no-package=1 surface/lessons=1 surface/mutant-gen=1 surface/mutants=1 surface/pre-review=6 surface/prose=3 surface/ps-guard-read=1 surface/ps-guard-wire=1 surface/r2-pass-notes=2 surface/readme=2 surface/removed-surface=3 surface/review-bench-export=1 surface/review-bench=1 surface/reviewer-env=1 surface/templates=7 surface/tsconfig-gate=1 surface/unattended=2 surface/verifier-binding=1 surface/verifier=2
+
+### DoD (measured on 655397c0, worktree clean)
+`npm run check`: exit 0. Typecheck passes; `tests 3659, suites 252, pass 3631, fail 0, cancelled 0, skipped 28, todo 0, duration_ms 487298.7327`. Output digest (sha256 of the full log, first 16 hex): d07caf8a2ba698a3.
+
+### The CHANGELOG entry, sentence by sentence
+
+| Sentence | Made true by | Pinned by |
+|---|---|---|
+| release section 0.2.0, dated 2026-11-14 | CHANGELOG.md line `## 0.2.0 - 2026-11-14` under `## Unreleased` (commit 2) | release-version test "CHANGELOG.md holds the release section between Unreleased and 0.1.0" (heading list) |
+| Every entry written since release 0.1.0 stands under it, and a new entry goes under the Unreleased heading above it, as before. | commit 2 inserts only the four lines of R3, so all 226 entries stand below this card's entry; `## Unreleased` stays first | same test: 227 entries, first is this entry, second T0-BENCH-DRAFTS-IGNORE-2, last T0-LESSONS-TEST-RUN-ENV; heading order Unreleased, 0.2.0, 0.1.0 |
+| The version is 0.2.0 in package.json, package-lock.json, the output of aidlc --version, the aidlc member of the host a manifest is sealed with, and README.md; no tag was created and nothing was published. | package.json:3, package-lock.json:3 and :9, src/cli/main.ts:233 (`.version('0.2.0')`) and :1450 (`aidlc: '0.2.0'` in `host`), README.md:7; no `git tag`, `npm publish` or `npm version` was run | release-version tests "the version of package.json stands in every place that carries it" and "aidlc --version prints the version"; revert rows 10 to 15 |
+| The 69 test files that cut the changelog at the heading after Unreleased now read it with changelogSince010 (tests/infra/changelog.ts), from the Unreleased heading down to the heading of release 0.1.0, so an entry stays pinned when a release heading is put above it. | tests/infra/changelog.ts; commit 3 converts the 114 places of the 69 files | tests/infra/changelog.test.ts; the RED above (69 files red with the heading alone) and the DoD (green after the conversion); revert rows 19 and 20 |
+| tests/surface/release-version.test.ts pins the section and requires the same version in the five places. | tests/surface/release-version.test.ts | revert rows 10 to 18 |
+
+### Changed lines
+`git diff --shortstat origin/main...HEAD` on 655397c0: 77 files changed, 338 insertions(+), 178 deletions(-), 516 changed lines against the budget of 950. This evidence section adds to the card file only.
+
+### Points decided in this attempt
+- tests/infra/changelog.test.ts: the test "changelogSince010 on each input class" runs each row as a subtest, so the repository row can fail while the other rows pass (hygiene, commit 1).
+- tests/surface/release-version.test.ts: the lock file, README and src/cli/main.ts are compared with the `version` of package.json after that is asserted equal to `VERSION`.
+- tests/surface/verifier.test.ts: row 8 is keyed on the file (`CHANGELOG.md`), not on the heading.
