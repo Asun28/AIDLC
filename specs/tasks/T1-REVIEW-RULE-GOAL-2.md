@@ -71,7 +71,7 @@ npm run typecheck && node --test tests/scenarios/review-rule-goal.test.ts tests/
 - Assertion: every test of the five files passes and the typecheck reports no error.
 
 ## Attempt evidence
-Attempt 1. Tests are in `tests/scenarios/review-rule-goal.test.ts`; "DoD" is the `dod_command`, exit 0, 116 tests passed and 0 failed. No row sets a stored field by hand. 18 source mutants, one per condition of the new code, each fail a test.
+Attempts 1 and 2. Tests are in `tests/scenarios/review-rule-goal.test.ts`; "DoD" is the `dod_command`, exit 0, 119 tests passed and 0 failed at attempt 2. One row sets a stored record by hand (F1 below). 27 source mutants (18 at attempt 1, 9 of the repair), each fail a test.
 
 | Item | Proof | Result |
 |---|---|---|
@@ -81,8 +81,18 @@ Attempt 1. Tests are in `tests/scenarios/review-rule-goal.test.ts`; "DoD" is the
 | 3 | test "acceptance 3": the CLI and the controller method on a DONE goal (reached by the loop, no reviewer), a cancelled goal and a goal `aidlc next` stopped for time; the three files keep their bytes | pass |
 | 4 | test "acceptance 1, 2, 4, 5 and 6": after the ship, `verifyAudit` (the function `aidlc audit verify` calls) on the goal's journal and operations, with an `OPERATION_ISSUED` after the `GOAL_STOPPED`; test "acceptance 4, journal rows": six rows through `Journal.append` | pass |
 | 5 | test "acceptance 1, 2, 4, 5 and 6": `ruling` in the JSON of CLI `review findings`; the text line through the exported `findingLine`, which the command prints with (the CLI prints JSON when stdout is not a terminal) | pass |
-| 6 | same test: `stop.nextAction` of the card's stop directive | pass |
+| 6 | same test: `stop.nextAction` of the card's stop directive; test "R3 decision 1, F3 and F4" for the other two paths that make such a stop | pass |
 | 7 | DoD (`claude-md-size.test.ts`, `templates.test.ts`); the line is one physical line, the same in both files | pass |
 | 8 | DoD; none of the five files is changed | pass |
 | 9 | `docs/OPERATIONS.md` (Rulings, Audit, STOP reasons, the paragraph "A goal that is terminal") and `CHANGELOG.md` (Unreleased) | for the reviewer |
 | 10 | test "acceptance 10": `GoalController.ruleFinding` with the fixture clock, each fault, the rerun, then `aidlc next` and the ship (append row) or CLI `card next` (record row); test "R8, the goal's last GOAL_STOPPED": two cards, two stops, two events | pass |
+| 10 | at attempt 2 also the rows of F1 and F2 below | pass |
+
+R3 decision 1 blocked candidate c6e8bd24 on four findings; attempt 2 repairs them. RED commit c477f3e4 holds the three new tests, which failed on the code of c6e8bd24: the F1 test on a goal record of generation 0 in `CARDS` where the resume had left generation 1 in `WAIT`, the F2 test on `completed: CARDS` for the overlapping call, the F3 and F4 test on `the nextAction names aidlc review rule`.
+
+| Finding | Repair | Proof |
+|---|---|---|
+| F1 readmission-overwrites-stop | the re-admission is one section of the goal lock (`updateJson` on the goal file), decided on the record read inside it; every goal write of `GoalController` takes that lock (`saveGoal`) | test "R3 decision 1, F1": a resume, a resume and a cancellation, a cancellation that read the goal before its stop (the one record set by hand, through `GoalStore.saveGoal`), a deadline extension |
+| F2 duplicate-readmission-event | the journal scan and the append are inside that section | test "R3 decision 1, F2": a second recovery, and a deadline extension, run after the first recovery's scan and before its append; each is refused with `LOCKED` and one event stands |
+| F3 missing-owner-ruling-guidance, history | `reviewNextAction` in the runner gives the guidance when the ledger holds an unlifted block decision with `stopReview`; the stop `selectCardState` builds from `reviewStop` takes it | test "R3 decision 1, F3 and F4", first part |
+| F4 missing-owner-ruling-guidance, ship path | the ship-path block stop takes the same helper, as do the other four sites that build a stop for review | same test: two ship-path blocks; two no-verdicts keep the old text |

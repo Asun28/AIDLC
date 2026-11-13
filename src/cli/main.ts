@@ -1029,8 +1029,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const ruling = parseRuling(o);
       const c = ctx(g());
       const goalRec = checkedGoal(c, cardId, o.goal, 'rule');
-      const { run: next, goal: goalNow, ruled } = c.controller.ruleFinding(runnerFor(c), goalRec.id, cardOf(c, cardId).card, findingId, ruling);
-      const readmitted = goalRec.state === 'STOP' && goalNow.state !== 'STOP';
+      const { run: next, goal: goalNow, ruled, readmitted } = c.controller.ruleFinding(runnerFor(c), goalRec.id, cardOf(c, cardId).card, findingId, ruling);
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
       // The lift (card T1-REVIEW-RULE-SHIP): the run left STOP in the ruling's own update. The deadline is read on the real clock and never moved.
       const lifted = next.state !== 'STOP';
