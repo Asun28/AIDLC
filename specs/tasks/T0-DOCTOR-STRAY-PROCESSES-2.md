@@ -512,3 +512,8 @@ Coordinator verification:
 - At b21e5a16, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/stray-processes.test.ts): tests 21, pass 19, fail 0, skipped 2.
 - Windows, docpins: 87 test files reading 7 changed documents: # tests 2097 # pass 2082 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At a3ae8c96, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/stray-processes.test.ts): tests 21, pass 19, fail 0, skipped 2.
+- Windows, docpins: 87 test files reading 7 changed documents: # tests 2097 # pass 2082 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
