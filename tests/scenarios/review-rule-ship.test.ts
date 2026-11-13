@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import fs, { readFileSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeFixture, writeCard, goalForCards } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, InjectedShipPath } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
+import { parseVerdictDocument } from '../../src/core/review-policy.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 
@@ -24,6 +25,19 @@ const OWNER = ['--by', BY.by, '--reason', BY.reason];
 const RERAISE = [['no RED -> add one'], ['still no RED (re:F1) -> add one']];
 /** The same stop, where decision 2 also raises F2: a test makes F2 advisory or resolved, so it bars no merge and needs no ruling (R1). */
 const RERAISE_AND_F2 = [RERAISE[0]!, [...RERAISE[1]!, 'no doc row -> add one']];
+
+/** Ship output of a CI failure the classifier reads as transient (one rerun), and of one it reads as a code defect (back to BUILD); from tests/scenarios/ci-rerun.test.ts. */
+const TRANSIENT = '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}';
+const CODE_DEFECT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/777 ... AssertionError: expected 2 to equal 3';
+/** A ship path that reads the canonical document `.review/T1-RS.json` of the checkout, as the scaffold and GitHub ship paths do. */
+class ReadingShipPath extends InjectedShipPath {
+  file = '';
+  override readVerdict() {
+    if (!existsSync(this.file)) return { file: this.file };
+    const raw = readFileSync(this.file, 'utf8');
+    return { verdict: parseVerdictDocument(JSON.parse(raw)), raw, file: this.file };
+  }
+}
 
 /** The faults of tests/scenarios/fault-points.test.ts, switched on by a test: a throw from fs.renameSync onto the card-run record, and from fs.appendFileSync onto a goal journal line of the named event type. */
 const fault: { record: boolean; append?: 'FINDING_RULED' | 'REVIEW_DECIDED' } = { record: false };
@@ -55,7 +69,7 @@ after(() => {
 });
 
 /** A card run a command reviewer stopped at R3: one block per entry of `blocks`, each on its own candidate (sha-1, sha-2, ...); `dispute` is disputed before the last decision. */
-async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], dispute: string[] = []) {
+async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], dispute: string[] = [], ship: DryRunShipPath = new DryRunShipPath(['merged'])) {
   const verdicts = blocks.map((texts) => {
     const reasons = texts.map((text, i) => `[spec] 6 tests @ ${FILE}:${i + 1}: ${text}`);
     return JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
@@ -66,7 +80,6 @@ async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], d
     'git diff': { stdout: `diff --git a/${FILE} b/${FILE}\n+export const x = 1;\n` },
     'fake-r3': () => { reviews.count += 1; return { stdout: verdicts.shift()! }; },
   });
-  const ship = new DryRunShipPath(['merged']);
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
   writeCard(fx, { id: 'T1-RS', title: 'review rule ship', allowPaths: [FILE] });
   const goal = goalForCards(fx, ['T1-RS']);
@@ -108,7 +121,11 @@ async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], d
   };
   /** `review r3` run by hand on the stored run. */
   const review = () => runner.formalReview(g(), card, persisted());
-  return { ship, bytes, stored, seed, events, rulingEvents, cli, rule, next, review, assertShipped };
+  /** `card attempt`: a success that records candidate `sha`, as the loop records sha-1 and sha-2. */
+  const attempt = (sha: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
+  /** `card ci-reconcile`: the rerun of CI run `runId` succeeded. */
+  const reconcile = (runId: string) => runner.ciReconcile(g(), card, persisted(), runId, () => ({ status: 'completed', conclusion: 'success', attempt: 2 }));
+  return { ship, persisted, reviews, bytes, stored, seed, events, rulingEvents, cli, rule, next, review, attempt, reconcile, assertShipped };
 }
 
 test('acceptance 1, 2, 4 and 5: on a run stopped at R3 decision 4 with two findings, the first ruling leaves the stop and the second lifts it, moves no counter, receipt or deadline, owes one REVIEW_DECIDED, and the unchanged candidate ships with its canonical pass [R1] [R2] [R3] [R4] [R5] [R6]', async () => {
@@ -206,16 +223,22 @@ test('acceptance 6: with the card deadline in the past the output of the lifting
 test('acceptance 7: after the lift a candidate other than the one the stopping decision reviewed gets no ship from the ruled pass [R4]', async () => {
   const fx = makeFixture(CONFIG);
   try {
-    const { ship, stored, seed, rule, next } = await stopped(fx, RERAISE_AND_F2, ['F1']);
+    const ship = new InjectedShipPath(['ci-red', 'merged'], CODE_DEFECT);
+    const { stored, seed, rule, next, attempt } = await stopped(fx, RERAISE_AND_F2, ['F1'], ship);
     // F2 of the stopping decision is resolved: the ruling of F1 alone lifts the stop.
     seed((run) => { run['findings'][1].resolvedAt = '2026-09-11T00:30:00.000Z'; });
     rule('F1', 'rejected');
     assert.equal(stored()['state'], 'SHIP');
-    // A commit on the branch after the lift: the run's candidate is sha-3, which no decision reviewed.
-    seed((run) => { run['candidate'] = { ...run['candidate'], sha: 'sha-3', digest: 'sha-3' }; });
+    // A commit made right after the lift is not a candidate: the episode succeeded with sha-2, so the attempt is refused and nothing is recorded.
+    assert.throws(() => attempt('sha-3'), /episode already succeeded/);
+    assert.equal(stored()['candidate'].sha, 'sha-2');
+    // The loop takes a new candidate only after the ruled one fails: its ship ends on a CI code defect, the card returns to BUILD, and the attempt records sha-3.
+    assert.equal(next().directive.kind, 'build');
+    attempt('sha-3');
+    assert.deepEqual([stored()['candidate'].sha, stored()['candidate'].digest, stored()['review'].invocations.at(-1).ruled], ['sha-3', 'sha-3', true]);
     const directive = next().directive;
-    // Both decisions are used, so the review sha-3 needs stops the card by the allowance rule.
-    assert.deepEqual([directive.kind, directive.kind === 'stop' ? directive.stop.reason : undefined, ship.requests.length], ['stop', 'review', 0], directive.narration);
+    // Both decisions are used, so the review sha-3 needs stops the card by the allowance rule: the one ship is that of sha-2, which failed.
+    assert.deepEqual([directive.kind, directive.kind === 'stop' ? directive.stop.reason : undefined, ship.requests.map((q) => q.candidateSha)], ['stop', 'review', ['sha-2']], directive.narration);
     // That stop has no stopping decision: the lifted one is not read as one, so no ruling applies to it (a non-goal of the card).
     assert.throws(() => rule('F1', 'rejected'), /no R3 decision of the run carries stopReview that no ruling has lifted/);
   } finally {
@@ -246,5 +269,27 @@ test('acceptance 5, fault rows: a failed card-run write at the lifting ruling ch
     } finally {
       fx.cleanup();
     }
+  }
+});
+
+test('R3 decision 1, F2: a ship path that reads the canonical document of the ruled pass records no invocation, and after a transient CI failure and its reconciliation the retry ships the ruled candidate [R4] [R5]', async () => {
+  const fx = makeFixture(CONFIG);
+  try {
+    const ship = new ReadingShipPath(['ci-red', 'merged'], TRANSIENT);
+    ship.file = path.join(fx.tmp, '.review', 'T1-RS.json');
+    const { persisted, reviews, stored, rule, next, reconcile } = await stopped(fx, RERAISE, ['F1'], ship);
+    rule('F1', 'rejected');
+    const ledger = stored()['review'];
+    // The first ship reads the ruling's document and fails in CI: one rerun, and the ledger is as the lift left it.
+    const failed = next();
+    assert.deepEqual([failed.directive.kind, failed.run.state, failed.run.ci.reruns.map((x) => x.outcome), ship.readVerdict().verdict?.verdict], ['ship', 'SHIP', ['requested'], 'pass']);
+    assert.deepEqual(stored()['review'], ledger, 'the ship read adds no invocation and moves no counter');
+    assert.equal(reconcile('12345').state, 'SHIP');
+    // The retry: no review directive, no REVIEW_FIX, no second pass (two decisions used, formalReview.secondPass on), and the same ledger.
+    const retried = next();
+    assert.deepEqual([retried.directive.kind, persisted().state, persisted().mergeVerified, ship.requests.map((q) => q.candidateSha), reviews.count], ['close', 'CLOSE', true, ['sha-2', 'sha-2'], 2], retried.directive.narration);
+    assert.deepEqual(stored()['review'], ledger, 'the retry adds no invocation and moves no counter');
+  } finally {
+    fx.cleanup();
   }
 });
