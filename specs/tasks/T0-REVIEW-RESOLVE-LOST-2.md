@@ -270,3 +270,13 @@ The row `verdictRef` as `path.resolve` of the value is red only on POSIX (the di
 
 ### Changed lines
 `git diff --shortstat 89ee0ea0...HEAD` with this section: 6 files, 1098 insertions and 9 deletions, 1107 changed lines, against the budget 1300.
+
+## Linux rows
+
+Run by the coordinator on 9b7f1029 under Linux (WSL Ubuntu, Node 22), in a copy of this worktree; each mutation alone, the file restored after.
+
+| Row | Mutation | Result |
+|---|---|---|
+| The new test file | none | 91 tests, 89 pass, 0 fail, 2 skipped (the two Windows rows of acceptance 11) |
+| R3, `verdictRef` on POSIX | the POSIX branch replaced by `path.resolve(file)` | acceptance 11 red, 2 of 8, in the directory-link subtest (`verdictRef` `<cwd>/verdict.json` against `<cwd>/link/../verdict.json`) |
+| R8, a fully qualified value with `-C` | `fileArg` returning a fully qualified value raw with `-C` | acceptance 11 red, 3 of 8, in "with -C a fully qualified value is normalized lexically, not read as given" and in the directory-link subtest |
