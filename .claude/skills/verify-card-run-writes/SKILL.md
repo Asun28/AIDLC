@@ -57,13 +57,14 @@ runs it, so CI runs it on every push.
   that dies mid-command, a torn journal line.
 - Card-run commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
+  `CardRunner.ruleFinding` (fault rows of its write and its owed
+  `FINDING_RULED` append: `tests/scenarios/review-rule.test.ts`),
   `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), `CardRunner.ruleFinding`
-  (its own fault rows, the write and the owed `FINDING_RULED` append, are
-  in `tests/scenarios/review-rule.test.ts`), `aidlc review repro`
+  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
   (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
   `GoalStore.updateCardRun` write of the finding's `repro` after both runs
-  and no journal append), failed and
+  and no journal append, so a failed write throws, exits 1 and leaves the
+  run and the journal as they were), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
   BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
   and no worktree path, card T0-PREPARE-WORKTREE).
