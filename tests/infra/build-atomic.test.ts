@@ -8,6 +8,7 @@ import { EOL } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cleanup, tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
@@ -334,8 +335,7 @@ function missingDocText(docs: Docs): string[] {
   const paragraphs = docs.operations.split(/\n\s*\n/);
   const hookLoading = paragraphs.findIndex((p) => p.startsWith('What a hook process loads'));
   if (hookLoading < 0 || paragraphs[hookLoading + 1] !== OPERATIONS_SENTENCES.join(' ')) missing.push('OPERATIONS');
-  const start = docs.changelog.indexOf('## Unreleased');
-  const unreleased = start < 0 ? '' : docs.changelog.slice(start, docs.changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(docs.changelog);
   if (!unreleased.includes(`\n${CHANGELOG_SENTENCES.join(' ')}\n`)) missing.push('CHANGELOG');
   if (!docs.claude.split('\n').includes(CLAUDE_LINE)) missing.push('CLAUDE.md');
   if (!docs.readme.split('\n').includes(README_LINE)) missing.push('README.md');

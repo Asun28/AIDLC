@@ -8,6 +8,7 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 import { reviewerEnv } from '../../src/review/pre-review.ts';
 import { RECONCILE_GRACE_MS, addMs, type CardRun, type ReviewInvocation, type Verdict } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-fb.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -724,7 +725,7 @@ test('T0-R3-RECONCILE-TIMEOUT acceptance 4: docs/OPERATIONS.md and the CHANGELOG
   const sentence = 'The timeout of that reconciliation is the one the reservation records, the timeout of the reviewer the decision was dispatched to (card T0-R3-RECONCILE-TIMEOUT, issue #96): renaming or removing `formalReview.fallback` or `formalReview.baseSync`, or changing a `timeoutMs`, while a decision runs never shortens or lengthens it, and a reservation written before the field is reconciled against the live timeout of the reviewer it names.';
   assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- R3 reconcile timeout, card T0-R3-RECONCILE-TIMEOUT (issue #96): a formal reservation records the timeout of the reviewer it is dispatched to, and a pending decision with no result is reconciled against that recorded timeout, so a configuration change while it runs (the fallback or the base-sync reviewer renamed or removed, a timeout changed) no longer charges it early; a reservation written before the field is reconciled as before.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

@@ -9,6 +9,7 @@ import YAML from 'yaml';
 import { compare, GATED, median, ratchet, type Baseline, type Measured, type Metric } from '../../bench/ratchet.ts';
 import { benchEnv, JOURNEYS, runJourney, timeJourney } from '../../bench/journeys.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const counterUrl = pathToFileURL(path.join(root, 'bench', 'counter.ts')).href;
@@ -262,8 +263,7 @@ function docsHold(ops: string, architecture: string, claude: string, changelog: 
   if (!architecture.split('\n').includes(ARCHITECTURE_SENTENCE)) return false;
   const commands = claude.split('```bash\n')[1]?.split('```')[0] ?? '';
   if (!commands.split('\n').includes(CLAUDE_LINE)) return false;
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   return unreleased.split('\n').includes(CHANGELOG_ENTRY);
 }
 

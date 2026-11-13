@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG, runHook, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook } from '../../src/hooks/entry.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -145,7 +146,7 @@ test('T1-PS-GUARD-READ acceptance 5: OPERATIONS and the CHANGELOG hold the exact
   assert.ok(hooks.includes(`\n\n${sentence}\n\n`), `docs/OPERATIONS.md (Hooks) states as its own paragraph: ${sentence}`);
   assert.ok(hooks.indexOf(sentence) > hooks.indexOf('| `route-new-work` |'), 'the sentence comes after the guards table');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- T1-PS-GUARD-READ (bugfix, issue 117): on a PowerShell event `production-gate` joins backtick continuations and tests script blocks and subexpressions as segments, and `protect-paths` counts PowerShell\'s write commands, aliases, `-OutFile` and `[IO.File]` writes; a Bash event decides as before.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

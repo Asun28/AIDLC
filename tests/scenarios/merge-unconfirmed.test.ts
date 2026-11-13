@@ -6,6 +6,7 @@ import { makeFixture, writeCard, goalForCards, type Fixture } from './_harness.t
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T0-EXIT-ZERO-NOT-MERGED (issue 76 item 3): an exit-0 ship without its adapter's merge contract is merge-unconfirmed,
 // which the card machine reconciles: gh's PR view when gh answers, else the merge token.
@@ -420,7 +421,6 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 5: docs/OPERATIONS.md, docs/ARCHITECTUR
   for (const sentence of OPERATIONS_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   assert.ok(read('docs', 'ARCHITECTURE.md').includes(ARCHITECTURE_PHRASE), `docs/ARCHITECTURE.md states: ${ARCHITECTURE_PHRASE}`);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
 });

@@ -18,6 +18,7 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import { Journal } from '../../src/state/journal.ts';
 import type { StatePaths } from '../../src/state/paths.ts';
 import { CardRun, type Card, type Goal, type JournalEvent, type ReviewInvocation } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CARD = 'T1-FP';
@@ -868,8 +869,7 @@ describe('fault-point check: each card-run write and journal append of five comm
 
   it('the CHANGELOG Unreleased section carries the T1-VERIFY-FAULT-POINTS entry [R9]', () => {
     const changelog = lf('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), CHANGELOG_ENTRY);
   });
 
@@ -881,8 +881,7 @@ describe('fault-point check: each card-run write and journal append of five comm
 
   it('the CHANGELOG Unreleased section carries the T1-VERIFY-LIVENESS entry [R10]', () => {
     const changelog = lf('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     assert.ok(unreleased.split('\n').includes(LIVENESS_CHANGELOG_ENTRY), LIVENESS_CHANGELOG_ENTRY);
   });
 });

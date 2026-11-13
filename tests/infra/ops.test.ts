@@ -5,6 +5,7 @@ import path from 'node:path';
 import { OPS_CONFIG_FILE, DeliveryOpsConfig, OperationBinding, REQUIRED_ROLES, executeOperation, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles } from '../../src/delivery/ops.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { cleanup, tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () => {
   const dir = tmpDir();
@@ -250,7 +251,7 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     const changelog = read('CHANGELOG.md');
     const start = changelog.indexOf('## Unreleased');
     assert.ok(start >= 0, 'CHANGELOG.md has an Unreleased section');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     for (const clause of ['and one that holds a NUL character (U+0000)', 'so that one form is refused everywhere', 'the role is bound, the step has no ledger record yet and the publication check passes', 'an unauthorized publication stops `release-auth`, as before']) assert.ok(unreleased.includes(clause), `CHANGELOG.md holds: ${clause}`);
   });
 

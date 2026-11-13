@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG } from '../../src/hooks/index.ts';
 import * as init from '../../src/scaffold/init.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const HOOK_ENTRY = path.join(root, 'bin', 'aidlc-hook.js');
@@ -323,7 +324,6 @@ test('T1-INIT-HOOK-PATH acceptance 7: OPERATIONS and the CHANGELOG hold the exac
 
   const entry = '- T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that checks the file of the wired dispatcher, starts no process, and reports `ok`, `FAILED` or `not wired`.';
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.includes(entry), `CHANGELOG Unreleased states: ${entry}`);
 });

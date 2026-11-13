@@ -10,6 +10,7 @@ import { OperationLedger } from '../../src/coordination/reconcile.ts';
 import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import { GhProbe } from '../../src/probes/gh.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const now = '2026-09-11T00:00:00.000Z';
 
@@ -207,7 +208,7 @@ test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unrele
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     '`WORK_AFTER_TERMINAL` counts a dispatch, an issued operation or an attempt only when the latest disposition journaled before it is terminal (`GOAL_DONE` or `GOAL_STOPPED`); a user-authorised re-admission ends that state: the `GOAL_TAKEOVER` of `aidlc goal resume`, which names the generation it links from and moves to a later one, or the `GOAL_STATE` from `STOP` to `CARDS` that `aidlc goal extend` writes in the stopped generation when it re-admits a time stop, so the continuation of a resumed or extended goal is not work after a terminal disposition (card T0-AUDIT-READMIT).',
     'A lease takeover (`aidlc goal takeover`) re-admits nothing, and work journaled by a generation below the highest one a resume moved to still blocks.',
@@ -460,6 +461,7 @@ test('T1-AUDIT-FACTS acceptance 8: docs/OPERATIONS.md (Audit), docs/ARCHITECTURE
   const root = path.resolve(import.meta.dirname, '..', '..');
   const section = (file: string[], heading: string) => {
     const text = readFileSync(path.join(root, ...file), 'utf8').replace(/\r\n/g, '\n');
+    if (file.join('/') === 'CHANGELOG.md') return changelogSince010(text);
     const start = text.indexOf(heading);
     assert.ok(start >= 0, `${file.join('/')} has ${heading}`);
     const end = text.indexOf('\n## ', start + 1);

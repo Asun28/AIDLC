@@ -8,6 +8,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 describe('CI classification (Q7)', () => {
   test('a transient log pattern alone is unknown: log text never grants a rerun, and its match stays as evidence (T0-CI-RERUN-STRUCTURED)', () => {
@@ -232,9 +233,8 @@ describe('T0-CI-RERUN-STRUCTURED acceptance 4: the docs state the rule and the C
     const operations = read('docs', 'OPERATIONS.md');
     for (const sentence of [...SENTENCES, ...SUCCESSOR_SENTENCES]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
-    assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).split('\n').includes(SUCCESSOR_ENTRY), 'CHANGELOG.md Unreleased carries the successor entry');
+    assert.ok(changelogSince010(changelog).split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
+    assert.ok(changelogSince010(changelog).split('\n').includes(SUCCESSOR_ENTRY), 'CHANGELOG.md Unreleased carries the successor entry');
   });
 
   test('aidlc ci classify --log on a log-only transient prints unknown and the note', () => {

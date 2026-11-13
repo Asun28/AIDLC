@@ -7,6 +7,7 @@ import { DEFAULT_HOOK_CONFIG, isBlock, runHook, type HookEvent, type HookResult 
 import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
 import { initProject } from '../../src/scaffold/init.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const NEW_MATCHER = 'Bash|PowerShell|Edit|Write|MultiEdit';
@@ -146,8 +147,7 @@ test('T1-PS-GUARD-WIRE acceptance 7: OPERATIONS and the CHANGELOG hold the exact
     assert.ok(operations.includes(text), `docs/OPERATIONS.md states: ${text}`);
   }
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- T1-PS-GUARD-WIRE (bugfix, issue 117): a PowerShell tool call now runs the Bash guard set (`production-gate`, `protect-paths`, `secrets-guard`), through the `PreToolUse` matcher `Bash|PowerShell|Edit|Write|MultiEdit` in both settings files, and `aidlc init` takes the dispatcher off an old-matcher entry, so it runs once per tool call and a foreign hook keeps its matcher.';
   assert.ok(unreleased.includes(entry), `CHANGELOG Unreleased states: ${entry}`);
 });

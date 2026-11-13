@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, T0, type Fixture } from './_harness.ts';
 import { HOUR_MS, addMs } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T1-SWEEP2-EXTEND-REASON: GoalController.extendDeadline builds the extension with the core extendDeadline rule, so a
 // blank reason is refused before the goal, a card run or the journal is written.
@@ -74,8 +75,7 @@ test('T1-SWEEP2-EXTEND-REASON acceptance 4: OPERATIONS states that a blank reaso
     'the Deadline extensions section states the refusal',
   );
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(
     unreleased.includes('- T1-SWEEP2-EXTEND-REASON (bugfix): `aidlc goal extend` refuses a blank `--reason` (empty or only whitespace) with `extension requires a recorded reason` before writing anything. `GoalController.extendDeadline` now builds the extension with the core `extendDeadline` (`src/core/deadlines.ts`), whose reason check the controller\'s own copy of the rule lacked.'),
     'the CHANGELOG Unreleased section names the card and the refusal',

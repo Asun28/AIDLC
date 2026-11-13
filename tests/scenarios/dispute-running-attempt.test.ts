@@ -14,6 +14,7 @@ import { cleanup } from '../infra/helpers.ts';
 import { finishAttempt } from '../../src/core/effort.ts';
 import type { CardDirective } from '../../src/loop/card-runner.ts';
 import type { EffortEpisode } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const T = '2026-09-11T00:00:00.000Z';
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -378,7 +379,7 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 5: docs/OPERATIONS.md and the CHANGE
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   for (const sentence of DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   assert.ok(unreleased.includes(CHANGELOG_SENTENCE), `CHANGELOG.md Unreleased states: ${CHANGELOG_SENTENCE}`);
 });
@@ -665,6 +666,6 @@ test('T0-ATTEMPT-NUMBER: docs/OPERATIONS.md, docs/ARCHITECTURE.md and the CHANGE
   const core = read('docs', 'ARCHITECTURE.md').split('\n').find((line) => line.startsWith('`src/core/` holds the decision engines.'));
   assert.ok(core?.includes(LADDER_ARCHITECTURE), 'the src/core/ paragraph states the ladder number directly after the effort.ts sentence');
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.split('\n').includes(LADDER_CHANGELOG), 'the CHANGELOG Unreleased section holds the entry');
 });

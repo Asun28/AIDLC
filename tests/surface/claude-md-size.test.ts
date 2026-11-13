@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const read = (file: string) => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
@@ -47,8 +48,7 @@ test('T0-CLAUDE-MD-TRIM-2 acceptance 2: the Conventions section states the limit
 
 test('T0-CLAUDE-MD-TRIM-2 acceptance 6: the CHANGELOG Unreleased section carries the entry [R5]', () => {
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), 'the Unreleased section holds the entry');
 });
 

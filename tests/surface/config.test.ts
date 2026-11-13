@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { ZodError } from 'zod';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
 import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, PreReviewConfig, PreReviewFallback, preReviewFallbackSettings, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const explicit = ProjectConfig.parse({ worktreeRoot: 'D:\\wt\\AIDLC' });
 const empty = ProjectConfig.parse({});
@@ -140,7 +141,7 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
     assert.ok(flat(read('CLAUDE.md')).includes('this repo uses Codex gpt-6-astra for R3, with Claude Opus 5.5 as the fallback)'), 'CLAUDE.md names the R3 reviewer');
     assert.ok(flat(read('src', 'review', 'pre-review.ts')).includes('as its last line: Codex `gpt-6-astra` in a read-only sandbox for R3, with a read-only headless `claude -p` (Opus 5.5) as its fallback, in this repository.'), 'the pre-review header names the R3 reviewer');
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const changelogSentences = [
       '- Formal review on Codex gpt-6-astra, card T0-R3-CODEX-ASTRA: this repository runs R3 on Codex `gpt-6-astra` in a read-only sandbox at `medium` for every candidate, with the headless Claude Opus 5.5 reviewer, its read-only flags and its effort policy moved to `formalReview.fallback`, which runs while Codex is held on quota.',
       '`gpt-6-sol` is refused for a Codex login with a ChatGPT account.',
@@ -217,7 +218,7 @@ describe('review effort documentation (T1-OPUS55-R3 acceptance 6)', () => {
 
   test('CHANGELOG.md carries the entry under Unreleased [R1] [R4]', () => {
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.match(unreleased, /T1-OPUS55-R3/);
   });
 });
@@ -336,7 +337,7 @@ describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptanc
     ];
     for (const sentence of opsSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const sentence = 'A blank value of a configuration key that gates behaviour is refused, and `aidlc doctor` reports a configuration that does not parse as `config: ERROR` with exit 1 instead of a stack trace.';
     assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
@@ -423,7 +424,7 @@ describe('ConfigError and the doctor catch (T0-PARSE-GUARD-FOLLOWUPS)', () => {
     const opsSentence = 'Only a `ConfigError`, which `loadProjectConfig` throws for an `aidlc.config.json` that is not JSON or fails the schema, is reported as `config: ERROR` (card T0-PARSE-GUARD-FOLLOWUPS); a failure to read the file, such as a directory at that path, ends `aidlc doctor` with its own message, as it ends every other command.';
     assert.ok(read('docs', 'OPERATIONS.md').includes(opsSentence), `docs/OPERATIONS.md states: ${opsSentence}`);
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const entry = '- Parse guard follow-ups, card T0-PARSE-GUARD-FOLLOWUPS (issue #79): a `retry after <n>` in a quota message reads its unit as a whole word, so `retry after 30 milliseconds` waits 30 ms instead of 30 minutes; `loadProjectConfig` throws a `ConfigError` for an `aidlc.config.json` that is not JSON or fails the schema, and `aidlc doctor` reports only that error as `config: ERROR`, while a failure to read the file ends it with its own message; the blank-refusal test covers `formalReview.baseSync.reviewer`, and the `-z` scan finds a single-quoted, double-quoted or template `-z` in code.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
@@ -502,7 +503,7 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     for (const sentence of opsSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     assert.ok(!operations.includes('Until the DeepSeek account has balance again (issue #92)'), 'the temporary sentence of a8293d7 is removed');
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const entry = "- Pre-review fallback, card T0-R2-FALLBACK-3, the third attempt after T0-R2-FALLBACK and T0-R2-FALLBACK-2 (part 2 of issue #92): `preReview.fallback` names a second R2 reviewer that runs while the primary holds a quota or billing hold, resolved per dispatch as the R3 fallback is, dispatched with its own settings and defaults and never the primary's, and sharing the primary's rounds, angles and no-verdict retry; a round in flight keeps the timeout it was dispatched with, and every round, event and evidence note names the reviewer that ran and its effort level; a review effort policy takes an `xhigh` rule; this repository runs DeepSeek as the R2 primary again with Claude Sonnet 5 as the fallback at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`, replacing the temporary swap of a8293d7.";
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
     assert.ok(!unreleased.includes('- R2 reviewer swap, temporary (issue #92)'), 'the temporary CHANGELOG line of a8293d7 is removed');
@@ -514,7 +515,7 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     assert.ok(operations.includes('with `claude-sonnet-5-5` for the investigator'), 'the family line names the Sonnet 5.5 investigator default');
     assert.ok(!/claude-sonnet-5(?!-5)/.test(operations), 'no claude-sonnet-5 without the .5 is left in OPERATIONS');
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.match(unreleased, /^- .*T1-EFF-REVIEW-CONFIG.*$/m, 'CHANGELOG.md Unreleased has a T1-EFF-REVIEW-CONFIG entry');
   });
 });

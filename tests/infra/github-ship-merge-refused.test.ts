@@ -7,6 +7,7 @@ import { GhProbe, GhProbeError } from '../../src/probes/gh.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 // Card T0-SHIP-MERGE-REFUSED (issue #85): a `gh pr merge` refusal after the base moved goes through the base sync again.
 const HEAD = 'a'.repeat(40);
@@ -247,9 +248,7 @@ test('T0-SHIP-MERGE-REFUSED: docs/OPERATIONS.md and the CHANGELOG Unreleased sec
     'A refusal GitHub reports `MERGEABLE` (a required check, review or rule, or a branch behind a base that requires it up to date) or an unreadable state starts no sync and keeps `[SHIP-MERGE-FAIL]`, now naming the state, as does a sync that finds the base merging cleanly.',
   ]) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const end = changelog.indexOf('\n## ', start + 1);
-  const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+  const unreleased = changelogSince010(changelog);
   const entry = '- Merge refusal, card T0-SHIP-MERGE-REFUSED: when GitHub refuses the merge of a PR whose base moved after the ship\'s base sync, the GitHub ship path reads the merge state and runs the base sync again, so the conflict becomes a CHANGELOG merge or a merge-conflict repair on a new candidate instead of a `tool` stop; a refusal for another reason keeps `[SHIP-MERGE-FAIL]` and names the state (issue #85).';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

@@ -11,6 +11,7 @@ import { MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS } from '../../src/re
 import { mutantsMarkerPath, mutantsReportPath } from '../../src/review/mutants.ts';
 import { T0, makeFixture, writeCard, type Fixture } from './_harness.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const CARD = 'T1-MUT';
 const SHA = 'sha-t1-mut';
@@ -320,7 +321,7 @@ describe('the docs of card T1-VERIFY-MUTANTS-PROMPT', () => {
     const arch = read('docs/ARCHITECTURE.md');
     assert.ok(arch.includes("the surviving mutants of the current candidate's report"), 'ARCHITECTURE names the prompt input');
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.ok(unreleased.split('\n').some((line) => line.startsWith('- T1-VERIFY-MUTANTS-PROMPT:')), 'the CHANGELOG entry');
   });
 });

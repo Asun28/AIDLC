@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { JournalEvent, JournalEventType } from '../../src/core/types.ts';
 import { Journal } from '../../src/state/journal.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T0-UNWRITTEN-EVENT-TYPES (issue 101, plan finding F4): the journal declares only event types some code writes.
 
@@ -55,7 +56,6 @@ const CHANGELOG_ENTRY =
 
 test('T0-UNWRITTEN-EVENT-TYPES acceptance 3: CHANGELOG.md Unreleased carries the entry [R3]', () => {
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
 });

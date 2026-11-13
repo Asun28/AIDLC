@@ -12,6 +12,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner, type CardDirective } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import type { Card, CardRun, Goal, ReviewRequest } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const Y = 'T1-Y';
 const Z = 'T1-Z';
@@ -202,10 +203,7 @@ const CHANGELOG_SENTENCES = [
 
 const readDoc = (file: string): string => readFileSync(fileURLToPath(new URL(`../../${file}`, import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
 const unreleasedOf = (changelog: string): string => {
-  const start = changelog.indexOf('\n## Unreleased\n');
-  if (start < 0) return '';
-  const end = changelog.indexOf('\n## ', start + 1);
-  return changelog.slice(start, end < 0 ? undefined : end);
+  return changelogSince010(changelog);
 };
 
 /** Each sentence of the Doc text section in its place, as `[sentence, present]`. */

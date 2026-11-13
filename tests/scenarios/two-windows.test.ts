@@ -16,6 +16,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { StoreError } from '../../src/state/store.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -1665,7 +1666,7 @@ test('T0-TAKEOVER-LOCKED-HINT: docs/OPERATIONS.md and the CHANGELOG Unreleased s
   const sessions = ops.slice(ops.indexOf('\n## Sessions\n'), ops.indexOf('\n## ', ops.indexOf('\n## Sessions\n') + 1));
   assert.ok(sessions.includes('A takeover refused with `LOCKED` after its lease write names the generation it took and the next command.'), 'the Sessions section states it');
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.includes("- Takeover refusal after the lease write, card T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a card takeover refused with `LOCKED` after its lease write names the card, the lease generation it took and the refusal, and the command that goes on from there: `aidlc card takeover <card> --goal <goal>` again while the run does not carry that generation, `aidlc card next <card> --goal <goal>` once it does; the error keeps the `LOCKED` code."), 'the CHANGELOG states it');
 });
 

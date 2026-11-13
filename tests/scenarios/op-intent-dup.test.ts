@@ -17,6 +17,7 @@ import { reviewRequestKey } from '../../src/core/review-policy.ts';
 import type { OperationIntent } from '../../src/coordination/reconcile.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 import type { Card, CardRun, Goal, OperationRecord } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const CARD = 'T0-OID';
 const DIGEST = 'sha-oid';
@@ -326,10 +327,7 @@ const CHANGELOG_SENTENCES = [
 
 const readDoc = (file: string): string => readFileSync(fileURLToPath(new URL(`../../${file}`, import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
 const unreleasedOf = (changelog: string): string => {
-  const start = changelog.indexOf('\n## Unreleased\n');
-  if (start < 0) return '';
-  const end = changelog.indexOf('\n## ', start + 1);
-  return changelog.slice(start, end < 0 ? undefined : end);
+  return changelogSince010(changelog);
 };
 
 /** Each sentence of the Doc text section in its place, as `[sentence, present]`. */

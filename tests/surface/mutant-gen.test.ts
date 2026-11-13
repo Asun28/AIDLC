@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyMutant, changedSourceLines, mutantsFor, type Mutant } from '../../src/review/mutant-gen.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -1011,7 +1012,7 @@ describe('docs (card T1-VERIFY-MUTANT-GEN)', () => {
     const start = text.indexOf(`\n${heading}\n`);
     return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
   };
-  const unreleasedOf = (text: string) => text.slice(text.indexOf('## Unreleased'), text.indexOf('\n## ', text.indexOf('## Unreleased') + 1));
+  const unreleasedOf = (text: string) => changelogSince010(text);
 
   test('acceptance 5: OPERATIONS.md Mutant sweep follows Review statistics and is pinned whole, ARCHITECTURE.md follows the stats sentence, the CHANGELOG entry is pinned; removing any sentence fails [R6]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));

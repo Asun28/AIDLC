@@ -10,6 +10,7 @@ import { loadEvals } from '../../src/evals/runner.ts';
 import { renderCard } from '../../src/artifacts/card.ts';
 import { runSync, scriptedRunner, type ExecReceipt, type Runner } from '../../src/probes/exec.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -487,8 +488,7 @@ function docsHold(ops: string, architecture: string, changelog: string, evals: s
   if (!(stats >= 0 && at > stats && end > at)) return false;
   if (JSON.stringify(ops.slice(at + '\n### Reviewer bench\n'.length, end).trim().split('\n\n')) !== JSON.stringify(OPERATIONS_SECTION)) return false;
   if (!architecture.split('\n').includes(ARCHITECTURE_SENTENCE)) return false;
-  const start = changelog.indexOf('## Unreleased');
-  if (!changelog.slice(start, changelog.indexOf('\n## ', start + 1)).split('\n').includes(CHANGELOG_ENTRY)) return false;
+  if (!changelogSince010(changelog).split('\n').includes(CHANGELOG_ENTRY)) return false;
   if (!flat(evals).includes(EVALS_SENTENCE)) return false;
   return JSON.stringify(cases.trim().split('\n\n')) === JSON.stringify(CASES_README);
 }

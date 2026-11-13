@@ -12,6 +12,7 @@ import { ProjectConfig } from '../../src/config.ts';
 import { run, scriptedRunner, type ExecOptions, type ExecReceipt, type Runner } from '../../src/probes/exec.ts';
 import { STRAY_AGE_MS, STRAY_CPU_RATIO, listProcesses, strayEntries, strayProcessesReport, type ProcessRow, type StrayInput, type StrayValue } from '../../src/probes/processes.ts';
 import { cleanup, tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 const repo = path.resolve(import.meta.dirname, '..', '..');
 const NOW = '2026-09-11T10:00:00.000Z';
@@ -660,7 +661,7 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
     const holdsA1 = (text: string): boolean => (text.split('\n').find((l) => l.startsWith('`src/probes/` gathers evidence.')) ?? '').endsWith(' ' + A1);
     const holdsC1 = (text: string): boolean => {
       const start = text.indexOf('## Unreleased');
-      const unreleased = text.slice(start, text.indexOf('\n## ', start + 1));
+      const unreleased = changelogSince010(text);
       return start >= 0 && unreleased.includes(C1 + '\n\n- T0-CI-PERMISSIONS') && text.split(C1).length === 2;
     };
     const ops = read('docs/OPERATIONS.md');

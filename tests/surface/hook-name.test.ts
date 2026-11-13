@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runHook, type HookEvent, type HookName } from '../../src/hooks/index.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const KNOWN = 'known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, verify-before-done, route-new-work';
@@ -94,6 +95,6 @@ test('T1-SWEEP-HOOK-NAME acceptance 4: OPERATIONS states the unknown-name exit a
     'OPERATIONS states the unknown-name exit',
   );
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   assert.match(unreleased, /^- T1-SWEEP-HOOK-NAME: `aidlc hook <name>` with a name that is no guard now exits 2 /m);
 });

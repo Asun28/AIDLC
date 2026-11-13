@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { Card } from '../../src/core/types.ts';
 import { PERSPECTIVES, buildReviewPrompt, finalizeReview } from '../../src/review/pre-review.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 /** The advisory-tag line every review prompt already carries; the two lines of this card follow it. */
@@ -95,7 +96,7 @@ describe('a pass with notes and the verdict line balance (T0-R2-PASS-NOTES, issu
     const operations = read('docs', 'OPERATIONS.md');
     for (const sentence of opsSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const entry = '- R2 pass notes, card T0-R2-PASS-NOTES (issue #82): every review prompt says that a pass that carries notes lists each note once, in the top-level `reasons`, with the `reasons` of both axes empty, and asks the reviewer to check that the verdict line is one complete JSON document before sending it; the `deepseek` command has no JSON output mode, and the reader still leaves no verdict for a document one brace short and never repairs it.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
@@ -136,7 +137,7 @@ describe('the reasons line agrees with the pass-notes line (T0-PASS-REASONS-WORD
 
   test('the CHANGELOG Unreleased section states the reworded line [R2]', () => {
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const entry = '- Pass reasons wording, card T0-PASS-REASONS-WORDING (issue #91): every review prompt says `reasons` is empty on a pass that carries no notes, where it said `reasons` is empty on pass, so it agrees with the line that a pass with notes lists each note once in the top-level `reasons`; `REVIEW.md` and the configs are unchanged, so the policy hash is unchanged.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });

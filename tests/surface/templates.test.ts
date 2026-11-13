@@ -10,6 +10,7 @@ import { parseBandsYaml } from '../../src/maintain/bands.ts';
 import { parseCardText } from '../../src/artifacts/card.ts';
 import { parseIntent } from '../../src/artifacts/intent.ts';
 import { templatesDir } from '../../src/scaffold/init.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -110,7 +111,7 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(operations.includes('it may be false only while `gateRequired` is false'), 'the waived verdict rule is documented');
     assert.ok(operations.includes('| `risk` | secrets or license gates tripped, a red secret or security scan in CI, or a high-risk operation refused |'), 'the STOP table names the red scan');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.ok(unreleased.includes('CI gates in the loop, card T1-LOOP-GATES'), 'the Unreleased section carries the entry');
     assert.ok(unreleased.includes('a block verdict for the candidate fails the ship even when the requirement is waived'), 'the entry records the never-waived block verdict');
   });
@@ -350,7 +351,7 @@ describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule
       assert.ok(ops.includes(phrase), phrase);
     }
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.match(unreleased, /^- T1-EFF-AGENTS-DOD: /m);
   });
 });
@@ -495,8 +496,7 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
     const from = claude.indexOf('\n## Conventions\n');
     const to = claude.indexOf('\n## AI-native SDLC (aidlc)\n');
     if (!(from >= 0 && to > from && claude.slice(from, to).replace(/\s+/g, ' ').includes(CLAUDE_SENTENCE))) return false;
-    const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     return unreleased.split('\n').includes(CHANGELOG_ENTRY);
   }
 
@@ -544,7 +544,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
     'The R3 stop rule, the decision allowance and the R2 rounds are unchanged.',
   ];
   const ARCHITECTURE = 'findings (ids, dispositions, re-raises, revisions), their defect class (`ReviewFinding.class`) and their first-round misses (`outsideDelta`)';
-  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
   test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@5 [R12]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
@@ -607,7 +607,7 @@ describe('dispute kinds and responses in the docs (T1-REVIEW-RESPONSES)', () => 
     const start = text.indexOf(`\n${heading}\n`);
     return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
   };
-  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
   test('acceptance 7: OPERATIONS.md carries the kinds and the responses paragraphs whole in their sections, ARCHITECTURE.md the dispute kind in the card-run row, the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R8]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
@@ -661,7 +661,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     const start = text.indexOf(`\n${heading}\n`);
     return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
   };
-  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
   test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@6 [R12] [R13]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
@@ -719,7 +719,7 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     const start = text.indexOf(`\n${heading}\n`);
     return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
   };
-  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleasedOf = (changelog: string) => changelogSince010(changelog);
   const barHolds = (text: string) => {
     const important = text.indexOf('\n## What Important means here\n');
     return important >= 0 && text.indexOf(`\n\n${BAR.join('\n')}\n\n## Cap the nits\n`) > important;

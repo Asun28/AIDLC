@@ -16,6 +16,7 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { CardRun, type Card, type Goal, type JournalEvent } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CARD = 'T1-JO';
@@ -512,7 +513,7 @@ const inCardRow = (doc: string, text: string): boolean => {
   const row = doc.split('\n').find((l) => l.startsWith('| `cards/<goalId>/<cardId>.json` |')) ?? '';
   return row.includes(`the run revision (compare-and-set for snapshot writes), ${text}`);
 };
-const inUnreleased = (doc: string, text: string): boolean => section(doc, '## Unreleased').includes(text);
+const inUnreleased = (doc: string, text: string): boolean => changelogSince010(doc).includes(text);
 
 const DOC_PINS: DocPin[] = [
   ...OPERATIONS_SENTENCES.map((text, n) => ({ name: `OPERATIONS sentence ${n + 1}`, file: 'docs/OPERATIONS.md', text, holds: inAudit })),

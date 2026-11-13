@@ -17,6 +17,7 @@ import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { exportBenchCases, formatBenchExport, loadBenchCases, type BenchExportOptions } from '../../src/review/bench.ts';
 import { createExclusive } from '../../src/state/store.ts';
 import { makeCardRun, makeGoal, tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
@@ -916,6 +917,5 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 10: the docs describe the export and kee
   const cases = read('evals/review/README.md');
   for (const needle of ['aidlc review bench export', 'git update-ref refs/aidlc/bench/']) assert.ok(cases.includes(needle), needle);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).includes('- T1-REVIEW-BENCH-EXPORT-3:'));
+  assert.ok(changelogSince010(changelog).includes('- T1-REVIEW-BENCH-EXPORT-3:'));
 });

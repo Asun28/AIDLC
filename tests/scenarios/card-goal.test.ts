@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -114,7 +115,7 @@ test('T0-CARD-GOAL-RESOLVE acceptance 4: docs/OPERATIONS.md, docs/ARCHITECTURE.m
   const archSentence = 'A command that names a card resolves its goal with `resolveCardGoal` (`src/core/card-goal.ts`) from the goals that project the card, never from which goal is newest (card T0-CARD-GOAL-RESOLVE).';
   assert.ok(architecture.includes(archSentence), `docs/ARCHITECTURE.md states: ${archSentence}`);
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const changelogSentences = [
     '- Card goal resolution, card T0-CARD-GOAL-RESOLVE: a command that names a card now acts on the goal that projects the card and refuses, naming the candidate goals, when none or several do; it used to take the newest active goal, so a card command of one session could create and journal a run of its card in another session\'s goal (issue #72).',
     'An explicit `--goal` that neither projects the card nor holds its run is refused.',

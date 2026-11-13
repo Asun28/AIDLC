@@ -5,6 +5,7 @@ import path from 'node:path';
 import ts from 'typescript';
 import { detectQuotaHold, nulList, quotaOutput } from '../../src/core/parse-guard.ts';
 import { classifyPreReview } from '../../src/review/pre-review.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const SRC = path.join(import.meta.dirname, '..', '..', 'src');
 /** Every TypeScript source under src/, as a path relative to src/ with forward slashes. */
@@ -218,7 +219,7 @@ describe('a billing state holds (T0-R2-BILLING-HOLD, issue #92)', () => {
     const sentence = 'The word rule also holds on a billing state, `insufficient balance` and `payment required` in the spellings the separators split (card T0-R2-BILLING-HOLD): a reviewer whose account has no balance, such as the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`, is a quota hold with `via text: Insufficient Balance` in its reasons, so the R2 gate waits and spends neither a round nor the no-verdict retry, where the round used to be a `tool_error` no-verdict round (issue #92); a bare `402` and a status of 402 do not hold.';
     assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const entry = '- Billing hold, card T0-R2-BILLING-HOLD (issue #92): the quota word rule holds on `insufficient balance` and `payment required`, so a reviewer whose account has no balance (the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`) is a quota hold that names the billing word and spends neither an R2 round nor the no-verdict retry; it used to be a `tool_error` no-verdict round.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });

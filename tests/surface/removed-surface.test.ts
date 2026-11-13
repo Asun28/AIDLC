@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import * as lib from '../../src/index.ts';
 import { ProjectConfig } from '../../src/config.ts';
 import { OperationBinding } from '../../src/delivery/ops.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8');
@@ -44,8 +45,7 @@ test('T1-SWEEP-DEAD-CODE acceptance 6: the obsolete script and the two duplicate
 
 test('T1-SWEEP-DEAD-CODE acceptance 7: the CHANGELOG names the card, the removed exports, the dropped field and the refused value [R6]', () => {
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = unreleased.split('\n').find((l) => l.startsWith('- T1-SWEEP-DEAD-CODE: '));
   assert.ok(entry, 'a T1-SWEEP-DEAD-CODE entry');
   for (const name of ['`MAX_LIFECYCLE_REPAIR_CYCLES`', '`resetRepoIdentityCache`', '`cardPolicy`', "`targetSelection: 'config'`", '`scripts/code-unchanged.mjs`', '`docs/plans/PLAN-aidlc-loop-v5.md`', '`docs/plans/PLAN-aidlc-loop-v4.md`']) {
@@ -75,8 +75,7 @@ test('T1-SWEEP2-DUPLICATES acceptance 6: the traceability rows cite the producti
   ];
   for (const row of rows) assert.ok(trace.includes(row), `row: ${row.slice(0, 40)}`);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = unreleased.split('\n').find((l) => l.startsWith('- T1-SWEEP2-DUPLICATES: '));
   assert.equal(
     entry,
@@ -116,8 +115,7 @@ test('T1-SWEEP2-TEST-ONLY acceptance 4: the rows of the uncalled pure checks say
   assert.ok(!ship.includes('gateChecks'), 'ship.ts names no gateChecks');
   assert.ok(ship.includes('`classifyCiFailure` in core/ci-policy decodes the check names when it reads the gate lines.'), 'ship.ts names the decoder');
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = unreleased.split('\n').find((l) => l.startsWith('- T1-SWEEP2-TEST-ONLY: '));
   assert.equal(
     entry,

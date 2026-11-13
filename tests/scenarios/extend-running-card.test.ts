@@ -7,6 +7,7 @@ import { HOUR_MS, MINUTE_MS, addMs, type CardRun, type CardState, type JournalEv
 import { makeStop } from '../../src/core/stop.ts';
 import { GoalController } from '../../src/loop/controller.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T0-EXTEND-RUNNING-CARD (issue 105): a deadline extension also moves the deadline of every card run of the current
 // projection still in progress, and the run-card directive shows the stored card deadline.
@@ -256,7 +257,6 @@ test('T0-EXTEND-RUNNING-CARD acceptance 4: docs/OPERATIONS.md, docs/ARCHITECTURE
   for (const sentence of OPERATIONS_SENTENCES.slice(1)) assert.ok(section.includes(sentence), `the Deadline extensions section states: ${sentence}`);
   assert.ok(read('docs', 'ARCHITECTURE.md').includes(ARCHITECTURE_PHRASE), `docs/ARCHITECTURE.md states: ${ARCHITECTURE_PHRASE}`);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
 });

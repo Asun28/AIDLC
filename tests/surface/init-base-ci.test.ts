@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initProject, type InitOptions } from '../../src/scaffold/init.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CI = '.github/workflows/aidlc-ci.yml';
@@ -397,7 +398,6 @@ test('T1-INIT-BASE-CI acceptance 6: OPERATIONS and the CHANGELOG hold the exact 
 
   const entry = "- T1-INIT-BASE-CI (bugfix): a config that `aidlc init` creates names the target's default branch, and a repository with no `package.json` gets no `aidlc-ci.yml` and no `agent-evals.yml`, each reported as skipped. Every workflow calls `npx --no-install aidlc`, so a repository with no local package cannot fetch the unrelated npm package of that name.";
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.split(/\r?\n/).includes(entry), `CHANGELOG Unreleased states: ${entry}`);
 });

@@ -15,6 +15,7 @@ import { hostName, resolveRepoIdentity, resolveStatePaths } from '../../src/stat
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { ConfigError, loadProjectConfig } from '../../src/config.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 function envWithState(): { cwd: string; env: NodeJS.ProcessEnv; stateDir: string } {
   const cwd = tmpDir('aidlc-hooks-');
@@ -879,7 +880,7 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 6: docs/OPERATIONS.md (Hooks) and the C
   assert.ok(hooks.includes(sentence), `docs/OPERATIONS.md (Hooks) states: ${sentence}`);
   assert.ok(!hooks.includes('card T0-HOOK-CONFIG-CLOSED-2,') && !hooks.includes('card T0-HOOK-CONFIG-CLOSED,'), 'the replaced paragraphs are gone');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- Hook config fails closed, card T0-HOOK-CONFIG-CLOSED-3 (issue 76 item 1, replacing T0-HOOK-CONFIG-CLOSED and T0-HOOK-CONFIG-CLOSED-2): an `aidlc.config.json` that is not JSON, fails the schema or cannot be read left the hook guards on their defaults, so `hooks.frozenPaths` was empty and `protect-paths` blocked nothing, and a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression threw inside its guard, which the hook entry turned into a pass. Now a broken config denies every call it denied before (each guard first decides on the `hooks` values the file still yields) and, beyond that, every Bash command but an exact list of `aidlc doctor` commands and every edit of a file other than the config; each such denial names the file JSON-quoted and says what still passes (an Edit or Write of the config, the Read, Grep and Glob tools, the doctor commands). `route-new-work` names the error on every prompt; the Stop output is unchanged. A valid config is read as before, unknown `hooks` keys included. An absent file still gives the defaults; one the lookup cannot reach, or gone between the lookup and the read, is a read failure.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   assert.ok(!unreleased.includes('card T0-HOOK-CONFIG-CLOSED-2 ('), 'the replaced entry is gone');
@@ -944,7 +945,7 @@ test('T0-HOOK-CONFIG-NONSTRING acceptance 3: under a valid config, a command tha
 test('T0-HOOK-CONFIG-NONSTRING acceptance 4: the CHANGELOG Unreleased section states the rule', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- Command values that are not strings, card T0-HOOK-CONFIG-NONSTRING (issue 129): while `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` compared the `command` of an event with the doctor list only when it was a string, so a hand-written hook event whose `command` was null, a number, an object or an array passed them, beside the config path too. A present `command` that is not one of the doctor commands is now denied whatever its type, after the decision the guards took before these cards on the same text; an event without a `command` is decided as before, and nothing changes under a valid config.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
@@ -1115,7 +1116,7 @@ test('T0-HOOK-CLASSIFIER-3 acceptance 5: docs/OPERATIONS.md (Hooks) and the CHAN
   assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
   assert.ok(!hooks.includes('(card T0-HOOK-CLASSIFIER,') && !hooks.includes('(card T0-HOOK-CLASSIFIER-2,'), 'the replaced paragraphs are gone');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER-3 (issue 120, replacing T0-HOOK-CLASSIFIER and T0-HOOK-CLASSIFIER-2). The Bash guards split a command only at `||`, `&&`, `;` and `|` and read a path-qualified first word by its base name, so a second command after a lone `&` or a line break, or a program named by a path, passed them as read-only, and `git remote` and `git worktree` changes were read as reads. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `git remote` and `git worktree` subcommands that change the repository (the third word) are mutating, and `protect-paths` reads `git worktree add`, `remove`, `move` and `prune` as writes. `production-gate` tests the segments it tested before first, the hook dispatch runs every guard with the classification before this card first and the new forms only when no guard blocked, and the legacy decision of a config that cannot be used keeps the classification before this card, so wherever a guard or the dispatch denied before, the same guard denies with the same reason. Option and program forms are issue 135.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   assert.ok(!unreleased.includes('card T0-HOOK-CLASSIFIER (issue 120)') && !unreleased.includes('card T0-HOOK-CLASSIFIER-2 (issue 120'), 'the replaced entries are gone');
@@ -1470,7 +1471,7 @@ test('T0-HOOK-CONFIG-DISCOVERY acceptance 5: docs/OPERATIONS.md (Hooks) and the 
   assert.ok(!hooks.includes('looked for in the working directory only'), 'the replaced sentence is gone');
   assert.ok(hooks.includes('The doctor commands and config repair paths listed above are exemptions from the broken-config check only. Existing guard denials still apply, including a production pattern matching doctor or a frozen config file. Relative config repair targets resolve against the event working directory; existing guards still match frozen-path patterns against the supplied path spelling and use the event session state.'));
   const changelog = readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = '- Hook config discovery, card T0-HOOK-CONFIG-DISCOVERY (issue 118): the hook guards read `aidlc.config.json` in the working directory of the hook event, so a session in a subdirectory without the file took the defaults (`hooks.frozenPaths` empty, `protect-paths` blocking nothing), a subdirectory with its own file took that one, and a linked worktree took its branch\'s copy, while the CLI reads the file at the main checkout root. Now the guards read the file at the main checkout root, as the CLI does, from every directory inside the repository; at the main checkout root and outside a git checkout nothing changes. Changed on purpose: a subdirectory with its own file and one without follow the root\'s file, and a linked worktree follows main\'s copy, so a change to `hooks.*` on a card branch reaches the guards only after it merges. While the config cannot be used, the relative `node` doctor commands pass only from the directory that holds it.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

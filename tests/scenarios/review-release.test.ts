@@ -14,6 +14,7 @@ import { Journal } from '../../src/state/journal.ts';
 import { hostName, shortKey } from '../../src/state/paths.ts';
 import { atomicWriteJson, listJsonFiles } from '../../src/state/store.ts';
 import type { ActorIdentity, ReviewRequest } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -729,5 +730,5 @@ test('acceptance 8: the OPERATIONS sentence is the last paragraph of Ship gates 
 
 test('acceptance 8: the CHANGELOG Unreleased section carries the entry [R5]', () => {
   const entry = '- T0-REVIEW-RELEASE: `aidlc review release <key> --reason <text>` frees the review slot of a process that died outside any catch, refusing while that process is alive or when it ran on another host, and every mutation of a review pool now runs in one lock section, so a release can never cancel a later admission of the same key.';
-  assert.ok(section(read('CHANGELOG.md'), '## Unreleased').split('\n').includes(entry));
+  assert.ok(changelogSince010(read('CHANGELOG.md')).split('\n').includes(entry));
 });

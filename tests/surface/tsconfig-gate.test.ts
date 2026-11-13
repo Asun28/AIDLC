@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8');
@@ -22,7 +23,6 @@ test('T1-SWEEP-UNUSED-GATE acceptance 1: tsconfig.json turns on both unused-code
 test('T1-SWEEP-UNUSED-GATE acceptance 4: CLAUDE.md names the unused-code options in its static gate sentence; the CHANGELOG names the card [R5]', () => {
   assert.ok(read('CLAUDE.md').includes('There is no linter; strict `tsc` with `noUnusedLocals` and `noUnusedParameters` is the only static gate.\n'));
   const changelog = read('CHANGELOG.md').replace(/\r\n/g, '\n');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.includes('\n- T1-SWEEP-UNUSED-GATE: `tsconfig.json` turns on `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` (sources and tests) and `npm run build` refuse an unused local, import or parameter.'));
 });

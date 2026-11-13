@@ -22,6 +22,7 @@ import { addMs } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const GPT = EFFORT_LADDERS['gpt']!;
 const JUSTIFIED = { harderProblem: true, limitsPermit: true };
@@ -491,7 +492,7 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
       'The refuted attempt keeps the `startedAt` and `finishedAt` of its success, so they still time the implementer\'s attempt; the time of the refutation is the `ATTEMPT_FINISHED` event with `refutedBy` in the journal.',
     ]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     for (const sentence of [
       '- Ship failure with nothing settled, card T0-SHIP-FAILURE-UNSETTLED: a ship failure on an effort episode with no settled attempt returns the episode unchanged, keeping a running attempt at its own effort, where the ladder step used to re-derive that effort.',
       'A refuted attempt keeping the `finishedAt` of its success is now documented, with the reason (docs/OPERATIONS.md).',

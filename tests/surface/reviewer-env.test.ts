@@ -8,6 +8,7 @@ import { reviewerEnv, runReviewPanel } from '../../src/review/pre-review.ts';
 import { runPreReview } from './_review-once.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const OURS = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
 const PASS = '{"verdict":"pass","reasons":[]}\n';
@@ -112,7 +113,7 @@ test('T0-REVIEWER-UTF8 acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unrele
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   for (const sentence of DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   assert.ok(unreleased.includes(CHANGELOG_SENTENCE), `CHANGELOG.md Unreleased states: ${CHANGELOG_SENTENCE}`);
 });

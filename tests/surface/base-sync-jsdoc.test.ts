@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T0-BASE-SYNC-JSDOC: the comments of the three symbols T0-BASE-SYNC-REVIEW extended describe the base-sync reviewer.
 const root = path.resolve(import.meta.dirname, '..', '..');
@@ -53,9 +54,7 @@ describe('T0-BASE-SYNC-JSDOC', () => {
 
   it('CHANGELOG.md Unreleased carries the entry under the card id (acceptance 3) [R4]', () => {
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const end = changelog.indexOf('\n## ', start + 1);
-    const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+    const unreleased = changelogSince010(changelog);
     const sentence = "- Base-sync JSDoc, card T0-BASE-SYNC-JSDOC: the comments of `formalPool`, `formalReviewerFor` and `CandidateInfo.baseSync` now name the base-sync reviewer's own review pool, its lookup by the recorded reviewer name and the marking of an undecided base-sync candidate's repair; no code changed (issue #65).";
     assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
