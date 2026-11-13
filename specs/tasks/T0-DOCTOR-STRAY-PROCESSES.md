@@ -54,7 +54,7 @@ acceptance:
   - 18. Same file as 1, "every session and the implementer agent carry the rule": the two CLAUDE.md bullets and the implementer item. Fails on main. [R11] [dod arm 1] Detail: body section Acceptance detail, item 18.
   - 19. Same file, "the documents state the check", each text removed on its own fails. Fails on main. [R12] [dod arm 1] Detail: body section Acceptance detail, item 19.
   - 20. The doctor call, the defaults, the ended processes and the unchanged texts are as R1, R5, R10 and R12 state (reviewer-verified). [R1] [R5] [R10] [R12] Detail: body section Acceptance detail, item 20.
-depends_on: [T0-CLI-CWD-FILE-ARGS-2]
+depends_on: [T0-CLI-CWD-FILE-ARGS-2, T0-REVIEW-RESOLVE-LOST]
 budget: 1120
 tdd: true
 diagnosis:
