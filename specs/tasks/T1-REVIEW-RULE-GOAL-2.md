@@ -71,7 +71,7 @@ npm run typecheck && node --test tests/scenarios/review-rule-goal.test.ts tests/
 - Assertion: every test of the five files passes and the typecheck reports no error.
 
 ## Attempt evidence
-Attempts 1 and 2. Tests are in `tests/scenarios/review-rule-goal.test.ts`; "DoD" is the `dod_command`, exit 0, 119 tests passed and 0 failed at attempt 2. One row sets a stored record by hand (F1 below). 27 source mutants (18 at attempt 1, 9 of the repair), each fail a test.
+Attempts 1 to 3. Tests are in `tests/scenarios/review-rule-goal.test.ts`; "DoD" is the `dod_command`, exit 0, 120 tests passed and 0 failed at attempt 3. One row sets a stored record by hand (F1 below). Of the source mutants run (18 at attempt 1, 9 at attempt 2, 8 at attempt 3) one survives: the generation term of the re-read, which no row separates from `updatedAt`.
 
 | Item | Proof | Result |
 |---|---|---|
@@ -92,7 +92,16 @@ R3 decision 1 blocked candidate c6e8bd24 on four findings; attempt 2 repairs the
 
 | Finding | Repair | Proof |
 |---|---|---|
-| F1 readmission-overwrites-stop | the re-admission is one section of the goal lock (`updateJson` on the goal file), decided on the record read inside it; every goal write of `GoalController` takes that lock (`saveGoal`) | test "R3 decision 1, F1": a resume, a resume and a cancellation, a cancellation that read the goal before its stop (the one record set by hand, through `GoalStore.saveGoal`), a deadline extension |
-| F2 duplicate-readmission-event | the journal scan and the append are inside that section | test "R3 decision 1, F2": a second recovery, and a deadline extension, run after the first recovery's scan and before its append; each is refused with `LOCKED` and one event stands |
+| F1 readmission-overwrites-stop | the re-admission is one section of the goal lock (`updateJson` on the goal file), decided on the record read inside it; at attempt 2 every goal write of `GoalController` also took that lock, which attempt 3 reverts | test "R3 decision 1, F1": a resume, a resume and a cancellation, a cancellation that read the goal before its stop (the one record set by hand, through `GoalStore.saveGoal`), a deadline extension |
+| F2 duplicate-readmission-event | the journal scan and the append are inside that section | test "R3 decision 1, F2": a second recovery run after the first recovery's scan and before its append is refused with `LOCKED` and one event stands |
 | F3 missing-owner-ruling-guidance, history | `reviewNextAction` in the runner gives the guidance when the ledger holds an unlifted block decision with `stopReview`; the stop `selectCardState` builds from `reviewStop` takes it | test "R3 decision 1, F3 and F4", first part |
 | F4 missing-owner-ruling-guidance, ship path | the ship-path block stop takes the same helper, as do the other four sites that build a stop for review | same test: two ship-path blocks; two no-verdicts keep the old text |
+
+R3 decision 2 blocked candidate a615ded5 on two findings about the lock attempt 2 put on every goal write. By the coordinator's decision attempt 3 reverts that part: `git diff main -- src/loop/controller.ts` holds three import hunks and the `ruleFinding` method, and every other goal write is as on main.
+
+| Finding | Repair | Proof |
+|---|---|---|
+| F1 re-raised, readmission-overwrites-stop (`saveGoal` wrote the caller's snapshot under the lock) | the private `saveGoal` is removed; inside its section `ruleFinding` reads the goal again right before the append and right before the write and leaves a changed record as it is | test "R3 decision 2, F1": an extension and a resume, each landing after the section's first read (no append) and after the read that precedes the append (one event, no goal write), then the rerun; test "R3 decision 1, F1" unchanged |
+| F9 goal-journal-outside-lock (`report` journaled, then failed with `LOCKED`) | no command other than `aidlc review rule` takes the lock, so none can fail with `LOCKED` | the revert; the row removed below |
+
+Row removed at attempt 3, because it asserted the reverted design: in test "R3 decision 1, F2", the row `extension` (a deadline extension overlapping a recovery is refused with `LOCKED`). Not serialized, as no goal write is: a goal command that reads the goal before the re-admission's write and writes after it, or that writes between the section's last read and that write.

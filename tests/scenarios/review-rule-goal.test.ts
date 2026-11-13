@@ -29,13 +29,13 @@ const block = (file: string, texts: string[]): string => {
 
 /** The faults of acceptance 10, switched on by a test: a throw from fs.appendFileSync onto a GOAL_STATE line of the goal journal, and from fs.renameSync onto the goal record `record`. */
 const fault: { append: boolean; record?: string } = { append: false };
-/** An overlapping command (R3 decision 1, F2): `run` is called once, right after the next read of the file `at` returns. */
-const overlap: { at?: string; run?: () => void } = {};
+/** An overlapping command (R3 decisions 1 and 2): `run` is called once, right after read number `nth` of the file `at` returns. */
+const overlap: { at?: string; nth: number; run?: () => void } = { nth: 1 };
 const real = { append: fs.appendFileSync, rename: fs.renameSync, read: fs.readFileSync };
 before(() => {
   (fs as unknown as Stored)['readFileSync'] = (...args: Parameters<typeof fs.readFileSync>) => {
     const out = real.read(...args);
-    if (overlap.at && typeof args[0] === 'string' && path.resolve(args[0]) === path.resolve(overlap.at)) {
+    if (overlap.at && typeof args[0] === 'string' && path.resolve(args[0]) === path.resolve(overlap.at) && --overlap.nth === 0) {
       overlap.at = undefined;
       overlap.run!();
     }
@@ -342,35 +342,67 @@ test('R3 decision 1, F1: a goal write that lands between the lifting ruling and 
   }
 });
 
-test('R3 decision 1, F2: a recovery call, or another goal write (a deadline extension), that overlaps a recovery after its journal scan and before its append is refused on the goal lock: exactly one GOAL_STATE from STOP to CARDS, and the goal record is the recovery\'s [R8]', async () => {
-  for (const other of ['recovery', 'extension'] as const) {
+/** A fixture where the lifting ruling failed at its GOAL_STATE append: the card's stop is lifted, the goal is in STOP for review, no event is journaled. */
+async function awaitingRecovery(fx: ReturnType<typeof makeFixture>) {
+  const s = await setup(fx);
+  await s.stopCard();
+  s.stopGoal();
+  s.rule('F1', 'a lead');
+  fault.append = true;
+  try {
+    assert.throws(() => s.rule('F2', 'the owner'), /EIO: injected/);
+  } finally {
+    fault.append = false;
+  }
+  assert.deepEqual([s.persisted().state, s.g().state, s.readmissions()], ['SHIP', 'STOP', []]);
+  return s;
+}
+
+test('R3 decision 1, F2: a recovery call that overlaps another, after its journal scan and before its append, waits on the goal lock and is refused: exactly one GOAL_STATE from STOP to CARDS [R8]', async () => {
   const fx = makeFixture(CONFIG);
   try {
-    const s = await setup(fx);
-    await s.stopCard();
-    s.stopGoal();
-    s.rule('F1', 'a lead');
-    fault.append = true;
-    try {
-      assert.throws(() => s.rule('F2', 'the owner'), /EIO: injected/);
-    } finally {
-      fault.append = false;
-    }
-    assert.deepEqual([s.persisted().state, s.g().state, s.readmissions()], ['SHIP', 'STOP', []]);
+    const s = await awaitingRecovery(fx);
     // Recovery A scans the journal; recovery B runs whole at that point, before A appends.
     let second = 'not run';
-    const deadlines = s.g().deadlines;
-    const overlapping = () => (other === 'recovery' ? s.rule('F2', 'the owner').goal.state : fx.controller.extendDeadline(s.goal.id, 'the owner', '2026-12-31T00:00:00.000Z', 'more time').state);
-    Object.assign(overlap, { at: s.journalFile, run: () => { try { second = `completed: ${overlapping()}`; } catch (err) { second = (err as Error).message; } } });
+    Object.assign(overlap, { at: s.journalFile, nth: 1, run: () => { try { second = `completed: ${s.rule('F2', 'the owner').goal.state}`; } catch (err) { second = (err as Error).message; } } });
     const first = s.rule('F1', 'the owner');
-    assert.match(second, /locked/i, `${other}: the overlapping call waits on the goal lock and is refused`);
-    assert.deepEqual([first.readmitted, s.g().state, s.g().deadlines, s.readmissions()], [true, 'CARDS', deadlines, [readmission(CARD, 'the owner')]], other);
+    assert.match(second, /locked/i, 'the overlapping ruling waits on the goal lock and is refused');
+    assert.deepEqual([first.readmitted, s.g().state, s.readmissions()], [true, 'CARDS', [readmission(CARD, 'the owner')]]);
     // Run again after the first has finished, the second call finds the goal re-admitted and appends nothing.
     assert.throws(() => s.rule('F2', 'the owner'), /is in SHIP, not stopped for review/);
     assert.equal(s.readmissions().length, 1);
   } finally {
     fx.cleanup();
   }
+});
+
+test('R3 decision 2, F1: a goal write of another command, which takes no lock, that lands inside the re-admission section before its last read of the goal is kept: no append when it lands before the read that precedes the append, no goal write when it lands after that read, and the rerun appends no second event [R2] [R8]', async () => {
+  // A recovery reads the goal file four times: on entry, at the start of the section, before the append and before the write.
+  // `nth` is the read the other command lands after.
+  const resume = (fx: ReturnType<typeof makeFixture>, goalId: string) => void fx.controller.report({ goalId, generation: 0, result: 'resume', data: { reason: 'the owner continues' } });
+  const extend = (fx: ReturnType<typeof makeFixture>, goalId: string) => void fx.controller.extendDeadline(goalId, 'the owner', '2026-12-31T00:00:00.000Z', 'more time');
+  const rows: Array<[name: string, nth: number, land: typeof resume, appended: number, rerun: 'readmits' | 'refused']> = [
+    ['an extension after the section\'s first read', 2, extend, 0, 'readmits'],
+    ['a resume after the section\'s first read', 2, resume, 0, 'refused'],
+    ['an extension after the read that precedes the append', 3, extend, 1, 'readmits'],
+    ['a resume after the read that precedes the append', 3, resume, 1, 'refused'],
+  ];
+  for (const [name, nth, land, appended, rerun] of rows) {
+    const fx = makeFixture(CONFIG);
+    try {
+      const s = await awaitingRecovery(fx);
+      let landed = '';
+      Object.assign(overlap, { at: s.goalFile, nth, run: () => { land(fx, s.goal.id); landed = s.bytes()[0]!; } });
+      const first = s.rule('F1', 'the owner');
+      assert.notEqual(landed, '', `${name}: the other command ran`);
+      assert.deepEqual([first.readmitted, s.bytes()[0], s.readmissions().length], [false, landed, appended], `${name}: the goal record keeps the bytes the other command wrote`);
+      assert.deepEqual([first.goal.state, first.goal.generation], [s.g().state, s.g().generation], `${name}: the call returns the goal as it is`);
+      if (rerun === 'refused') assert.throws(() => s.rule('F1', 'the owner'), /is in SHIP, not stopped for review/, name);
+      else assert.deepEqual([s.rule('F1', 'the owner').readmitted, s.g().state, s.g().deadlines.extensions.length], [true, 'CARDS', 1], name);
+      assert.deepEqual(s.readmissions(), appended || rerun === 'readmits' ? [readmission(CARD, 'the owner')] : [], `${name}: at most one GOAL_STATE from STOP to CARDS`);
+    } finally {
+      fx.cleanup();
+    }
   }
 });
 

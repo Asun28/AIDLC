@@ -217,7 +217,7 @@ export class GoalController {
     });
     const claim = this.leases.claim(resourceKeys.goal(this.repo.key, goal.id), { operation: 'coordinate', now });
     if (claim.status === 'held') throw new Error(`goal lease unexpectedly held by ${claim.lease.owner.session}`);
-    this.saveGoal(goal);
+    this.store.saveGoal(goal);
     const j = this.journal(goal.id);
     j.append({ type: 'GOAL_CREATED', goalId: goal.id, generation: 0, data: { request: request.text.slice(0, 500), source: request.source, target, deadline: deadlines.goalDeadline, leaseGeneration: claim.lease.generation } });
     j.append({ type: 'GOAL_ROUTED', goalId: goal.id, generation: 0, data: { routing, line: formatRouting(routing) } });
@@ -335,7 +335,7 @@ export class GoalController {
     }
     // Derived transition CARDS -> RUN.
     const next = transitionGoal(goal, 'RUN', now, { projectionAuthorized: true });
-    this.saveGoal(next);
+    this.store.saveGoal(next);
     this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'CARDS', to: 'RUN', cards: goal.cards } });
     return this.nextInRun(next, now);
   }
@@ -390,12 +390,12 @@ export class GoalController {
       // derives VERIFY_ARC from RUN only, never from WAIT.
       if (goal.state === 'WAIT') {
         const resumed = transitionGoal(goal, 'RUN', now);
-        this.saveGoal(resumed);
+        this.store.saveGoal(resumed);
         this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'WAIT', to: 'RUN', reason: 'required cards closed' } });
         goal = resumed;
       }
       const next = transitionGoal(goal, 'VERIFY_ARC', now, { requiredCardsClosed: true });
-      this.saveGoal(next);
+      this.store.saveGoal(next);
       this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: goal.state, to: 'VERIFY_ARC' } });
       return this.nextInVerifyArc(next, now);
     }
@@ -411,14 +411,14 @@ export class GoalController {
     if (arc.verdict === 'wait') {
       if (goal.state !== 'WAIT') {
         const next = transitionGoal(goal, 'WAIT', now);
-        this.saveGoal(next);
+        this.store.saveGoal(next);
       }
       const running = projected.filter((r) => ['BUILD', 'SHIP', 'REVIEW_FIX', 'WAIT', 'PREPARE', 'CLOSE'].includes(r.state) || ownedElsewhere.has(r.cardId)).map((r) => (ownedElsewhere.has(r.cardId) ? `${r.cardId}:owner:${ownedElsewhere.get(r.cardId)}` : `${r.cardId}:${r.state}`));
       return Directive.parse({ kind: 'wait', ...base, goalState: 'WAIT', on: running.join(',') || 'dependencies', pollSeconds: 90, narration: `Waiting on ${running.join(', ') || 'dependency closure'}; ${arc.reasons.join('; ')}` });
     }
     if (goal.state === 'WAIT') {
       const next = transitionGoal(goal, 'RUN', now);
-      this.saveGoal(next);
+      this.store.saveGoal(next);
       goal = next;
     }
     const cardId = arc.wave[0]!;
@@ -467,7 +467,7 @@ export class GoalController {
       // A production goal requests staging too (`stagesForTarget`), and its attempt verifies staging before the CHECKPOINT.
       const stagingVerified = done.target === 'production' && done.steps.some((s) => s.name === 'stage-verify' && s.status === 'succeeded');
       next.stages = { ...next.stages, ...(stagingVerified ? { staging: 'pass' as const } : {}), [goal.target]: 'pass' };
-      this.saveGoal(next);
+      this.store.saveGoal(next);
       return this.nextInClose(next, now);
     }
     if (!attempt) {
@@ -504,7 +504,7 @@ export class GoalController {
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
     // The lease is settled before DONE is saved: a refused takeover throws with the goal still in CLOSE.
     this.releaseGoalLease(goal, now);
-    this.saveGoal(next);
+    this.store.saveGoal(next);
     this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
@@ -736,7 +736,7 @@ export class GoalController {
       default:
         throw new Error(`unknown report result ${String(input.result)}`);
     }
-    goal = this.saveGoal(goal);
+    goal = this.store.saveGoal(goal);
     this.writeBoard(goal);
     return { goal, directive: this.next(goal.id) };
   }
@@ -834,7 +834,7 @@ export class GoalController {
 
   private persistStop(goal: Goal, stop: StopRecord): Goal {
     const stopped = this.persistStopValue(goal, stop);
-    return this.saveGoal(stopped);
+    return this.store.saveGoal(stopped);
   }
 
   private persistStopValue(goal: Goal, stop: StopRecord): Goal {
@@ -946,7 +946,7 @@ export class GoalController {
       if (change === 'readmitted') this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
       if (change === 'moved') this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { cardDeadline: { from, to: newDeadline, by } } });
     }
-    const saved = this.saveGoal(readmitted);
+    const saved = this.store.saveGoal(readmitted);
     this.writeBoard(saved);
     return saved;
   }
@@ -962,8 +962,12 @@ export class GoalController {
    * again in that state for a ruled finding of the lifted decision writes no ruling (`ruled: false`) and completes the
    * re-admission with the `by` of the lift; the event is appended only when none follows the goal's last `GOAL_STOPPED`.
    * The goal read, its checks (STOP for review, terminal, the generation), the journal scan, the append and the goal write
-   * are one section of the goal lock that every goal write of this controller takes (`saveGoal`); a goal that is no longer
-   * stopped for review in that generation when the section reads it is left as it is (`readmitted: false`).
+   * are one section of the goal lock (`<goal file>.lock`, `updateJson`), which only this method takes: two rulings are
+   * serialized, and no other goal write is. So the section reads the goal again right before the append and right before
+   * the write, and a record that another writer changed since the section's first read (state, stop, terminal flag,
+   * generation or `updatedAt`) is left as that writer left it, with no append or with no write (`readmitted: false`). A
+   * goal write that lands after the last read and before this write, or that was computed from an earlier read and lands
+   * after it, is not caught, as with every goal write.
    */
   ruleFinding(runner: { ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun }, goalId: string, card: Card, findingId: string, ruling: Omit<FindingRuling, 'at'>): { run: CardRun; goal: Goal; ruled: boolean; readmitted: boolean } {
     const goal = this.mustGoal(goalId);
@@ -977,29 +981,27 @@ export class GoalController {
     if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
     // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: a resume, a
-    // cancellation or any other goal write that landed since is kept, and an overlapping recovery waits here.
+    // cancellation or any other goal write that landed since is kept, and an overlapping ruling waits here.
     let readmitted = false;
+    let seen: Goal | undefined;
+    const changedSince = (current: Goal): boolean => {
+      seen = this.store.getGoal(goal.id);
+      return !seen || seen.state !== current.state || seen.terminal !== current.terminal || seen.generation !== current.generation || seen.updatedAt !== current.updatedAt || JSON.stringify(seen.stop) !== JSON.stringify(current.stop);
+    };
     const saved = updateJson(this.store.goalFile(goal.id), Goal, (current) => {
       if (!current || current.state !== 'STOP' || !current.terminal || current.stop?.reason !== 'review' || current.generation !== goal.generation) return current;
       if (this.store.getCardRun(goal.id, card.id)?.state === 'STOP') return current;
       const events = this.journal(goal.id).readAll();
       const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data['ruling']));
+      if (changedSince(current)) return current;
       if (!journaled) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: current.generation, data: { from: 'STOP', to: 'CARDS', reason: `ruling on ${card.id} by ${by}`, ruling: { cardId: card.id, by } } });
+      if (changedSince(current)) return current;
       readmitted = true;
       // Re-entry runs through CARDS: the projection is re-validated before `aidlc next` reads the card run.
       return Goal.parse({ ...current, terminal: false, stop: undefined, state: 'CARDS', updatedAt: nowIso() });
     })!;
     if (readmitted) this.writeBoard(saved);
-    return { run, goal: saved, ruled: !rerun, readmitted };
-  }
-
-  /**
-   * Every goal write of the controller, in a section of the goal lock (`<goal file>.lock`, `updateJson`): the lock
-   * `ruleFinding` holds from its read of the goal to its write, so no stop, cancellation, resume or derived transition
-   * lands between the two (card T1-REVIEW-RULE-GOAL-2, R3 decision 1). The record written is the caller's, as before.
-   */
-  private saveGoal(goal: Goal): Goal {
-    return updateJson(this.store.goalFile(goal.id), Goal, () => Goal.parse({ ...goal, updatedAt: nowIso() }))!;
+    return { run, goal: readmitted ? saved : (seen ?? saved), ruled: !rerun, readmitted };
   }
 
   /** `owners` is the dispatch's decision from `liveOwners`; a caller without it gets that decision at the board's clock. */
