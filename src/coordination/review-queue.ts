@@ -243,7 +243,7 @@ export class ReviewQueue {
     return done;
   }
 
-  /** Mark a lost response; the slot stays occupied until `resolveLost` records the looked-up outcome. */
+  /** Mark a lost response; the slot stays occupied until `resolveLost` frees it, just before it writes the looked-up outcome. */
   markLost(key: string, detail: string): ReviewRequest {
     return this.requestSection(key, (r) => {
       const lost: ReviewRequest = { ...r, state: 'lost', lastError: detail };
@@ -252,14 +252,16 @@ export class ReviewQueue {
     });
   }
 
-  resolveLost(key: string, outcome: { found: true; verdictRef: string } | { found: false }, now: string = nowIso()): ReviewRequest {
+  resolveLost(key: string, outcome: { found: true; verdictRef: string } | { found: false }, now: string = nowIso(), before?: (request: ReviewRequest) => void): ReviewRequest {
     return this.requestSection(key, (r) => {
       if (r.state !== 'lost') throw new Error(`request ${key} is not lost`);
-      if (outcome.found) return this.completeInSection(r, outcome.verdictRef, now);
-      const requeued: ReviewRequest = { ...r, state: 'queued', startedAt: undefined, slotOwner: undefined, lastError: 'lost response; looked up, no result; requeued in order' };
-      atomicWriteJson(this.requestFile(key), requeued);
-      this.releaseSlot(r.pool, key, now);
-      return requeued;
+      before?.(r);
+      this.releaseSlot(r.pool, r.key, now);
+      const settled: ReviewRequest = outcome.found
+        ? { ...r, state: 'completed', finishedAt: now, verdictRef: outcome.verdictRef }
+        : { ...r, state: 'queued', startedAt: undefined, slotOwner: undefined, lastError: 'lost response; looked up, no result; requeued in order' };
+      atomicWriteJson(this.requestFile(r.key), settled);
+      return settled;
     });
   }
 
