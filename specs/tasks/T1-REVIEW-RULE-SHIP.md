@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-RULE-SHIP
 title: "The ruling that settles the last merge-blocking finding of the stopping R3 decision lifts the card's stop, and the candidate that decision reviewed ships as passed by ruling with no further review"
-status: todo
+status: merged
 branch: T1-REVIEW-RULE-SHIP
 worktree: D:\wt\AIDLC\T1-REVIEW-RULE-SHIP
 plan_ref: plans/review-ruling.md#order-of-work
