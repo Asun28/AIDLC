@@ -4,6 +4,7 @@ title: "`docs/reliability/baseline.md` reports the Phase 0 numbers from a run of
 status: todo
 branch: T1-OUTCOME-BASELINE
 worktree: D:\wt\AIDLC\T1-OUTCOME-BASELINE
+superseded_by: T1-OUTCOME-REPORT
 plan_ref: plans/reliability-baseline.md#order-of-work
 allow_paths:
   - docs/reliability/baseline.md
