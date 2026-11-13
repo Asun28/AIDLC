@@ -182,6 +182,8 @@ function rootOf(shown: string, platform: NodeJS.Platform): Root | undefined {
   const bare = shown.replace(trailing, '');
   if ((platform === 'win32' ? path.win32 : path.posix).parse(shown).root.replace(trailing, '') === bare) return undefined;
   const norm = normalize(shown, platform).replace(/\/$/, '');
+  // A root that normalizes to nothing (on posix `/` and backslashes, which the path module reads as a name) is never used.
+  if (norm === '') return undefined;
   const drive = platform === 'win32' ? /^([a-z]):\/(.+)$/.exec(norm) : null;
   // The drive form, the Git Bash form and the WSL form.
   return { shown, prefixes: drive ? [norm, `/${drive[1]}/${drive[2]}`, `/mnt/${drive[1]}/${drive[2]}`] : [norm] };
@@ -210,6 +212,8 @@ function matchIn(command: string, roots: Root[], platform: NodeJS.Platform): Mat
   let best: Match | undefined;
   for (const root of roots) {
     for (const prefix of root.prefixes) {
+      // An empty prefix would be found at every index and never end the search.
+      if (prefix === '') continue;
       for (let at = text.indexOf(prefix); at >= 0; at = text.indexOf(prefix, at + 1)) {
         const end = at + prefix.length;
         if (isName(codePointBefore(text, at)) || isName(text.codePointAt(end))) continue;
