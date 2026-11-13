@@ -222,6 +222,11 @@ export function preReviewSummaryText(summary: { reviewer: string; round: number;
   return `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]${coverageLine(summary.coverage)}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``;
 }
 
+/** The text of one finding (`aidlc review findings`): its line, with the ruling of a ruled finding (card T1-REVIEW-RULE-GOAL-2), then its reason. */
+export function findingLine(f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; outsideDelta?: boolean; disputes: Array<{ note: string; kind?: DisputeKind }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; ruling?: { decision: string; by: string; reason: string; issue?: number }; reason: string }): string {
+  return `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''}${f.outsideDelta ? ' (first-round miss)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note (${disputeKindOf(f.disputes.at(-1))}): ${f.disputes.at(-1)?.note}` : ''}${f.ruling ? `; ruled ${f.ruling.decision}${f.ruling.issue ? ` (issue ${f.ruling.issue})` : ''} by ${f.ruling.by}: ${f.ruling.reason}` : ''}\n     ${f.reason}`;
+}
+
 export async function main(argv: string[] = process.argv): Promise<void> {
   const program = new Command();
   program.name('aidlc').description('AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery').version('0.1.0');
@@ -603,10 +608,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
    * `cardGoalId` does and, with `guard`, refused when it is stopped or done; a named terminal goal is refused before
    * `holdsRun` reads a run. The command then uses this record, never a reload, up to its first card-run access.
    */
-  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard = true): Goal => {
+  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard: boolean | 'rule' = true): Goal => {
     const goals = c.store.listGoals();
     const refuse = (goalRec: Goal | undefined) => {
-      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec) : undefined;
+      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec, guard === 'rule') : undefined;
       if (refusal) fail(refusal);
     };
     if (explicit !== undefined) refuse(goals.find((x) => x.id === explicit));
@@ -1031,8 +1036,6 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: r.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
       out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
     });
-  const findingLine = (f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; outsideDelta?: boolean; disputes: Array<{ note: string; kind?: DisputeKind }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; reason: string }) =>
-    `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''}${f.outsideDelta ? ' (first-round miss)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note (${disputeKindOf(f.disputes.at(-1))}): ${f.disputes.at(-1)?.note}` : ''}\n     ${f.reason}`;
   review
     .command('findings <cardId>')
     .description('list the findings of the card run with their dispositions, disputes, re-raises and resolution')
@@ -1075,11 +1078,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--issue <n>', 'the follow-up issue number, only with --defer')
     .option('--goal <id>')
     .action((cardId: string, findingId: string, o: { reject?: boolean; defer?: boolean; by: string; reason: string; issue?: string; goal?: string }) => {
-      // Refused before any record is read. The run is read under its lock and never created, and no board is written.
+      // Refused before any record is read. The run is read under its lock and never created. The command runs on a goal stopped for
+      // review too, and the ruling that lifts the card's stop re-admits that goal (card T1-REVIEW-RULE-GOAL-2).
       const ruling = parseRuling(o);
       const c = ctx(g());
-      const goalRec = checkedGoal(c, cardId, o.goal);
-      const next = runnerFor(c).ruleFinding(goalRec, cardOf(c, cardId).card, findingId, ruling);
+      const goalRec = checkedGoal(c, cardId, o.goal, 'rule');
+      const { run: next, goal: goalNow, ruled, readmitted } = c.controller.ruleFinding(runnerFor(c), goalRec.id, cardOf(c, cardId).card, findingId, ruling);
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
       // The lift (card T1-REVIEW-RULE-SHIP): the run left STOP in the ruling's own update. The deadline is read on the real clock and never moved.
       const lifted = next.state !== 'STOP';
@@ -1087,7 +1091,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const then = !lifted
         ? 'the card run stays stopped: another merge-blocking finding of the stopping decision is unruled'
         : `the stop is lifted and candidate ${next.candidate?.sha ?? next.candidate?.digest ?? 'unknown'} passes by ruling; next: ${late ? `the card deadline ${next.deadline} has passed, so run \`aidlc goal extend ${goalRec.id} --until <iso> --by <who> --reason <text>\` and then ` : ''}\`aidlc card next ${cardId}\``;
-      out(c, { cardId, finding: f, lifted, next: then }, () => `${f.id} ruled ${f.ruling?.decision}${f.ruling?.issue ? ` (issue ${f.ruling.issue})` : ''}; ${then}`);
+      const goalNote = readmitted ? `; goal ${goalNow.id} is re-admitted (${goalNow.state})` : '';
+      out(c, { cardId, finding: f, lifted, ruled, readmitted, next: `${then}${goalNote}` }, () => `${f.id} ${ruled ? 'ruled' : 'was already ruled'} ${f.ruling?.decision}${f.ruling?.issue ? ` (issue ${f.ruling.issue})` : ''}; ${then}${goalNote}`);
     });
   review
     .command('repro <cardId> <findingId>')

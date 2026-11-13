@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -483,6 +483,16 @@ export class CardRunner {
     return named ? `${detail}; ${named}` : detail;
   }
 
+  /**
+   * The `nextAction` of a stop for review (card T1-REVIEW-RULE-GOAL-2, R5): `base`, and after it the ruling guidance exactly
+   * when `review` holds a block decision recorded with `stopReview` that no ruling has lifted, the stop `aidlc review rule`
+   * acts on. Every site that builds or materializes a stop for review takes its `nextAction` from here.
+   */
+  private reviewNextAction(cardId: string, review: ReviewLedger, base: string): string {
+    if (stoppingDecision(review)?.outcome !== 'block') return base;
+    return `${base}. The ruling on each finding is the owner's: only on the owner's instruction in the session, record it with \`aidlc review rule ${cardId} <finding> --reject|--defer --by <who> --reason "<text>"\` (--reject: the finding does not hold; --defer: it holds and is left to follow-up work); a finding left unruled keeps the stop`;
+  }
+
   private guardFindingsMutation(run: CardRun): void {
     if (run.stop || run.state === 'STOP') throw new Error(`card run is stopped (${run.stop?.reason ?? 'STOP'}); findings cannot change: ${run.stop?.nextAction ?? 'resolve the stop first'}`);
   }
@@ -742,7 +752,9 @@ export class CardRunner {
       repairExhausted,
       capabilityBlocker,
     };
-    const decision = selectCardState(evidence);
+    const selected = selectCardState(evidence);
+    // A stop the machine builds here from a recorded decision (`reviewStop`) has its generic text: the runner names the ruling.
+    const decision = selected.reason === 'review allowance exhausted' && selected.stop ? { ...selected, stop: { ...selected.stop, nextAction: this.reviewNextAction(card.id, run.review, selected.stop.nextAction) } } : selected;
     let next: CardRun = { ...run, state: decision.state, stop: decision.stop ?? run.stop, blocker: decision.state === 'STOP' ? decision.reason : undefined };
     // A revalidated ownership stop is persisted with the re-derived state before any action: a ship issued from this call
     // reads the record as persisted and must not find the stop it cleared.
@@ -1516,7 +1528,7 @@ export class CardRunner {
         }
         return { run: handed };
       }
-      const stop = makeStop('review', `pre-review rounds exhausted (${blocks.length}/${cfg.rounds} blocks in R3 cycle ${cycle}); last block: ${quotedList(residual) || 'see the retained verdicts'}${deadlock ? `; ${deadlock}` : ''}`, `read the retained verdicts under .review/${card.id}.pre.*; fix within scope and re-run, or set preReview.onExhausted to "ship" to hand the residual findings to R3`, { at: now, global: false });
+      const stop = makeStop('review', `pre-review rounds exhausted (${blocks.length}/${cfg.rounds} blocks in R3 cycle ${cycle}); last block: ${quotedList(residual) || 'see the retained verdicts'}${deadlock ? `; ${deadlock}` : ''}`, this.reviewNextAction(card.id, run.review, `read the retained verdicts under .review/${card.id}.pre.*; fix within scope and re-run, or set preReview.onExhausted to "ship" to hand the residual findings to R3`), { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -1631,7 +1643,7 @@ export class CardRunner {
     const baseSyncDecision = this.baseSyncDue(run);
     const allowance = this.formalAllowance(run, card);
     if (run.review.substantiveDecisions >= allowance && !baseSyncDecision) {
-      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision allowance for repairs` : 'two-decision allowance'} (${run.review.substantiveDecisions} used)`, 'return the retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
+      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision allowance for repairs` : 'two-decision allowance'} (${run.review.substantiveDecisions} used)`, this.reviewNextAction(card.id, run.review, 'return the retained verdict evidence for human adjudication; no counter reset'), { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -2375,7 +2387,7 @@ export class CardRunner {
                   break;
                 }
                 case 'stop-review': {
-                  const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
+                  const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), this.reviewNextAction(card.id, next.review, 'return the retained verdict evidence for human adjudication; no counter reset'), { at: after, global: false });
                   next = { ...next, state: 'STOP', stop };
                   break;
                 }
@@ -2955,11 +2967,11 @@ export class CardRunner {
             if (classified.outcome === 'pass') {
               // R10: the document blocked on advisory notes only. The loop recorded a pass, no block was consumed and the
               // candidate keeps its receipts; the ship path still refused the merge, so a human decides, not a repair.
-              const stop = makeStop('review', `the ship path refused the merge on reasons the loop reads as advisory notes, never a block: ${quotedList(shipAdvisory) || 'none named'}`, 'answer the notes or adjust the ship path reviewer; the candidate and its DoD receipt stand, no decision or block was consumed', { at: now, global: false });
+              const stop = makeStop('review', `the ship path refused the merge on reasons the loop reads as advisory notes, never a block: ${quotedList(shipAdvisory) || 'none named'}`, this.reviewNextAction(card.id, latest.review, 'answer the notes or adjust the ship path reviewer; the candidate and its DoD receipt stand, no decision or block was consumed'), { at: now, global: false });
               return { state: 'STOP', stop };
             }
             if (latest.review.substantiveBlocks >= 2 || reviewDecision?.action === 'stop-review') {
-              const stop = makeStop('review', this.withContest(reviewDecision?.action === 'stop-review' ? reviewDecision.detail : 'second substantive block', latest.findings), 'return the PR and retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
+              const stop = makeStop('review', this.withContest(reviewDecision?.action === 'stop-review' ? reviewDecision.detail : 'second substantive block', latest.findings), this.reviewNextAction(card.id, latest.review, 'return the PR and retained verdict evidence for human adjudication; no counter reset'), { at: now, global: false });
               return { state: 'STOP', stop };
             }
             // The two R3 decisions are the formal review's own budget: the episode reopens and the repair is the next attempt.
@@ -2982,7 +2994,7 @@ export class CardRunner {
         if (reviewDecision?.action === 'retry-review') {
           return finish(() => ({ state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
         }
-        return stopWith(makeStop('review', 'missing/malformed/stale verdict after the single retry', 'preserve raw output; never pass; hand off for adjudication', { at: now, global: false }));
+        return stopWith(makeStop('review', 'missing/malformed/stale verdict after the single retry', this.reviewNextAction(card.id, run.review, 'preserve raw output; never pass; hand off for adjudication'), { at: now, global: false }));
       }
       case 'ci-red':
       case 'ci-timeout': {
