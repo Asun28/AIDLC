@@ -500,6 +500,10 @@ export const FindingRepro = z.object({
 });
 export type FindingRepro = z.infer<typeof FindingRepro>;
 
+/** The owner's ruling on a finding of the R3 decision that stopped the card (`aidlc review rule`, card T1-REVIEW-RULE-2): `rejected`, the finding does not hold; `deferred`, it holds and is left to follow-up work, with the issue number when given. */
+export const FindingRuling = z.object({ at: IsoTimestamp, by: z.string().min(1), decision: z.enum(['rejected', 'deferred']), reason: z.string().min(1), issue: z.number().int().positive().optional() });
+export type FindingRuling = z.infer<typeof FindingRuling>;
+
 export const ReviewFinding = z.object({
   id: z.string().regex(/^F\d+$/),
   stage: FindingStage,
@@ -549,6 +553,8 @@ export const ReviewFinding = z.object({
   revision: z.number().int().nonnegative().default(0),
   /** The latest `aidlc review repro` of the finding; a later repro replaces it. Absent on records written before card T1-FINDING-REPRO-2. */
   repro: FindingRepro.optional(),
+  /** The owner's ruling; a ruled finding keeps its disposition. Absent on an unruled finding and on records written before card T1-REVIEW-RULE-2. */
+  ruling: FindingRuling.optional(),
 });
 export type ReviewFinding = z.infer<typeof ReviewFinding>;
 
@@ -818,11 +824,12 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
 /**
  * A decision event a card-run write owes to the goal journal (card T0-JOURNAL-FAULT-EVENTS): the write that commits the
  * decision records it, and the command appends it after that write; an append that did not land is made by the next
- * `card next`, `card attempt`, `review pre` or `review r3` on the card.
+ * `card next`, `card attempt`, `review pre` or `review r3` on the card. `FINDING_RULED` is the event the ruling write of
+ * `aidlc review rule` owes (card T1-REVIEW-RULE-2).
  */
 export const OwedEvent = z.object({
   key: z.string().min(1),
-  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT']),
+  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT', 'FINDING_RULED']),
   generation: z.number().int().nonnegative(),
   data: z.record(z.string(), z.unknown()),
 });
@@ -1038,6 +1045,7 @@ export const JournalEventType = z.enum([
   'PRE_REVIEW_DECIDED',
   'FINDING_DISPUTED',
   'FINDING_ACCEPTED',
+  'FINDING_RULED',
   'CI_CLASSIFIED',
   'CI_RERUN',
   'OPERATION_INTENT',
