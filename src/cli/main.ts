@@ -4,6 +4,7 @@
  */
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
@@ -56,7 +57,7 @@ import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '.
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
 import { Goal, OperationKind, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
-import { disputeKindOf, parseDisputeKind, parseRuling } from '../core/review-policy.ts';
+import { disputeKindOf, parseDisputeKind, parseRuling, parseVerdictDocument } from '../core/review-policy.ts';
 
 interface Ctx {
   root: string;
@@ -957,6 +958,59 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         },
       });
       out(c, released, () => `released ${key}`);
+    });
+  review
+    .command('resolve <key>')
+    .description('settle a lost review request with the outcome of its lookup and free its pool slot: --verdict <file> completes it, --no-result requeues it')
+    .option('--verdict <file>', 'the verdict document the lookup found')
+    .option('--no-result', 'the lookup found no result')
+    .requiredOption('--reason <text>', 'why, kept in the journal of each requester goal')
+    .action((key: string, o: { verdict?: string; result: boolean; reason: string }) => {
+      if (o.verdict !== undefined && o.result === false) return fail('review resolve: --verdict and --no-result exclude each other; give one');
+      if (o.verdict === undefined && o.result !== false) return fail("review resolve: give --verdict <file> (the lookup found the review's result) or --no-result (it found none)");
+      if (/^\s*$/.test(o.reason)) return fail('review resolve: --reason must not be blank');
+      let verdict: { ref: string; sha256: string } | undefined;
+      if (o.verdict !== undefined) {
+        const file = fileArg(o.verdict, '--verdict');
+        let bytes: Buffer;
+        try {
+          bytes = readFileSync(file);
+        } catch (err) {
+          return fail(`review resolve: --verdict ${JSON.stringify(file)}: cannot read the file (${(err as NodeJS.ErrnoException | undefined)?.code ?? 'UNREADABLE'})`);
+        }
+        let document: unknown;
+        try {
+          document = JSON.parse(bytes.toString('utf8'));
+        } catch {
+          return fail(`review resolve: --verdict ${JSON.stringify(file)} is not JSON`);
+        }
+        let accepted = false;
+        try {
+          accepted = parseVerdictDocument(document) !== undefined;
+        } catch {
+          accepted = false;
+        }
+        if (!accepted) return fail(`review resolve: --verdict ${JSON.stringify(file)} is not a review verdict that the verdict-file parser accepts`);
+        // The path read: with -C the resolved path; without it the value as the file system read it, made absolute without collapsing `..`.
+        const ref = g().cwd !== undefined ? file : process.platform === 'win32' ? path.resolve(file) : file.startsWith('/') ? file : `${process.cwd()}/${file}`;
+        verdict = { ref, sha256: createHash('sha256').update(bytes).digest('hex') };
+      }
+      const c = ctx(g());
+      const outcome = verdict ? 'found' : 'not-found';
+      const resolved = new ReviewQueue(c.paths.reviewQueue).resolveLost(key, verdict ? { found: true, verdictRef: verdict.ref } : { found: false }, nowIso(), (request) => {
+        // Inside the queue's section, before any queue write: each existing goal journals once per key, pool, seq, attempts, outcome and verdict digest, so a run that failed part way is finished by running it again.
+        for (const requester of request.requesters) {
+          const [goalId, cardId] = requester.split(':');
+          const goal = goalId ? c.store.getGoal(goalId) : undefined;
+          if (!goal) continue;
+          const journal = Journal.forGoal(c.paths.journal, goal.id);
+          const same = (e: { type: string; data: Record<string, unknown> }): boolean =>
+            e.type === 'NOTE' && e.data['kind'] === 'review-lost-resolved' && e.data['key'] === request.key && e.data['pool'] === request.pool && e.data['seq'] === request.seq && e.data['attempts'] === request.attempts && e.data['outcome'] === outcome && e.data['verdictSha256'] === verdict?.sha256;
+          if (journal.readAll().some(same)) continue;
+          journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-lost-resolved', key: request.key, pool: request.pool, seq: request.seq, attempts: request.attempts, outcome, reason: o.reason, ...(verdict ? { verdictSha256: verdict.sha256 } : {}) } });
+        }
+      });
+      out(c, resolved, () => `resolved ${resolved.key}: ${resolved.state}`);
     });
   review
     .command('pre <cardId>')

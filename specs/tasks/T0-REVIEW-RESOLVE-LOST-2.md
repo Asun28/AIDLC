@@ -204,3 +204,84 @@ npm run typecheck && node --test tests/scenarios/review-resolve.test.ts tests/sc
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; every existing file listed passes unchanged. The other document readers are the coordinator's checkpoint before the first review (hygiene); the full suite runs in CI.
 
+## Attempt evidence
+Implementer: Sonnet 5.5. Worktree D:/wt/AIDLC/T0-REVIEW-RESOLVE-LOST-2 on main 89ee0ea0. Commits: cc51a0b7 `test:` RED (carried test file), 243302a6 `feat:` (source, documents, CHANGELOG), then this `card:` commit. Windows 11, Node 22.23.1. The POSIX rows were not run here (2 skipped); the coordinator's Linux run covers them. Nothing above this heading in the card was changed.
+
+### Carry check
+The patch is `git diff bfc2cb42 de9a26fc -- src docs CHANGELOG.md tests` of T0-REVIEW-RESOLVE-LOST, applied with a 3-way merge: CHANGELOG.md, docs/OPERATIONS.md and src/coordination/review-queue.ts cleanly; src/cli/main.ts with one conflict, the import line, resolved to the line of difference a. The changed lines of each carried file (the `+` and `-` lines of `git diff 89ee0ea0 HEAD -- <file>` compared as a multiset with those of the predecessor's patch, script scratchpad carrycheck.mjs) differ in these lines only:
+| File | Changed lines carried / here | Lines that differ |
+|---|---|---|
+| src/cli/main.ts | 56 / 56 | a: the import line, `parseDisputeKind, parseVerdictDocument` becomes `parseDisputeKind, parseRuling, parseVerdictDocument` (`parseRuling` is main's) |
+| src/coordination/review-queue.ts | 16 / 16 | none (`git diff 52141049 HEAD` of the file is empty) |
+| docs/OPERATIONS.md | 4 / 4 | b: `(card T0-REVIEW-RESOLVE-LOST)` becomes `(card T0-REVIEW-RESOLVE-LOST-2)` in paragraph S; the Setup `-C` paragraph is identical to de9a26fc |
+| CHANGELOG.md | 2 / 2 | b: the entry begins `- T0-REVIEW-RESOLVE-LOST-2 (replaces T0-REVIEW-RESOLVE-LOST, audit item F9):` |
+| tests/scenarios/review-resolve.test.ts | 963 / 963 | b: the same two texts in `PARAGRAPH_S` and `ENTRY_C` (`git diff de9a26fc HEAD` of the file: 2 insertions, 2 deletions) |
+Both constants equal the lines of section Exact text of this card (compared by script). Placement: the tests of acceptance 13 pass, so paragraph S stands directly above the `review release` paragraph, last in Ship gates, and entry C directly above `- T0-UNRESOLVED-NARRATION`. Main's `review rule` command, its OPERATIONS lines and its two CHANGELOG entries are not in the carried hunks (they appear in `git diff de9a26fc HEAD` and nowhere else).
+
+### RED, on main 89ee0ea0 source with the carried test file (receipt: scratchpad red-new.txt)
+91 tests: 83 fail, 6 pass, 2 skipped; all 14 top-level tests fail. Every CLI row ends `error: unknown command 'resolve'` (57 of them), the not-found alias rows of acceptance 5 keep the stored key in `active`, and the three document tests find no text. The 6 that pass on main are the ones the card says pass there (unknown key and queued request with no call, the three-argument call, the found alias rows).
+
+### Revert table, quoted from T0-REVIEW-RESOLVE-LOST
+67 actual runs, 67 red, one mutation at a time with the file restored, measured on 52141049 with the test file of 9afb7dcc; 8 of them (R2-stored-key-slot, R3-found-state, R4-lastError, R5-order-request, R6-id-type and three document rows) re-run on 61ec1b34 with the same failing counts. Here src/coordination/review-queue.ts is byte-identical to 52141049, and src/cli/main.ts differs from it only by difference a and by the `review rule` command of main, which no row reads. The test file differs from 61ec1b34 only in the harness (the fault switches dropped from the inherited environment, the one-shot rename fault, the 60 s timeout of `cliAsync`), the document constants and the Setup assertion, the join row (backslash spelling of the repository), the both-platform row of a fully qualified value with `-C` and the POSIX link case; no row below reads those lines.
+| Requirement | Mutation (rows) | Red in |
+|---|---|---|
+| R1 steps 2, 3, 4 | each check removed (3); step 4 as space and tab only (1) | acceptance 3, 2/15 each |
+| R1 step 5 | `fileArg` replaced by the raw value (1) | acceptance 3 and 11, 5/22 |
+| R1 steps 6, 7, 8 | M4 code fallback, M5 removed, parser result ignored, parser throw accepted, weaker parser (5) | acceptance 3, 2/15 each |
+| R1 one read, bytes | file read twice; digest of the decoded text (2) | acceptance 4, 2/3 each |
+| R1 ctx() before step | `ctx(g())` before each of steps 2 to 8 (7) | acceptance 3 (bad-configuration pass), 2/15 each |
+| R1 order | step 4 before 3, after 5, after 6; step 2 after 5 (4) | acceptance 3, 2/15 each |
+| R2 | any state but lost accepted; message names the stored key (2) | acceptance 3 and 5, 7/30 and 2/15 |
+| R2/R5/R6 stored key | slot removal, NOTE data, NOTE identity, human line by the supplied key (4) | acceptance 1, 2, 5, 6: 12/24, 6/16, 3/22, 6/16 |
+| R3 | `verdictRef` as given; no `finishedAt`; no `verdictRef`; state cancelled (4) | acceptance 1, 5: 2/7, 4/22, 4/22, 13/22 |
+| R3/R8 | read by the raw value; `verdictRef` the raw value with `-C` (2) | acceptance 11, 2/7 each |
+| R4 | lastError, startedAt kept, slotOwner kept, other seq, other state (5) | acceptance 2: 2/9, 2/9, 2/9, 4/9, 5/9 |
+| R5 order | request before slot; `before` after the slot; `before` before the lost check; `before` swallowed; never called (5) | acceptance 5, 6, 7: 6/6, 8/19, 4/19, 6/19, 9/22 |
+| R6 order | journal lookup before the section; journal after the queue write (2) | acceptance 3, 7, 6: 9/19, 9/10 |
+| R6 identity | each of type, kind, key, pool, seq, attempts, outcome, digest ignored (8); never reused (1) | acceptance 8: 2/16 to 3/16; 12/26 |
+| R6 NOTE content | absent goal not skipped; generation 0; attempts 1; reason trimmed; digest on not-found; other card (6) | acceptance 8, 1, 2: 2/16, 2/16, 3/16, 2/7, 2/9, 2/7 |
+| R7 | human line without the state; the command rewrites goal records (2) | acceptance 1 and 10: 8/16, 4/4 |
+The row `verdictRef` as `path.resolve` of the value is red only on POSIX (the directory-link row); the coordinator runs it on Linux.
+
+### Rows run again here, on 243302a6 (actual runs, each mutation alone, file restored, tree clean after)
+| Row | Result |
+|---|---|
+| paragraph S removed | red 1/1: the Ship gates test |
+| the list sentence (`review resolve --verdict` in the Setup list) removed | red 1/1: the Setup test |
+| the corrected Setup sentence reverted to `is used as given` | red 1/1: the Setup test |
+| entry C removed | red 1/1: the CHANGELOG test (a first run of this row had a stale marker and changed nothing; it was run again with the marker of this card's entry) |
+| `fileArg` returns a fully qualified value raw with `-C` | red 2/8 in acceptance 11, first in `with -C a fully qualified value is normalized lexically, not read as given` |
+
+### DoD on 243302a6 (exit 0; receipt scratchpad dod-new.txt)
+`npm run typecheck && node --test` of the nine files: tests 289, suites 14, pass 284, fail 0, skipped 5 (two POSIX rows of acceptance 11; three of cli-cwd-paths.test.ts). `node bin/aidlc.js cards validate`: ok true, no blocking, no errors.
+
+### Clause table
+| Requirement | Code | Test |
+|---|---|---|
+| R1 order of checks | src/cli/main.ts `review resolve` action: M1, M2, M3, `fileArg`, one read, M5, M6, then `ctx()` | acceptance 3 (rows, precedence rows, rows under a refused configuration), 4 |
+| R2 key and state by the queue | review-queue.ts `resolveLost` inside `requestSection`; stored key after the lookup | acceptance 1, 2, 3, 5 |
+| R3 found outcome and `verdictRef` | `resolveLost` found record; `ref` in the action | acceptance 1, 4, 11 |
+| R4 requeue | `resolveLost` not-found record | acceptance 2 |
+| R5 `before`, slot before request | `resolveLost` order | acceptance 5, 6, 7 |
+| R6 NOTE per requester goal | `before` of the action, identity `same` | acceptance 1, 2, 7, 8, 9 |
+| R7 writes only the request, the pool and the journals | the action calls nothing else | acceptance 3 (records rows), 10 |
+| R8 `--verdict` through `fileArg` before `ctx()` | `fileArg` in the action | acceptance 3 (path rows), 11 |
+| R9 documents | docs/OPERATIONS.md paragraph S and the Setup `-C` paragraph, CHANGELOG.md entry C | acceptance 13 a, b, c |
+
+### Changed lines
+`git diff --shortstat 89ee0ea0...HEAD` with this section: 6 files, 1098 insertions and 9 deletions, 1107 changed lines, against the budget 1300.
+
+## Linux rows
+
+Run by the coordinator on 9b7f1029 under Linux (WSL Ubuntu, Node 22), in a copy of this worktree; each mutation alone, the file restored after.
+
+| Row | Mutation | Result |
+|---|---|---|
+| The new test file | none | 91 tests, 89 pass, 0 fail, 2 skipped (the two Windows rows of acceptance 11) |
+| R3, `verdictRef` on POSIX | the POSIX branch replaced by `path.resolve(file)` | acceptance 11 red, 2 of 8, in the directory-link subtest (`verdictRef` `<cwd>/verdict.json` against `<cwd>/link/../verdict.json`) |
+| R8, a fully qualified value with `-C` | `fileArg` returning a fully qualified value raw with `-C` | acceptance 11 red, 3 of 8, in "with -C a fully qualified value is normalized lexically, not read as given" and in the directory-link subtest |
+
+Coordinator verification:
+- At d50369bb, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/review-resolve.test.ts): tests 91, pass 89, fail 0, skipped 2.
+- Windows, docpins: 83 test files reading 2 changed documents: # tests 2034 # pass 2020 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
