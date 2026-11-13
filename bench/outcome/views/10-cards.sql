@@ -32,20 +32,35 @@ SELECT count(*) AS card_attempts, count(*) FILTER (WHERE failed) AS failed, coun
   count(*) FILTER (WHERE failed) / count(*) AS successor_rate
 FROM card_attempts;
 
--- Over cards with at least one formal entry whose outcome is pass or block. A block with mergeBlocking absent is merge-blocking.
+-- Over cards with at least one formal entry whose outcome is pass or block (cards). A block with mergeBlocking absent is
+-- merge-blocking; two_or_more_blocks_share and stop_review_share count every such entry. A decision is a formal pass or
+-- block that is not a second pass and not a base-sync decision. A card's decisions over all of its runs are placed in the
+-- order requestedAt (as a timestamp), decision (absent last), goalId, outcome; first_decision_pass_share is the share of
+-- cards whose first decision passes (none counts as not passing), and mean_decisions_to_pass the mean place of the first
+-- pass over cards that have one.
 CREATE OR REPLACE VIEW summary_review_convergence AS
 WITH per_card AS (
-  SELECT cardId, bool_or(outcome = 'pass') AS passed, bool_or(stopReview) AS stopped,
+  SELECT cardId, bool_or(stopReview) AS stopped,
     count(*) FILTER (WHERE outcome = 'block' AND coalesce(mergeBlocking, true)) AS blocks
   FROM review_decisions WHERE stage = 'formal'
   GROUP BY cardId HAVING count(*) FILTER (WHERE outcome IN ('pass', 'block')) > 0
+),
+placed AS (
+  SELECT cardId, outcome,
+    row_number() OVER (PARTITION BY cardId ORDER BY requestedAt::TIMESTAMPTZ, decision NULLS LAST, goalId, outcome) AS place
+  FROM review_decisions
+  WHERE stage = 'formal' AND outcome IN ('pass', 'block') AND secondPass IS NOT TRUE AND baseSync IS NOT TRUE
+),
+decisions AS (
+  SELECT cardId, bool_or(place = 1 AND outcome = 'pass') AS first_passed, min(place) FILTER (WHERE outcome = 'pass') AS to_pass
+  FROM placed GROUP BY cardId
 )
 SELECT count(*) AS cards,
-  avg((passed AND blocks = 0)::INT) AS first_decision_pass_share,
-  avg((blocks >= 2)::INT) AS two_or_more_blocks_share,
-  avg(blocks + 1) FILTER (WHERE passed) AS mean_decisions_to_pass,
-  avg(stopped::INT) AS stop_review_share
-FROM per_card;
+  avg(coalesce(d.first_passed, false)::INT) AS first_decision_pass_share,
+  avg((p.blocks >= 2)::INT) AS two_or_more_blocks_share,
+  avg(d.to_pass) AS mean_decisions_to_pass,
+  avg(p.stopped::INT) AS stop_review_share
+FROM per_card p LEFT JOIN decisions d USING (cardId);
 
 -- lead_p50 and lead_p90: hours from startedAt to the start of the first CLOSE or DONE span, over runs with mergeVerified
 -- that have such a span (n runs). state_total: the hours of every span with an endTs, per state (n spans).
