@@ -492,7 +492,7 @@ Each row changes one clause in the worktree, runs `node --test-reporter=tap test
 
 ### Repair after the formal review's first decision
 
-Commits on a2fa046d: 9dd83c00 (test rows for the five findings), a918a4e0 (fix for findings 1 and 2), 0017b606 (the filesystem-root rule alone decides an all-separator root; the extra `bare === ''` check it replaced could never change the value), ed3b6394 (test row `D:/\` as main root). Code head ed3b6394; no card text above the evidence changed.
+Commits on a2fa046d: 9dd83c00 (test rows for the five findings), a918a4e0 (fix for findings 1 and 2), 0017b606 (removed the `bare === ''` check; the claim made here that the filesystem-root rule alone decides every root that normalizes to nothing was false: a918a4e0 had replaced the guard on the normalized root, `norm === ''`, and the second decision found `/\` on posix used with an empty prefix; see the next subsection), ed3b6394 (test row `D:/\` as main root). Code head ed3b6394; no card text above the evidence changed.
 
 | Finding | Change | Red without it |
 |---|---|---|
@@ -507,6 +507,20 @@ Equivalent after the reviewer's question: R3-j (an elapsed time that does not ma
 Rows re-run at ed3b6394, each mutation alone, files restored (`git status --short` empty after): every R2, R3, R5 and R8 row, R6-h and R6-i, with R5-d and R5-e redefined for the new rule (the rule dropped; the parsed root compared with its trailing separators) and five new rows (R5-r posix semantics on win32, R5-s trailing separators of the root kept, R5-t `/` alone as the win32 trailing set, red only by the `D:/\` row, R3-q the fraction cut to whole milliseconds; R5-o made unique to the trim). 64 rows: 62 red, 2 green (R3-j, R5-q, equivalent as above).
 
 DoD on ed3b6394, clean tree: exit 0; tests 156, suites 24, pass 151, fail 0, cancelled 0, skipped 5, todo 0 (output sha256 prefix 4794fb752be6ed35). `node bin/aidlc.js cards validate`: exit 0, `"ok": true`. Changed lines: `git diff --shortstat origin/main...HEAD` 1244 on ed3b6394 before this subsection; with it and the four corrected revert-table lines, 1262 of 1400.
+
+### Repair after the formal review's second decision
+
+Finding (empty-root-prefix-loop, src/probes/processes.ts:184 at 98429083): on posix a `worktreeRoot` of `/` and a backslash passes the path-module rule (`path.posix` reads `\` as a name, so its root is `/`), normalizes to the empty prefix, and `matchIn` then loops forever (`indexOf('', at + 1)` stays at the end of the text). Cause: a918a4e0 replaced the guard `norm === ''` of rootOf; 0017b606 removed `bare === ''`, which did not cover this root either.
+
+Commits: f1290f8c (test), 583e2cce (fix). Fix: src/probes/processes.ts:185-186, a root whose normalized prefix is empty is never used; :215-216, `matchIn` skips an empty prefix. Nothing else changed.
+
+Red test: tests/infra/stray-processes.test.ts:421, through the child of tests/infra/stray-processes.child.ts (new mode `--report`), bounded at 30 s by the parent, platform `linux` injected: `strayProcessesReport` with `worktreeRoot` `/\`, `//` and `/\\\` and an old, busy process gives `none` with one listing under main root `/home/u/src/AIDLC`, and `n/a (no usable root)` with no listing under main root `/`; `strayEntries` with the root `/\` gives `none`. On 98429083: `--report: status null, signal SIGTERM, error ... ETIMEDOUT` (tests 21, pass 20, fail 1); the timed-out child was gone afterwards (no process naming the worktree). Forms tried on win32 (`/`, `\`, `//`, `/\`, `\\`, `\/`, `///`, `/\\\`, `\\\`, `D:`, `D:/\`, `\\srv`, `\\?\`, `\\.\`): none is used with an empty prefix; the all-separator forms are filesystem roots there.
+
+Rows re-run at 583e2cce, each mutation alone, files restored: every R5 and R6 row and two new ones. 41 rows: 39 red, 2 green. R6-t (the `norm === ''` guard removed) is red by the child's timeout. R6-u (the skip in `matchIn` removed, the guard in place) is green and kept as defence in depth: `strayEntries` and `strayProcessesReport`, the exported functions that reach `matchIn`, pass every root through `rootOf`, which no longer gives an empty prefix. R5-q stays equivalent.
+
+Loops read again at 583e2cce: `parseCim` and `parsePs` iterate a finite list; `segmentAt` iterates a finite string; `matchIn` searches with a non-empty prefix, so `at` grows on each step until `indexOf` gives -1; `walk` adds a new pid on each step or ends, so it stops within the number of rows (a cycle ends at the visited set); `strayEntries` iterates the rows and a finite chain. The regular expressions have no nested quantifiers.
+
+DoD on 583e2cce, clean tree: exit 0; tests 157, suites 24, pass 152, fail 0, cancelled 0, skipped 5, todo 0 (sha256 prefix 88e0e5973ff95dc3). `node bin/aidlc.js cards validate`: exit 0, `"ok": true`. Changed lines: 1305 on 583e2cce before this subsection; with it, 1319 of 1400.
 
 Coordinator verification:
 - At b21e5a16, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/stray-processes.test.ts): tests 21, pass 19, fail 0, skipped 2.
