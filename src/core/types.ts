@@ -828,7 +828,7 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
  */
 export const OwedEvent = z.object({
   key: z.string().min(1),
-  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT']),
+  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT', 'FINDING_RULED']),
   generation: z.number().int().nonnegative(),
   data: z.record(z.string(), z.unknown()),
 });

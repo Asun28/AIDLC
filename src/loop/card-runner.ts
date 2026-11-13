@@ -503,15 +503,19 @@ export class CardRunner {
   /**
    * The owner's ruling on a finding of the R3 decision that stopped the card (card T1-REVIEW-RULE): one locked update, judged on
    * the record read inside the lock (`ruleFinding` in review-policy), then one FINDING_RULED event. The run stays stopped and no
-   * lease is fenced: the ruling comes after the stop. A failed append leaves the ruling without its event, as with a dispute.
+   * lease is fenced: the ruling comes after the stop. The update owes the event (`journalOwed`, card T0-JOURNAL-FAULT-EVENTS), so
+   * an append that fails here is made once by the next `card next` on the card (`deliverOwed`), which a stopped run reaches too.
    */
   ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun {
     const at = this.clock();
+    let owed: OwedEvent | undefined;
     const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
       if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to rule on`);
-      return { ...persisted, findings: ruleFinding(persisted, id, { at, ...ruling }) };
+      const findings = ruleFinding(persisted, id, { at, ...ruling });
+      owed = this.owe(goal, 'FINDING_RULED', { finding: id.toUpperCase(), ruling: { at, ...ruling } });
+      return { ...persisted, findings, journalOwed: this.owedWith(goal.id, persisted, owed) };
     });
-    this.journal(goal.id).append({ type: 'FINDING_RULED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase(), ruling: next.findings.find((f) => f.id === id.toUpperCase())?.ruling } });
+    this.deliverOwed(goal, card, next, { keys: [owed!.key] });
     return next;
   }
 

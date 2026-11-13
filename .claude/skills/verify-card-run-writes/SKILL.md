@@ -59,9 +59,8 @@ runs it, so CI runs it on every push.
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.withdrawCandidate` (its own fault rows are in
   `tests/scenarios/candidate-withdraw.test.ts`), `CardRunner.ruleFinding`
-  (card T1-REVIEW-RULE: one `GoalStore.updateCardRun` write, then one
-  `FINDING_RULED` journal append, whose failure leaves the ruling without
-  its event), `aidlc review repro`
+  (its own fault rows, the write and the owed `FINDING_RULED` append, are
+  in `tests/scenarios/review-rule.test.ts`), `aidlc review repro`
   (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
   `GoalStore.updateCardRun` write of the finding's `repro` after both runs
   and no journal append), failed and
