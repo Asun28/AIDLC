@@ -242,8 +242,8 @@ test('acceptance 10: a failed GOAL_STATE append or goal write at the lifting rul
       const held = s.bytes();
       assert.throws(() => s.rule('F9', 'the owner'), /is in SHIP, not stopped for review/);
       assert.deepEqual(s.bytes(), held);
-      // The rerun names a ruled finding of the lifted decision (F1, ruled by a lead, or F2) and another `by` and decision: the event carries the by of the lift.
-      const again = s.rule(failing === 'append' ? 'F1' : 'f2', 'someone else', CARD, 'deferred');
+      // The rerun: the same ruling again (record row), or another ruled finding of the lifted decision, F1 ruled by a lead, with another `by` and decision (append row): the event carries the by of the lift.
+      const again = failing === 'append' ? s.rule('f1', 'someone else', CARD, 'deferred') : s.rule('F2', 'the owner');
       assert.deepEqual([again.ruled, again.goal.state, s.bytes()[2], s.count('FINDING_RULED')], [false, 'CARDS', held[2], 2], 'no ruling is written: the card run keeps its bytes');
       assert.deepEqual([s.goalRec()['state'], s.goalRec()['terminal'], 'stop' in s.goalRec()], ['CARDS', false, false]);
       assert.deepEqual(s.readmissions(), [readmission(CARD, 'the owner')], 'exactly one GOAL_STATE from STOP to CARDS');
