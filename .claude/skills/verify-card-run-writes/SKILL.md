@@ -57,8 +57,8 @@ runs it, so CI runs it on every push.
   that dies mid-command, a torn journal line.
 - Card-run commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
-  `CardRunner.ruleFinding` (fault rows of its write and its owed
-  `FINDING_RULED` append: `tests/scenarios/review-rule.test.ts`),
+  `CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's
+  `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`),
   `CardRunner.withdrawCandidate` (its own fault rows are in
   `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
   (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
