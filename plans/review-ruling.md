@@ -42,7 +42,7 @@ The record first. T1-REVIEW-RULE-2 writes a ruling on a finding and changes no s
 ## Order of work
 1. T1-REVIEW-RULE-2 (replaces T1-REVIEW-RULE): the `ruling` field, `ruleFinding` in `src/core/review-policy.ts`, the runner method, the command and `FINDING_RULED`.
 2. T1-REVIEW-RULE-SHIP: the lift, the ruled pass, the gate and the canonical document. Depends on 1: it reads the `ruling` field and both change `src/loop/card-runner.ts`.
-3. T1-REVIEW-RULE-GOAL: the command on a goal stopped for review, the goal re-admission, the audit rule, the ruling in `aidlc review findings`, the stop narration and the instruction line. Depends on 2: it re-admits the goal at the lift.
+3. T1-REVIEW-RULE-GOAL-2 (replaces T1-REVIEW-RULE-GOAL, which started and built nothing: its acceptance 2 said `aidlc next` dispatches the card after the lift, and the controller waits on a run in progress): the command on a goal stopped for review, the goal re-admission, the audit rule, the ruling in `aidlc review findings`, the stop narration and the instruction line. Depends on 2: it re-admits the goal at the lift.
 
 One worker: the three cards share files.
 
@@ -51,7 +51,7 @@ One worker: the three cards share files.
 |---|---|---|---|---|---|
 | T1-REVIEW-RULE-2 | MUST | `aidlc review rule` records a ruling on a finding of a card stopped for review (replaces T1-REVIEW-RULE) | - | - | - |
 | T1-REVIEW-RULE-SHIP | MUST | the last ruling lifts the card's stop and the candidate ships by ruling | T1-REVIEW-RULE-2 | - | - |
-| T1-REVIEW-RULE-GOAL | MUST | the ruling runs on a stopped goal and re-admits it; narration, findings list and instructions name it | T1-REVIEW-RULE-SHIP | - | - |
+| T1-REVIEW-RULE-GOAL-2 | MUST | the ruling runs on a stopped goal and re-admits it; narration, findings list and instructions name it | T1-REVIEW-RULE-SHIP | - | - |
 
 ## Risks
 - T0-REVIEW-RESOLVE-LOST is running and changes `src/cli/main.ts`; card 1 meets it at base sync.

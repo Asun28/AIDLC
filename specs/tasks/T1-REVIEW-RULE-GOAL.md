@@ -2,6 +2,7 @@
 id: T1-REVIEW-RULE-GOAL
 title: "`aidlc review rule` runs on a goal stopped for review and re-admits it when the ruling lifts the card's stop; the stop narration, `aidlc review findings` and the installed instructions name the ruling as the owner's"
 status: todo
+superseded_by: T1-REVIEW-RULE-GOAL-2
 branch: T1-REVIEW-RULE-GOAL
 worktree: D:\wt\AIDLC\T1-REVIEW-RULE-GOAL
 plan_ref: plans/review-ruling.md#order-of-work
