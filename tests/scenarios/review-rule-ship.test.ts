@@ -2,14 +2,15 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import fs, { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, InjectedShipPath } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { parseVerdictDocument } from '../../src/core/review-policy.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
+import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { DryRunShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 
 /** The CLI from the sources, never a compiled build that may be stale. */
@@ -74,12 +75,15 @@ after(() => {
   syncBuiltinESMExports();
 });
 
+/** The reviewer's block verdict line for the given finding texts, each cited at a line of FILE. */
+const block = (texts: string[]): string => {
+  const reasons = texts.map((text, i) => `[spec] 6 tests @ ${FILE}:${i + 1}: ${text}`);
+  return JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
+};
+
 /** A card run a command reviewer stopped at R3: one block per entry of `blocks`, each on its own candidate (sha-1, sha-2, ...); `dispute` is disputed before the last decision. */
 async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], dispute: string[] = [], ship: DryRunShipPath = new DryRunShipPath(['merged'])) {
-  const verdicts = blocks.map((texts) => {
-    const reasons = texts.map((text, i) => `[spec] 6 tests @ ${FILE}:${i + 1}: ${text}`);
-    return JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
-  });
+  const verdicts = blocks.map(block);
   const reviews = { count: 0 };
   const script = scriptedRunner({
     'git diff --name-only': { stdout: `${FILE}\u0000` },
@@ -199,7 +203,7 @@ test('acceptance 3 and 6: on a run stopped at decision 2 by a re-raise, one ruli
     assert.deepEqual([pass.outcome, pass.ruled, pass.reviewer, pass.candidateSha, pass.candidateDigest, pass.requestedAt], ['pass', true, 'ruling:the owner', 'sha-2', lifted.candidateDigest, lifted.stopLifted.at]);
     assert.deepEqual([now['state'], 'stop' in now, now['review'].substantiveDecisions, now['review'].substantiveBlocks, now['review'].noVerdictRetriesUsed, now['dodReceipt'], now['redReceipt'], now['deadline']], ['SHIP', false, 2, 2, 0, 'dod:2', 'red:1', '2999-01-01T00:00:00.000Z']);
     // Two decisions are used and formalReview.secondPass is on: the ruled candidate takes no second pass and no further decision, by hand either.
-    await assert.rejects(review(), /the two-decision review allowance is used \(2 decided\); the current candidate already holds its pass, ship it/);
+    await assert.rejects(review(), /candidate sha-2 passed by ruling \(ruling:the owner\); no review may run: ship it/);
     assertShipped(next().directive.kind, 'sha-2', 2);
   } finally {
     fx.cleanup();
@@ -279,8 +283,9 @@ test('acceptance 5, fault rows: a failed card-run write at the lifting ruling ch
 });
 
 test('R3 decision 1, F2: a ship path that reads the canonical document of the ruled pass records no invocation, and after a transient CI failure and its reconciliation the retry ships the ruled candidate; a pass another reviewer wrote there is its own decision and does not replace the ruled pass [R4] [R5]', async () => {
-  for (const foreign of [false, true]) {
-    const fx = makeFixture(CONFIG);
+  // The third row gives the ship-path reviewer (`config.reviewer`) the formal reviewer's name (R3 decision 2, re:F2).
+  for (const [foreign, shipReviewer] of [[false, 'codex-review'], [true, 'codex-review'], [true, 'fake-r3']] as const) {
+    const fx = makeFixture({ config: { ...CONFIG.config, reviewer: shipReviewer } });
     try {
       const ship = new ReadingShipPath(['ci-red', 'merged'], TRANSIENT);
       Object.assign(ship, { file: path.join(fx.tmp, '.review', 'T1-RS.json'), foreign });
@@ -293,14 +298,14 @@ test('R3 decision 1, F2: a ship path that reads the canonical document of the ru
         return { counters, invocations: invocations.map((i: Stored) => (i.invocationId.startsWith('ship:') ? [i.reviewer, i.outcome, i.candidateSha] : i)) };
       };
       const { invocations: lifted, lastVerdict: _v, ...counters } = ledger;
-      const expected = { counters, invocations: foreign ? [...lifted, ['codex-review', 'pass', 'sha-2']] : lifted };
+      const expected = { counters, invocations: foreign ? [...lifted, [shipReviewer, 'pass', 'sha-2']] : lifted };
       // The first ship reads the document and fails in CI: one rerun.
       const failed = next();
       assert.deepEqual([failed.directive.kind, failed.run.state, failed.run.ci.reruns.map((x) => x.outcome), ship.readVerdict().verdict?.verdict], ['ship', 'SHIP', ['requested'], 'pass']);
       assert.deepEqual(after(), expected, 'the ledger after the first ship');
       if (!foreign) assert.deepEqual(stored()['review'], ledger, 'the ship read adds no invocation and moves no counter');
       assert.equal(reconcile('12345').state, 'SHIP');
-      await assert.rejects(review(), /the two-decision review allowance is used/, 'no second pass and no further decision by hand');
+      await assert.rejects(review(), /passed by ruling .*no review may run/, 'no second pass and no further decision by hand');
       // The retry: no review directive, no REVIEW_FIX, no second pass (formalReview.secondPass on), and no further invocation.
       const retried = next();
       assert.deepEqual([retried.directive.kind, persisted().state, persisted().mergeVerified, ship.requests.map((q) => q.candidateSha), reviews.count], ['close', 'CLOSE', true, ['sha-2', 'sha-2'], 2], retried.directive.narration);
@@ -308,5 +313,108 @@ test('R3 decision 1, F2: a ship path that reads the canonical document of the ru
     } finally {
       fx.cleanup();
     }
+  }
+});
+
+test('R3 decision 2, re:F2: the ruled pass of the candidate digest is its standing decision whatever invocation the ledger holds after it: the gate admits the ship with no review directive and no second pass', async () => {
+  // Each row is an invocation a ship can leave after the ruled pass, for the same digest. A pending reservation is not a row: the
+  // admission refuses a review of a ruled candidate, so none can follow one, and a ship waits on any reservation (`shipDrift`).
+  const rows: Array<[name: string, extra: Stored]> = [
+    ['a ship-path pass under the formal reviewer\'s name', { reviewer: 'fake-r3', outcome: 'pass' }],
+    ['a ship-path pass under another name', { reviewer: 'codex-review', outcome: 'pass' }],
+    ['a ship-path advisory block under the formal reviewer\'s name', { reviewer: 'fake-r3', outcome: 'block', mergeBlocking: false }],
+    ['a no-verdict', { reviewer: 'fake-r3', outcome: 'no-verdict' }],
+    ['a quota hold', { reviewer: 'fake-r3', outcome: 'quota-hold', holdUntil: '2026-09-11T02:00:00.000Z' }],
+  ];
+  // Every row runs, and the rows that do not ship are reported together.
+  const refused: string[] = [];
+  for (const [name, extra] of rows) {
+    const fx = makeFixture(CONFIG);
+    try {
+      const { ship, persisted, reviews, seed, rule, next } = await stopped(fx, RERAISE, ['F1']);
+      rule('F1', 'rejected');
+      seed((run) => { const { ruled: _r, ...pass } = run['review'].invocations.at(-1); run['review'].invocations.push({ ...pass, invocationId: 'ship:op-row', ...extra }); });
+      const directive = next().directive;
+      const got = [directive.kind, ship.requests.map((q) => q.candidateSha).join(), reviews.count, persisted().mergeVerified, persisted().review.invocations.some((i) => i.secondPass || i.outcome === 'pending')].join(' ');
+      if (got !== 'close sha-2 2 true false') refused.push(`${name}: ${got}`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+  assert.deepEqual(refused, []);
+});
+
+test('acceptance 7, git-backed (R3 decision 2, re:F1): a commit made on the card branch after the lift is not shipped under the ruling: the GitHub ship path reads the checkout at the new commit and refuses the ruled document of the old one', async () => {
+  const fx = makeFixture({ config: { ...CONFIG.config, shipPath: 'github' } });
+  try {
+    const git = (cwd: string, ...args: string[]): string => {
+      const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout.trim();
+    };
+    writeCard(fx, { id: 'T1-RS', title: 'review rule ship', allowPaths: [FILE] });
+    const goal = goalForCards(fx, ['T1-RS']);
+    // A real repository and worktree root, both canonical (lessons T1-BOARD-WATCH-2 and T0-PREPARE-WORKTREE-2).
+    writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\nwt/\n.review/\n');
+    git(fx.tmp, 'init', '-q', '-b', 'main');
+    git(fx.tmp, 'add', '-A');
+    git(fx.tmp, 'commit', '-q', '-m', 'base');
+    mkdirSync(path.join(fx.tmp, 'wt'));
+    const mainRoot = realpathSync.native(fx.tmp);
+    const wtRoot = realpathSync.native(path.join(fx.tmp, 'wt'));
+    const wt = path.join(wtRoot, 'T1-RS');
+    // git runs for real; the reviewer and gh are scripted, and every command is recorded.
+    const verdicts = RERAISE.map(block);
+    const scripted = scriptedRunner({ 'fake-r3': () => ({ stdout: verdicts.shift()! }), 'gh api user -q .login': { stdout: 'alice\n' } });
+    const calls: string[] = [];
+    const run: SyncRunner = (cmd, args, o) => { calls.push([cmd, ...args].join(' ')); return cmd === 'git' ? runSync(cmd, args, o) : scripted(cmd, args, o); };
+    const shipPath = new GitHubShipPath({ mainRoot, worktreeRoot: wtRoot, repository: 'o/r', runner: run, sleep: () => {} });
+    const runner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, mainRoot, worktreeRoot: mainRoot, isGit: true }, config: { ...fx.config, worktreeRoot: wtRoot }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath, now: fx.now, runner: run });
+    const card = fx.card('T1-RS');
+    const g = () => fx.goal(goal.id);
+    const persisted = () => fx.store.getCardRun(goal.id, 'T1-RS') ?? fx.controller.ensureCardRun(g(), 'T1-RS');
+    const next = () => runner.next(g(), card, persisted());
+    /** A commit on the card branch, in its worktree. */
+    const commit = (n: number): string => {
+      mkdirSync(path.join(wt, 'src'), { recursive: true });
+      writeFileSync(path.join(wt, FILE), `export const x = ${n};\n`);
+      git(wt, 'add', '-A');
+      git(wt, 'commit', '-q', '-m', `candidate ${n}`);
+      return git(wt, 'rev-parse', 'HEAD');
+    };
+    assert.equal(next().directive.kind, 'prepare');
+    git(mainRoot, 'worktree', 'add', '-q', '-b', 'T1-RS', wt);
+    assert.equal(next().directive.kind, 'prepare');
+    const shas: string[] = [];
+    for (const n of [1, 2]) {
+      next();
+      shas.push(commit(n));
+      // The attempt names no sha: the runner records the candidate from the checkout.
+      runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${n}`, redReceipt: 'red:1' });
+      assert.deepEqual([next().directive.kind, persisted().candidate?.sha], ['review', shas[n - 1]]);
+      if (n === 2) runner.disputeFinding(g(), card, persisted(), 'F1', 'the row exists');
+      await runner.formalReview(g(), card, persisted());
+    }
+    assert.deepEqual([next().directive.kind, persisted().stop?.reason], ['stop', 'review']);
+    runner.ruleFinding(g(), card, 'F1', { decision: 'rejected', ...BY });
+    assert.deepEqual([persisted().state, persisted().review.invocations.at(-1)?.ruled, persisted().review.invocations.at(-1)?.candidateSha], ['SHIP', true, shas[1]]);
+
+    // A commit on the branch after the lift. No field of the run is edited: card next runs the ship path on the checkout.
+    const later = commit(3);
+    calls.length = 0;
+    const after = next();
+    const receipt = fx.ops.unresolved(goal.id, 'T1-RS').length;
+    assert.deepEqual([after.directive.kind, after.directive.kind === 'stop' ? after.directive.stop.reason : undefined, persisted().mergeVerified ?? false, receipt], ['stop', 'review', false, 0], after.directive.narration);
+    // The ship path read the checkout at the new commit and refused the ruled document, which names the reviewed one, before any remote effect.
+    const doc: Stored = JSON.parse(readFileSync(path.join(wt, '.review', 'T1-RS.json'), 'utf8'));
+    assert.deepEqual([doc['verdict'], doc['sha'], doc['reviewer'], git(wt, 'rev-parse', 'HEAD')], ['pass', shas[1], 'ruling:the owner', later]);
+    assert.ok(calls.some((c) => c.startsWith('git rev-parse')), 'the ship path read the checkout head');
+    assert.deepEqual(calls.filter((c) => /^(git push|gh pr |git fetch)/.test(c)), [], 'no push, no PR and no fetch');
+    assert.match(after.directive.narration, /stale verdict/);
+    // The ship path's own answer on that checkout names both commits.
+    const again = shipPath.ship({ cardId: 'T1-RS', base: 'main', mode: 'remote', candidateSha: shas[1] });
+    assert.deepEqual([again.outcome, again.receipt.stdout.includes(`[R3-STALE-VERDICT-SHA] verdict sha ${shas[1]} != HEAD ${later}`)], ['review-no-verdict', true], again.receipt.stdout);
+  } finally {
+    fx.cleanup();
   }
 });
