@@ -285,3 +285,207 @@ The source mutants the revert table of the Attempt evidence covers, each run alo
 - R11 and R12: each text removed on its own.
 
 ## Attempt evidence
+
+Implementer: Claude Opus 5.5, 2026-11-13. Code head 9982bc19 (commits 1107face seam, a11d6f29 RED tests, 24de30e4 implementation and documents, 9982bc19 two rows for mutants of the card's list and a total parent walk); the evidence commit changes only this file.
+
+### Carry from T0-DOCTOR-STRAY-PROCESSES (8a239ea5)
+
+Main changed none of the carried files between 5620be8e and 8f8a9512 (`git diff --stat 5620be8e 8f8a9512` lists only the two card files). `git diff --stat 8a239ea5 9982bc19 -- . ':!specs'`: 5 files, 48 insertions, 20 deletions; the other six files are byte-identical to 8a239ea5.
+
+| File | Difference from 8a239ea5 | Why |
+|---|---|---|
+| src/probes/processes.ts | default `env` is `process.env` (was `{ ...process.env }`); an absolute worktree root loses its trailing separators (`/[\\/]+$/` on win32, `/\/+$/` elsewhere) unless `parse(root).root` is the root itself; `walk` ends when the listing lacks the process (was a non-null assertion); card id in the header comment | R5 as corrected; the walk change makes the self-missing refusal of R7 come from its own check (revert row R7-j) and not from an error the report catches |
+| docs/OPERATIONS.md | P1 names `(card T0-DOCTOR-STRAY-PROCESSES-2)` | Exact text P1 |
+| CHANGELOG.md | C1 begins `- T0-DOCTOR-STRAY-PROCESSES-2 (bugfix, replaces T0-DOCTOR-STRAY-PROCESSES, ordered by the owner on 2026-11-12)` | Exact text C1 |
+| tests/infra/stray-processes.test.ts | P1 and C1 literals; acceptance 7 rows `D:\wt\AIDLC\` and `D:\wt\AIDLC/\` asserted as the whole entry `... under D:\wt\AIDLC, folder t0-x`, plus Fixture P rows `/home/u/wt//` (`under /home/u/wt`) and `/home/u/wt\` (`under /home/u/wt\`, a backslash is no separator on posix); 13(f) segment of 59 `k`, U+1D49C, 10 `k`; acceptance 14 win32 subtest `SYSTEMROOT` = `X:\Sysroot`, last of its test, restored by its own `t.after`; acceptance 15 with `process.env`, the parent's row required with a start time, the base name `stray-processes.test.ts`, both rows' `command` replaced by the absolute path of the test file in the copy; acceptance 6 also calls `listProcesses` directly with the throwing stdout; acceptance 12 adds `start: null, cpu: T` (exactly `none`) | Acceptance detail 7, 12, 13, 14, 15 as corrected; the 6 and 12 rows kill the Mutants items "a throwing stdout not caught" and "a process without a start time listed", which no row of the card's lists turned red |
+| tests/infra/stray-processes.child.ts | card id in the header comment | |
+
+### RED (seam 1107face, tests a11d6f29, Windows 11, Node 22.23.1)
+
+`node --test tests/infra/stray-processes.test.ts`: tests 21, pass 0, fail 20, skipped 1 (the POSIX subtest of 14). Every failure is an AssertionError; no TypeError, import or typecheck failure (`npm run typecheck` exit 0 on a11d6f29).
+
+| Item | Red on the seam | First failing assertion |
+|---|---|---|
+| 1 | yes | value `none`, then `calls.length` 0 for 1 (the seam runs no listing) |
+| 2 | yes | deep-equal of (b): `none` for the entry and S |
+| 3 | yes | `empty`: `none` for `unknown: the process listing could not be read` |
+| 4 | yes | `expected a list holding pid 5500: "none"` |
+| 5 | yes | `empty`: `none` for unknown |
+| 6 | yes | `none` for `unknown: the process listing failed (no exit code)` |
+| 7 | yes | `none` for `n/a (not a git repository)` |
+| 8 | yes | `expected a list holding pid 5900: "none"` |
+| 9 | yes | deep-equal of (a) |
+| 10 | yes | child printed `"none"` for the entries of (b) |
+| 11 | yes | deep-equal of (d) |
+| 12 | yes | `expected a list holding pid 5800: "none"` |
+| 13 | yes | deep-equal of (a) |
+| 14 | yes | win32 subtests: `calls.length` 0 for 1 (both); POSIX subtest skipped on Windows |
+| 15 | yes | `the parent pid 99748 is not in the listing` (the seam lists nothing) |
+| 16 | yes | `--json` and `--no-json`: `strayProcesses` missing |
+| 17 | n/a (passes on main and now) | the three doctor files and the guard pass in the DoD below |
+| 18 | yes | `CLAUDE.md` (H1 missing) |
+| 19 | yes | `docs/OPERATIONS.md` (P1 missing) |
+| 20 | reviewer-verified | doctor call main.ts:314, entry main.ts:328, default env processes.ts:292 |
+
+### Revert table (code head 9982bc19)
+
+Each row changes one clause in the worktree, runs `node --test-reporter=tap tests/infra/stray-processes.test.ts` alone (R7-b only the cycle test, R5-e only acceptance 7 under a 30 s bound, since both loop forever) and restores the file byte for byte; after the run `git status --short` was empty. 138 rows: 133 red, 5 green, each green row an equivalent mutant (the clause's effect is already produced by another clause, so no listing can tell them apart). The row "default env is a copy" (R5-j) is red in the new win32 subtest. Doc rows R11 and R12 remove each text alone. Rows run on Windows; the POSIX subtest of 14 is skipped there and the coordinator runs the file on Linux.
+
+| Row | Clause reverted | Result | Red in |
+|---|---|---|---|
+| R1-a | PowerShell path changed (src/probes/processes.ts) | red (4) | the listing is one bounded command per platform; platform, environment, pid and directory default to the calling proces |
+| R1-b | pwsh as the command (src/probes/processes.ts) | red (3) | the listing is one bounded command per platform; platform, environment, pid and directory default to the calling proces |
+| R1-c | -EncodedCommand for -Command (src/probes/processes.ts) | red (2) | the listing is one bounded command per platform; the real listing shows this process and leaves it out of the report |
+| R1-d | an argument dropped (-NonInteractive) (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-e | script changed (exit 0 in catch) (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-f | timeout 20000 (src/probes/processes.ts) | red (2) | the listing is one bounded command per platform; a listing that fails, times out, throws or rejects gives unknown, neve |
+| R1-g | byte bound 8 MiB (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-h | shell true (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-i | ps without -ww (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-j | ps with etimes (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-k | windir before SystemRoot (src/probes/processes.ts) | red (1) | platform, environment, pid and directory default to the calling proces |
+| R1-l | trailing separators of SystemRoot kept (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R1-m | C:Windows fallback changed (src/probes/processes.ts) | red (1) | the listing is one bounded command per platform |
+| R2-a | single object refused (src/probes/processes.ts) | red (1) | a Windows listing is read in each form it takes |
+| R2-b | byte order mark kept (src/probes/processes.ts) | red (1) | a Windows listing is read in each form it takes |
+| R2-c | null cmd refused (src/probes/processes.ts) | red (3) | a Windows listing is read in each form it takes; a process is under the repository through its parent chain, which its  |
+| R2-d | null start refused (src/probes/processes.ts) | red (2) | a Windows listing is read in each form it takes; a process is stray from 30 minutes of age and half its age in CPU |
+| R2-e | null cpu refused (src/probes/processes.ts) | red (1) | a Windows listing is read in each form it takes |
+| R2-f | an element that is not an object skipped (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-g | missing pid and ppid accepted (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-h | missing start read as null (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-i | missing cpu read as 0 (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-j | missing cmd read as empty (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-k | negative pid accepted (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-l | negative ppid accepted (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-m | negative cpu accepted (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-n | safe-integer check dropped (src/probes/processes.ts) | red (2) | a Windows listing the parser refuses gives unknown; a ps listing the parser refuses gives unknown |
+| R2-o | start safe-integer check dropped (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-p | cmd of another type accepted (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-q | duplicate pid accepted (win32) (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
+| R2-r | top level not a list or object read as empty (src/probes/processes.ts) | green | equivalent: an empty list then lacks doctor, so R7 gives the same `unknown: the process listing could not be read` |
+| R3-a | two colon fields read as hours and minutes (src/probes/processes.ts) | red (4) | a ps listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R3-b | days ignored (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
+| R3-c | fraction refused (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
+| R3-d | comma refused (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
+| R3-e | s flag dropped (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
+| R3-f | a line that does not match skipped (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
+| R3-g | unsafe pid accepted (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
+| R3-h | unsafe ppid accepted (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
+| R3-i | a CPU time that does not match accepted (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
+| R3-j | an elapsed time that does not match accepted (src/probes/processes.ts) | green | equivalent: an elapsed time that does not match gives a start time that is not finite, which the next clause of R3 refuses |
+| R3-k | finiteness check of a duration dropped (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
+| R3-l | finiteness check of the start time dropped (src/probes/processes.ts) | green | equivalent: with durations finite and `nowMs` finite (R5) the start time is always finite |
+| R3-m | duplicate pid accepted (ps) (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
+| R3-n | trailing CR kept (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
+| R3-o | blank lines not skipped (src/probes/processes.ts) | red (5) | the listing is one bounded command per platform; a ps listing is read in each form it takes |
+| R3-p | no line left accepted (src/probes/processes.ts) | green | equivalent: an empty list then lacks doctor, so R7 gives the same unknown value |
+| R4-a | a synchronous throw not caught by the inner catch (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-b | a rejected runner not caught (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-c | timeout read after the exit code (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-d | stdout of a non-zero exit parsed (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-e | null exit code not told apart (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-f | a throwing stdout not caught (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-g | stderr read (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R4-h | an unknown listing value replaced (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
+| R5-a | isGit ignored (src/probes/processes.ts) | red (3) | the roots are the main checkout and the worktree root as the config re; aidlc doctor prints strayProcesses after interruptedWrites and exits 0 |
+| R5-b | relative worktree root resolved against the main checkout (src/probes/processes.ts) | red (2) | the roots are the main checkout and the worktree root as the config re; platform, environment, pid and directory default to the calling proces |
+| R5-c | resolver throw not caught (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-d | a drive root used (win32) (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-e | the root / used (posix) (src/probes/processes.ts) | red (hang) | the roots are the main checkout ...: an empty prefix loops in matchIn, the run ends at its 30 s bound |
+| R5-f | main checkout dropped (src/probes/processes.ts) | red (2) | the roots are the main checkout and the worktree root as the config re; an entry names the executable and the match and no argument; the list  |
+| R5-g | none for no usable root (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-h | unreadable clock not refused (src/probes/processes.ts) | red (1) | a process is stray from 30 minutes of age and half its age in CPU |
+| R5-i | platform default not process.platform (src/probes/processes.ts) | red (2) | platform, environment, pid and directory default to the calling proces |
+| R5-j | env default is a copy (src/probes/processes.ts) | red (2) | on win32: the PowerShell path from SystemRoot and the root resolved ag; on win32: SYSTEMROOT in another letter case is read through process.en |
+| R5-k | self default not process.pid (src/probes/processes.ts) | red (2) | platform, environment, pid and directory default to the calling proces |
+| R5-l | cwd default not process.cwd() (src/probes/processes.ts) | red (1) | platform, environment, pid and directory default to the calling proces |
+| R5-m | caught error not turned into unknown (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-n | trailing separators of an absolute worktree root kept (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-o | only / removed on win32 (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-p | backslash removed elsewhere too (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R5-q | the filesystem-root exception of the trim dropped (src/probes/processes.ts) | green | equivalent: a filesystem root, trimmed or not, is left out by the filesystem-root rule of R5 |
+| R6-a | separator runs not collapsed (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-b | backslash not replaced (src/probes/processes.ts) | red (8) | a Windows listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R6-c | toLowerCase dropped on win32 (src/probes/processes.ts) | red (7) | a Windows listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R6-d | letter case folded on linux (src/probes/processes.ts) | red (3) | a ps listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R6-e | drive prefix dropped (src/probes/processes.ts) | red (9) | a Windows listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R6-f | Git Bash prefix dropped (src/probes/processes.ts) | red (3) | a root matches by normalized prefix between two non-name characters; a process is under the repository through its parent chain, which its  |
+| R6-g | WSL prefix dropped (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-h | root not normalized (src/probes/processes.ts) | red (9) | a Windows listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R6-i | trailing / of a normalized root kept (src/probes/processes.ts) | red (1) | the roots are the main checkout and the worktree root as the config re |
+| R6-j | boundary after dropped (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-k | boundary before dropped (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-l | p{L} dropped (src/probes/processes.ts) | red (9) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R6-m | p{N} dropped (src/probes/processes.ts) | red (8) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R6-n | . dropped from the name class (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-o | _ dropped from the name class (src/probes/processes.ts) | red (2) | the roots are the main checkout and the worktree root as the config re; a root matches by normalized prefix between two non-name characters |
+| R6-p | - dropped from the name class (src/probes/processes.ts) | red (8) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R6-q | boundary before read by UTF-16 unit (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-r | boundary after read by UTF-16 unit (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R6-s | only the first occurrence tried (src/probes/processes.ts) | red (1) | a root matches by normalized prefix between two non-name characters |
+| R7-a | no parent walk (src/probes/processes.ts) | red (6) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R7-b | visited set dropped (src/probes/processes.ts) | red (1) | a cyclic parent chain ends |
+| R7-c | start guard dropped (src/probes/processes.ts) | red (1) | a process is under the repository through its parent chain, which its  |
+| R7-d | start guard made non-strict (src/probes/processes.ts) | red (2) | a process is under the repository through its parent chain, which its ; a cyclic parent chain ends |
+| R7-e | a parent with an unknown start ends the walk (src/probes/processes.ts) | red (1) | a Windows listing is read in each form it takes |
+| R7-f | self exclusion dropped (src/probes/processes.ts) | red (11) | the listing is one bounded command per platform; a Windows listing is read in each form it takes |
+| R7-g | ancestor exclusion dropped (src/probes/processes.ts) | red (2) | doctor's own chain and its descendants are never listed and the chain'; the real listing shows this process and leaves it out of the report |
+| R7-h | descendant exclusion dropped (src/probes/processes.ts) | red (1) | doctor's own chain and its descendants are never listed and the chain' |
+| R7-i | the chain's command lines counted (src/probes/processes.ts) | red (1) | doctor's own chain and its descendants are never listed and the chain' |
+| R7-j | self-missing check dropped (src/probes/processes.ts) | red (4) | a Windows listing the parser refuses gives unknown; a ps listing the parser refuses gives unknown |
+| R7-k | reported match not the earliest (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R7-l | shorter prefix at a tie (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R7-m | ancestors' command lines not read (src/probes/processes.ts) | red (4) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R8-a | age compared with > for >= (src/probes/processes.ts) | red (1) | a process is stray from 30 minutes of age and half its age in CPU |
+| R8-b | CPU condition dropped (src/probes/processes.ts) | red (3) | a Windows listing is read in each form it takes; a process is under the repository through its parent chain, which its  |
+| R8-c | CPU compared with > for >= (src/probes/processes.ts) | red (2) | a ps listing is read in each form it takes; a process is stray from 30 minutes of age and half its age in CPU |
+| R8-d | ratio 0.6 (src/probes/processes.ts) | red (2) | a ps listing is read in each form it takes; a process is stray from 30 minutes of age and half its age in CPU |
+| R8-e | age 29 minutes (src/probes/processes.ts) | red (1) | a process is stray from 30 minutes of age and half its age in CPU |
+| R8-f | the system clock for now (src/probes/processes.ts) | red (8) | a Windows listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R8-g | a process without a start time listed (src/probes/processes.ts) | red (1) | a process is stray from 30 minutes of age and half its age in CPU |
+| R9-a | sort reversed (src/probes/processes.ts) | red (3) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-b | tie order reversed (src/probes/processes.ts) | red (2) | a cyclic parent chain ends; an entry names the executable and the match and no argument; the list  |
+| R9-c | 19 entries (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-d | 21 entries (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-e | no and <n> more (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-f | S missing (src/probes/processes.ts) | red (6) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-g | S not last (src/probes/processes.ts) | red (6) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-h | the whole command line printed (src/probes/processes.ts) | red (7) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-i | first word read without the quote rule (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-j | base name cut by UTF-16 unit (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-k | segment cut by UTF-16 unit (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-l | segment cut at 61 (src/probes/processes.ts) | red (1) | an entry names the executable and the match and no argument; the list  |
+| R9-m | folder missing (src/probes/processes.ts) | red (8) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-n | through an ancestor missing (src/probes/processes.ts) | red (4) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-o | Math.round for the age (src/probes/processes.ts) | red (1) | a process is stray from 30 minutes of age and half its age in CPU |
+| R9-p | Math.round for the CPU time (src/probes/processes.ts) | red (2) | a process is under the repository through its parent chain, which its ; an entry names the executable and the match and no argument; the list  |
+| R9-q | (no command line) printed as a quoted empty name (src/probes/processes.ts) | red (2) | a Windows listing is read in each form it takes; a ps listing is read in each form it takes |
+| R9-r | base name taken after the last backslash only (src/probes/processes.ts) | red (2) | a ps listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
+| R10-a | entry placed after hookCommand (src/cli/main.ts) | red (2) | aidlc doctor prints strayProcesses after interruptedWrites and exits 0 |
+| R10-b | entry not printed (src/cli/main.ts) | red (2) | aidlc doctor prints strayProcesses after interruptedWrites and exits 0 |
+| R11-a | H1 removed from CLAUDE.md (CLAUDE.md) | red (1) | every session and the implementer agent carry the rule |
+| R11-b | H1 removed from templates/CLAUDE.aidlc.md (templates/CLAUDE.aidlc.md) | red (1) | every session and the implementer agent carry the rule |
+| R11-c | I1 removed from .claude/agents/implementer.md (.claude/agents/implementer.md) | red (1) | every session and the implementer agent carry the rule |
+| R11-d | I1 removed from templates/claude/agents/implementer.md (templates/claude/agents/implementer.md) | red (1) | every session and the implementer agent carry the rule |
+| R12-a | P1 removed (docs/OPERATIONS.md) | red (1) | the documents state the check |
+| R12-b | A1 removed (docs/ARCHITECTURE.md) | red (1) | the documents state the check |
+| R12-c | C1 removed (CHANGELOG.md) | red (1) | the documents state the check |
+
+### DoD (code head 9982bc19, clean tree, from the worktree root)
+
+`npm run typecheck && node --test tests/infra/stray-processes.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/templates.test.ts tests/surface/module-map.test.ts tests/surface/claude-md-size.test.ts tests/surface/mirror.test.ts tests/infra/base-sync.test.ts tests/surface/init-no-package.test.ts`: exit 0; tests 156, suites 24, pass 151, fail 0, cancelled 0, skipped 5, todo 0 (output sha256 prefix 990a7209686e6c68). The five skips: the POSIX subtest of acceptance 14, one in base-sync.test.ts (this git knows --no-lazy-fetch, so the older-git row is skipped) and three Windows skips in cli-cwd-paths.test.ts. The real listing of acceptance 15: exit 0, timedOut false, 1617 ms, 282 994 output bytes. `node bin/aidlc.js cards validate`: exit 0, `"ok": true`.
+
+### Document texts against the code and the tests
+
+| Text | Place | Pinned by | Made true by |
+|---|---|---|---|
+| H1 | CLAUDE.md:165-170, templates/CLAUDE.aidlc.md:48-53 | acceptance 18, mirror.test.ts, claude-md-size.test.ts (CLAUDE.md 185 lines) | a rule, no code |
+| I1 | .claude/agents/implementer.md:26-32 and its template copy (byte-identical, ASCII) | acceptance 18, templates.test.ts | a rule, no code |
+| P1 | docs/OPERATIONS.md:41 | acceptance 19 | listing and bounds: `listProcesses`, `PROCESS_LIST_TIMEOUT_MS`, `PROCESS_LIST_MAX_BUFFER` (acceptance 1, 6, 15); roots and matching: `strayProcessesReport`, `rootOf`, `normalize`, `matchIn` (7, 8); the chain: `walk`, `strayEntries` (9, 10, 11); age and CPU: `STRAY_AGE_MS`, `STRAY_CPU_RATIO` (12); the five values, the entry form, `and <n> more`, S and no argument (2, 7, 13); doctor beside its probes with no exit change: main.ts:314, :328 (16, 17) |
+| A1 | docs/ARCHITECTURE.md:20 | acceptance 19, module-map.test.ts (names src/probes/processes.ts) | as P1 |
+| C1 | CHANGELOG.md:49, directly above `- T0-CI-PERMISSIONS`, a blank line between | acceptance 19 | as P1; the `aidlc init` clause by src/scaffold/init.ts:165-175 (appends the template only when CLAUDE.md has no aidlc section) |
+
+### Changed lines
+
+`git diff --shortstat origin/main...HEAD` on 9982bc19: 11 files changed, 1005 insertions, 2 deletions (1007 changed lines) before this section; with its 204 lines, 1211 of the budget of 1400.
