@@ -223,15 +223,15 @@ function matchIn(command: string, roots: Root[], platform: NodeJS.Platform): Mat
 function walk(pid: number, byPid: Map<number, ProcessRow>): number[] {
   const visited = new Set([pid]);
   const up: number[] = [];
-  let current = byPid.get(pid)!;
-  for (;;) {
+  for (let current = byPid.get(pid); current !== undefined; ) {
     const next = byPid.get(current.ppid);
-    if (!next || visited.has(next.pid)) return up;
-    if (current.startMs !== null && next.startMs !== null && next.startMs > current.startMs) return up;
+    if (!next || visited.has(next.pid)) break;
+    if (current.startMs !== null && next.startMs !== null && next.startMs > current.startMs) break;
     visited.add(next.pid);
     up.push(next.pid);
     current = next;
   }
+  return up;
 }
 
 /** The base name of the executable, the first word of the command line, cut to 60 code points; undefined when there is none. */

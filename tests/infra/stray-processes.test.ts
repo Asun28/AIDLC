@@ -278,6 +278,7 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
       }),
     );
     assert.equal(await strayProcessesReport(winInput(getter.runner)), UNREADABLE);
+    assert.equal(await listProcesses(getter.runner, 'win32', {}, T), UNREADABLE);
   });
 
   test('the roots are the main checkout and the worktree root as the config resolves them [R5]', async () => {
@@ -417,6 +418,7 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
     assert.equal(await one(T - 30 * MIN + 1), 'none');
     assert.equal(await one(T + MIN, 0), 'none');
     assert.equal(await one(null), 'none');
+    assert.equal(await one(null, T), 'none');
     assert.ok(listed(await one(T - 1_914_000), 5800).includes('age 31 min'));
     assert.ok(listed(await one(T - 30 * MIN, 900_000), 5800).includes('cpu 15 min'));
     assert.equal(await one(T - 30 * MIN, 899_999), 'none');
