@@ -69,3 +69,20 @@ npm run typecheck && node --test tests/scenarios/review-rule-goal.test.ts tests/
 ```
 - Expected exit code: 0
 - Assertion: every test of the five files passes and the typecheck reports no error.
+
+## Attempt evidence
+Attempt 1. Tests are in `tests/scenarios/review-rule-goal.test.ts`; "DoD" is the `dod_command`, exit 0, 116 tests passed and 0 failed. No row sets a stored field by hand. 18 source mutants, one per condition of the new code, each fail a test.
+
+| Item | Proof | Result |
+|---|---|---|
+| RED | commit 41945d72 holds the test file alone; all 5 tests failed on main: test 1 at `:122` (`the nextAction names aidlc review rule`), test 2 on `1 mutation event(s) after terminal disposition` for the review stop with `ruling`, tests 3 to 5 on `fx.controller.ruleFinding is not a function` | failed as required |
+| 1 | test "acceptance 1, 2, 4, 5 and 6": the goal is stopped by `GoalController.next`; CLI `review dispute` exits 1 and the goal record, journal and card run keep their bytes; the CLI ruling of F1 leaves the goal record byte-identical and appends no `GOAL_STATE` | pass |
+| 2 | same test: the CLI ruling of F2; the goal record compared whole (`stop` gone, `terminal` false, `CARDS`, `updatedAt` later, `revision` equal); one event with `ruling: { cardId, by }`; `GoalController.next` returns `wait` on `T1-RG:SHIP` with the goal in `WAIT` and one `CARD_DISPATCHED`; `CardRunner.next` ships `T1-RG-sha-2`; CLI `card next` exits 0 | pass |
+| 3 | test "acceptance 3": the CLI and the controller method on a DONE goal (reached by the loop, no reviewer), a cancelled goal and a goal `aidlc next` stopped for time; the three files keep their bytes | pass |
+| 4 | test "acceptance 1, 2, 4, 5 and 6": after the ship, `verifyAudit` (the function `aidlc audit verify` calls) on the goal's journal and operations, with an `OPERATION_ISSUED` after the `GOAL_STOPPED`; test "acceptance 4, journal rows": six rows through `Journal.append` | pass |
+| 5 | test "acceptance 1, 2, 4, 5 and 6": `ruling` in the JSON of CLI `review findings`; the text line through the exported `findingLine`, which the command prints with (the CLI prints JSON when stdout is not a terminal) | pass |
+| 6 | same test: `stop.nextAction` of the card's stop directive | pass |
+| 7 | DoD (`claude-md-size.test.ts`, `templates.test.ts`); the line is one physical line, the same in both files | pass |
+| 8 | DoD; none of the five files is changed | pass |
+| 9 | `docs/OPERATIONS.md` (Rulings, Audit, STOP reasons, the paragraph "A goal that is terminal") and `CHANGELOG.md` (Unreleased) | for the reviewer |
+| 10 | test "acceptance 10": `GoalController.ruleFinding` with the fixture clock, each fault, the rerun, then `aidlc next` and the ship (append row) or CLI `card next` (record row); test "R8, the goal's last GOAL_STOPPED": two cards, two stops, two events | pass |

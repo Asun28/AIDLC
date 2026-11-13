@@ -160,6 +160,7 @@ refuses SHIP without a DoD receipt; the Stop hook only reminds.
   production, tag/publish and data operations require recorded authority.
 - Maker/checker deadlock: after two rounds of mutual non-acceptance, stop
   for a human ruling; do not fan out reviewers or switch accounts.
+- A review ruling (`aidlc review rule`) is recorded only on the owner's instruction in the session.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
 
 ### Docs

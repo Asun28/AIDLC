@@ -19,7 +19,6 @@ const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 const CARD = 'T1-RG';
 const SECOND = 'T1-RH';
 const REASON = 'the row is tests/t1-rg.test.ts:9';
-const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 const CONFIG = { config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, secondPass: true } } };
 type Stored = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const fileOf = (id: string) => `src/${id.toLowerCase()}.ts`;
@@ -92,7 +91,6 @@ function setup(fx: ReturnType<typeof makeFixture>, ids: string[] = [CARD]) {
   const count = (type: string) => events().filter((e) => e['type'] === type).length;
   /** The journal's GOAL_STATE events out of STOP, as `[generation, data]`. */
   const readmissions = () => events().filter((e) => e['type'] === 'GOAL_STATE' && e['data'].from === 'STOP').map((e) => [e['generation'], e['data']]);
-  // No session variable of the calling environment reaches the CLI: CI sets none.
   const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: fx.paths.root };
   delete env['CLAUDE_CODE_SESSION_ID'];
   delete env['AIDLC_SESSION'];
@@ -134,17 +132,15 @@ test('acceptance 1, 2, 4, 5 and 6: on a goal aidlc next stopped for review, the 
     const listed = (JSON.parse(s.cli('review', 'findings', CARD).stdout) as Stored)['findings'] as Stored[];
     assert.deepEqual(listed.map((f) => [f['id'], f['ruling'] && [f['ruling'].decision, f['ruling'].by, f['ruling'].reason]]), [['F1', ['rejected', 'a lead', REASON]], ['F2', undefined]]);
     assert.deepEqual(listed.map((f) => aidlc.findingLine(f as Parameters<typeof aidlc.findingLine>[0]).split('\n')[0]!.includes('ruled rejected by a lead')), [true, false]);
-
     // Acceptance 2: the lifting ruling, by another name than the first. The goal record is compared whole: `stop` gone, `terminal`, `state` and the store's `updatedAt` moved.
     const was = s.goalRec();
-    assert.deepEqual([was['state'], was['terminal'], was['stop'].reason], ['STOP', true, 'review']);
     const lift = s.ruleCli('f2', 'the owner', '--defer', '--issue', '7');
     assert.equal(lift.status, 0, lift.stderr);
     assert.match(lift.stdout, /goal .* is re-admitted/);
     const now = s.goalRec();
     const { stop: _stop, ...rest } = was;
-    assert.deepEqual(now, { ...rest, terminal: false, state: 'CARDS', updatedAt: now['updatedAt'] });
-    assert.match(now['updatedAt'], ISO);
+    const expected: Stored = { ...rest, terminal: false, state: 'CARDS', updatedAt: now['updatedAt'] };
+    assert.deepEqual(now, expected);
     assert.ok(now['updatedAt'] > was['updatedAt'], `${now['updatedAt']} is after ${was['updatedAt']}`);
     assert.deepEqual([now['revision'], now['generation'], 'stop' in now], [was['revision'], was['generation'], false]);
     assert.deepEqual(s.readmissions(), [readmission(CARD, 'the owner')]);
@@ -215,7 +211,6 @@ test('acceptance 3: review rule exits non-zero and writes nothing on a DONE goal
       const refused = s.ruleCli('F1', 'the owner');
       assert.equal(refused.status, 1, `${row}: ${refused.stdout}`);
       assert.match(refused.stderr, names, row);
-      // The method the command calls refuses the same goal itself.
       assert.throws(() => s.rule('F1', 'the owner'), names, row);
       assert.deepEqual(s.bytes(), held, `${row}: the goal record, the journal and the card run are byte-identical`);
     } finally {

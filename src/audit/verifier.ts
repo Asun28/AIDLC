@@ -80,7 +80,9 @@ export function verifyAudit(input: VerifierInput): AuditReport {
 
   // Terminal accounting: work counts against the latest disposition journaled before it. A user-authorised re-admission ends
   // a terminal disposition: the resume takeover (it links from an earlier generation and moves to a later one) and the
-  // extension of a time stop (GOAL_STATE from STOP to CARDS in the generation of a GOAL_STOPPED for time). A lease takeover
+  // extension of a time stop (GOAL_STATE from STOP to CARDS in the generation of a GOAL_STOPPED for time). The same event ends
+  // a stop for review only when it carries `ruling` with the card id and `by`, as the lifting `aidlc review rule` writes it
+  // (card T1-REVIEW-RULE-GOAL-2); without it the event re-admits nothing after a stop for review. A lease takeover
   // re-admits nothing, and work of a generation below the highest one a resume moved to is a late wakeup of a stopped
   // generation. The chain check guarantees the events are in sequence order. A recovered attempt (`completed: true`, card
   // T0-JOURNAL-FAULT-EVENTS) counts at `startedAt`, the write that committed it, against the last disposition of its generation.
@@ -90,6 +92,10 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   let resumedGeneration: number | undefined;
   let afterTerminal = 0;
   const lastDisposition = new Map<number, string>();
+  const carriesRuling = (data: Record<string, unknown>): boolean => {
+    const ruling = data['ruling'] as { cardId?: unknown; by?: unknown } | null | undefined;
+    return typeof ruling === 'object' && ruling !== null && typeof ruling.cardId === 'string' && typeof ruling.by === 'string';
+  };
   for (const e of events) {
     if (e.type === 'GOAL_DONE' || e.type === 'GOAL_STOPPED') {
       terminal = e;
@@ -97,7 +103,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
     } else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string') {
       resumedGeneration = Math.max(resumedGeneration ?? 0, generationOf(e));
       if (terminal && generationOf(e) > generationOf(terminal)) terminal = undefined;
-    } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && terminal?.type === 'GOAL_STOPPED' && terminal.data['reason'] === 'time' && generationOf(e) === generationOf(terminal)) terminal = undefined;
+    } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && terminal?.type === 'GOAL_STOPPED' && (terminal.data['reason'] === 'time' || (terminal.data['reason'] === 'review' && carriesRuling(e.data))) && generationOf(e) === generationOf(terminal)) terminal = undefined;
     else if (['CARD_DISPATCHED', 'OPERATION_ISSUED', 'ATTEMPT_STARTED'].includes(e.type) && (terminal || (resumedGeneration !== undefined && generationOf(e) < resumedGeneration)) && !committedBefore(e, lastDisposition.get(generationOf(e)))) afterTerminal += 1;
   }
   if (afterTerminal) findings.push({ severity: 'block', code: 'WORK_AFTER_TERMINAL', detail: `${afterTerminal} mutation event(s) after terminal disposition` });

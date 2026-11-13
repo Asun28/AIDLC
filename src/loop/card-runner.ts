@@ -2375,7 +2375,9 @@ export class CardRunner {
                   break;
                 }
                 case 'stop-review': {
-                  const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
+                  // A block decision leaves findings the owner can rule on (card T1-REVIEW-RULE-GOAL-2); a stop with no verdict has none.
+                  const ruling = decidedOutcome === 'block' ? `. The ruling on each finding is the owner's: only on the owner's instruction in the session, record it with \`aidlc review rule ${card.id} <finding> --reject|--defer --by <who> --reason "<text>"\` (--reject: the finding does not hold; --defer: it holds and is left to follow-up work); a finding left unruled keeps the stop` : '';
+                  const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), `return the retained verdict evidence for human adjudication; no counter reset${ruling}`, { at: after, global: false });
                   next = { ...next, state: 'STOP', stop };
                   break;
                 }
