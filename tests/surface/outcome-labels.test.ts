@@ -42,15 +42,15 @@ ambiguous-card: the finding and the code follow two readings of a card text that
 Write at most five lines of reasons, then a last line that is only the label.`;
 
 test("the prompt carries the card's requirements, the reason and the cited lines", () => {
-  const card = '---\nid: T9\ntitle: T9\nstatus: todo\nallow_paths:\n  - src/x.ts\ndod_command: npm test\nrequirements:\n  - R1. the sum holds\nacceptance:\n  - 1. the sum test passes [R1]\nsweep: none\n---\n\n# T9\n';
+  const card = '---\nid: T9-SUM\ntitle: T9-SUM\nstatus: todo\nallow_paths:\n  - src/x.ts\ndod_command: npm test\nrequirements:\n  - R1. the sum holds\nacceptance:\n  - 1. the sum test passes [R1]\nsweep: none\n---\n\n# T9-SUM\n';
   const file = Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
-  const f = finding('T9', 'F4', { round: 2, candidateSha: 'abc', file: 'src/x.ts', reason: 'off by one @ src/x.ts:200' });
+  const f = finding('T9-SUM', 'F4', { round: 2, candidateSha: 'abc', file: 'src/x.ts', reason: 'off by one @ src/x.ts:200' });
   const p = promptFor(f, card, file, 'specs/tasks');
-  assert.ok(p.startsWith(`${HEAD}\n\nCard T9, requirements:\nR1. the sum holds\nAcceptance:\n1. the sum test passes [R1]\n\nFinding F4 of goal g1, R3 decision 2:\noff by one @ src/x.ts:200\n\nsrc/x.ts at abc, lines 120 to 280:\n120\tline 120\n`), p.slice(0, 2000));
+  assert.ok(p.startsWith(`${HEAD}\n\nCard T9-SUM, requirements:\nR1. the sum holds\nAcceptance:\n1. the sum test passes [R1]\n\nFinding F4 of goal g1, R3 decision 2:\noff by one @ src/x.ts:200\n\nsrc/x.ts at abc, lines 120 to 280:\n120\tline 120\n`), p.slice(0, 2000));
   assert.ok(p.includes('\n280\tline 280\n') && !p.includes('\n119\t') && !p.includes('\n281\t'), p);
   const noLine = promptFor({ ...f, reason: 'r @ src/x.ts' }, card, file, 'specs/tasks');
   assert.ok(noLine.includes('src/x.ts at abc, lines 1 to 81:\n1\tline 1\n') && noLine.includes('\n81\tline 81\n') && !noLine.includes('\n82\t'), noLine);
-  for (const text of [null, 'not a card']) assert.ok(promptFor(f, text, file, 'specs/tasks').includes('\n\nThe card file specs/tasks/T9.md is absent or does not parse at abc.\n\nFinding F4'));
+  for (const text of [null, 'not a card']) assert.ok(promptFor(f, text, file, 'specs/tasks').includes('\n\nThe card file specs/tasks/T9-SUM.md is absent or does not parse at abc.\n\nFinding F4'));
   assert.ok(promptFor({ ...f, file: null }, card, file, 'specs/tasks').includes('\n\nThe finding cites no file.\n'));
   assert.ok(promptFor(f, card, null, 'specs/tasks').includes('\n\nThe cited file src/x.ts is absent at abc.\n'));
 });
