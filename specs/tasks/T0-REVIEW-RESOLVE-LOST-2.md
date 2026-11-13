@@ -280,3 +280,8 @@ Run by the coordinator on 9b7f1029 under Linux (WSL Ubuntu, Node 22), in a copy 
 | The new test file | none | 91 tests, 89 pass, 0 fail, 2 skipped (the two Windows rows of acceptance 11) |
 | R3, `verdictRef` on POSIX | the POSIX branch replaced by `path.resolve(file)` | acceptance 11 red, 2 of 8, in the directory-link subtest (`verdictRef` `<cwd>/verdict.json` against `<cwd>/link/../verdict.json`) |
 | R8, a fully qualified value with `-C` | `fileArg` returning a fully qualified value raw with `-C` | acceptance 11 red, 3 of 8, in "with -C a fully qualified value is normalized lexically, not read as given" and in the directory-link subtest |
+
+Coordinator verification:
+- At d50369bb, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/review-resolve.test.ts): tests 91, pass 89, fail 0, skipped 2.
+- Windows, docpins: 83 test files reading 2 changed documents: # tests 2034 # pass 2020 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
