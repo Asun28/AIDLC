@@ -180,7 +180,7 @@ function rootOf(shown: string, platform: NodeJS.Platform): Root | undefined {
   // A filesystem root is the root the platform's path module parses, its trailing separators set aside.
   const trailing = platform === 'win32' ? /[\\/]+$/ : /\/+$/;
   const bare = shown.replace(trailing, '');
-  if (bare === '' || (platform === 'win32' ? path.win32 : path.posix).parse(shown).root.replace(trailing, '') === bare) return undefined;
+  if ((platform === 'win32' ? path.win32 : path.posix).parse(shown).root.replace(trailing, '') === bare) return undefined;
   const norm = normalize(shown, platform).replace(/\/$/, '');
   const drive = platform === 'win32' ? /^([a-z]):\/(.+)$/.exec(norm) : null;
   // The drive form, the Git Bash form and the WSL form.
