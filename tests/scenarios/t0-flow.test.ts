@@ -22,6 +22,7 @@ import { detectQuotaHold } from '../../src/core/parse-guard.ts';
 import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
 import { resolveWorktreeRoot } from '../../src/config.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** Test-only: write a run record wholesale, past the store's stale-write check, to rewind a scenario to an earlier ledger state. */
 function rewindCardRun(fx: ReturnType<typeof makeFixture>, run: CardRun): CardRun {
@@ -4029,7 +4030,7 @@ test('T0-SHIP-QUOTA-RESET: docs/OPERATIONS.md and the CHANGELOG Unreleased secti
   const sentence = "A quota wait of the formal review or of the ship path names the later of its hold and the reset the reviewer's review pool already keeps, which is when that pool admits a review again (card T0-SHIP-QUOTA-RESET, issue 54).";
   assert.ok(read('docs/OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = "- Quota wait reset, card T0-SHIP-QUOTA-RESET (issue 54): a quota wait of the formal review or of the ship path names the later of its hold and the reset the reviewer's review pool already keeps (`ReviewQueue.heldUntil`), in its `pollSeconds` and its narration, instead of the invocation's hold or now plus 15 minutes; the pre-review wait has no pool and is unchanged.";
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
@@ -4092,7 +4093,7 @@ test('T0-SHIP-QUOTA-WAIT-3 acceptance 4: docs/OPERATIONS.md and the CHANGELOG Un
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'A `review-no-verdict` ship outcome whose receipt carries a quota message is a quota hold on the ship path as well: the ship returns a `wait` directive on `review-quota`, holds the review pool for 15 minutes, leaves the card out of STOP and spends neither the no-verdict retry nor a substantive decision (card T0-SHIP-QUOTA-WAIT-3).',
     'While the hold stands, `aidlc card next` waits on the held pool and ships nothing; once it has passed, `aidlc card next` ships the same candidate again, and the hold never extends the card deadline.',
@@ -4251,7 +4252,7 @@ test('T0-SHIP-HOLD-OUTCOME acceptance 4: docs/OPERATIONS.md and the CHANGELOG Un
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'Only a `review-no-verdict` ship outcome holds the review pool on a quota message (card T0-SHIP-HOLD-OUTCOME): the receipt of the ship path is the output of the whole ship command (git, gh and the CI gate log), not only of its reviewer, so a ship that merged, whose CI gate failed or that ended with any other outcome settles its pool request without a hold (the request is completed, or marked lost when the ship timed out), sets no pool `resetAt` and journals no `REVIEW_HOLD`, whatever quota message its receipt carries.',
     'A hold set by such a ship left its request in `retry-after` after the card had closed; once the hold passed, the pool admitted that request as running, and nothing completed it.',
@@ -4490,7 +4491,7 @@ test('T0-SHIP-REPAIR-ATTEMPT acceptance 5: docs/OPERATIONS.md and the CHANGELOG 
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     "A ship that fails on the candidate's own code is a failed attempt (card T0-SHIP-REPAIR-ATTEMPT): a CI failure classified as a code defect and the ship outcomes `dod-failed`, `verify-failed`, `scope-blocked` and `budget-over` turn the success that bound the candidate into a counted failure whose cause names the outcome (`ship <outcome>: <detail>`, appended to the attempt's evidence and journaled as `ATTEMPT_FINISHED` with `refutedBy`), and reopen the effort episode.",
     "The next step is the ladder's on that episode, the same one `aidlc card attempt` admits: the repair attempt, the single justified escalation, or STOP/card once the ladder is spent or the same cause repeats without progress.",
@@ -4624,7 +4625,7 @@ test('T0-RUNNING-REPAIR-STOP acceptance 4: docs/OPERATIONS.md and the CHANGELOG 
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'A repair attempt that a review fix opened and that is still running when such a failure stops the ladder stays in the stopped episode, and `aidlc card attempt` refuses to finish it with any outcome, naming the stop (card T0-RUNNING-REPAIR-STOP): a success recorded after the stop would otherwise turn the stopped episode back into a succeeded one.',
     "When the ladder instead promotes that running repair to the single escalation, the promotion is journaled as an `ATTEMPT_STARTED` of the same attempt number with the new effort, `escalated: true`, `promoted: true`, the effort it started at as `from` and `reason: 'ship-failure'`.",
@@ -4716,7 +4717,7 @@ test('T0-SHIP-NOTHING-REFUTED acceptance 3: docs/OPERATIONS.md and the CHANGELOG
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const paragraph = operations.split('\n').find((l) => l.startsWith("A ship that fails on the candidate's own code is a failed attempt")) ?? '';
   const docSentences = [
     `A ship failure that refutes no recorded success (the run has no effort episode, or its last evaluated attempt is not a success) counts no attempt, and its build directive ends with "${SHIP_FAILURE_NOTHING_REFUTED}" instead of "${SHIP_FAILURE_COUNTED}" (card T0-SHIP-NOTHING-REFUTED).`,
@@ -4899,7 +4900,7 @@ test('T0-TOOL-STOP-TEXT: docs/OPERATIONS.md and the CHANGELOG Unreleased section
     'STOP/tool, with the `[SAGA-RESUME]` command in its detail as a diagnostic only, and nothing pushed.',
   ]) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = "- Tool stop text, card T0-TOOL-STOP-TEXT (issue 85 item 2): a `tool` stop (an unclassified ship outcome, or no usable pre-review verdict twice in one cycle) says it is final for the card and names the one way on: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason \"...\" --replace '{\"<card>\":\"<replacement>\"}'`. It never names `card next`, which returns the same stop; the ship's `[SAGA-RESUME]` command moves to the stop's detail as a labelled diagnostic. A recorded card resume is issue 109.";
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
@@ -4977,7 +4978,7 @@ test('T0-PROBE-STOP-TEXT: docs/OPERATIONS.md and the CHANGELOG Unreleased sectio
   const root = path.resolve(import.meta.dirname, '..', '..');
   const read = (file: string) => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const entry = "- Probe stop text, card T0-PROBE-STOP-TEXT (issue 111): the PREPARE stop for a failed worktree probe (the worktree list or the common git directory) takes the tool-stop next action of T0-TOOL-STOP-TEXT: it names the git error, says the stop is final for the card and names the replacement path through `aidlc goal resume --replace`, without the candidate when none was built. An ownership stop from the same check keeps its own next action.";
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

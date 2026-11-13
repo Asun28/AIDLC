@@ -8,6 +8,7 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 // Card T1-FINDING-REPRO-2 R6: the formal REVIEW_FIX narrations end with this sentence.
 import { REPRO_REQUEST } from '../../src/review/repro.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** The directive text, as the card words it. */
 const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines. List in the attempt evidence each input form and failure path the repair hunks handle (for a parser, each kind of value it can be given; for I/O, each error it can raise), each with the test that covers it.';
@@ -86,6 +87,6 @@ test('T0-REPAIR-FORMS acceptance 3: docs/OPERATIONS.md holds the Repair check pa
   const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
   assert.ok(read('docs/OPERATIONS.md').split('\n').includes(OPS_PARAGRAPH), `docs/OPERATIONS.md holds: ${OPS_PARAGRAPH}`);
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(unreleased.includes(CHANGELOG_ENTRY), `CHANGELOG.md Unreleased states: ${CHANGELOG_ENTRY}`);
 });

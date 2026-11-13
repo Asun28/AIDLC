@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PERSPECTIVES, buildReviewPrompt } from '../../src/review/pre-review.ts';
 import type { Card } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -278,7 +279,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
 
   test('T1-PROMPT-CHECK-2 acceptance 3: CHANGELOG.md Unreleased carries the entry, every sentence of it [R4] [R5]', () => {
     const changelog = read('CHANGELOG.md').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const sentences = [
       '- End-of-turn wording and removed-instruction patterns, card T1-PROMPT-CHECK-2: the end-of-turn line of every R2 and R3 prompt and the end-of-turn rule in `docs/OPERATIONS.md` now say that a note after the verdict line is ignored only when it contains no JSON, since the reader takes the last JSON document that parses; `docs/OPERATIONS.md` said that any note after the verdict line is ignored.',
       '`removedInstructions` (`tests/surface/prose.test.ts`) also catches "be very conservative", "be more conservative", "stay more conservative", "re verify" and "verify ... with a subagent" with any number of words between, and "subagent" spelled "sub-agent" or "sub agent", each with a self-test case.',
@@ -311,7 +312,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
     assert.ok(at < ops.indexOf('\nPlaceholders in argv:', section), 'before the placeholder paragraph');
     assert.ok(at < ops.indexOf('\n### ', section + 1), 'before the next section');
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     // The whole entry this card adds, every clause of it.
     assert.ok(unreleased.split(/\r?\n/).includes('- Review and agent prompts for Opus 5.5, card T1-OPUS55-PROMPTS: every R2 and R3 prompt and the reviewer agent end the turn only on the verdict JSON line; a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict. The R2 prompt asks for every finding the reviewer can defend and says its block rule decides only whether a finding blocks. The implementer agent ends its turn only with the report or a named blocker, and `arc.md` gives a child the elapsed time against its deadline (`elapsed <s> / <s>`). `tests/surface/prose.test.ts` keeps every agent, skill, `REVIEW.md` and review prompt free of the instructions the Opus 5 and 5.5 guides say to remove (double-check or re-verify, "think carefully", "think step by step", "use a subagent to verify", "be conservative", "only report high-severity", each in the word orders and spellings the test lists).'));
   });
@@ -371,7 +372,7 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
 
   test('acceptance 10: CHANGELOG.md Unreleased carries the entry, docs/ARCHITECTURE.md keeps the card-run lock phrase and states the primitive, and docs/OPERATIONS.md describes the lock [R1]', () => {
     const changelog = lf(read('CHANGELOG.md'));
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.ok(
       unreleased.split('\n').includes(
         "- One locked read-modify-write, card T1-STORE-CAS-2 (the successor of T1-STORE-CAS, stopped by its last R3 review): `updateJson` in `src/state/store.ts` hands a change function the stored record under an exclusive lock file (`<file>.lock`) and writes nothing when the function throws or returns the record unchanged; every lease write (claim, takeover, heartbeat, release and the purge of a released lease) and every card-run write go through it, and the card-run store's own lock code is removed. `aidlc card takeover` checks the lease and the operation ledger, journals the handoff intent and writes the lease in one lease section, then holds the card-run lock and the lease lock inside it until the run record is on disk, and journals the acquisition and writes the run there only while the lease is still this session's acquisition and the locked run does not carry the generation yet: a stop saved during a takeover is kept (it used to make the takeover's save fail), two completions of one generation journal one `LEASE_ACQUIRED`, and a takeover that lost the lease or whose generation another completion recorded refuses and writes nothing; its second lease read and its late-operation refusal are removed. A ship's fence, duplicate check and operation intent run under the same card lease lock, so a ship intent is refused while a takeover holds that lock and a ship after a takeover is fenced before it records an intent. `mergeFindings` is removed, since a snapshot write must carry the stored revision. Lock errors are `StoreError` `LOCKED` and `LOCK_LOST` (they were `CARD_RUN_LOCKED` and `CARD_RUN_LOCK_LOST`); a lock is removed only by the writer that created it, and a lock whose owner process is gone is refused with `LOCKED` naming the lock file and the process id (delete it only once that process is confirmed dead), where it used to be taken over after 30 s; a lock that cannot be read or removed after the change ran no longer replaces the change's result or error; an exclusive create that fails with EPERM counts as a held lock only while the lock path exists; and an update whose change returns the stored record no longer writes or bumps the run revision.",

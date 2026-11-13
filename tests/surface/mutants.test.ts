@@ -11,6 +11,7 @@ import { runSync, scriptedRunner, type ExecOptions, type ExecReceipt, type Runne
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, mutantsMarkerPath, mutantsReportPath, restoreMutants, runMutants, type MutantsDeps, type RunMutantsInput } from '../../src/review/mutants.ts';
 import { goalForCards, makeFixture, writeCard } from '../scenarios/_harness.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -1053,7 +1054,7 @@ describe('the docs of card T1-VERIFY-MUTANTS', () => {
     assert.ok(arch.includes('`src/review/mutant-gen.ts`'), 'ARCHITECTURE names mutant-gen.ts');
     assert.ok(arch.indexOf('`src/review/mutants.ts`') > arch.indexOf('`src/review/mutant-gen.ts`'), 'ARCHITECTURE names mutants.ts after mutant-gen.ts');
     const changelog = read('CHANGELOG.md');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const entry = unreleased.split('\n').find((line) => line.startsWith('- T1-VERIFY-MUTANTS-2:'));
     assert.ok(entry?.includes('`aidlc card mutants`'), 'the CHANGELOG entry names the command');
   });

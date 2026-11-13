@@ -5,6 +5,7 @@ import { describe, test } from 'node:test';
 import { parseCardText, renderCard } from '../../src/artifacts/card.ts';
 import type { Card } from '../../src/core/types.ts';
 import { buildReviewPrompt } from '../../src/review/pre-review.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), 'utf8').replace(/\r\n/g, '\n');
@@ -75,8 +76,7 @@ describe('T0-EDGE-SCOPE', () => {
     assert.ok(size >= 0 && ops.indexOf(OPS_PARAGRAPH) > size, 'the paragraph follows the Card size paragraph');
     assert.ok(ops.includes(REVIEW_PRE_FIELDS), 'the aidlc review pre sentence lists requirements');
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), 'the CHANGELOG entry, exact');
   });
 });

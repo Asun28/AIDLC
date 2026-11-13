@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, T0, type Fixture } from './_harness.ts';
 import { addMs } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // T0-LESSON-DUP: `aidlc card close --lesson` records a lesson the file already holds under another date once, and the
 // close directive says the flag writes the line itself.
@@ -112,9 +113,7 @@ const CHANGELOG_SENTENCES = [
 function missingDocText(operations: string, changelog: string): string[] {
   const missing: string[] = [];
   if (!operations.includes(`${LESSONS_ANCHOR} ${OPERATIONS_SENTENCE}`)) missing.push(OPERATIONS_SENTENCE);
-  const start = changelog.indexOf('## Unreleased');
-  const end = start < 0 ? -1 : changelog.indexOf('\n## ', start + 1);
-  const unreleased = start < 0 ? '' : changelog.slice(start, end < 0 ? undefined : end);
+  const unreleased = changelogSince010(changelog);
   if (!unreleased.includes(`\n${CHANGELOG_SENTENCES[0]}`)) missing.push(CHANGELOG_SENTENCES[0]!);
   for (const sentence of CHANGELOG_SENTENCES.slice(1)) if (!unreleased.includes(sentence)) missing.push(sentence);
   return missing;

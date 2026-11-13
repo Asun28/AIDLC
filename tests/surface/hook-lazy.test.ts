@@ -14,6 +14,7 @@ import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { hostName, resolveRepoIdentity, statePathsFromRoot } from '../../src/state/paths.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const counterUrl = pathToFileURL(path.join(root, 'bench', 'counter.ts')).href;
@@ -225,8 +226,7 @@ function docsHold(ops: string, architecture: string, changelog: string, predeces
   if (ops.slice(at + '\n## Hooks\n'.length, end).trim().split('\n\n')[1] !== HOOKS_PARAGRAPH) return false;
   if (!architecture.includes(ARCHITECTURE_SENTENCE)) return false;
   if (!predecessor.split('\n').includes(SUPERSEDED)) return false;
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   return unreleased.split('\n').includes(CHANGELOG_ENTRY);
 }
 

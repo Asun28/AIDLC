@@ -5,6 +5,7 @@ import { hookNamesFor } from '../../src/hooks/entry.ts';
 import { HOOK_NAMES, type HookName } from '../../src/hooks/index.ts';
 import { initProject } from '../../src/scaffold/init.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const sentence = 'aidlc is not an implementation of the AWS AI-DLC methodology; it is a driver-agnostic bounded-autonomy control plane for coding agents.';
@@ -19,7 +20,7 @@ test('T1-README-SCOPE: the opening paragraph adds the scope sentence and preserv
 });
 
 test('T1-README-SCOPE: Unreleased records the clarification in plain prose', () => {
-  const unreleased = read('CHANGELOG.md').split('## Unreleased\n')[1]?.split('\n## ')[0];
+  const unreleased = changelogSince010(read('CHANGELOG.md'));
   const entry = '- T1-README-SCOPE: clarify in the README opening paragraph that aidlc is a driver-agnostic bounded-autonomy control plane for coding agents, not an implementation of the AWS AI-DLC methodology.';
   assert.ok(unreleased?.includes(entry));
   assert.doesNotMatch(sentence + entry, /[\u2014\u300c\u300d]/u);
@@ -82,6 +83,6 @@ test('T1-INIT-SURFACE acceptance 6: the README section, OPERATIONS Setup and Unr
   assert.ok(setup?.includes(SETUP_USAGE), SETUP_USAGE);
   assert.ok(setup?.includes(SETUP_SENTENCE), SETUP_SENTENCE);
   assert.ok(!initSection().includes('so no guard runs') && !setup?.includes('so no guard runs'), 'a hook already in the file keeps running, so the text cannot say no guard runs');
-  const unreleased = read('CHANGELOG.md').split('## Unreleased\n')[1]?.split('\n## ')[0];
+  const unreleased = changelogSince010(read('CHANGELOG.md'));
   assert.ok(unreleased?.split('\n').includes(CHANGELOG_ENTRY), CHANGELOG_ENTRY);
 });

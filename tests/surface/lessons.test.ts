@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, reviewLessons, LESSON_LINE, REVIEW_LESSONS_MAX_BYTES } from '../../src/artifacts/lessons.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const ENTRY = { date: '2026-09-14', ref: 'T1-LOOP-LESSONS', kind: 'NEVER' as const, rule: 'skip the lesson step at CLOSE', source: 'PR #11' };
 const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE (source: PR #11)';
@@ -231,8 +232,7 @@ describe('the lessons module carries no unread path constant (T0-LESSONS-FILE-CO
 
   test('acceptance 4: the CHANGELOG Unreleased section names the card [R2]', () => {
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-    const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     assert.match(unreleased, /^- T0-LESSONS-FILE-CONST: .*`LESSONS_FILE`/m);
   });
 });

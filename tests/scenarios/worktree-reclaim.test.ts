@@ -14,6 +14,7 @@ import { GitProbe } from '../../src/probes/git.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName, shortKey } from '../../src/state/paths.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // T0-WORKTREE-RECLAIM-2: the sweep removes the clean worktrees of finished cards and keeps every branch. Each test runs on a
 // real temporary repository, because what is at stake is what git lists, refuses and deletes.
@@ -764,7 +765,7 @@ test('T0-WORKTREE-RECLAIM-2 acceptance 12: the guide, the architecture note and 
   for (const doc of ['docs/OPERATIONS.md', 'docs/ARCHITECTURE.md']) assert.ok(flat(doc).includes(sentence), `${doc} holds the sentence`);
   assert.ok(flat('docs/OPERATIONS.md').includes('no lock spans the check and the removal, so a `goal resume` and `card next` in another session in that window can lose a clean worktree, and `card next` then starts it again on the branch.'), 'the guide states the limit');
   assert.ok(flat('docs/OPERATIONS.md').includes('ignored path'), 'the guide states the rule on ignored paths');
-  const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
+  const unreleased = changelogSince010(readFileSync(path.resolve('CHANGELOG.md'), 'utf8'));
   assert.match(unreleased ?? '', /T0-WORKTREE-RECLAIM-2/);
   assert.deepEqual(readdirSync(path.resolve('tests/scenarios')).filter((f) => f === 'worktree-reclaim.test.ts'), ['worktree-reclaim.test.ts']);
 });

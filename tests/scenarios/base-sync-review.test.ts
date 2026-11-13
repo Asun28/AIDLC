@@ -8,6 +8,7 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 import { reviewerEnv } from '../../src/review/pre-review.ts';
 import { MINUTE_MS, addMs, type ReviewInvocation } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T0-BASE-SYNC-REVIEW: a candidate made by resolving a base-sync conflict after both R3 decisions gets one more decision
 // by the configured base-sync reviewer, instead of a STOP.
@@ -271,7 +272,7 @@ test('acceptance 6: docs/OPERATIONS.md and the CHANGELOG Unreleased section stat
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'Base-sync decision (card T0-BASE-SYNC-REVIEW): a candidate recorded by the successful attempt that cleared a `merge-conflict` repair, or that repairs a base-sync candidate no R3 decision has decided yet (an R2 block after the merge), is a base-sync candidate; when it needs R3 after both decisions are used and `formalReview.baseSync` is configured, the SHIP gate issues one more decision on it by that reviewer, with its own command, effort policy (default `medium`) and review pool `<reviewPool>/<reviewer>`, instead of stopping for review; the primary keeps the pool it has without a base-sync reviewer.',
     'The prompt carries the delta since the candidate the last decision reviewed and says that the base moved; the invocation is recorded under the base-sync reviewer\'s name and marked `baseSync`.',
@@ -387,7 +388,7 @@ test('T0-BASE-SYNC-HOLD-NARRATION acceptance 1: a quota hold of the base-sync re
 
 test('T0-BASE-SYNC-HOLD-NARRATION acceptance 3: the CHANGELOG Unreleased section states the fix', () => {
   const changelog = readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const sentence = '- Base-sync hold narration, card T0-BASE-SYNC-HOLD-NARRATION: a quota hold of the base-sync reviewer now makes `aidlc card next` wait with a narration that names the base-sync reviewer as held; with a fallback configured it used to say that the primary and the fallback both reported a quota, which was false.';
   assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });

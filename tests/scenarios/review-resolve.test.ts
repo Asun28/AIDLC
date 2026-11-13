@@ -18,6 +18,7 @@ import { Journal } from '../../src/state/journal.ts';
 import { shortKey } from '../../src/state/paths.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
 import type { Goal, JournalEvent, ReviewRequest } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -957,7 +958,7 @@ test('docs/OPERATIONS.md Setup lists review resolve --verdict among the -C file 
 });
 
 test('CHANGELOG.md carries entry C directly above the T0-UNRESOLVED-NARRATION entry', () => {
-  const unreleased = section(read('CHANGELOG.md'), '## Unreleased');
+  const unreleased = changelogSince010(read('CHANGELOG.md'));
   assert.ok(unreleased.includes(`${ENTRY_C}\n\n- T0-UNRESOLVED-NARRATION`));
   assert.equal(occurrences(unreleased, ENTRY_C), 1);
 });

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createRun, createRunSync, killProcessTree, ok, run, runSync, scriptedRunner, TIMEOUT_GRACE_MS, TREE_HELPER_BACKSTOP_MS, treeHelperPath } from '../../src/probes/exec.ts';
 import type { ExecOptions, ExecReceipt, ProcessKiller, SpawnSyncFn, SyncRunner } from '../../src/probes/exec.ts';
 import { cleanup, tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 describe('probes/exec (receipts: exit, output digest, timeout)', () => {
   it('runSync executes a real node process and records exit 0, output and a sha256 receipt', () => {
@@ -712,8 +713,7 @@ function docsHold(ops: string, architecture: string, changelog: string): boolean
   if (!OPERATIONS_SENTENCES.every((s) => paragraph.includes(` ${s}`))) return false;
   const probes = architecture.split('\n').find((line) => line.startsWith('`src/probes/` gathers evidence.')) ?? '';
   if (!probes.includes(` ${ARCHITECTURE_SENTENCE} `)) return false;
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   return unreleased.split('\n').includes(CHANGELOG_ENTRY);
 }
 

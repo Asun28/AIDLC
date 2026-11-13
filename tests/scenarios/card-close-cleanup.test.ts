@@ -12,6 +12,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { cleanup } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // T0-CLOSE-CLEANUP-2: `aidlc card close` does the cleanup and metadata steps it records. The card reaches CLOSE on the
 // dry-run path of the harness; the closing runner is on a real path over a real repository, so git does the refusing.
@@ -714,7 +715,7 @@ test('T0-CLOSE-EVIDENCE-CHECK acceptance 11: the guide, the architecture note, b
     assert.ok(flat(copy).indexOf('card close --all') > retain, copy + ' puts the removal after the evidence step');
     assert.ok(Buffer.byteLength(readFileSync(path.resolve(copy), 'utf8'), 'utf8') <= 6500, copy + ' stays under the cap');
   }
-  const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
+  const unreleased = changelogSince010(readFileSync(path.resolve('CHANGELOG.md'), 'utf8'));
   assert.match(unreleased ?? '', /T0-CLOSE-EVIDENCE-CHECK/);
   const fx = makeFixture();
   try {
@@ -738,7 +739,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 8: the guide, the architecture note, both ca
     assert.ok(flat(copy).indexOf('card close --all') > retain, `${copy} puts the removal after the evidence step`);
     assert.ok(Buffer.byteLength(readFileSync(path.resolve(copy), 'utf8'), 'utf8') <= 6500, `${copy} stays under the cap`);
   }
-  const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
+  const unreleased = changelogSince010(readFileSync(path.resolve('CHANGELOG.md'), 'utf8'));
   assert.match(unreleased ?? '', /T0-CLOSE-CLEANUP-2/);
   const fx = makeFixture();
   try {

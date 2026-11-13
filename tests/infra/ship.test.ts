@@ -7,6 +7,7 @@ import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, encodeUntrusted, 
 import type { ExecReceipt } from '../../src/probes/exec.ts';
 import { normaliseCause } from '../../src/core/effort.ts';
 import { cleanup, tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 function receipt(stdout: string, exitCode = 1, extra: Partial<ExecReceipt> = {}): ExecReceipt {
   const now = new Date().toISOString();
@@ -499,7 +500,7 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE-2)', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.equal(FAILING_LINE_DOC_SENTENCES.length, 5);
     for (const sentence of FAILING_LINE_DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     assert.ok(unreleased.includes(FAILING_LINE_CHANGELOG_SENTENCE), `CHANGELOG.md Unreleased states: ${FAILING_LINE_CHANGELOG_SENTENCE}`);

@@ -10,6 +10,7 @@ import { EvidenceStore, Manifest, fileSha256 } from '../../src/audit/manifest.ts
 import { verifyAudit, type AuditFinding } from '../../src/audit/verifier.ts';
 import { OperationLedger } from '../../src/coordination/reconcile.ts';
 import type { JournalEventType } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const T = '2026-11-12T00:00:00.000Z';
 const ACTOR = actor('verifier-binding');
@@ -304,6 +305,6 @@ const CHANGELOG_SENTENCES = [
 test('T0-AUDIT-BINDING: docs/OPERATIONS.md and the CHANGELOG state the warnings, the comparison and the seal', () => {
   const audit = section('docs/OPERATIONS.md', '## Audit');
   for (const sentence of OPERATIONS_SENTENCES) assert.ok(audit.includes(sentence), `docs/OPERATIONS.md, Audit: ${sentence}`);
-  const unreleased = section('CHANGELOG.md', '## Unreleased');
+  const unreleased = changelogSince010(readFileSync(path.resolve('CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n'));
   for (const sentence of CHANGELOG_SENTENCES) assert.ok(unreleased.includes(sentence), `CHANGELOG.md, Unreleased: ${sentence}`);
 });

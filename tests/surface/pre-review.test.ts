@@ -18,6 +18,7 @@ import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { makeFixture, writeCard } from '../scenarios/_harness.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 function fixtureCard() {
   const dir = tmpDir('aidlc-prereview-');
@@ -1224,7 +1225,7 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 3: docs/OPERATIONS.md and the CHANGELOG U
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'A success attempt on a `tdd: true` card is refused when neither the stored run nor the attempt carries a RED receipt: `aidlc card attempt` names the missing RED receipt and records nothing (no attempt, no effort change, no candidate), so record the success again with `--red-receipt`.',
     'A verdict document inside a Markdown code fence (```json or a bare ```) is read as the verdict when the fence closes after it; a document inside a fence that never closes makes the output malformed, and the last document still decides, fenced or not.',
@@ -1244,7 +1245,7 @@ test('T1-RENAME-PATHS acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unrelea
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'A renamed file is a changed path at its source and at its destination, so a rename from inside `allow_paths` to a path outside it, or from outside into it, is refused, and every R2 and R3 prompt lists both paths of a rename among the changed paths (card T1-RENAME-PATHS).',
     'The path rule matches the changed paths the scope gate uses, `git diff --name-only -z <base>...<candidateSha> --no-renames`, which name a renamed file by its source and its destination, each as written and never C-quoted, so moving a file out of `src/core` counts as touching it and a non-ASCII name matches a single-segment glob such as `src/core/*.ts` (card T1-RENAME-PATHS).',
@@ -1264,7 +1265,7 @@ test('T0-QUOTA-FALSE-HOLD acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unr
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'A review whose process returns no verdict that counts (none was read, or the process did not exit 0) is a quota hold only on a quota message: from a process that exited 0, in its stderr alone, since its stdout is its answer and the reasoning there can name a quota word; from any other process (a non-zero exit, or no exit code after a signal), in its stdout or its stderr.',
     'For a review command (R2, and R3 run by `aidlc review r3`), a process that timed out is a `timeout` no-verdict round and never a hold, and without a quota message the round is a no-verdict round: `tool_error` for a process that did not exit 0, `malformed` for one that exited 0 with text on stdout, `no_output` for one without.',
@@ -1289,7 +1290,7 @@ test('T1-PARSE-GUARD acceptance 10: docs/OPERATIONS.md, docs/ARCHITECTURE.md and
   const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
   const operations = read('docs', 'OPERATIONS.md');
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     'A provider that reports a numeric error status decides a quota hold from that status alone (card T1-PARSE-GUARD): 429 and 529 hold and any other status does not, whatever quota words its message carries.',
     'The `claude-api` provider reads the status of the SDK error, with its `retry-after` header as the delay, and the `claude-code` provider reads `api_error_status` from an `is_error` payload of `--output-format json`, which is an error or a hold whatever the exit code and never a result.',
@@ -1379,7 +1380,7 @@ test('T0-R2-ANSWER-MARKER acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unr
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   const docSentences = [
     '`preReview.answerMarker` (default empty) names the line that separates a pre-reviewer\'s reasoning from its answer: when it is set, each angle is read from the stdout after the last line that equals the marker once the surrounding whitespace of both is trimmed, so fence lines and JSON-looking text in the reasoning never decide the verdict, and the fence rule and the last-document rule apply to that answer alone (card T0-R2-ANSWER-MARKER).',
     'With the marker set, an output with no marker line is a `malformed` no-verdict round even when its last line is a verdict, so an output cut before its answer never passes; the formal review (R3) reader ignores the setting.',
@@ -1402,8 +1403,7 @@ test('T1-SWEEP-REVIEW-WRAPPERS acceptance 1: src/review/pre-review.ts exports no
 
 test('T1-SWEEP-REVIEW-WRAPPERS acceptance 4: the CHANGELOG Unreleased section names the card and the moved wrappers [R4]', () => {
   const changelog = readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(
     unreleased.includes('\n- T1-SWEEP-REVIEW-WRAPPERS: `runPreReview`, `buildPreReviewPrompt` and `extractVerdict` move from `src/review/pre-review.ts` to the test helper `tests/surface/_review-once.ts`, unchanged in signature and composition:'),
     'CHANGELOG.md Unreleased names the moved wrappers',

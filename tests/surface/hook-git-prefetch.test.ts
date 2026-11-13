@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'no
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
@@ -366,8 +367,7 @@ function docsHold(ops: string, changelog: string): boolean {
   const paragraphs = ops.slice(at, end).split('\n\n');
   const discovery = paragraphs.findIndex((p) => p.startsWith('Which `aidlc.config.json` the guards read'));
   if (discovery < 0 || paragraphs[discovery + 1] !== OPS_PARAGRAPH) return false;
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   return unreleased.split('\n').includes(CHANGELOG_ENTRY);
 }
 

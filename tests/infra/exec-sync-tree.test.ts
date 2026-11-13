@@ -15,6 +15,7 @@ import { GitProbe } from '../../src/probes/git.ts';
 import { GhProbe } from '../../src/probes/gh.ts';
 import { createRunSync, ok, runSync, scriptedRunner } from '../../src/probes/exec.ts';
 import type { ExecOptions, SpawnSyncFn, SyncRunner } from '../../src/probes/exec.ts';
+import { changelogSince010 } from './changelog.ts';
 
 /** A runner that records the options of every call and answers exit 0 with `stdout`. */
 function recording(stdout = ''): { runner: SyncRunner; options: (ExecOptions | undefined)[] } {
@@ -93,8 +94,7 @@ function docsHold(ops: string, architecture: string, changelog: string): boolean
   if (ops.includes(OLD_OPERATIONS_SENTENCE) || ops.includes(OLD_DIRECT_PATH_SENTENCE)) return false;
   const probes = architecture.split('\n').find((line) => line.startsWith('`src/probes/` gathers evidence.')) ?? '';
   if (!probes.includes(" `exec.ts` runs commands and returns receipts (exit, output digest, timing), the async runner ending a timed-out command's whole process tree" + ARCHITECTURE_CLAUSE + ' with a scripted runner for tests. ')) return false;
-  const start = changelog.indexOf('## Unreleased');
-  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  const unreleased = changelogSince010(changelog);
   return unreleased.split('\n').includes(CHANGELOG_ENTRY);
 }
 

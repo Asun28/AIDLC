@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, T0 } from './_harness.ts';
 import { HOUR_MS, addMs, type GoalRequest, type RequestSize } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 /** A fixture whose registry holds the two cards the issue #73 request named. */
 function withCards() {
@@ -100,9 +101,7 @@ test('T0-GOAL-CARD-COUNT-3 acceptance 5: docs/OPERATIONS.md and the CHANGELOG Un
   const sentence = 'A request whose text names several cards keeps the arc limit also when `--card` names one of them, its `ref=` is the first known card id of the text, and a caller that passes no known card list has every card id token counted (card T0-GOAL-CARD-COUNT-3).';
   assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const end = changelog.indexOf('\n## ', start + 1);
-  const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+  const unreleased = changelogSince010(changelog);
   const entry = "- Goal card count follow-up, card T0-GOAL-CARD-COUNT-3: a request whose text names several cards keeps the 12 h arc deadline when `--card` names one of them; the router takes `ref=` from the first known card id, never an unknown id before it, and without a known card list counts every card id token, so two tokens leave the count to the projection (issue #73).";
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
@@ -118,9 +117,7 @@ test('T0-GOAL-CARD-COUNT acceptance 3: docs/OPERATIONS.md, docs/ARCHITECTURE.md 
   const sentence = 'The goal deadline is fixed at intake: `createGoal` (`src/loop/controller.ts`) takes the goal\'s card from the request text only when the router counts exactly one card, a request naming several known card ids leaves the count unknown, and an explicit T1 or T2 size always gets the arc limit (card T0-GOAL-CARD-COUNT).';
   assert.ok(read('docs', 'ARCHITECTURE.md').includes(sentence), `docs/ARCHITECTURE.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
-  const start = changelog.indexOf('## Unreleased');
-  const end = changelog.indexOf('\n## ', start + 1);
-  const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+  const unreleased = changelogSince010(changelog);
   const entry = '- Goal card count, card T0-GOAL-CARD-COUNT: a goal request that names several known card ids, or carries an explicit T1 or T2 size, now gets the 12 h arc deadline and leaves its card list to the projection; it used to take the first card id of the text as its only card and get the 3 h one-card limit (issue #73).';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

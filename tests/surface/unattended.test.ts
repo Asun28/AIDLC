@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Directive } from '../../src/loop/directive.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 // Card T0-UNATTENDED-RUNS: OPERATIONS.md documents /goal and /loop over `aidlc next`, and every DoD receipt example names the test count.
 const root = path.resolve(import.meta.dirname, '..', '..');
@@ -80,9 +81,7 @@ describe('T0-UNATTENDED-RUNS', () => {
 
   it('CHANGELOG.md Unreleased carries the entry under the card id (acceptance 5)', () => {
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const end = changelog.indexOf('\n## ', start + 1);
-    const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+    const unreleased = changelogSince010(changelog);
     for (const sentence of [
       '- Unattended runs, card T0-UNATTENDED-RUNS: `docs/OPERATIONS.md` documents a `/goal` condition that drives a goal through `aidlc next` and `aidlc report` until the latest directive is `done`, `stop`, `ask`, `checkpoint` or `wait`, and a self-paced `/loop` that waits on a `wait` directive by its `until` or `pollSeconds`; a `/schedule` cloud routine cannot drive a goal, since `.aidlc/` is local and gitignored.',
       'The condition tells the agent not to act on or report those five kinds, so no goal turn approves a checkpoint or answers an ask.',
@@ -94,9 +93,7 @@ describe('T0-UNATTENDED-RUNS', () => {
 
   it('CHANGELOG.md Unreleased carries the T0-UNATTENDED-TEST-SCAN entry [T0-UNATTENDED-TEST-SCAN R3]', () => {
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const end = changelog.indexOf('\n## ', start + 1);
-    const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+    const unreleased = changelogSince010(changelog);
     const sentence = '- Unattended-runs doc test, card T0-UNATTENDED-TEST-SCAN: the test proves the `/goal` hands-off clause against `docs/OPERATIONS.md` and on every `/goal` prompt that `docs/OPERATIONS.md` and `README.md` show, instead of comparing two of its own constants, and it checks single-quoted `--dod-receipt` examples as well as double-quoted ones (issue #62).';
     assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { DEFAULT_HOOK_CONFIG, fixTaskMarker, protectTests } from '../../src/hooks/index.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 /** The package entry the card names; it runs the sources when no build is at least as new as them (`bin/resolve-entry.js`). */
@@ -66,7 +67,7 @@ test('T1-SWEEP2-FIX-TASK acceptance 3: CardRunner has no setFixTaskMarker, ARCHI
   assert.ok(row, 'the state table has a fix-task row');
   assert.equal(row, '| `fix-task` | active fix-task marker read by the protect-tests hook; written by CLI `card fix-task`, deleted by `card fix-task --clear` | CLI `card fix-task` |');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const unreleased = changelogSince010(changelog);
   assert.ok(
     unreleased.includes('- T1-SWEEP2-FIX-TASK (bugfix): `aidlc card fix-task --clear` deletes the `fix-task` marker instead of writing an empty one, which the protect-tests hook read as an active fix task, so test files now unlock after a clear. The uncalled `CardRunner.setFixTaskMarker`, which cleared the same way, is removed. A stale empty marker left by an earlier `--clear` still locks: run `aidlc card fix-task --clear` once more to remove it.'),
     'the CHANGELOG Unreleased section names the card, the fix, the removed method and the stale-marker recovery',

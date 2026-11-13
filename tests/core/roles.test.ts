@@ -5,6 +5,7 @@ import path from 'node:path';
 import { DEFAULT_MODELS, assessTaskEffort, resolveRoleProfile, reviewerIndependent } from '../../src/core/roles.ts';
 import { EFFORT_LADDERS } from '../../src/core/effort.ts';
 import type { EffortLevel } from '../../src/core/types.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 describe('role profiles (MA1 / MA3)', () => {
   test('defaults: Claude roles resolve to Opus 5.5 (investigator Sonnet 5.5); GPT roles to the configured seat [T1-OPUS55-MODELS R5] [T1-EFF-REVIEW-CONFIG R3]', () => {
@@ -107,8 +108,7 @@ describe('Claude defaults documentation (T1-OPUS55-MODELS acceptance 5)', () => 
 
   test('CHANGELOG.md carries the entry under Unreleased [R5]', () => {
     const changelog = read('CHANGELOG.md');
-    const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const unreleased = changelogSince010(changelog);
     assert.match(unreleased, /T1-OPUS55-MODELS/);
   });
 });

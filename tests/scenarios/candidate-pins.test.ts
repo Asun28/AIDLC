@@ -14,6 +14,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import type { CardRun, Verdict } from '../../src/core/types.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
+import { changelogSince010 } from '../infra/changelog.ts';
 
 const CARD = 'T0-PIN';
 const FILE = 'src/t0-pin.ts';
@@ -526,6 +527,5 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 9: the docs describe the pins [R5]', (
   for (const text of ['refs/aidlc/candidates/', 'core.hooksPath=/dev/null', 'candidatePinned', 'pinError', 'git update-ref -d']) assert.ok(section.includes(text), text);
   assert.ok(read('docs/ARCHITECTURE.md').includes('refs/aidlc/candidates/'));
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.indexOf('## Unreleased');
-  assert.ok(changelog.slice(unreleased, changelog.indexOf('\n## ', unreleased + 1)).includes('- T0-REVIEW-CANDIDATE-PINS:'));
+  assert.ok(changelogSince010(changelog).includes('- T0-REVIEW-CANDIDATE-PINS:'));
 });

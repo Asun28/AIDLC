@@ -9,6 +9,7 @@ import { loadProjectConfig } from '../../src/config.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import { hookWiringReport } from '../../src/probes/hook-wiring.ts';
 import { tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
@@ -194,10 +195,7 @@ describe('T0-INIT-REVIEW-IGNORE: init ignores .review/', () => {
 
   /** Whether the Unreleased section of `changelog` carries the entry as one line. */
   function hasChangelogEntry(changelog: string): boolean {
-    const start = changelog.indexOf('\n## Unreleased\n');
-    if (start < 0) return false;
-    const end = changelog.indexOf('\n## ', start + 1);
-    return changelog.slice(start, end < 0 ? undefined : end).split('\n').includes(CHANGELOG_ENTRY);
+    return changelogSince010(changelog).split('\n').includes(CHANGELOG_ENTRY);
   }
 
   test('acceptance 5: the CHANGELOG Unreleased section carries the T0-INIT-REVIEW-IGNORE entry, and fails with it removed [R4]', () => {

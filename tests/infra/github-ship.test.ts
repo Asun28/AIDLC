@@ -11,6 +11,7 @@ import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts
 import { makeFixture, writeCard, goalForCards } from '../scenarios/_harness.ts';
 import { classifyCiFailure } from '../../src/core/ci-policy.ts';
 import { tmpDir } from './helpers.ts';
+import { changelogSince010 } from './changelog.ts';
 
 const HEAD = 'a'.repeat(40);
 const BASE_OID = 'd'.repeat(40);
@@ -813,7 +814,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     assert.equal(BOUNDS_DOC_SENTENCES.length, 3);
     for (const sentence of BOUNDS_DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     for (const sentence of BOUNDS_CHANGELOG_SENTENCES) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
@@ -823,7 +824,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     for (const sentence of DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     for (const sentence of CHANGELOG_SENTENCES) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
@@ -1508,7 +1509,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     for (const sentence of EDGES_DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     assert.ok(unreleased.includes(EDGES_CHANGELOG_SENTENCE), `CHANGELOG.md Unreleased states: ${EDGES_CHANGELOG_SENTENCE}`);
   });
@@ -1517,7 +1518,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     const root = path.resolve(import.meta.dirname, '..', '..');
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const unreleased = changelogSince010(changelog);
     const docSentences = [
       'When the only unmerged path of a base-sync conflict is `CHANGELOG.md`, the path rewrites it with `git checkout --conflict=diff3` and resolves it only when every hunk lies in `## Unreleased`, has an empty base part (both sides only added lines there) and adds no `## ` heading: each hunk keeps the card\'s lines, then the base\'s, the merge is committed, and the ship ends with `[SHIP-BASE-SYNC-MERGED]` naming the merge commit, pushing and merging nothing (card T0-BASE-SYNC-CHANGELOG-2).',
       'Any other conflict, another path, a hunk outside `## Unreleased`, a hunk with a base part or one that adds a heading, is left whole for the merge-conflicts skill.',
