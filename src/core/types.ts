@@ -824,7 +824,8 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
 /**
  * A decision event a card-run write owes to the goal journal (card T0-JOURNAL-FAULT-EVENTS): the write that commits the
  * decision records it, and the command appends it after that write; an append that did not land is made by the next
- * `card next`, `card attempt`, `review pre` or `review r3` on the card.
+ * `card next`, `card attempt`, `review pre` or `review r3` on the card. `FINDING_RULED` is the event the ruling write of
+ * `aidlc review rule` owes (card T1-REVIEW-RULE).
  */
 export const OwedEvent = z.object({
   key: z.string().min(1),
