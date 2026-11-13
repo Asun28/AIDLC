@@ -230,7 +230,7 @@ export function findingLine(f: { id: string; stage: string; round: number; persp
 
 export async function main(argv: string[] = process.argv): Promise<void> {
   const program = new Command();
-  program.name('aidlc').description('AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery').version('0.1.0');
+  program.name('aidlc').description('AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery').version('0.2.0');
   program.option('--json', 'print JSON (default when stdout is not a TTY)');
   program.option('--no-json', 'print the human line even when stdout is not a TTY');
   program.option('-C, --cwd <dir>', 'run as if started in <dir>');
@@ -1447,7 +1447,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         const unbound = sealing.entries.filter((e) => CANDIDATE_BOUND_KINDS.includes(e.kind) && !e.candidateDigest).map((e) => e.id);
         if (unbound.length) throw new Error(`manifest of ${id} holds evidence of a candidate-bound kind with no candidate digest: ${unbound.join(', ')}; ${sealing.seal ? 'this sealed manifest cannot accept replacement evidence; its audit level remains at most traceable' : 'retain each again with --candidate <digest>, then seal'}`);
         const event = Journal.forGoal(c.paths.journal, id).append({ type: 'MANIFEST_SEALED', goalId: id, generation: goalRec.generation, data: { entries: sealing.entries.length, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest } });
-        return { journalHead: event.hash, journalEvents: event.seq + 1, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest, now, host: { node: process.version, platform: process.platform, aidlc: '0.1.0' } };
+        return { journalHead: event.hash, journalEvents: event.seq + 1, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest, now, host: { node: process.version, platform: process.platform, aidlc: '0.2.0' } };
       });
       out(c, { seal: sealed.seal, entries: sealed.entries.length, journalHead: sealed.journalHead }, () => `sealed manifest for ${id} (${sealed.entries.length} entries)`);
     });

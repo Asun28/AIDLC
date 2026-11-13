@@ -4,7 +4,7 @@ AI-native SDLC orchestrator in TypeScript. It implements the Anthropic AI-native
 
 ## Status
 
-Version 0.1.0.
+Version 0.2.0.
 
 - The development-only loop (intake, routing, planning gates, card execution, arc selection, integrated acceptance, closure) is implemented and tested (unit suites plus end-to-end scenarios for the T0 flow, T1 arc, review block, CI rerun, deadlines, two windows, staging/production release, audit and amendments).
 - Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, candidate-bound verdict, base sync, push, PR, CI check runs, squash merge; a base that conflicts leaves the merge in the worktree and returns the card to BUILD instead of opening a PR GitHub runs no workflow on). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).

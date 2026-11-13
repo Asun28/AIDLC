@@ -1,6 +1,6 @@
 {
   "name": "aidlc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery, with bounded autonomy, shared-session coordination and auditable evidence.",
   "license": "MIT",
   "type": "module",
