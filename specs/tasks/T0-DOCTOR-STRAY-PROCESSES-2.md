@@ -329,7 +329,7 @@ Main changed none of the carried files between 5620be8e and 8f8a9512 (`git diff 
 
 ### Revert table (code head 9982bc19)
 
-Each row changes one clause in the worktree, runs `node --test-reporter=tap tests/infra/stray-processes.test.ts` alone (R7-b only the cycle test, R5-e only acceptance 7 under a 30 s bound, since both loop forever) and restores the file byte for byte; after the run `git status --short` was empty. 138 rows: 133 red, 5 green, each green row an equivalent mutant (the clause's effect is already produced by another clause, so no listing can tell them apart). The row "default env is a copy" (R5-j) is red in the new win32 subtest. Doc rows R11 and R12 remove each text alone. Rows run on Windows; the POSIX subtest of 14 is skipped there and the coordinator runs the file on Linux.
+Each row changes one clause in the worktree, runs `node --test-reporter=tap tests/infra/stray-processes.test.ts` alone (R7-b only the cycle test, R5-e only acceptance 7 under a 30 s bound, since both loop forever) and restores the file byte for byte; after the run `git status --short` was empty. 138 rows at 9982bc19: 133 red, 5 green; R2-r, R3-l and R3-p were not equivalent (formal review, findings 3 to 5) and are red since the repair below; R3-j and R5-q are equivalent (the repair subsection names the exported functions checked). The row "default env is a copy" (R5-j) is red in the new win32 subtest. Doc rows R11 and R12 remove each text alone. Rows run on Windows; the POSIX subtest of 14 is skipped there and the coordinator runs the file on Linux.
 
 | Row | Clause reverted | Result | Red in |
 |---|---|---|---|
@@ -363,7 +363,7 @@ Each row changes one clause in the worktree, runs `node --test-reporter=tap test
 | R2-o | start safe-integer check dropped (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
 | R2-p | cmd of another type accepted (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
 | R2-q | duplicate pid accepted (win32) (src/probes/processes.ts) | red (1) | a Windows listing the parser refuses gives unknown |
-| R2-r | top level not a list or object read as empty (src/probes/processes.ts) | green | equivalent: an empty list then lacks doctor, so R7 gives the same `unknown: the process listing could not be read` |
+| R2-r | top level not a list or object read as empty (src/probes/processes.ts) | green at 9982bc19; red at ed3b6394 | not equivalent (formal review, finding 3): `listProcesses` resolved rows instead of unknown; the report masked it. Red in "a Windows listing the parser refuses gives unknown" since the direct rows of the repair |
 | R3-a | two colon fields read as hours and minutes (src/probes/processes.ts) | red (4) | a ps listing is read in each form it takes; the roots are the main checkout and the worktree root as the config re |
 | R3-b | days ignored (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
 | R3-c | fraction refused (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
@@ -375,11 +375,11 @@ Each row changes one clause in the worktree, runs `node --test-reporter=tap test
 | R3-i | a CPU time that does not match accepted (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
 | R3-j | an elapsed time that does not match accepted (src/probes/processes.ts) | green | equivalent: an elapsed time that does not match gives a start time that is not finite, which the next clause of R3 refuses |
 | R3-k | finiteness check of a duration dropped (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
-| R3-l | finiteness check of the start time dropped (src/probes/processes.ts) | green | equivalent: with durations finite and `nowMs` finite (R5) the start time is always finite |
+| R3-l | finiteness check of the start time dropped (src/probes/processes.ts) | green at 9982bc19; red at ed3b6394 | not equivalent (formal review, finding 5): `listProcesses` with `nowMs` Infinity resolved a start time of Infinity. Red in "a ps listing the parser refuses gives unknown" since the direct row of the repair |
 | R3-m | duplicate pid accepted (ps) (src/probes/processes.ts) | red (1) | a ps listing the parser refuses gives unknown |
 | R3-n | trailing CR kept (src/probes/processes.ts) | red (1) | a ps listing is read in each form it takes |
 | R3-o | blank lines not skipped (src/probes/processes.ts) | red (5) | the listing is one bounded command per platform; a ps listing is read in each form it takes |
-| R3-p | no line left accepted (src/probes/processes.ts) | green | equivalent: an empty list then lacks doctor, so R7 gives the same unknown value |
+| R3-p | no line left accepted (src/probes/processes.ts) | green at 9982bc19; red at ed3b6394 | not equivalent (formal review, finding 4): `listProcesses` resolved `[]` instead of unknown; the report masked it. Red in "a ps listing the parser refuses gives unknown" since the direct rows of the repair |
 | R4-a | a synchronous throw not caught by the inner catch (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
 | R4-b | a rejected runner not caught (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
 | R4-c | timeout read after the exit code (src/probes/processes.ts) | red (1) | a listing that fails, times out, throws or rejects gives unknown, neve |
@@ -489,6 +489,24 @@ Each row changes one clause in the worktree, runs `node --test-reporter=tap test
 ### Changed lines
 
 `git diff --shortstat origin/main...HEAD` on 9982bc19: 11 files changed, 1005 insertions, 2 deletions (1007 changed lines) before this section; with its 204 lines, 1211 of the budget of 1400.
+
+### Repair after the formal review's first decision
+
+Commits on a2fa046d: 9dd83c00 (test rows for the five findings), a918a4e0 (fix for findings 1 and 2), 0017b606 (the filesystem-root rule alone decides an all-separator root; the extra `bare === ''` check it replaced could never change the value), ed3b6394 (test row `D:/\` as main root). Code head ed3b6394; no card text above the evidence changed.
+
+| Finding | Change | Red without it |
+|---|---|---|
+| 1 filesystem root | src/probes/processes.ts:179-184: a root is a filesystem root when `path.win32` (win32) or `path.posix` parses it to its own root once trailing separators (`\` and `/` on win32, `/` elsewhere) are set aside: `D:\`, `D:/\`, `/`, `\\srv\share`, `//srv/share/` in every spelling; `\\srv\share\wt` stays usable with its one prefix `/srv/share/wt` (R6) | tests/infra/stray-processes.test.ts:324-333 (acceptance 7): on a2fa046d `n/a (no usable root)` expected, `none` actual (repair-red receipt: 2 of 20 fail, 7 and 12) |
+| 2 fraction | src/probes/processes.ts:97-99: whole milliseconds from the first three fraction digits plus the rest as a fraction of one millisecond | :447-452 (acceptance 12): on a2fa046d `30:00.0009` with `15:00.0004` expected `none`, listed actual; rows on both sides of half, with `.` and `,` |
+| 3 R2-r | test only: `listProcesses` of `"text"`, `42`, `true`, `null` is unknown | :192, red under R2-r |
+| 4 R3-p | test only: `listProcesses` of `''`, `\n\n`, a line of spaces is unknown | :251, red under R3-p |
+| 5 R3-l | test only: `listProcesses` of a valid ps listing with `nowMs` Infinity is unknown | :252, red under R3-l |
+
+Equivalent after the reviewer's question: R3-j (an elapsed time that does not match accepted) gives `startMs = nowMs - undefined`, NaN, which the start-time check refuses, so `listProcesses` resolves the same unknown; R5-q (the filesystem-root exception of the trim dropped) gives a trimmed filesystem root, which `rootOf` still excludes. Exported functions checked: `listProcesses` (the only parser of the elapsed field), `strayEntries` (takes rows and roots; neither clause is on its path) and `strayProcessesReport` (the only caller of the trim, which passes the root to `rootOf` alone).
+
+Rows re-run at ed3b6394, each mutation alone, files restored (`git status --short` empty after): every R2, R3, R5 and R8 row, R6-h and R6-i, with R5-d and R5-e redefined for the new rule (the rule dropped; the parsed root compared with its trailing separators) and five new rows (R5-r posix semantics on win32, R5-s trailing separators of the root kept, R5-t `/` alone as the win32 trailing set, red only by the `D:/\` row, R3-q the fraction cut to whole milliseconds; R5-o made unique to the trim). 64 rows: 62 red, 2 green (R3-j, R5-q, equivalent as above).
+
+DoD on ed3b6394, clean tree: exit 0; tests 156, suites 24, pass 151, fail 0, cancelled 0, skipped 5, todo 0 (output sha256 prefix 4794fb752be6ed35). `node bin/aidlc.js cards validate`: exit 0, `"ok": true`. Changed lines: `git diff --shortstat origin/main...HEAD` 1244 on ed3b6394 before this subsection; with it and the four corrected revert-table lines, 1262 of 1400.
 
 Coordinator verification:
 - At b21e5a16, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/stray-processes.test.ts): tests 21, pass 19, fail 0, skipped 2.
