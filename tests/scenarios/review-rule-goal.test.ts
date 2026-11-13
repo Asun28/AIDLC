@@ -6,7 +6,7 @@ import fs, { readFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeFixture, writeCard, goalForCards, driveCardToDone, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, driveCardToDone, candidateShaFor, T0 } from './_harness.ts';
 import * as aidlc from '../../src/cli/main.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -29,8 +29,18 @@ const block = (file: string, texts: string[]): string => {
 
 /** The faults of acceptance 10, switched on by a test: a throw from fs.appendFileSync onto a GOAL_STATE line of the goal journal, and from fs.renameSync onto the goal record `record`. */
 const fault: { append: boolean; record?: string } = { append: false };
-const real = { append: fs.appendFileSync, rename: fs.renameSync };
+/** An overlapping command (R3 decision 1, F2): `run` is called once, right after the next read of the file `at` returns. */
+const overlap: { at?: string; run?: () => void } = {};
+const real = { append: fs.appendFileSync, rename: fs.renameSync, read: fs.readFileSync };
 before(() => {
+  (fs as unknown as Stored)['readFileSync'] = (...args: Parameters<typeof fs.readFileSync>) => {
+    const out = real.read(...args);
+    if (overlap.at && typeof args[0] === 'string' && path.resolve(args[0]) === path.resolve(overlap.at)) {
+      overlap.at = undefined;
+      overlap.run!();
+    }
+    return out;
+  };
   (fs as unknown as Stored)['appendFileSync'] = (...args: Parameters<typeof fs.appendFileSync>) => {
     if (fault.append && typeof args[1] === 'string' && args[1].includes('"type":"GOAL_STATE"')) throw Object.assign(new Error('EIO: injected'), { code: 'EIO' });
     return real.append(...args);
@@ -44,6 +54,7 @@ before(() => {
 after(() => {
   fs.appendFileSync = real.append;
   fs.renameSync = real.rename;
+  fs.readFileSync = real.read;
   syncBuiltinESMExports();
 });
 
@@ -52,10 +63,12 @@ function setup(fx: ReturnType<typeof makeFixture>, ids: string[] = [CARD]) {
   const verdicts: string[] = [];
   const reviews = { count: 0 };
   let file = '';
+  /** Called while the reviewer runs, as another window acts during a decision. */
+  const during: { fn?: () => void } = {};
   const script = scriptedRunner({
     'git diff --name-only': () => ({ stdout: `${file}\u0000` }),
     'git diff': () => ({ stdout: `diff --git a/${file} b/${file}\n+export const x = 1;\n` }),
-    'fake-r3': () => { reviews.count += 1; return { stdout: verdicts.shift()! }; },
+    'fake-r3': () => { reviews.count += 1; during.fn?.(); return { stdout: verdicts.shift()! }; },
   });
   const ship = new DryRunShipPath(ids.map(() => 'merged' as const));
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
@@ -107,7 +120,7 @@ function setup(fx: ReturnType<typeof makeFixture>, ids: string[] = [CARD]) {
   };
   /** The `WORK_AFTER_TERMINAL` findings of `aidlc audit verify`, by the function the command calls on the goal's journal and operations. */
   const audit = () => verifyAudit({ goalId: goal.id, journal: Journal.forGoal(fx.paths.journal, goal.id), operations: fx.ops, now: fx.now() }).findings.filter((f) => f.code === 'WORK_AFTER_TERMINAL');
-  return { goal, runner, ship, reviews, g, persisted, stopCard, stopGoal, goalFile, bytes, goalRec, events, count, readmissions, cli, ruleCli, rule, next, assertWaits, audit };
+  return { goal, runner, ship, reviews, during, journalFile, g, persisted, stopCard, stopGoal, goalFile, bytes, goalRec, events, count, readmissions, cli, ruleCli, rule, next, assertWaits, audit };
 }
 const readmission = (cardId: string, by: string) => [0, { from: 'STOP', to: 'CARDS', reason: `ruling on ${cardId} by ${by}`, ruling: { cardId, by } }];
 
@@ -287,5 +300,105 @@ test('R8, the goal\'s last GOAL_STOPPED: a goal aidlc next stopped again on a se
     assert.deepEqual(s.audit(), []);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('R3 decision 1, F1: a resume, or a resume and a cancellation, that lands between the lifting ruling and the re-admission stands: the goal record is the one that write left, and no GOAL_STATE out of STOP is appended [R2]', async () => {
+  for (const cancelled of [false, true]) {
+    const fx = makeFixture(CONFIG);
+    try {
+      const s = await setup(fx);
+      await s.stopCard();
+      s.stopGoal();
+      s.rule('F1', 'a lead');
+      // The other command lands after the ruling's card-run write and before the re-admission reads the goal.
+      let landed = '';
+      const racing = {
+        ruleFinding: (...args: Parameters<CardRunner['ruleFinding']>) => {
+          const run = s.runner.ruleFinding(...args);
+          fx.controller.report({ goalId: s.goal.id, generation: 0, result: 'resume', data: { reason: 'the owner continues' } });
+          if (cancelled) fx.controller.report({ goalId: s.goal.id, generation: 1, result: 'cancel', data: { detail: 'stopped by the user' } });
+          landed = s.bytes()[0]!;
+          return run;
+        },
+      };
+      const r = fx.controller.ruleFinding(racing, s.goal.id, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: REASON });
+      assert.deepEqual([s.g().generation, s.g().state, s.g().stop?.reason], cancelled ? [1, 'STOP', 'cancelled'] : [1, 'WAIT', undefined]);
+      assert.deepEqual([s.bytes()[0], s.readmissions(), r.readmitted, s.persisted().state], [landed, [], false, 'SHIP'], 'the goal record keeps the bytes the other command wrote');
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('R3 decision 1, F2: a recovery call that overlaps another, after its journal scan and before its append, is refused on the goal lock and appends nothing: exactly one GOAL_STATE from STOP to CARDS [R8]', async () => {
+  const fx = makeFixture(CONFIG);
+  try {
+    const s = await setup(fx);
+    await s.stopCard();
+    s.stopGoal();
+    s.rule('F1', 'a lead');
+    fault.append = true;
+    try {
+      assert.throws(() => s.rule('F2', 'the owner'), /EIO: injected/);
+    } finally {
+      fault.append = false;
+    }
+    assert.deepEqual([s.persisted().state, s.g().state, s.readmissions()], ['SHIP', 'STOP', []]);
+    // Recovery A scans the journal; recovery B runs whole at that point, before A appends.
+    let second = 'not run';
+    Object.assign(overlap, { at: s.journalFile, run: () => { try { second = `completed: ${s.rule('F2', 'the owner').goal.state}`; } catch (err) { second = (err as Error).message; } } });
+    const first = s.rule('F1', 'the owner');
+    assert.match(second, /locked/i, 'the overlapping call waits on the goal lock and is refused');
+    assert.deepEqual([first.readmitted, s.g().state, s.readmissions()], [true, 'CARDS', [readmission(CARD, 'the owner')]]);
+    // Run again after the first has finished, the second call finds the goal re-admitted and appends nothing.
+    assert.throws(() => s.rule('F2', 'the owner'), /is in SHIP, not stopped for review/);
+    assert.equal(s.readmissions().length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+const GUIDANCE = ['aidlc review rule', '--reject', '--defer', "the owner's"];
+test('R3 decision 1, F3 and F4: the stop of a recorded R3 block decision names the ruling on every path that makes it: a decision that landed as history behind a newer candidate, and a ship-path block; a stop with no verdict keeps its text [R5]', async () => {
+  // F3. While decision 2 runs, another window records a newer candidate (the store update of tests/scenarios/t0-flow.test.ts:1995): the
+  // decision is committed as history, and the next `card next` materializes its stop from the recorded `stopReview`.
+  const fx = makeFixture(CONFIG);
+  try {
+    const s = await setup(fx);
+    s.during.fn = () => {
+      if (s.reviews.count === 2) fx.store.updateCardRun(s.goal.id, CARD, (current) => ({ ...current!, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3' }));
+    };
+    const stop = (await s.stopCard())['stop'];
+    assert.deepEqual([s.persisted().candidate?.digest, typeof s.persisted().review.invocations.at(-1)?.stopReview], ['sha-3', 'string']);
+    for (const part of GUIDANCE) assert.ok(stop.nextAction.includes(part), `history: the nextAction names ${part}: ${stop.nextAction}`);
+    assert.equal(stop.nextAction.split('aidlc review rule').length, 2, 'the guidance is given once');
+    assert.deepEqual(s.next().directive, { kind: 'stop', cardId: CARD, stop, narration: 'review allowance exhausted' }, 'a later card next returns the same stop');
+  } finally {
+    fx.cleanup();
+  }
+  // F4 and the stop that is not rulable: a ship-path reviewer (no formalReview.command) blocks twice, or returns no verdict twice.
+  const BLOCK = { verdict: 'block' as const, reasons: ['[spec] 6 tests missing @ src/t1-rg.ts'], axes: { spec: { verdict: 'block' as const, reasons: ['tests missing'] }, standards: { verdict: 'pass' as const, reasons: [] } }, sha: candidateShaFor(CARD), run_status: 'success' as const };
+  for (const outcome of ['review-blocked', 'review-no-verdict'] as const) {
+    const ship = makeFixture();
+    try {
+      writeCard(ship, { id: CARD, title: 'review rule goal', tier: 'S', reviewGate: 'codex {verdict:pass}', acceptance: ['1. x is 1. [dod arm 1]'] });
+      const goal = goalForCards(ship, [CARD]);
+      const runner = ship.runner(new DryRunShipPath([outcome, outcome], outcome === 'review-blocked' ? BLOCK : undefined));
+      const g = () => ship.goal(goal.id);
+      const card = ship.card(CARD);
+      let r = runner.next(g(), card, runner.next(g(), card, ship.controller.ensureCardRun(g(), CARD)).run);
+      r = runner.next(g(), card, runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor(CARD) }));
+      if (outcome === 'review-blocked') {
+        r = runner.next(g(), card, r.run);
+        r = runner.next(g(), card, runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-repaired' }));
+      } else r = runner.next(g(), card, r.run);
+      assert.deepEqual([r.directive.kind, r.run.stop?.reason], ['stop', 'review'], r.directive.narration);
+      const nextAction = r.run.stop!.nextAction;
+      if (outcome === 'review-blocked') for (const part of GUIDANCE) assert.ok(nextAction.includes(part), `ship path: the nextAction names ${part}: ${nextAction}`);
+      else assert.equal(nextAction, 'preserve raw output; never pass; hand off for adjudication', 'no verdict: nothing to rule on, the text is as before');
+    } finally {
+      ship.cleanup();
+    }
   }
 });
