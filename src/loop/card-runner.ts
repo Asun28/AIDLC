@@ -1714,14 +1714,12 @@ export class CardRunner {
   }
 
   /**
-   * The pass by ruling that decides the run's candidate (card T1-REVIEW-RULE-SHIP R4): its latest decision by a configured formal
-   * reviewer or by ruling, when that one is `ruled`. As for `lastFormalInvocation`, a decision the ship path recorded after it
-   * (`ship:` invocations) does not replace it. A candidate with another digest has none.
+   * The pass by ruling recorded for the run's candidate digest (card T1-REVIEW-RULE-SHIP R4), found by its own identity: `ruled`
+   * and that digest. It is the candidate's standing decision whatever invocation the ledger holds after it, under any reviewer
+   * name, since `formalAdmission` admits no review of a ruled candidate. A candidate with another digest has none.
    */
   private ruledPass(run: CardRun): ReviewInvocation | undefined {
-    const names = this.formalReviewerNames();
-    const last = [...run.review.invocations].reverse().find((i) => i.candidateDigest === run.candidate?.digest && (i.ruled || names.has(i.reviewer)) && (i.outcome === 'pass' || i.outcome === 'block'));
-    return last?.ruled ? last : undefined;
+    return [...run.review.invocations].reverse().find((i) => i.ruled && i.candidateDigest === run.candidate?.digest);
   }
 
   /**
@@ -1819,6 +1817,9 @@ export class CardRunner {
     // no further decision is admitted, here and on the record locked at reservation (card T1-EFF-R3-PROGRESS-2).
     const recordedStop = current.review.invocations.find((i) => i.stopReview && !i.stopLifted)?.stopReview;
     if (recordedStop) throw new Error(`a formal decision of this card recorded a stop for a ruling (${recordedStop}); no review may run: return the retained verdict evidence for human adjudication`);
+    // A candidate that passed by ruling takes no further decision and no second pass (card T1-REVIEW-RULE-SHIP, forbid).
+    const ruled = this.ruledPass(current);
+    if (ruled) throw new Error(`candidate ${candidateSha.slice(0, 12)} passed by ruling (${ruled.reviewer}); no review may run: ship it with \`aidlc card next ${card.id}\``);
     const eligibility = this.preReviewEligibility(current, candidateDigest);
     if (!eligibility.eligible) throw new Error(`pre-review pass required first (${eligibility.reason}): run \`aidlc review pre ${card.id}\` on candidate ${candidateSha.slice(0, 12)} before the formal review`);
     const ledger = current.review;
@@ -1847,7 +1848,7 @@ export class CardRunner {
     const baseSyncDecision = cfg === this.config.formalReview.baseSync;
     const allowance = this.formalAllowance(current, card);
     if (ledger.substantiveDecisions + pendingDecisions >= allowance && !baseSyncDecision) {
-      throw new Error(`the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision review allowance for repairs` : 'two-decision review allowance'} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${(this.ruledPass(current) ?? this.lastFormalInvocation(ledger.invocations, candidateDigest))?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+      throw new Error(`the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision review allowance for repairs` : 'two-decision review allowance'} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
     if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
       throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
