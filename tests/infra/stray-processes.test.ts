@@ -418,6 +418,25 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
     ]);
   });
 
+  test('a posix root of / and backslashes normalizes to nothing: it is never used and nothing loops on it [R5] [R6]', () => {
+    const child = path.join(repo, 'tests', 'infra', 'stray-processes.child.ts');
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(process.env)) if (!/^(NODE_|GIT_|AIDLC_)/.test(key.toUpperCase())) env[key] = value;
+    const child2 = (args: string[]): unknown => {
+      const r = spawnSync(process.execPath, [child, ...args], { encoding: 'utf8', timeout: 30_000, windowsHide: true, env });
+      assert.equal(r.status, 0, `${args[0]}: status ${r.status}, signal ${r.signal}, error ${r.error?.message}: ${r.stderr}`);
+      return JSON.parse(r.stdout);
+    };
+    const listing = psText([...P_BASE, p(5900, 3999, '45:00', '/home/u/x')]);
+    for (const worktreeRoot of ['/\\', '//', '/\\\\\\']) {
+      const input = (mainRoot: string): string => JSON.stringify({ isGit: true, mainRoot, config: { worktreeRoot }, now: NOW, platform: 'linux', env: { HOME: '/home/u' }, self: 4000, cwd: '/home/u/caller' });
+      assert.deepEqual(child2(['--report', input('/home/u/src/AIDLC'), listing]), { value: 'none', calls: 1 }, worktreeRoot);
+      assert.deepEqual(child2(['--report', input('/'), listing]), { value: 'n/a (no usable root)', calls: 0 }, worktreeRoot);
+    }
+    const psRows = [{ pid: 3999, ppid: 1, startMs: T - 240 * MIN, cpuMs: 240 * MIN, command: 'claude --x' }, { pid: 4000, ppid: 3999, startMs: T - 120 * MIN, cpuMs: 120 * MIN, command: 'node doctor' }, { pid: 5900, ppid: 3999, startMs: T - 45 * MIN, cpuMs: 45 * MIN, command: '/home/u/x' }];
+    assert.equal(child2([JSON.stringify(psRows), JSON.stringify({ roots: ['/\\'], self: 4000, platform: 'linux', nowMs: T })]), 'none');
+  });
+
   test("doctor's own chain and its descendants are never listed and the chain's command lines do not count [R7]", async () => {
     assert.equal(await win([]), 'none');
     const pwsh = w(3999, 1, T - 240 * MIN, 'pwsh -WorkingDirectory D:\\Projects\\AIDLC');
