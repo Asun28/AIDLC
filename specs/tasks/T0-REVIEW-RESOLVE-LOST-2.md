@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-RESOLVE-LOST-2
 title: (replaces T0-REVIEW-RESOLVE-LOST) aidlc review resolve settles a lost review request with the looked-up outcome, a verdict file completing it and --no-result requeuing it in its place, each freeing the pool slot of the stored key after one NOTE per existing requester goal and leaving the request lost when a journal or queue write fails; every other state and every malformed call is refused with no write
-status: todo
+status: merged
 branch: T0-REVIEW-RESOLVE-LOST-2
 worktree: D:\wt\AIDLC\T0-REVIEW-RESOLVE-LOST-2
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12 and the owner's ruling of 2026-11-13 for a replacement card; the predecessor's candidate is carried, added plus deleted lines: 72 in src (src/cli/main.ts 56, src/coordination/review-queue.ts 16), 6 of documents (docs/OPERATIONS.md 4, CHANGELOG.md 2), about 965 of tests/scenarios/review-resolve.test.ts (fourteen tests, eleven behavioural and three document), about 120 lines of attempt evidence in this card file (the carry check, the RED receipt, the revert table quoted with its commits, the rows run again, the DoD, the clause table) and about 20 lines for the coordinator's verification block; about 1185 in all, and the budget is set once, before the start"
