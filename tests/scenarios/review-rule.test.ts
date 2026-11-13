@@ -1,4 +1,4 @@
-// Card T1-REVIEW-RULE: `aidlc review rule` records the owner's ruling on a finding of the R3 decision that stopped a card.
+// Card T1-REVIEW-RULE-2 (replaces T1-REVIEW-RULE): `aidlc review rule` records the owner's ruling on a finding of the R3 decision that stopped a card.
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
@@ -93,7 +93,7 @@ async function stopped(fx: ReturnType<typeof makeFixture>) {
   return { runner, goal, card, g, persisted, runFile, bytes, stored, events, ruled, cli, rule, ruleByRunner };
 }
 
-test('acceptance 1 to 4: review rule records a ruling and a FINDING_RULED event on a finding of the stopping R3 decision, refuses every other case without a write, and leaves the stop as it was [R1] [R2] [R3] [R4] [R5]', async () => {
+test('acceptance 1, 2, 3 and 5: review rule records a ruling and a FINDING_RULED event on a finding of the stopping R3 decision, refuses every other case without a write, and leaves the stop as it was [R1] [R2] [R3] [R5] [R6]', async () => {
   const fx = makeFixture({ config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const { runFile, bytes, stored, events, cli, rule, ruleByRunner } = await stopped(fx);
@@ -163,7 +163,7 @@ test('acceptance 1 to 4: review rule records a ruling and a FINDING_RULED event 
     const ruledF1 = events().at(-1)!;
     assert.deepEqual([ruledF1['type'], ruledF1['cardId'], ruledF1['data']], ['FINDING_RULED', 'T1-RR', { finding: 'F1', ruling: finding(now, 'F1')['ruling'], eventKey: ruledF1['data'].eventKey }]);
 
-    // Acceptance 4, with nothing substituted (R3 decision 1, F4). The store's own fields of every write: the run's revision
+    // Acceptance 5, with nothing substituted (R3 decision 1 of T1-REVIEW-RULE, F4). The store's own fields of every write: the run's revision
     // rises by one per ruling and updatedAt is a later write time. The owed entry of the latest ruling is the delivered event.
     assert.equal(now['revision'], was['revision'] + 2);
     assert.match(now['updatedAt'], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
@@ -187,7 +187,7 @@ test('acceptance 1 to 4: review rule records a ruling and a FINDING_RULED event 
   }
 });
 
-test('acceptance 1, 2 and 5: --reject through the CLI persists rejected; a failed card-run write rules and journals nothing; a failed FINDING_RULED append keeps the ruling and card next delivers the event once [R1] [R3] [R4]', async () => {
+test('acceptance 1, 2 and 6: --reject through the CLI persists rejected; a failed card-run write rules and journals nothing; a failed FINDING_RULED append keeps the ruling and card next delivers the event once [R1] [R3] [R4]', async () => {
   const fx = makeFixture({ config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const { runner, card, g, persisted, bytes, stored, ruled, rule, ruleByRunner } = await stopped(fx);
@@ -203,10 +203,13 @@ test('acceptance 1, 2 and 5: --reject through the CLI persists rejected; a faile
     }
     assert.deepEqual(bytes(), held, 'the card-run file and the journal are byte-identical');
 
-    // R3 decision 1, F2: a successful --reject through the CLI persists `rejected`, and the event carries it.
+    // R3 decision 1 of T1-REVIEW-RULE, F2: a successful --reject through the CLI persists `rejected`, and the event carries it.
+    const revisionWas = finding(stored(), 'F1')['revision'];
     const rejected = rule('F1', '--reject', ...OWNER);
     assert.equal(rejected.status, 0, rejected.stderr);
     const f1 = finding(stored(), 'F1')['ruling'];
+    assert.match(f1.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.equal(finding(stored(), 'F1')['revision'], revisionWas + 1);
     assert.deepEqual([f1.decision, f1.by, f1.reason, 'issue' in f1], ['rejected', 'the owner', 'the row is tests/t1-rr.test.ts:9', false]);
     assert.deepEqual(ruled().map(([cardId, data]) => [cardId, data.finding, data.ruling]), [['T1-RR', 'F1', f1]]);
 
@@ -234,8 +237,8 @@ test('acceptance 1, 2 and 5: --reject through the CLI persists rejected; a faile
   }
 });
 
-test('R2: the stopping decision is the latest invocation that carries stopReview, not the first one that does and not the last invocation [R2]', () => {
-  // R3 decision 1, F3. Three invocations on three candidates, each with its own finding: stops on sha-a and on sha-b, then a
+test('acceptance 4: the stopping decision is the latest invocation that carries stopReview, not the first one that does and not the last invocation [R2]', () => {
+  // R3 decision 1 of T1-REVIEW-RULE, F3. Three invocations on three candidates, each with its own finding: stops on sha-a and on sha-b, then a
   // later invocation on sha-c without stopReview. The right source is sha-b: only F2 can be ruled, and only on candidate d-b.
   const invocation = (n: string, stopReview?: string) => ({ invocationId: `i-${n}`, candidateDigest: `d-${n}`, candidateSha: `sha-${n}`, base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'fake-r3', requestedAt: '2026-09-11T00:00:00.000Z', outcome: 'block', ...(stopReview ? { stopReview } : {}) });
   const raised = (id: string, n: string) => ({ id, stage: 'formal', round: 1, reason: `[spec] 6 tests @ ${FILE}:1: ${id}`, candidateSha: `sha-${n}`, raisedAt: '2026-09-11T00:00:00.000Z', disposition: 'open', disputes: [], reraised: [], revision: 0 });

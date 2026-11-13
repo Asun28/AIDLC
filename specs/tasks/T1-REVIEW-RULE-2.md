@@ -65,3 +65,28 @@ npm run typecheck && node --test tests/scenarios/review-rule.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every test of both files passes and the typecheck reports no error.
+
+## Attempt evidence
+The three tests of `tests/scenarios/review-rule.test.ts` are named here by their first words: test A "acceptance 1, 2, 3 and 5", test B "acceptance 1, 2 and 6", test C "acceptance 4".
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `node --test tests/scenarios/review-rule.test.ts`. Through the CLI: test B rules `F1 --reject` (persisted `decision` `rejected`, `by`, `reason`, no `issue`, an ISO `at`, `revision` 1 higher); test A rules `f2 --defer --issue 12`, the id in lower case (persisted `deferred`, `issue` 12, an ISO `at`, `revision` 1 higher). Through `CardRunner.ruleFinding`: test A rules `f1` as rejected with `at` equal to the fixture clock, `2026-09-11T01:00:00.000Z`. | pass |
+| 2 | Tests A and B: one more journal event after each ruling, `FINDING_RULED` with the card id, the finding id, the ruling and the `eventKey` of its owed entry. | pass |
+| 3 | Test A, one table of 16 rows through the CLI, the rows of the item in its order; each exits 1, names its condition and leaves the card-run file and the journal byte-identical. | pass |
+| 4 | Test C, on a run record with `stopReview` on the invocations of `sha-a` and `sha-b` and a later invocation on `sha-c` without it: F2 of `sha-b` is ruled, F1 of `sha-a` and F3 of `sha-c` are refused, and a candidate digest other than that of `sha-b` is refused. | pass |
+| 5 | Test A, nothing substituted before the comparison: the run's `revision` is 2 higher, `updatedAt` is an ISO timestamp later than before, `journalOwed` holds the delivered event of the latest ruling, every other field of the run is equal, each ruled finding differs only in `ruling` and `revision`, and the unruled F3 is equal; `aidlc card next` returns the same stop directive. | pass |
+| 6 | Test B, fault rows. A throw from `fs.renameSync` onto the card-run record: `ruleFinding` throws and both files are byte-identical. A throw from `fs.appendFileSync` onto the `FINDING_RULED` line of the goal journal: the ruling is in the run with its event in `journalOwed`, a rerun is refused as already ruled, and after each of two `card next` calls (`CardRunner.next`) the journal holds exactly one `FINDING_RULED` for it, marked `completed: true`. | pass |
+| 7 | `node --test tests/scenarios/fault-points.test.ts` passes (1 suite, 28 subtests); `git diff main -- tests/scenarios/fault-points.test.ts` prints nothing. `.claude/skills/verify-card-run-writes/SKILL.md`, under the card-run commands the check does not drive, names `CardRunner.ruleFinding`, the write, the owed `FINDING_RULED` append and `tests/scenarios/review-rule.test.ts`. | pass |
+| 8 | `docs/OPERATIONS.md`, Findings and dispositions, paragraph Rulings, and the sentence after the list of owed events in Audit; `CHANGELOG.md`, entry T1-REVIEW-RULE-2 (reviewer-verified against the diff). | written |
+| RED receipt | Commit 6c9cf72a of the predecessor T1-REVIEW-RULE, which this branch holds (corrected by fac78152). | held |
+| DoD | `npm run typecheck && node --test tests/scenarios/review-rule.test.ts tests/scenarios/fault-points.test.ts`: exit 0, tests 31, pass 31, fail 0. | pass |
+
+Changes of this card against the predecessor's candidate 5caa0970: two assertions on the CLI `--reject` ruling of test B (an ISO `at`, `revision` 1 higher), the test names and comments renumbered to this card, the card name in the docs, the CHANGELOG entry and the source comments, and the card files.
+
+Findings of the predecessor's R3 decision 1, by this card's numbering:
+- F1: fault rows for the write and the append are in `tests/scenarios/review-rule.test.ts` (test B, item 6); the skill record points to them (item 7).
+- F2: a successful `--reject` through the CLI, asserting the persisted decision and the event (test B, item 1).
+- F3: a hand-built run with stops on two candidates and a later invocation without one (test C, item 4); taking the first stop or the last invocation each fails it.
+- F4: was disputed; R6 and acceptance 5 of this card now state the fields a ruling changes, and test A compares the rest with nothing substituted.
+- F5: the update owes `FINDING_RULED` in `journalOwed` and `deliverOwed` appends it; `card next` delivers one a failed append left (R3, R4, item 6).

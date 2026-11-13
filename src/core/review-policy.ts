@@ -569,7 +569,7 @@ export function findingsOfCandidate(findings: ReviewFinding[], stage: FindingSta
   return findings.filter((f) => (f.stage === stage && f.candidateSha === candidateSha) || f.reraised.some((r) => r.stage === stage && r.candidateSha === candidateSha));
 }
 
-/** The flags of `aidlc review rule` as a ruling without its time (card T1-REVIEW-RULE, R1); each refusal names the flag. */
+/** The flags of `aidlc review rule` as a ruling without its time (card T1-REVIEW-RULE-2, R1); each refusal names the flag. */
 export function parseRuling(o: { reject?: boolean; defer?: boolean; by?: string; reason?: string; issue?: string }): Omit<FindingRuling, 'at'> {
   if (Boolean(o.reject) === Boolean(o.defer)) throw new Error('a ruling takes exactly one of --reject and --defer');
   if (!o.by?.trim()) throw new Error('--by is blank: name who rules');
@@ -580,7 +580,7 @@ export function parseRuling(o: { reject?: boolean; defer?: boolean; by?: string;
 }
 
 /**
- * The owner rules on a finding of the R3 decision that stopped the card (card T1-REVIEW-RULE, R2): the latest formal invocation
+ * The owner rules on a finding of the R3 decision that stopped the card (card T1-REVIEW-RULE-2, R2): the latest formal invocation
  * with `stopReview`. Each condition that does not hold throws; only the finding's `ruling` and `revision` change, its disposition stays.
  */
 export function ruleFinding(run: Pick<CardRun, 'state' | 'stop' | 'review' | 'candidate' | 'findings'>, id: string, ruling: FindingRuling): ReviewFinding[] {

@@ -62,19 +62,3 @@ npm run typecheck && node --test tests/scenarios/review-rule.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every test of both files passes and the typecheck reports no error.
-## Attempt evidence
-| Item | Proof | Result |
-|---|---|---|
-| 1 | `node --test tests/scenarios/review-rule.test.ts`, tests 1 and 2: the CLI rules `f2 --defer --issue 12` (test 1) and `F1 --reject` (test 2, persisted `decision` `rejected`); `CardRunner.ruleFinding` rules `f1` as rejected with `at` equal to the fixture clock. The CLI has no clock to inject, so its `at` is checked for ISO form only. | pass |
-| 2 | Tests 1 and 2: one more journal event after each ruling, `FINDING_RULED` with the card id, the finding id, the ruling and the `eventKey` of its owed entry. | pass |
-| 3 | Test 1, one table of 16 rows through the CLI: the 15 rows of the item and a run with no `stopReview`; each exits 1, names its condition and leaves both files byte-identical. Test 3: the stopping decision is the latest invocation with `stopReview`. | pass |
-| 4 | Test 1, nothing substituted: the run's `revision` is 2 higher, `updatedAt` is a later time, `journalOwed` holds the delivered event of the latest ruling, every other field of the run is equal, and each ruled finding differs only in `ruling` and `revision`; `aidlc card next` returns the same stop directive. | pass |
-| 5 | `node --test tests/scenarios/fault-points.test.ts` passes. Test 2 holds the fault rows of the command, as `CardRunner.withdrawCandidate` has its own: a failed card-run write leaves both files byte-identical; a failed `FINDING_RULED` append keeps the ruling, and `card next` delivers the event once. The skill names where the rows are. | pass |
-| 6 | `docs/OPERATIONS.md`, Findings and dispositions, paragraph Rulings; `CHANGELOG.md`, entry T1-REVIEW-RULE (reviewer-verified against the diff). | written |
-
-Repair after R3 decision 1:
-- F1: fault rows for the write and the append added to `tests/scenarios/review-rule.test.ts` (test 2); the skill record points to them.
-- F2: a successful `--reject` through the CLI, asserting the persisted decision and the event (test 2).
-- F3: a hand-built run with stops on two candidates and a later invocation without one (test 3); taking the first stop or the last invocation each fails it.
-- F4: disputed, assertion made explicit: no value is substituted before the comparison (test 1).
-- F5: the update owes `FINDING_RULED` in `journalOwed` and `deliverOwed` appends it; `card next` delivers one a failed append left.

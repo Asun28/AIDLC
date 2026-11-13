@@ -501,7 +501,7 @@ export class CardRunner {
   }
 
   /**
-   * The owner's ruling on a finding of the R3 decision that stopped the card (card T1-REVIEW-RULE): one locked update, judged on
+   * The owner's ruling on a finding of the R3 decision that stopped the card (card T1-REVIEW-RULE-2): one locked update, judged on
    * the record read inside the lock (`ruleFinding` in review-policy), then one FINDING_RULED event. The run stays stopped and no
    * lease is fenced: the ruling comes after the stop. The update owes the event (`journalOwed`, card T0-JOURNAL-FAULT-EVENTS), so
    * an append that fails here is made once by the next `card next` on the card (`deliverOwed`), which a stopped run reaches too.
