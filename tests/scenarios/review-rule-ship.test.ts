@@ -10,7 +10,7 @@ import { makeFixture, writeCard, goalForCards, InjectedShipPath } from './_harne
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { parseVerdictDocument } from '../../src/core/review-policy.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
-import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { DryRunShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 
 /** The CLI from the sources, never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -32,6 +32,12 @@ const CODE_DEFECT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/ru
 /** A ship path that reads the canonical document `.review/T1-RS.json` of the checkout, as the scaffold and GitHub ship paths do. */
 class ReadingShipPath extends InjectedShipPath {
   file = '';
+  /** When set, the ship replaces the document with a pass of another reviewer before it is read, as a ship-path reviewer would. */
+  foreign = false;
+  override ship(req: ShipRequest): ShipResult {
+    if (this.foreign) writeFileSync(this.file, JSON.stringify({ verdict: 'pass', reasons: [], sha: req.candidateSha, reviewer: 'other', run_status: 'success' }), 'utf8');
+    return super.ship(req);
+  }
   override readVerdict() {
     if (!existsSync(this.file)) return { file: this.file };
     const raw = readFileSync(this.file, 'utf8');
@@ -272,24 +278,35 @@ test('acceptance 5, fault rows: a failed card-run write at the lifting ruling ch
   }
 });
 
-test('R3 decision 1, F2: a ship path that reads the canonical document of the ruled pass records no invocation, and after a transient CI failure and its reconciliation the retry ships the ruled candidate [R4] [R5]', async () => {
-  const fx = makeFixture(CONFIG);
-  try {
-    const ship = new ReadingShipPath(['ci-red', 'merged'], TRANSIENT);
-    ship.file = path.join(fx.tmp, '.review', 'T1-RS.json');
-    const { persisted, reviews, stored, rule, next, reconcile } = await stopped(fx, RERAISE, ['F1'], ship);
-    rule('F1', 'rejected');
-    const ledger = stored()['review'];
-    // The first ship reads the ruling's document and fails in CI: one rerun, and the ledger is as the lift left it.
-    const failed = next();
-    assert.deepEqual([failed.directive.kind, failed.run.state, failed.run.ci.reruns.map((x) => x.outcome), ship.readVerdict().verdict?.verdict], ['ship', 'SHIP', ['requested'], 'pass']);
-    assert.deepEqual(stored()['review'], ledger, 'the ship read adds no invocation and moves no counter');
-    assert.equal(reconcile('12345').state, 'SHIP');
-    // The retry: no review directive, no REVIEW_FIX, no second pass (two decisions used, formalReview.secondPass on), and the same ledger.
-    const retried = next();
-    assert.deepEqual([retried.directive.kind, persisted().state, persisted().mergeVerified, ship.requests.map((q) => q.candidateSha), reviews.count], ['close', 'CLOSE', true, ['sha-2', 'sha-2'], 2], retried.directive.narration);
-    assert.deepEqual(stored()['review'], ledger, 'the retry adds no invocation and moves no counter');
-  } finally {
-    fx.cleanup();
+test('R3 decision 1, F2: a ship path that reads the canonical document of the ruled pass records no invocation, and after a transient CI failure and its reconciliation the retry ships the ruled candidate; a pass another reviewer wrote there is its own decision and does not replace the ruled pass [R4] [R5]', async () => {
+  for (const foreign of [false, true]) {
+    const fx = makeFixture(CONFIG);
+    try {
+      const ship = new ReadingShipPath(['ci-red', 'merged'], TRANSIENT);
+      Object.assign(ship, { file: path.join(fx.tmp, '.review', 'T1-RS.json'), foreign });
+      const { persisted, reviews, stored, rule, next, review, reconcile } = await stopped(fx, RERAISE, ['F1'], ship);
+      rule('F1', 'rejected');
+      const ledger = stored()['review'];
+      // What the other reviewer's pass adds, once: one `ship:` invocation after the ruled pass, with the counters as they were. The ruling's document adds nothing.
+      const after = (): Stored => {
+        const { invocations, lastVerdict: _v, ...counters } = stored()['review'];
+        return { counters, invocations: invocations.map((i: Stored) => (i.invocationId.startsWith('ship:') ? [i.reviewer, i.outcome, i.candidateSha] : i)) };
+      };
+      const { invocations: lifted, lastVerdict: _v, ...counters } = ledger;
+      const expected = { counters, invocations: foreign ? [...lifted, ['codex-review', 'pass', 'sha-2']] : lifted };
+      // The first ship reads the document and fails in CI: one rerun.
+      const failed = next();
+      assert.deepEqual([failed.directive.kind, failed.run.state, failed.run.ci.reruns.map((x) => x.outcome), ship.readVerdict().verdict?.verdict], ['ship', 'SHIP', ['requested'], 'pass']);
+      assert.deepEqual(after(), expected, 'the ledger after the first ship');
+      if (!foreign) assert.deepEqual(stored()['review'], ledger, 'the ship read adds no invocation and moves no counter');
+      assert.equal(reconcile('12345').state, 'SHIP');
+      await assert.rejects(review(), /the two-decision review allowance is used/, 'no second pass and no further decision by hand');
+      // The retry: no review directive, no REVIEW_FIX, no second pass (formalReview.secondPass on), and no further invocation.
+      const retried = next();
+      assert.deepEqual([retried.directive.kind, persisted().state, persisted().mergeVerified, ship.requests.map((q) => q.candidateSha), reviews.count], ['close', 'CLOSE', true, ['sha-2', 'sha-2'], 2], retried.directive.narration);
+      assert.deepEqual(after(), expected, 'the retry adds no invocation and moves no counter');
+    } finally {
+      fx.cleanup();
+    }
   }
 });

@@ -1710,12 +1710,17 @@ export class CardRunner {
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     if (decided.some((i) => i.secondPass)) return false;
     const last = [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest);
-    return last?.outcome === 'pass' && !last.ruled;
+    return last?.outcome === 'pass' && !this.ruledPass(run);
   }
 
-  /** The pass by ruling that decides the run's candidate: its latest decided invocation, by a reviewer or by ruling, when that one is `ruled` (card T1-REVIEW-RULE-SHIP R4). A candidate with another digest has none. */
+  /**
+   * The pass by ruling that decides the run's candidate (card T1-REVIEW-RULE-SHIP R4): its latest decision by a configured formal
+   * reviewer or by ruling, when that one is `ruled`. As for `lastFormalInvocation`, a decision the ship path recorded after it
+   * (`ship:` invocations) does not replace it. A candidate with another digest has none.
+   */
   private ruledPass(run: CardRun): ReviewInvocation | undefined {
-    const last = [...run.review.invocations].reverse().find((i) => i.candidateDigest === run.candidate?.digest && (i.outcome === 'pass' || i.outcome === 'block'));
+    const names = this.formalReviewerNames();
+    const last = [...run.review.invocations].reverse().find((i) => i.candidateDigest === run.candidate?.digest && (i.ruled || names.has(i.reviewer)) && (i.outcome === 'pass' || i.outcome === 'block'));
     return last?.ruled ? last : undefined;
   }
 
@@ -2741,13 +2746,17 @@ export class CardRunner {
       (!rawDoc || (rawDoc.reviewer !== undefined && commandReviewers?.has(rawDoc.reviewer) === true && rawDoc.sha === run.candidate?.sha)) &&
       verdictInfo.verdict.verdict === commandVerdict &&
       JSON.stringify(verdictInfo.verdict.reasons) === JSON.stringify(commandReasons);
+    // The canonical document of a pass by ruling (`publishRuled`), re-read by the ship path, is that ruled pass and never a
+    // new decision: a ship pass recorded after it would become the candidate's latest decision and hide it (card T1-REVIEW-RULE-SHIP).
+    const ruled = this.ruledPass(run);
+    const ruledArtifact = ruled !== undefined && verdictInfo.verdict?.verdict === 'pass' && verdictInfo.verdict.sha === run.candidate?.sha && (!rawDoc || (rawDoc.reviewer === ruled.reviewer && rawDoc.sha === run.candidate?.sha));
     // Record a substantive decision only when a verdict exists or the ship outcome is review-related; a
     // merge without a readable verdict is noted as evidence, never counted as a decision or a retry.
     // A ship-path verdict file re-read for the same candidate (a CI retry re-reading an unchanged advisory verdict) is the
     // same decision: it is recorded once.
     const artifactDigest = verdictInfo.verdict ? createHash('sha256').update(JSON.stringify(verdictInfo.verdict)).digest('hex') : undefined;
     const standingFor = (ledger: ReviewLedger): ReviewInvocation | undefined => (artifactDigest !== undefined ? [...ledger.invocations].reverse().find((i) => i.candidateDigest === candidateDigest && i.artifactDigest === artifactDigest && (i.outcome === 'pass' || i.outcome === 'block')) : undefined);
-    if (!sameArtifact && (verdictInfo.verdict || ['review-blocked', 'review-no-verdict'].includes(result.outcome))) {
+    if (!sameArtifact && !ruledArtifact && (verdictInfo.verdict || ['review-blocked', 'review-no-verdict'].includes(result.outcome))) {
       // The decision, its counters and its findings are recorded in one locked update against the record as it is at
       // completion: a failure after the write leaves a consistent ledger, and the same artifact (a CI retry re-reading an
       // unchanged verdict, a replay of this operation) is never a second decision or a second finding. The ship-path

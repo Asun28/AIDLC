@@ -71,19 +71,23 @@ npm run typecheck && node --test tests/scenarios/review-rule-ship.test.ts tests/
 - Assertion: every test of the four files passes and the typecheck reports no error.
 
 ## Attempt evidence
-Attempt 1. Tests named below are in `tests/scenarios/review-rule-ship.test.ts` unless a file is given; "DoD" is the `dod_command`, exit 0, 54 tests passed and 0 failed (5, 3, 18 and 28 by file).
+Attempts 1 and 2. Tests named below are in `tests/scenarios/review-rule-ship.test.ts` unless a file is given; "DoD" is the `dod_command`, exit 0, 55 tests passed and 0 failed (6, 3, 18 and 28 by file) at attempt 2.
 
 | Item | Proof | Result |
 |---|---|---|
 | RED | commit 28c53b4e holds the test file alone; all 5 tests failed on main's behaviour, the first at `:124` with `stopLifted` absent from the stopping invocation, tests 2 and 3 on an output that does not name `aidlc card next`, tests 4 and 5 on state `STOP` where `SHIP` is expected. The file later gained a fault helper and rows for an advisory finding, a resolved finding, `review r3` by hand and the `blocker` field | failed for the missing lift |
 | 1 | test "acceptance 1, 2, 4 and 5": decision 4, findings F4 and F5; the first ruling leaves `state`, `stop` and `review` equal; the second is compared field by field | pass |
-| 2 | same test and "acceptance 3 and 6": `card next` returns `close` after one dry-run ship of the unchanged sha, 0 reviewer runs after the stop, `formalReview.secondPass` on; `review r3` by hand is refused | pass |
+| 2 | same test and "acceptance 3 and 6": `card next` returns `close` after one dry-run ship of the unchanged sha, 0 reviewer runs after the stop, `formalReview.secondPass` on; `review r3` by hand is refused. Repair of R3 decision 1 F2: test "R3 decision 1, F2" ships through a ship path that reads `.review/T1-RS.json`, a transient CI failure, `ciReconcile` and the retry: `close`, no review directive, no REVIEW_FIX, no second pass, the ledger deep-equal to the one the lift left | pass |
 | 3 | test "acceptance 3 and 6": decision 2, re-raise of the disputed F1, one ruling through the CLI | pass |
-| 4 | test "acceptance 1, 2, 4 and 5": `.review/T1-RS.json` compared with literal `advisory` entries | pass |
+| 4 | test "acceptance 1, 2, 4 and 5": `.review/T1-RS.json` compared with literal `advisory` entries; test "R3 decision 1, F2": the ship path reads that document back and no invocation is recorded for it | pass |
 | 5 | test "acceptance 1, 2, 4 and 5" (the event) and test "acceptance 5, fault rows" (`fs.renameSync`, then `fs.appendFileSync` on `FINDING_RULED` and on `REVIEW_DECIDED`, two `card next` each) | pass |
 | 6 | tests "acceptance 3 and 6" (deadline 2999) and "acceptance 6" (deadline 2000, CLI `card next` stops for `time`) | pass |
-| 7 | test "acceptance 7": the stored candidate is set to sha-3, since the fixture has no git branch to commit on; `card next` stops for review and nothing ships | pass |
+| 7 | test "acceptance 7": repair of R3 decision 1 F1, no hand edit of the candidate: `recordAttempt` of sha-3 right after the lift is refused (the episode succeeded) and records nothing; the ship of sha-2 then fails on a CI code defect, the card returns to BUILD, `recordAttempt` records sha-3, and `card next` stops for review with sha-2 the only ship. Not a git-backed fixture: `recordAttempt` reads the checkout's commit only with the scaffold or GitHub ship path and an existing worktree, and with the dry-run path it takes the sha the attempt names | pass |
 | 8 | DoD: `second-pass.test.ts` and `fault-points.test.ts` unchanged and passing; `review-rule.test.ts` passes with the changes listed in the attempt report. The record of `.claude/skills/verify-card-run-writes/SKILL.md`: see below | pass |
 | 9 | `docs/OPERATIONS.md` (Findings and dispositions, STOP reasons), `docs/ARCHITECTURE.md`, `CHANGELOG.md` | reviewer-verified |
+
+R3 decision 1 (candidate aba74865, block), repair attempt 2. RED: commit c12cda8f, test "R3 decision 1, F2" failed at `:286` on a `ship:` invocation appended after the ruled pass.
+- F2 (ruled-pass-lost-on-ship-read): `applyShipResult` reads the ruling's document as the ruled pass (`ruledArtifact`), and `ruledPass` and `secondPassDue` no longer let a `ship:` invocation replace it.
+- F1 (missing-branch-commit-test): acceptance 7 records the new candidate with `recordAttempt`, row 7 above.
 
 Acceptance 8, the record of `.claude/skills/verify-card-run-writes/SKILL.md`: only its `CardRunner.ruleFinding` entry, under Not covered, is reworded, and the file is 8000 bytes, the cap of `tests/surface/templates.test.ts`. The entry reads "`CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`)": the write is the one locked update that records the ruling and, at the last ruling, the lift; the two appends are named by event type; the path pattern covers `tests/scenarios/review-rule.test.ts` and `tests/scenarios/review-rule-ship.test.ts`, which hold the fault rows (item 5). The words "fault rows" did not fit beside "appends" within the cap. The check of that skill passes (28 of 28): the lift adds no write to a command the check drives.
