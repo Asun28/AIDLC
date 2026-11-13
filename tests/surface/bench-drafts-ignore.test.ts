@@ -1,7 +1,7 @@
 // Card T0-BENCH-DRAFTS-IGNORE-2: git ignores the case files directly under evals/review and no directory there.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
@@ -32,7 +32,7 @@ test('the root .gitignore carries the rule and its exception once, under the com
   assert.ok(text.endsWith(`${EXCEPT}\n`), 'the text ends with the exception and one line feed');
 });
 
-type Repo = { dir: string; git: (args: string[]) => ReturnType<typeof spawnSync<string>> };
+type Repo = { dir: string; git: (args: string[]) => SpawnSyncReturns<string> };
 
 /** A new repository in a temporary directory that holds a byte copy of the root .gitignore. Child environment: no GIT_ variable, no NODE_OPTIONS, an empty global configuration, ceilings above the fixture. */
 function repo(): Repo {
