@@ -103,3 +103,70 @@ The existing test of acceptance 9 of T1-REVIEW-BENCH compares the README, split 
 Test "CHANGELOG.md carries the entry above the 0.1.0 section". The part of CHANGELOG.md from the first `## Unreleased` to the line feed before `## 0.1.0 - 2026-09-11`, split at line feeds, includes the entry as a whole line. The slice ends at the 0.1.0 heading and not at the next heading, because a release cut (audit item H12, a card of its own) will put a release heading between `## Unreleased` and this entry, and the entry stays above 0.1.0 then. The entry, one line.
 
 "- T0-BENCH-DRAFTS-IGNORE-2 (replaces T0-BENCH-DRAFTS-IGNORE, audit item H5): `.gitignore` lists `/evals/review/*.json`, so plain `git status` no longer lists the unconfirmed drafts that `aidlc review bench export` writes into `evals/review/` (490 stood untracked on 2026-11-14); a second line excepts a directory of such a name, so nothing in a directory is hidden. A tracked case stays tracked, and a newly confirmed case is committed with `git add -f evals/review/<id>.json` (evals/review/README.md). `aidlc review bench run` loads every case file of the directory as before; the two lines change only what git lists."
+
+## Attempt evidence
+
+Receipts are in the implementer scratchpad folder `h5-2` (red1.log, red3-rule-only.log, revert.mjs, revert.log, dod.log).
+
+### Commits
+- `00322333` test: RED. `tests/surface/bench-drafts-ignore.test.ts` whole and the new `CASES_README` element; `.gitignore`, README and CHANGELOG.md unchanged.
+- `081281a2` the four `.gitignore` lines, the README paragraph, the CHANGELOG entry.
+- `fae40df2` a third commit, not planned by the card: a type fix of 2 lines in the new test file (`SpawnSyncReturns<string>` for the `git` helper; `npm run typecheck` rejected `ReturnType<typeof spawnSync<string>>`). The RED commit was left as it was.
+
+### RED, measured on 00322333
+| Acceptance | Result on 00322333 | Failing assertion |
+|---|---|---|
+| 1 | not ok | "exactly one line is the rule": `0 !== 1` |
+| 2, row 1 | not ok | `evals/review/T0-X.g-20260101000000-abcdef.F1.json: exit code`, `1 !== 0`; the loop stops at row 1, rows 2 to 6 expect exit 1 and no output, which a repository without the rule gives |
+| 3 | not ok | listing has the extra line `?? evals/review/draft.json` |
+| 4 | not ok | T1-REVIEW-BENCH acceptance 9: "the doc texts this card adds are present whole": `false == true` (element present, paragraph absent) |
+| 5 | not ok | the entry is not a line of the part above 0.1.0: `actual: false` |
+
+Intermediate RED of acceptance 3 (rule `/evals/review/*.json` with its comment, without the exception, in a scratch `.gitignore`, then restored; red3-rule-only.log): "git reads the rule..." ok; "a directory named like a case file..." not ok, the lines `?? evals/review/archive.json/README.md` and `?? evals/review/archive.json/inner.json` are missing.
+
+### Revert table (measured on fae40df2 with scratch changes, each restored by `git checkout --`; `git diff --stat` empty at the end)
+| # | Change | Test that went red | Acceptance |
+|---|---|---|---|
+| 1 | rule replaced by `/evals/review/*` | root .gitignore text; git reads the rule | 1, 2 |
+| 2 | rule replaced by `/evals/review/**/*.json` | root .gitignore text; git reads the rule; directory test | 1, 2, 3 |
+| 3 | rule replaced by `/evals/**/*.json` | same three | 1, 2, 3 |
+| 4 | rule replaced by `*.json` | same three | 1, 2, 3 |
+| 5 | rule replaced by `/evals/review/*.json*` | root .gitignore text; git reads the rule | 1, 2 |
+| 6 | rule replaced by `evals/review/*.json` | root .gitignore text; git reads the rule | 1, 2 |
+| 7 | rule removed | all three | 1, 2, 3 |
+| 8 | exception removed | root .gitignore text; directory test | 1, 3 |
+| 9 | exception without trailing slash | root .gitignore text; git reads the rule; directory test | 1, 2, 3 |
+| 10 | exception above the rule | root .gitignore text; directory test | 1, 3 |
+| 11 | rule written twice | root .gitignore text; git reads the rule | 1, 2 |
+| 12 | comment line removed | root .gitignore text | 1 |
+| 13 | blank line between comment and rule | root .gitignore text | 1 |
+| 14 | a further line holding `evals` | root .gitignore text | 1 |
+| 15 | README paragraph removed | T1-REVIEW-BENCH acceptance 9 | 4 |
+| 16 | `CASES_README` element removed | T1-REVIEW-BENCH acceptance 9 | 4 |
+| 17 | CHANGELOG entry removed | CHANGELOG.md carries the entry above the 0.1.0 section | 5 |
+| 18 | CHANGELOG entry moved below `## 0.1.0 - 2026-09-11` | same | 5 |
+
+Rows red: 18 of 18.
+
+### DoD, measured on fae40df2
+`npm run typecheck && node --test` of the six files: exit 0; tests 128, pass 128, fail 0, cancelled 0, skipped 0. (The first run on 081281a2 failed typecheck; that is the type fix above.)
+
+### Document sentences against tests
+| Sentence | Made true by | Test |
+|---|---|---|
+| README paragraph, sentence 1 (`.gitignore` lists the rule, so plain `git status` leaves out an untracked case file and `git add` needs `-f`) | the rule line; the ignored draft (git check-ignore row 1) and `git status` listing | bench-drafts-ignore.test.ts: git reads the rule; directory test (draft not listed) |
+| README paragraph, sentence 2 (a tracked case stays tracked, `git status` shows its change) | git ignore rules do not apply to tracked files; the card's repro `git ls-files evals/review` prints 31 paths with the rule in effect | not covered by a test of this card (git behaviour; stated in the card's diagnosis) |
+| README paragraph, text as a whole | README and `CASES_README` carry it | review-bench.test.ts T1-REVIEW-BENCH acceptance 9 |
+| CHANGELOG sentence 1 (the rule, drafts no longer listed, a second line excepts a directory of such a name) | the two `.gitignore` lines | bench-drafts-ignore.test.ts: root .gitignore text; git reads the rule; directory test |
+| CHANGELOG sentence 2 (tracked case stays tracked, `git add -f`) | as README sentence 2 | entry present: CHANGELOG test; behaviour as above |
+| CHANGELOG sentence 3 (`aidlc review bench run` loads every case file as before) | no change to src (diff touches no file under src) | none; the diff holds no src file |
+| `.gitignore` comment | the comment line, byte for byte | bench-drafts-ignore.test.ts: root .gitignore text |
+
+### Changed lines against the budget of 260
+- Without this evidence commit (`git diff --shortstat origin/main...HEAD` at fae40df2): 5 files changed, 98 insertions(+).
+- With this evidence commit: 6 files changed, 160 insertions(+) (98 + 62 lines of this section), under the budget of 260.
+
+Coordinator verification:
+- At 438764a4, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/bench-drafts-ignore.test.ts, tests/surface/review-bench.test.ts): tests 31, pass 31, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 2041 # pass 2026 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 70): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

@@ -30,3 +30,7 @@ Thumbs.db
 # test output
 coverage/
 *.log
+
+# reviewer bench cases: a draft of aidlc review bench export stays local, and a confirmed case is committed with git add -f (evals/review/README.md)
+/evals/review/*.json
+!/evals/review/*.json/
