@@ -15,7 +15,7 @@ The owner rules on each finding of the decision that stopped a card, and the sto
 Not in this plan: every item under Out of scope in the spec.
 
 ## 2. Minimal acceptable loop
-The record first. T1-REVIEW-RULE writes a ruling on a finding and changes no state, so it cannot ship anything. T1-REVIEW-RULE-SHIP then lifts the card's stop when the last finding is ruled. T1-REVIEW-RULE-GOAL makes both work on a goal that has stopped. Three cards, because each stays within the 250-line budget of a card that changes `src/`.
+The record first. T1-REVIEW-RULE-2 writes a ruling on a finding and changes no state, so it cannot ship anything. T1-REVIEW-RULE-SHIP then lifts the card's stop when the last finding is ruled. T1-REVIEW-RULE-GOAL makes both work on a goal that has stopped. Three cards. T1-REVIEW-RULE stopped at R3 decision 2 on two contradictions in its card (its fault coverage and its "every other field" clause); T1-REVIEW-RULE-2 replaces it by the owner's ruling of 2026-11-13 and carries its candidate. The owner approved budgets of 400 for the three cards in the same ruling: the first, planned at 250, came to 370 changed lines.
 
 ## 6. Contracts and core interfaces
 - `ReviewFinding.ruling` (optional): `at`, `by`, `decision` (`rejected` or `deferred`), `reason`, `issue` (optional). Records written before this plan have none.
@@ -40,7 +40,7 @@ The record first. T1-REVIEW-RULE writes a ruling on a finding and changes no sta
 - .claude/skills/verify-card-run-writes/SKILL.md
 
 ## Order of work
-1. T1-REVIEW-RULE: the `ruling` field, `ruleFinding` in `src/core/review-policy.ts`, the runner method, the command and `FINDING_RULED`.
+1. T1-REVIEW-RULE-2 (replaces T1-REVIEW-RULE): the `ruling` field, `ruleFinding` in `src/core/review-policy.ts`, the runner method, the command and `FINDING_RULED`.
 2. T1-REVIEW-RULE-SHIP: the lift, the ruled pass, the gate and the canonical document. Depends on 1: it reads the `ruling` field and both change `src/loop/card-runner.ts`.
 3. T1-REVIEW-RULE-GOAL: the command on a goal stopped for review, the goal re-admission, the audit rule, the ruling in `aidlc review findings`, the stop narration and the instruction line. Depends on 2: it re-admits the goal at the lift.
 
@@ -49,8 +49,8 @@ One worker: the three cards share files.
 ## 7. Task split (dependencies and parallel windows)
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
-| T1-REVIEW-RULE | MUST | `aidlc review rule` records a ruling on a finding of a card stopped for review | - | - | - |
-| T1-REVIEW-RULE-SHIP | MUST | the last ruling lifts the card's stop and the candidate ships by ruling | T1-REVIEW-RULE | - | - |
+| T1-REVIEW-RULE-2 | MUST | `aidlc review rule` records a ruling on a finding of a card stopped for review (replaces T1-REVIEW-RULE) | - | - | - |
+| T1-REVIEW-RULE-SHIP | MUST | the last ruling lifts the card's stop and the candidate ships by ruling | T1-REVIEW-RULE-2 | - | - |
 | T1-REVIEW-RULE-GOAL | MUST | the ruling runs on a stopped goal and re-admits it; narration, findings list and instructions name it | T1-REVIEW-RULE-SHIP | - | - |
 
 ## Risks
