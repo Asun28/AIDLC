@@ -1,7 +1,7 @@
 ---
 id: T0-RELEASE-0-2-0
 title: CHANGELOG.md gets the release section 0.2.0 for every entry written since 0.1.0, the version is 0.2.0 in the five places that carry it, and the 69 test files that pin an entry read the changelog down to the 0.1.0 heading through one helper
-status: todo
+status: merged
 branch: T0-RELEASE-0-2-0
 worktree: D:\wt\AIDLC\T0-RELEASE-0-2-0
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and of 2026-11-14 (audit item H12 as a card of its own): the source change is two version literals in src/cli/main.ts; the rest of the budget is one to nine changed lines in each of 69 test files, two new test files and one helper, which cannot be split without leaving the suite red between the parts"
