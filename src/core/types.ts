@@ -342,6 +342,10 @@ export const ReviewInvocation = z.object({
   advisory: z.array(z.string()).optional(),
   /** The one second pass of a card run: this R3 ran with matched rules, no delta and no advisory notes (card T1-R3-SECOND-PASS). */
   secondPass: z.boolean().optional(),
+  /** On the stopping decision: the owner's rulings settled its last merge-blocking finding, so the runner no longer reads `stopReview` as a recorded stop (card T1-REVIEW-RULE-SHIP). */
+  stopLifted: z.object({ at: IsoTimestamp, by: z.string().min(1) }).optional(),
+  /** A pass by ruling, not a reviewer decision: appended by the lift for the candidate of the stopping decision, with reviewer `ruling:<by>`; it moves no counter and gets no second pass (card T1-REVIEW-RULE-SHIP). */
+  ruled: z.boolean().optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 

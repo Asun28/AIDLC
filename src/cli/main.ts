@@ -1013,7 +1013,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   review
     .command('rule <cardId> <findingId>')
-    .description("record the owner's ruling on a merge-blocking finding of the R3 decision that stopped the card; the card stays stopped")
+    .description("record the owner's ruling on a merge-blocking finding of the R3 decision that stopped the card; the ruling that settles the last one lifts the stop")
     .option('--reject', 'the finding does not hold')
     .option('--defer', 'the finding holds and is left to follow-up work')
     .requiredOption('--by <who>', 'who rules, as recorded')
@@ -1027,7 +1027,13 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const goalRec = checkedGoal(c, cardId, o.goal);
       const next = runnerFor(c).ruleFinding(goalRec, cardOf(c, cardId).card, findingId, ruling);
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
-      out(c, { cardId, finding: f }, () => `${f.id} ruled ${f.ruling?.decision}${f.ruling?.issue ? ` (issue ${f.ruling.issue})` : ''}; the card run stays stopped: this command lifts no stop`);
+      // The lift (card T1-REVIEW-RULE-SHIP): the run left STOP in the ruling's own update. The deadline is read on the real clock and never moved.
+      const lifted = next.state !== 'STOP';
+      const late = lifted && Date.parse(next.deadline) <= Date.parse(nowIso());
+      const then = !lifted
+        ? 'the card run stays stopped: another merge-blocking finding of the stopping decision is unruled'
+        : `the stop is lifted and candidate ${next.candidate?.sha ?? next.candidate?.digest ?? 'unknown'} passes by ruling; next: ${late ? `the card deadline ${next.deadline} has passed, so run \`aidlc goal extend ${goalRec.id} --until <iso> --by <who> --reason <text>\` and then ` : ''}\`aidlc card next ${cardId}\``;
+      out(c, { cardId, finding: f, lifted, next: then }, () => `${f.id} ruled ${f.ruling?.decision}${f.ruling?.issue ? ` (issue ${f.ruling.issue})` : ''}; ${then}`);
     });
   review
     .command('repro <cardId> <findingId>')
