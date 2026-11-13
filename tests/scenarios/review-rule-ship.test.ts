@@ -84,11 +84,13 @@ const block = (texts: string[]): string => {
 /** A card run a command reviewer stopped at R3: one block per entry of `blocks`, each on its own candidate (sha-1, sha-2, ...); `dispute` is disputed before the last decision. */
 async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], dispute: string[] = [], ship: DryRunShipPath = new DryRunShipPath(['merged'])) {
   const verdicts = blocks.map(block);
-  const reviews = { count: 0 };
+  const reviews = { count: 0, pre: 0 };
   const script = scriptedRunner({
     'git diff --name-only': { stdout: `${FILE}\u0000` },
     'git diff': { stdout: `diff --git a/${FILE} b/${FILE}\n+export const x = 1;\n` },
     'fake-r3': () => { reviews.count += 1; return { stdout: verdicts.shift()! }; },
+    // The pre-reviewer, when a test configures one, blocks every round.
+    'fake-r2': () => { reviews.pre += 1; return { stdout: block([`r2 round ${reviews.pre} -> repair`]) }; },
   });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
   writeCard(fx, { id: 'T1-RS', title: 'review rule ship', allowPaths: [FILE] });
@@ -99,6 +101,11 @@ async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], d
   let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-RS'));
   for (let n = 1; n <= blocks.length; n++) {
     r = runner.next(g(), card, runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: `dod:${n}`, redReceipt: 'red:1', candidateSha: `sha-${n}` }));
+    // With R2 configured the gate asks for a round first; its block exhausts the cycle's rounds, and `onExhausted: ship` hands the candidate to R3.
+    if (r.directive.kind === 'pre-review') {
+      await runner.preReview(g(), card, persisted());
+      r = runner.next(g(), card, persisted());
+    }
     assert.equal(r.directive.kind, 'review', r.directive.narration);
     if (n === blocks.length) for (const id of dispute) runner.disputeFinding(g(), card, persisted(), id, 'the row exists');
     r = runner.next(g(), card, (await runner.formalReview(g(), card, persisted())).run);
@@ -416,5 +423,29 @@ test('acceptance 7, git-backed (R3 decision 2, re:F1): a commit made on the card
     assert.deepEqual([again.outcome, again.receipt.stdout.includes(`[R3-STALE-VERDICT-SHA] verdict sha ${shas[1]} != HEAD ${later}`)], ['review-no-verdict', true], again.receipt.stdout);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('R3 decision 3, F3: with R2 configured and its rounds exhausted (onExhausted ship), the ruled candidate ships with no pre-review and no review directive, and a candidate with another digest gets a pre-review round [R4]', async () => {
+  // The R2 block of each cycle takes a finding id: F1 (R2), F2 (R3 decision 1), F3 (R2), and decision 2 re-raises the disputed F2.
+  const blocks = [['no RED -> add one'], ['still no RED (re:F2) -> add one']];
+  for (const outcome of ['merged', 'ci-red'] as const) {
+    const fx = makeFixture({ config: { ...CONFIG.config, preReview: { command: ['fake-r2', '{instructions}'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false } } });
+    try {
+      const ship = new InjectedShipPath([outcome], CODE_DEFECT);
+      const { persisted, reviews, rule, next, attempt } = await stopped(fx, blocks, ['F2'], ship);
+      // The candidate reached the stopping decision with no R2 pass, and that block opened R2 cycle 2, which holds no round.
+      assert.deepEqual([persisted().preReview.rounds.map((x) => [x.cycle, x.outcome, x.candidateSha]), persisted().review.substantiveBlocks], [[[0, 'block', 'sha-1'], [1, 'block', 'sha-2']], 2]);
+      rule('F2', 'rejected');
+      const first = next();
+      assert.deepEqual([first.directive.kind, ship.requests.map((q) => q.candidateSha), reviews.pre, reviews.count], [outcome === 'merged' ? 'close' : 'build', ['sha-2'], 2, 2], first.directive.narration);
+      if (outcome === 'merged') continue;
+      // The ship failed on a CI code defect and the repair is another digest: the ruled pass exempts it from nothing.
+      attempt('sha-3');
+      const later = next();
+      assert.deepEqual([later.directive.kind, persisted().candidate?.sha, ship.requests.length], ['pre-review', 'sha-3', 1], later.directive.narration);
+    } finally {
+      fx.cleanup();
+    }
   }
 });
