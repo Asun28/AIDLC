@@ -157,6 +157,11 @@ function outcomeOf(receipt: ExecReceipt, dodExit: number): MutantOutcome {
   return receipt.exitCode === dodExit ? 'survived' : 'killed';
 }
 
+/** The one call of a card's DoD, shared by the sweep and `card attempt` (card T1-DOD-RECORD): through the platform shell in the worktree. */
+export function dodCall(card: Pick<Card, 'dod_command'>, worktree: string, timeoutMs: number): [string, string[], { cwd: string; shell: true; timeoutMs: number }] {
+  return [card.dod_command, [], { cwd: worktree, shell: true, timeoutMs }];
+}
+
 /** Apply the mutants of a committed candidate one at a time under the card's DoD and write the report bound to that commit. */
 export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Promise<{ report: MutantReport; path: string }> {
   const { card, worktree, base, max = MUTANT_MAX_DEFAULT, timeoutMs = MUTANT_TIMEOUT_DEFAULT_MS } = input;
@@ -176,7 +181,7 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
   const candidate = git.head(worktree);
   const targets = targetsOf(worktree, diffOf(read, worktree, `${base}...${candidate}`), regularFiles(read, worktree, candidate));
   const chosen = targets.slice(0, max);
-  const dod = () => deps.dod(card.dod_command, [], { cwd: worktree, shell: true, timeoutMs });
+  const dod = () => deps.dod(...dodCall(card, worktree, timeoutMs));
 
   const baseline = await dod();
   if (baseline.timedOut) throw new Error(`the DoD timed out after ${timeoutMs} ms on the unmutated candidate; raise --timeout-ms`);

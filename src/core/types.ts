@@ -624,6 +624,30 @@ export type RoleProfile = z.infer<typeof RoleProfile>;
 export const NotCountedReason = z.enum(['expected-red', 'quota', 'admission-hold', 'tool-outage', 'env-setup', 'review-disputed']);
 export type NotCountedReason = z.infer<typeof NotCountedReason>;
 
+/**
+ * The card's DoD as `card attempt --outcome success` ran it in the card worktree (card T1-DOD-RECORD). A record only: no
+ * state, outcome, allowance, stop, review or SHIP rule reads it. `commit` and `clean` come from the candidate probe of the
+ * same call and are absent when no probe read them; `exitCode` is null when the receipt has none and on a timeout.
+ */
+export const LoopDod = z.discriminatedUnion('ran', [
+  z.object({
+    ran: z.literal(true),
+    command: z.string(),
+    worktree: z.string(),
+    commit: z.string().optional(),
+    clean: z.boolean().optional(),
+    exitCode: z.number().int().nullable(),
+    timedOut: z.boolean(),
+    expectedExit: z.number().int(),
+    timeoutMs: z.number().int().positive(),
+    durationMs: z.number().nonnegative(),
+    outputSha256: z.string(),
+    outputTail: z.string(),
+  }),
+  z.object({ ran: z.literal(false), command: z.string(), reason: z.enum(['no-worktree', 'no-directory']), worktree: z.string().optional() }),
+]);
+export type LoopDod = z.infer<typeof LoopDod>;
+
 export const Attempt = z.object({
   n: z.number().int().positive(),
   effort: EffortLevel,
@@ -638,6 +662,8 @@ export const Attempt = z.object({
   checksGained: z.array(z.string()).default([]),
   checksLost: z.array(z.string()).default([]),
   nextHypothesis: z.string().optional(),
+  /** The DoD the loop ran on a recorded success (card T1-DOD-RECORD); absent on records written before it. */
+  loopDod: LoopDod.optional(),
 });
 export type Attempt = z.infer<typeof Attempt>;
 
