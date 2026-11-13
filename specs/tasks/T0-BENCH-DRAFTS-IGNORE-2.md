@@ -1,7 +1,7 @@
 ---
 id: T0-BENCH-DRAFTS-IGNORE-2
 title: (replaces T0-BENCH-DRAFTS-IGNORE) Git ignores the reviewer bench case files directly under evals/review and no directory there, so the unconfirmed drafts of the export no longer fill git status, and a confirmed case is committed with git add -f
-status: todo
+status: merged
 branch: T0-BENCH-DRAFTS-IGNORE-2
 worktree: D:\wt\AIDLC\T0-BENCH-DRAFTS-IGNORE-2
 allow_paths:
