@@ -82,4 +82,4 @@ The owner (labels, rulings, approval of the review text); `bench/outcome/`, `doc
   of null goes to the owner.
 
 ## Open questions
-(none; the owner answered the four panel questions and the four checkpoint questions on 2026-11-14)
+- (none)
