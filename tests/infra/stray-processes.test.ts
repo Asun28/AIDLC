@@ -330,6 +330,7 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
       listed(asMain, 5902);
     }
     listed(await winCmd('\\\\srv\\share\\wt\\T0-X', { mainRoot: 'D:\\', config: ProjectConfig.parse({ worktreeRoot: '\\\\srv\\share\\wt\\' }) }), 5900);
+    notListed(await win([w(5901, 3999, OLD, 'D:\\Other\\x')], { mainRoot: 'D:/\\', config: ProjectConfig.parse({ worktreeRoot: 'E:\\wt' }) }), 5901);
     // A step that throws against the typed precondition gives the caught-error value.
     assert.equal((await winReport(JSON.stringify(BASE), { mainRoot: 42 as never })).value, UNREADABLE);
   });
