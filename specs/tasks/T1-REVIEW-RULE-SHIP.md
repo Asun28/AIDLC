@@ -69,3 +69,21 @@ npm run typecheck && node --test tests/scenarios/review-rule-ship.test.ts tests/
 ```
 - Expected exit code: 0
 - Assertion: every test of the four files passes and the typecheck reports no error.
+
+## Attempt evidence
+Attempt 1. Tests named below are in `tests/scenarios/review-rule-ship.test.ts` unless a file is given; "DoD" is the `dod_command`, exit 0, 54 tests passed and 0 failed (5, 3, 18 and 28 by file).
+
+| Item | Proof | Result |
+|---|---|---|
+| RED | commit 28c53b4e holds the test file alone; all 5 tests failed on main's behaviour, the first at `:124` with `stopLifted` absent from the stopping invocation, tests 2 and 3 on an output that does not name `aidlc card next`, tests 4 and 5 on state `STOP` where `SHIP` is expected. The file later gained a fault helper and rows for an advisory finding, a resolved finding, `review r3` by hand and the `blocker` field | failed for the missing lift |
+| 1 | test "acceptance 1, 2, 4 and 5": decision 4, findings F4 and F5; the first ruling leaves `state`, `stop` and `review` equal; the second is compared field by field | pass |
+| 2 | same test and "acceptance 3 and 6": `card next` returns `close` after one dry-run ship of the unchanged sha, 0 reviewer runs after the stop, `formalReview.secondPass` on; `review r3` by hand is refused | pass |
+| 3 | test "acceptance 3 and 6": decision 2, re-raise of the disputed F1, one ruling through the CLI | pass |
+| 4 | test "acceptance 1, 2, 4 and 5": `.review/T1-RS.json` compared with literal `advisory` entries | pass |
+| 5 | test "acceptance 1, 2, 4 and 5" (the event) and test "acceptance 5, fault rows" (`fs.renameSync`, then `fs.appendFileSync` on `FINDING_RULED` and on `REVIEW_DECIDED`, two `card next` each) | pass |
+| 6 | tests "acceptance 3 and 6" (deadline 2999) and "acceptance 6" (deadline 2000, CLI `card next` stops for `time`) | pass |
+| 7 | test "acceptance 7": the stored candidate is set to sha-3, since the fixture has no git branch to commit on; `card next` stops for review and nothing ships | pass |
+| 8 | DoD: `second-pass.test.ts` and `fault-points.test.ts` unchanged and passing; `review-rule.test.ts` passes with the changes listed in the attempt report. The skill record is not changed: see below | not met for the record |
+| 9 | `docs/OPERATIONS.md` (Findings and dispositions, STOP reasons), `docs/ARCHITECTURE.md`, `CHANGELOG.md` | reviewer-verified |
+
+Acceptance 8, the record of `.claude/skills/verify-card-run-writes/SKILL.md`: the file is 7999 bytes and `tests/surface/templates.test.ts` caps it at 8000. Naming the lift's write, its two appends and `tests/scenarios/review-rule-ship.test.ts` adds at least 70 bytes to the `CardRunner.ruleFinding` entry, the only text of the file this plan owns, so it cannot be added without removing text about another command or raising the cap in a test file outside `allow_paths`. Left for a ruling. The fault rows themselves exist (item 5), and the check of that skill passes (28 of 28): the lift adds no write to a command the check drives.

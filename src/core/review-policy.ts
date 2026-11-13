@@ -585,8 +585,8 @@ export function parseRuling(o: { reject?: boolean; defer?: boolean; by?: string;
  */
 export function ruleFinding(run: Pick<CardRun, 'state' | 'stop' | 'review' | 'candidate' | 'findings'>, id: string, ruling: FindingRuling): ReviewFinding[] {
   if (run.state !== 'STOP' || run.stop?.reason !== 'review') throw new Error(`the card run ${run.state === 'STOP' ? `is stopped for ${run.stop?.reason ?? 'no recorded reason'}` : `is in ${run.state}`}, not stopped for review: a ruling needs a card that R3 stopped`);
-  const stopping = run.review.invocations.filter((i) => i.stopReview).at(-1);
-  if (!stopping) throw new Error('no R3 decision of the run carries stopReview: this stop for review has no finding to rule on');
+  const stopping = stoppingDecision(run.review);
+  if (!stopping) throw new Error('no R3 decision of the run carries stopReview that no ruling has lifted: this stop for review has no finding to rule on');
   if (run.candidate?.digest !== stopping.candidateDigest) throw new Error(`the run's candidate digest ${run.candidate?.digest ?? '(none)'} is not that of the stopping decision (${stopping.candidateDigest})`);
   const f = findingOrThrow(run.findings, id);
   if (!stopping.candidateSha || !findingsOfCandidate(run.findings, 'formal', stopping.candidateSha).includes(f)) throw new Error(`${f.id} is not a finding the stopping decision raised or re-raised`);
@@ -594,6 +594,29 @@ export function ruleFinding(run: Pick<CardRun, 'state' | 'stop' | 'review' | 'ca
   if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later decision re-raised it); nothing to rule on`);
   if (f.ruling) throw new Error(`${f.id} is already ruled (${f.ruling.decision}); a ruling is not withdrawn or changed`);
   return run.findings.map((x) => (x === f ? { ...x, ruling, revision: x.revision + 1 } : x));
+}
+
+/** The decision that stops the card for a ruling: the latest invocation with `stopReview` that no ruling has lifted (`stopLifted`, card T1-REVIEW-RULE-SHIP R3). */
+export function stoppingDecision(ledger: ReviewLedger): ReviewInvocation | undefined {
+  return ledger.invocations.filter((i) => i.stopReview && !i.stopLifted).at(-1);
+}
+
+/** The findings of a decision that bar the merge until ruled: the ones it raised or re-raised that are neither advisory nor resolved. */
+function mergeBlockingFindings(findings: ReviewFinding[], decision: ReviewInvocation): ReviewFinding[] {
+  return decision.candidateSha ? findingsOfCandidate(findings, 'formal', decision.candidateSha).filter((f) => !f.advisory && !f.resolvedAt) : [];
+}
+
+/**
+ * The lift (card T1-REVIEW-RULE-SHIP, R1 and R2): once `findings`, as a ruling leaves them, hold no unruled merge-blocking finding of
+ * the stopping decision, the ledger with `stopLifted` on that decision and one ruled pass appended for its candidate digest and sha, with that pass and the ids of the ruled findings.
+ * No counter moves. Undefined while a finding of that decision is unruled, so the stop stays.
+ */
+export function liftRuledStop(ledger: ReviewLedger, findings: ReviewFinding[], at: string, by: string): { review: ReviewLedger; pass: ReviewInvocation; ruled: string[] } | undefined {
+  const stopping = stoppingDecision(ledger);
+  const blocking = stopping ? mergeBlockingFindings(findings, stopping) : [];
+  if (!stopping || !blocking.length || blocking.some((f) => !f.ruling)) return undefined;
+  const pass: ReviewInvocation = { invocationId: `ruling:${stopping.invocationId}`, candidateDigest: stopping.candidateDigest, candidateSha: stopping.candidateSha, base: stopping.base, policyVersion: stopping.policyVersion, reviewer: `ruling:${by}`, requestedAt: at, outcome: 'pass', ruled: true };
+  return { review: { ...ledger, invocations: [...ledger.invocations.map((i) => (i === stopping ? { ...i, stopLifted: { at, by } } : i)), pass] }, pass, ruled: blocking.map((f) => f.id) };
 }
 
 /** A pre-review round (cycle + round) or the formal decisions on one candidate. */

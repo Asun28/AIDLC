@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -505,17 +505,26 @@ export class CardRunner {
    * the record read inside the lock (`ruleFinding` in review-policy), then one FINDING_RULED event. The run stays stopped and no
    * lease is fenced: the ruling comes after the stop. The update owes the event (`journalOwed`, card T0-JOURNAL-FAULT-EVENTS), so
    * an append that fails here is made once by the next `card next` on the card (`deliverOwed`), which a stopped run reaches too.
+   *
+   * The ruling that leaves no unruled merge-blocking finding of the stopping decision lifts the stop in the same update (card
+   * T1-REVIEW-RULE-SHIP): `liftRuledStop` marks that decision and appends the ruled pass, the run's `stop` is cleared and its state
+   * is SHIP, and the update also owes one REVIEW_DECIDED, whose `ruled`, `by` and finding ids are in the persisted data. No counter,
+   * receipt or deadline moves.
    */
   ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun {
     const at = this.clock();
-    let owed: OwedEvent | undefined;
+    let owed: OwedEvent[] = [];
     const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
       if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to rule on`);
       const findings = ruleFinding(persisted, id, { at, ...ruling });
-      owed = this.owe(goal, 'FINDING_RULED', { finding: id.toUpperCase(), ruling: { at, ...ruling } });
-      return { ...persisted, findings, journalOwed: this.owedWith(goal.id, persisted, owed) };
+      owed = [this.owe(goal, 'FINDING_RULED', { finding: id.toUpperCase(), ruling: { at, ...ruling } })];
+      const lift = liftRuledStop(persisted.review, findings, at, ruling.by);
+      if (!lift) return { ...persisted, findings, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+      const { review, pass, ruled } = lift;
+      owed.push(this.owe(goal, 'REVIEW_DECIDED', { invocationId: pass.invocationId, reviewer: pass.reviewer, candidateDigest: pass.candidateDigest, candidateSha: pass.candidateSha, outcome: 'pass', ruled: true, by: ruling.by, ruledFindings: ruled }));
+      return { ...persisted, findings, review, state: 'SHIP', stop: undefined, blocker: undefined, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
     });
-    this.deliverOwed(goal, card, next, { keys: [owed!.key] });
+    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key) });
     return next;
   }
 
@@ -683,7 +692,7 @@ export class CardRunner {
     // re-raised finding or the fourth decision; this predicate backs a run left in REVIEW_FIX with no decision left, and a
     // decision recorded as a stop, which stops the card with its own detail even when its commit landed only as history
     // behind a newer candidate (card T1-EFF-R3-PROGRESS-2).
-    const recordedStop = run.review.invocations.find((i) => i.stopReview)?.stopReview;
+    const recordedStop = run.review.invocations.find((i) => i.stopReview && !i.stopLifted)?.stopReview;
     const reviewExhausted = recordedStop !== undefined || (this.config.formalReview.command.length
       ? run.review.noVerdictRetriesUsed > 1 || (run.state === 'REVIEW_FIX' && run.review.substantiveBlocks > 0 && run.review.substantiveDecisions >= MAX_R3_DECISIONS)
       : run.review.substantiveBlocks >= 2 || run.review.noVerdictRetriesUsed > 1 || (run.review.substantiveDecisions >= 2 && run.review.substantiveBlocks > 0 && run.state === 'REVIEW_FIX'));
@@ -1414,7 +1423,7 @@ export class CardRunner {
     if (!eligibility.eligible) return `the candidate lost its pre-review eligibility (${eligibility.reason})`;
     const formal = this.config.formalReview;
     if (formal.command.length) {
-      const last = this.lastFormalInvocation(armed.review.invocations, digest);
+      const last = this.ruledPass(armed) ?? this.lastFormalInvocation(armed.review.invocations, digest);
       const admitted = last?.outcome === 'pass' || (last?.outcome === 'block' && !this.invocationBlocking(armed, card, last));
       if (!admitted) return `the candidate lost its formal review admission (${last?.outcome ?? 'no decision'} recorded meanwhile)`;
     }
@@ -1568,6 +1577,12 @@ export class CardRunner {
     if (!primary.command.length) return undefined;
     const now = this.clock();
     const digest = run.candidate?.digest;
+    // A pass by ruling admits the ship of its candidate with no review and no second pass (card T1-REVIEW-RULE-SHIP R4).
+    const ruled = this.ruledPass(run);
+    if (ruled) {
+      this.publishRuled(card, run, ruled);
+      return undefined;
+    }
     // A decision by either configured reviewer decides the candidate; the reviewer that runs next is resolved below.
     const last = this.lastFormalInvocation(run.review.invocations, digest);
     if (last?.outcome === 'pass') {
@@ -1694,7 +1709,24 @@ export class CardRunner {
     if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS - 1) return false;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     if (decided.some((i) => i.secondPass)) return false;
-    return [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest)?.outcome === 'pass';
+    const last = [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest);
+    return last?.outcome === 'pass' && !last.ruled;
+  }
+
+  /** The pass by ruling that decides the run's candidate: its latest decided invocation, by a reviewer or by ruling, when that one is `ruled` (card T1-REVIEW-RULE-SHIP R4). A candidate with another digest has none. */
+  private ruledPass(run: CardRun): ReviewInvocation | undefined {
+    const last = [...run.review.invocations].reverse().find((i) => i.candidateDigest === run.candidate?.digest && (i.outcome === 'pass' || i.outcome === 'block'));
+    return last?.ruled ? last : undefined;
+  }
+
+  /**
+   * The canonical document of a pass by ruling (card T1-REVIEW-RULE-SHIP R5), written by the gate before the ship: a pass for the
+   * candidate sha with one `advisory` entry per ruled finding of that candidate (decision, `by`, reason).
+   */
+  private publishRuled(card: Card, run: CardRun, pass: ReviewInvocation): void {
+    const sha = pass.candidateSha ?? run.candidate?.sha;
+    const entries = (sha ? findingsOfCandidate(run.findings, 'formal', sha) : []).flatMap((f) => (f.ruling ? [`${f.id} ruled ${f.ruling.decision}${f.ruling.issue ? ` (issue ${f.ruling.issue})` : ''} by ${f.ruling.by}: ${f.ruling.reason}; the finding: ${f.reason}`] : []));
+    this.publishCanonical(card, path.join(this.reviewCheckout(run), '.review'), { verdict: 'block', reasons: entries, sha, branch: card.id, run_status: 'success' }, true, pass.invocationId, undefined, pass.reviewer);
   }
 
   /** The latest invocation on a candidate by either configured formal reviewer, whatever its outcome (pending included). */
@@ -1780,7 +1812,7 @@ export class CardRunner {
     if (current.stop || current.state === 'STOP') throw new Error(`card run is stopped (${current.stop?.reason ?? 'STOP'}); no review may run: ${current.stop?.nextAction ?? 'resolve the stop first'}`);
     // A decision recorded as a stop ends the review even when its commit landed only as history behind a newer candidate:
     // no further decision is admitted, here and on the record locked at reservation (card T1-EFF-R3-PROGRESS-2).
-    const recordedStop = current.review.invocations.find((i) => i.stopReview)?.stopReview;
+    const recordedStop = current.review.invocations.find((i) => i.stopReview && !i.stopLifted)?.stopReview;
     if (recordedStop) throw new Error(`a formal decision of this card recorded a stop for a ruling (${recordedStop}); no review may run: return the retained verdict evidence for human adjudication`);
     const eligibility = this.preReviewEligibility(current, candidateDigest);
     if (!eligibility.eligible) throw new Error(`pre-review pass required first (${eligibility.reason}): run \`aidlc review pre ${card.id}\` on candidate ${candidateSha.slice(0, 12)} before the formal review`);
@@ -1810,7 +1842,7 @@ export class CardRunner {
     const baseSyncDecision = cfg === this.config.formalReview.baseSync;
     const allowance = this.formalAllowance(current, card);
     if (ledger.substantiveDecisions + pendingDecisions >= allowance && !baseSyncDecision) {
-      throw new Error(`the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision review allowance for repairs` : 'two-decision review allowance'} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+      throw new Error(`the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision review allowance for repairs` : 'two-decision review allowance'} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${(this.ruledPass(current) ?? this.lastFormalInvocation(ledger.invocations, candidateDigest))?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
     if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
       throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);

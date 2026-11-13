@@ -119,6 +119,11 @@ test('acceptance 1, 2, 3 and 5: review rule records a ruling and a FINDING_RULED
     // The event carries the key of its owed entry (`eventKey`, card T0-JOURNAL-FAULT-EVENTS) beside the finding id and the ruling.
     assert.equal(typeof ruledF2['data'].eventKey, 'string');
     assert.deepEqual([ruledF2['type'], ruledF2['cardId'], ruledF2['data']], ['FINDING_RULED', 'T1-RR', { finding: 'F2', ruling: f2['ruling'], eventKey: ruledF2['data'].eventKey }]);
+    // Acceptance 5 after a ruling that leaves F1 of the stopping decision unruled (card T1-REVIEW-RULE-SHIP: the ruling of the last finding lifts
+    // the stop): every other field of the run is equal, its state and stop included, and card next, which writes the run once, returns the same stop.
+    const rest = ({ revision: _r, updatedAt: _u, journalOwed: _o, findings: _f, ...other }: Stored): Stored => other;
+    assert.deepEqual(rest(stored()), rest(was));
+    assert.deepEqual(stopOf(), stopBefore, 'card next returns the same stop');
 
     // Acceptance 3: each row is refused with its condition named, and the card-run file and the journal keep their bytes.
     const rows: Array<[name: string, args: string[], names: RegExp, seed?: (run: Stored) => void]> = [
@@ -159,19 +164,18 @@ test('acceptance 1, 2, 3 and 5: review rule records a ruling and a FINDING_RULED
     ruleByRunner('f1', { decision: 'rejected', by: 'the owner', reason: 'the RED is tests/t1-rr.test.ts:3' });
     const now = stored();
     assert.deepEqual(finding(now, 'F1')['ruling'], { at: '2026-09-11T01:00:00.000Z', by: 'the owner', decision: 'rejected', reason: 'the RED is tests/t1-rr.test.ts:3' });
-    assert.equal(events().length, eventsBefore + 2, 'one more journal event');
-    const ruledF1 = events().at(-1)!;
+    assert.equal(events().length, eventsBefore + 3, 'two more journal events: FINDING_RULED, then the REVIEW_DECIDED of the lift');
+    const [ruledF1, decided] = events().slice(-2) as [Stored, Stored];
     assert.deepEqual([ruledF1['type'], ruledF1['cardId'], ruledF1['data']], ['FINDING_RULED', 'T1-RR', { finding: 'F1', ruling: finding(now, 'F1')['ruling'], eventKey: ruledF1['data'].eventKey }]);
 
     // Acceptance 5, with nothing substituted (R3 decision 1 of T1-REVIEW-RULE, F4). The store's own fields of every write: the run's revision
-    // rises by one per ruling and updatedAt is a later write time. The owed entry of the latest ruling is the delivered event.
-    assert.equal(now['revision'], was['revision'] + 2);
+    // rises by one per ruling, and by one for the card next between them, and updatedAt is a later write time. The owed entries of the
+    // ruling that lifts the stop are its two delivered events.
+    assert.equal(now['revision'], was['revision'] + 3);
     assert.match(now['updatedAt'], /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
     assert.ok(now['updatedAt'] > was['updatedAt'], `${now['updatedAt']} is after ${was['updatedAt']}`);
-    assert.deepEqual(now['journalOwed'], [{ key: ruledF1['data'].eventKey, type: 'FINDING_RULED', generation: ruledF1['generation'], data: ruledF1['data'] }]);
-    // Every other field of the run is equal, and every field of the ruled findings but `ruling` and `revision` (one higher).
-    const rest = ({ revision: _r, updatedAt: _u, journalOwed: _o, findings: _f, ...other }: Stored): Stored => other;
-    assert.deepEqual(rest(now), rest(was));
+    assert.deepEqual(now['journalOwed'], [ruledF1, decided].map((e) => ({ key: e['data'].eventKey, type: e['type'], generation: e['generation'], data: e['data'] })));
+    // Every field of the ruled findings is equal but `ruling` and `revision` (one higher).
     for (const id of ['F1', 'F2']) {
       const { ruling, revision, ...same } = finding(now, id);
       const { revision: revisionWas, ...sameWas } = finding(was, id);
@@ -180,8 +184,8 @@ test('acceptance 1, 2, 3 and 5: review rule records a ruling and a FINDING_RULED
     }
     assert.deepEqual(finding(now, 'F3'), finding(was, 'F3'));
     // Decision 2 re-raised the disputed F1 and F2, which reopened them; F3 keeps the dispute recorded while it ran.
-    assert.deepEqual([now['state'], now['stop'].reason, ...now['findings'].map((f: Stored) => f['disposition'])], ['STOP', 'review', 'open', 'open', 'disputed']);
-    assert.deepEqual(stopOf(), stopBefore, 'card next returns the same stop');
+    // F1 was the last unruled finding of the stopping decision, so its ruling lifted the stop: SHIP, no stop, and the last invocation is the ruled pass.
+    assert.deepEqual([now['state'], 'stop' in now, now['review'].invocations.at(-1).ruled, decided['type'], ...now['findings'].map((f: Stored) => f['disposition'])], ['SHIP', false, true, 'REVIEW_DECIDED', 'open', 'open', 'disputed']);
   } finally {
     fx.cleanup();
   }
@@ -203,16 +207,6 @@ test('acceptance 1, 2 and 6: --reject through the CLI persists rejected; a faile
     }
     assert.deepEqual(bytes(), held, 'the card-run file and the journal are byte-identical');
 
-    // R3 decision 1 of T1-REVIEW-RULE, F2: a successful --reject through the CLI persists `rejected`, and the event carries it.
-    const revisionWas = finding(stored(), 'F1')['revision'];
-    const rejected = rule('F1', '--reject', ...OWNER);
-    assert.equal(rejected.status, 0, rejected.stderr);
-    const f1 = finding(stored(), 'F1')['ruling'];
-    assert.match(f1.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
-    assert.equal(finding(stored(), 'F1')['revision'], revisionWas + 1);
-    assert.deepEqual([f1.decision, f1.by, f1.reason, 'issue' in f1], ['rejected', 'the owner', 'the row is tests/t1-rr.test.ts:9', false]);
-    assert.deepEqual(ruled().map(([cardId, data]) => [cardId, data.finding, data.ruling]), [['T1-RR', 'F1', f1]]);
-
     // The FINDING_RULED append fails after the write: the ruling stands and the event is owed, not journaled.
     fault.append = true;
     try {
@@ -222,16 +216,28 @@ test('acceptance 1, 2 and 6: --reject through the CLI persists rejected; a faile
     }
     const f2 = finding(stored(), 'F2')['ruling'];
     assert.deepEqual(f2, { at: fx.now(), decision: 'deferred', ...by });
-    assert.equal(ruled().length, 1, 'no event for F2 yet');
+    assert.equal(ruled().length, 0, 'no event for F2 yet');
     assert.deepEqual(stored()['journalOwed'].map((o: Stored) => [o['type'], o['data'].finding]), [['FINDING_RULED', 'F2']]);
     // A rerun is refused as already ruled and journals nothing; `card next` on the stopped run delivers the owed event, once.
     assert.throws(() => ruleByRunner('F2', { decision: 'deferred', ...by }), /F2 is already ruled/);
-    assert.equal(ruled().length, 1);
+    assert.equal(ruled().length, 0);
     for (const pass of [1, 2]) {
       const next = runner.next(g(), card, persisted());
       assert.equal(next.directive.kind, 'stop', `card next ${pass} returns the stop`);
-      assert.deepEqual(ruled().map(([cardId, data]) => [cardId, data.finding, data.ruling, data.completed]), [['T1-RR', 'F1', f1, undefined], ['T1-RR', 'F2', f2, true]], `after card next ${pass}: exactly one FINDING_RULED per ruling`);
+      assert.deepEqual(ruled().map(([cardId, data]) => [cardId, data.finding, data.ruling, data.completed]), [['T1-RR', 'F2', f2, true]], `after card next ${pass}: exactly one FINDING_RULED per ruling`);
     }
+
+    // R3 decision 1 of T1-REVIEW-RULE, F2: a successful --reject through the CLI persists `rejected`, and the event carries it.
+    const revisionWas = finding(stored(), 'F1')['revision'];
+    const rejected = rule('F1', '--reject', ...OWNER);
+    assert.equal(rejected.status, 0, rejected.stderr);
+    const f1 = finding(stored(), 'F1')['ruling'];
+    assert.match(f1.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    assert.equal(finding(stored(), 'F1')['revision'], revisionWas + 1);
+    assert.deepEqual([f1.decision, f1.by, f1.reason, 'issue' in f1], ['rejected', 'the owner', 'the row is tests/t1-rr.test.ts:9', false]);
+    assert.deepEqual(ruled().map(([cardId, data]) => [cardId, data.finding, data.ruling]), [['T1-RR', 'F2', f2], ['T1-RR', 'F1', f1]]);
+    // The row moved below the failed append (card T1-REVIEW-RULE-SHIP): it rules the last unruled finding of the stopping decision, which lifts the stop.
+    assert.deepEqual([stored()['state'], 'stop' in stored(), stored()['review'].invocations.at(-1).ruled], ['SHIP', false, true]);
   } finally {
     fx.cleanup();
   }

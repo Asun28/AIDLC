@@ -18,13 +18,24 @@ const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 /** A command reviewer with the second pass on: a ruled pass must get none (R4). */
 const CONFIG = { config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, secondPass: true } } };
 type Stored = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-const OWNER = ['--by', 'the owner', '--reason', 'the row is tests/t1-rs.test.ts:9'];
 const BY = { by: 'the owner', reason: 'the row is tests/t1-rs.test.ts:9' };
+const OWNER = ['--by', BY.by, '--reason', BY.reason];
 /** Decision 1 raises F1; decision 2, on the repaired candidate, re-raises the disputed F1, which stops the card: the stopping decision holds one finding. */
 const RERAISE = [['no RED -> add one'], ['still no RED (re:F1) -> add one']];
+/** The same stop, where decision 2 also raises F2: a test makes F2 advisory or resolved, so it bars no merge and needs no ruling (R1). */
+const RERAISE_AND_F2 = [RERAISE[0]!, [...RERAISE[1]!, 'no doc row -> add one']];
 
 /** The faults of tests/scenarios/fault-points.test.ts, switched on by a test: a throw from fs.renameSync onto the card-run record, and from fs.appendFileSync onto a goal journal line of the named event type. */
 const fault: { record: boolean; append?: 'FINDING_RULED' | 'REVIEW_DECIDED' } = { record: false };
+/** `run` throws the injected fault while `on` is switched on. */
+const failsUnder = (on: Partial<typeof fault>, run: () => unknown): void => {
+  Object.assign(fault, on);
+  try {
+    assert.throws(run, /EIO: injected/);
+  } finally {
+    Object.assign(fault, { record: false, append: undefined });
+  }
+};
 const real = { append: fs.appendFileSync, rename: fs.renameSync };
 before(() => {
   (fs as unknown as Stored)['appendFileSync'] = (...args: Parameters<typeof fs.appendFileSync>) => {
@@ -70,7 +81,6 @@ async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], d
     r = runner.next(g(), card, (await runner.formalReview(g(), card, persisted())).run);
   }
   assert.deepEqual([r.directive.kind, persisted().state, persisted().stop?.reason, persisted().review.substantiveDecisions], ['stop', 'STOP', 'review', blocks.length], r.directive.narration);
-
   const runFile = fx.store.cardFile(goal.id, 'T1-RS');
   const journalFile = path.join(fx.paths.journal, `${goal.id}.jsonl`);
   const bytes = () => [readFileSync(runFile, 'utf8'), readFileSync(journalFile, 'utf8')];
@@ -96,7 +106,9 @@ async function stopped(fx: ReturnType<typeof makeFixture>, blocks: string[][], d
     assert.deepEqual([persisted().state, persisted().mergeVerified, persisted().candidate?.sha, reviews.count, persisted().review.substantiveDecisions], ['CLOSE', true, sha, decisions, decisions]);
     assert.equal(persisted().review.invocations.some((i) => i.secondPass || i.outcome === 'pending'), false, 'no second pass and no reservation');
   };
-  return { ship, persisted, runFile, bytes, stored, seed, events, rulingEvents, cli, rule, next, assertShipped };
+  /** `review r3` run by hand on the stored run. */
+  const review = () => runner.formalReview(g(), card, persisted());
+  return { ship, bytes, stored, seed, events, rulingEvents, cli, rule, next, review, assertShipped };
 }
 
 test('acceptance 1, 2, 4 and 5: on a run stopped at R3 decision 4 with two findings, the first ruling leaves the stop and the second lifts it, moves no counter, receipt or deadline, owes one REVIEW_DECIDED, and the unchanged candidate ships with its canonical pass [R1] [R2] [R3] [R4] [R5] [R6]', async () => {
@@ -108,13 +120,11 @@ test('acceptance 1, 2, 4 and 5: on a run stopped at R3 decision 4 with two findi
     assert.deepEqual(was['findings'].filter((f: Stored) => f['candidateSha'] === 'sha-4').map((f: Stored) => f['id']), ['F4', 'F5']);
     const fixed = (run: Stored) => [run['review'].substantiveDecisions, run['review'].substantiveBlocks, run['review'].noVerdictRetriesUsed, run['dodReceipt'], run['redReceipt'], run['deadline']];
     assert.deepEqual(fixed(was), [4, 4, 0, 'dod:4', 'red:1', '2026-09-11T03:00:00.000Z']);
-
     // The first ruling leaves F5 unruled: the run stays stopped and no invocation changes.
     rule('F4', 'rejected');
     const first = stored();
     assert.deepEqual([first['state'], first['stop'], first['review']], ['STOP', was['stop'], was['review']]);
     assert.deepEqual(rulingEvents(), [['FINDING_RULED', undefined]]);
-
     // The second ruling settles the last finding: the same update lifts the stop.
     fx.advance(3_600_000);
     rule('f5', 'deferred', 7);
@@ -123,20 +133,18 @@ test('acceptance 1, 2, 4 and 5: on a run stopped at R3 decision 4 with two findi
     const pass = now['review'].invocations.at(-1);
     assert.deepEqual(lifted, { ...was['review'].invocations[stopping], stopLifted: { at: '2026-09-11T01:00:00.000Z', by: 'the owner' } });
     assert.deepEqual(pass, { invocationId: `ruling:${lifted.invocationId}`, candidateDigest: lifted.candidateDigest, candidateSha: 'sha-4', base: 'main', policyVersion: lifted.policyVersion, reviewer: 'ruling:the owner', requestedAt: '2026-09-11T01:00:00.000Z', outcome: 'pass', ruled: true });
-    assert.deepEqual([lifted.candidateDigest, now['candidate'].digest, now['state'], 'stop' in now], [was['candidate'].digest, was['candidate'].digest, 'SHIP', false]);
+    assert.deepEqual([lifted.candidateDigest, now['candidate'].digest, now['state'], 'stop' in now, typeof was['blocker'], 'blocker' in now], ['sha-4', 'sha-4', 'SHIP', false, 'string', false]);
     assert.deepEqual(fixed(now), [4, 4, 0, 'dod:4', 'red:1', '2026-09-11T03:00:00.000Z']);
     // Every invocation but the stopping one is as it was, the pass is the only new one, and so is every field of the run but the ones the lift and the store move.
     assert.deepEqual(now['review'].invocations.filter((_: Stored, i: number) => i !== stopping), [...was['review'].invocations.filter((_: Stored, i: number) => i !== stopping), pass]);
     const rest = ({ revision: _r, updatedAt: _u, journalOwed: _o, findings: _f, state: _s, stop: _t, blocker: _b, review: { invocations: _i, ...ledger }, ...other }: Stored): Stored => ({ ...other, ledger });
     assert.deepEqual(rest(now), rest(was));
     assert.equal(now['revision'], was['revision'] + 2);
-
     // Acceptance 5: after the last FINDING_RULED, exactly one REVIEW_DECIDED, of the ruled pass, with `ruled` and `by` in its persisted data.
     assert.deepEqual(rulingEvents(), [['FINDING_RULED', undefined], ['FINDING_RULED', undefined], ['REVIEW_DECIDED', undefined]]);
     const decided = events().at(-1)!;
     assert.deepEqual([decided['type'], decided['cardId'], decided['data']], ['REVIEW_DECIDED', 'T1-RS', { invocationId: pass.invocationId, reviewer: 'ruling:the owner', candidateDigest: lifted.candidateDigest, candidateSha: 'sha-4', outcome: 'pass', ruled: true, by: 'the owner', ruledFindings: ['F4', 'F5'], eventKey: decided['data'].eventKey }]);
     assert.deepEqual(now['journalOwed'].map((o: Stored) => [o['type'], o['data']]), [['FINDING_RULED', events().at(-2)!['data']], ['REVIEW_DECIDED', decided['data']]]);
-
     // Acceptance 2: card next ships the unchanged candidate; with decision 4 used, any review directive would be a stop.
     assertShipped(next().directive.kind, 'sha-4', 4);
     assert.deepEqual(rulingEvents().map(([type]) => type), ['FINDING_RULED', 'FINDING_RULED', 'REVIEW_DECIDED']);
@@ -155,7 +163,7 @@ test('acceptance 1, 2, 4 and 5: on a run stopped at R3 decision 4 with two findi
 test('acceptance 3 and 6: on a run stopped at decision 2 by a re-raise, one ruling through the CLI lifts the stop, its output names aidlc card next and not aidlc goal extend while the deadline is ahead, and the candidate ships with no second pass [R1] [R3] [R4] [R7]', async () => {
   const fx = makeFixture(CONFIG);
   try {
-    const { stored, seed, cli, next, assertShipped } = await stopped(fx, RERAISE, ['F1']);
+    const { stored, seed, cli, next, review, assertShipped } = await stopped(fx, RERAISE, ['F1']);
     seed((run) => { run['deadline'] = '2999-01-01T00:00:00.000Z'; });
     const ruled = cli('review', 'rule', 'T1-RS', 'F1', '--reject', ...OWNER);
     assert.equal(ruled.status, 0, ruled.stderr);
@@ -167,7 +175,8 @@ test('acceptance 3 and 6: on a run stopped at decision 2 by a re-raise, one ruli
     assert.deepEqual([lifted.stopLifted, typeof lifted.stopReview], [{ at: lifted.stopLifted.at, by: 'the owner' }, 'string']);
     assert.deepEqual([pass.outcome, pass.ruled, pass.reviewer, pass.candidateSha, pass.candidateDigest, pass.requestedAt], ['pass', true, 'ruling:the owner', 'sha-2', lifted.candidateDigest, lifted.stopLifted.at]);
     assert.deepEqual([now['state'], 'stop' in now, now['review'].substantiveDecisions, now['review'].substantiveBlocks, now['review'].noVerdictRetriesUsed, now['dodReceipt'], now['redReceipt'], now['deadline']], ['SHIP', false, 2, 2, 0, 'dod:2', 'red:1', '2999-01-01T00:00:00.000Z']);
-    // Two decisions are used, so without the ruled pass a second pass would be due on a passed candidate (formalReview.secondPass).
+    // Two decisions are used and formalReview.secondPass is on: the ruled candidate takes no second pass and no further decision, by hand either.
+    await assert.rejects(review(), /the two-decision review allowance is used \(2 decided\); the current candidate already holds its pass, ship it/);
     assertShipped(next().directive.kind, 'sha-2', 2);
   } finally {
     fx.cleanup();
@@ -177,13 +186,14 @@ test('acceptance 3 and 6: on a run stopped at decision 2 by a re-raise, one ruli
 test('acceptance 6: with the card deadline in the past the output of the lifting ruling names aidlc goal extend, the deadline is not moved, and aidlc card next stops for time [R2] [R7]', async () => {
   const fx = makeFixture(CONFIG);
   try {
-    const { ship, stored, seed, cli } = await stopped(fx, RERAISE, ['F1']);
-    seed((run) => { run['deadline'] = '2000-01-01T00:00:00.000Z'; });
+    const { ship, stored, seed, events, cli } = await stopped(fx, RERAISE_AND_F2, ['F1']);
+    // F2 of the stopping decision is advisory: the ruling of F1 alone lifts the stop.
+    seed((run) => { run['deadline'] = '2000-01-01T00:00:00.000Z'; run['findings'][1].advisory = true; });
     const ruled = cli('review', 'rule', 'T1-RS', 'F1', '--defer', ...OWNER);
     assert.equal(ruled.status, 0, ruled.stderr);
     assert.match(ruled.stdout, /aidlc card next T1-RS/);
     assert.match(ruled.stdout, /aidlc goal extend/);
-    assert.deepEqual([stored()['state'], stored()['deadline']], ['SHIP', '2000-01-01T00:00:00.000Z']);
+    assert.deepEqual([stored()['state'], stored()['deadline'], events().at(-1)!['data'].ruledFindings], ['SHIP', '2000-01-01T00:00:00.000Z', ['F1']]);
     const after = cli('card', 'next', 'T1-RS');
     assert.equal(after.status, 0, after.stderr);
     const directive = (JSON.parse(after.stdout) as Stored)['directive'];
@@ -196,7 +206,9 @@ test('acceptance 6: with the card deadline in the past the output of the lifting
 test('acceptance 7: after the lift a candidate other than the one the stopping decision reviewed gets no ship from the ruled pass [R4]', async () => {
   const fx = makeFixture(CONFIG);
   try {
-    const { ship, stored, seed, rule, next } = await stopped(fx, RERAISE, ['F1']);
+    const { ship, stored, seed, rule, next } = await stopped(fx, RERAISE_AND_F2, ['F1']);
+    // F2 of the stopping decision is resolved: the ruling of F1 alone lifts the stop.
+    seed((run) => { run['findings'][1].resolvedAt = '2026-09-11T00:30:00.000Z'; });
     rule('F1', 'rejected');
     assert.equal(stored()['state'], 'SHIP');
     // A commit on the branch after the lift: the run's candidate is sha-3, which no decision reviewed.
@@ -204,6 +216,8 @@ test('acceptance 7: after the lift a candidate other than the one the stopping d
     const directive = next().directive;
     // Both decisions are used, so the review sha-3 needs stops the card by the allowance rule.
     assert.deepEqual([directive.kind, directive.kind === 'stop' ? directive.stop.reason : undefined, ship.requests.length], ['stop', 'review', 0], directive.narration);
+    // That stop has no stopping decision: the lifted one is not read as one, so no ruling applies to it (a non-goal of the card).
+    assert.throws(() => rule('F1', 'rejected'), /no R3 decision of the run carries stopReview that no ruling has lifted/);
   } finally {
     fx.cleanup();
   }
@@ -216,21 +230,10 @@ test('acceptance 5, fault rows: a failed card-run write at the lifting ruling ch
       const { bytes, stored, rulingEvents, rule, next, assertShipped } = await stopped(fx, RERAISE, ['F1']);
       // The card-run write fails: the command throws, and the card-run file and the journal keep their bytes.
       const held = bytes();
-      fault.record = true;
-      try {
-        assert.throws(() => rule('F1', 'rejected'), /EIO: injected/);
-      } finally {
-        fault.record = false;
-      }
+      failsUnder({ record: true }, () => rule('F1', 'rejected'));
       assert.deepEqual(bytes(), held, 'the card-run file and the journal are byte-identical');
-
       // The append fails after the write: the lift is in the run, and the events not appended are owed.
-      fault.append = append;
-      try {
-        assert.throws(() => rule('F1', 'rejected'), /EIO: injected/);
-      } finally {
-        fault.append = undefined;
-      }
+      failsUnder({ append }, () => rule('F1', 'rejected'));
       const now = stored();
       assert.deepEqual([now['state'], 'stop' in now, now['review'].invocations.at(-2).stopLifted?.by, now['review'].invocations.at(-1).ruled], ['SHIP', false, 'the owner', true], `${append}: the lift stands`);
       assert.deepEqual(now['journalOwed'].map((o: Stored) => o['type']), ['FINDING_RULED', 'REVIEW_DECIDED']);
