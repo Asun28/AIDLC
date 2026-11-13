@@ -22,6 +22,8 @@ import { GoalTransitionError, stagesForTarget, transitionGoal } from '../core/go
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { parseIntent } from '../artifacts/intent.ts';
 import { makeStop } from '../core/stop.ts';
+import { terminalGoalRefusal } from '../core/card-goal.ts';
+import { findingsOfCandidate } from '../core/review-policy.ts';
 import { approvalPacket, requireAuthority } from '../core/authorization.ts';
 import { resolveRoleProfile, assessTaskEffort } from '../core/roles.ts';
 import { mapRevision } from '../core/amendments.ts';
@@ -39,6 +41,7 @@ import {
   addMs,
   nowIso,
   type DeliveryTarget,
+  type FindingRuling,
   type Lease,
   type OperationRecord,
   type OwedEvent,
@@ -51,6 +54,7 @@ import { ReleaseRunner } from './release-runner.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { updateJson } from '../state/store.ts';
 import { renderBoard, outcomeOf } from '../state/board.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import { loadCardRegistry, validateRegistry, type CardRegistry } from '../artifacts/card.ts';
@@ -945,6 +949,59 @@ export class GoalController {
     const saved = this.store.saveGoal(readmitted);
     this.writeBoard(saved);
     return saved;
+  }
+
+  /**
+   * `aidlc review rule` (card T1-REVIEW-RULE-GOAL-2): the ruling through `runner` (`CardRunner.ruleFinding`), on a goal that
+   * admits card work or is in STOP with stop reason `review`; any other stopped, terminal or DONE goal is refused before a read
+   * of the card run. When the goal is stopped for review and the ruling lifted the card's stop, the goal is re-admitted as
+   * `extendDeadline` re-admits a time stop: one `GOAL_STATE` from STOP to CARDS whose `ruling` names the card and `by`, then
+   * the goal record without its stop. No deadline moves.
+   *
+   * The append comes first, so a failure of either write leaves the goal in STOP with the card's stop lifted. The command run
+   * again in that state for a ruled finding of the lifted decision writes no ruling (`ruled: false`) and completes the
+   * re-admission with the `by` of the lift; the event is appended only when none follows the goal's last `GOAL_STOPPED`.
+   * The goal read, its checks (STOP for review, terminal, the generation), the journal scan, the append and the goal write
+   * are one section of the goal lock (`<goal file>.lock`, `updateJson`), which only this method takes: two rulings are
+   * serialized, and no other goal write is. So the section reads the goal again right before the append and right before
+   * the write, and a record that another writer changed since the section's first read (state, stop, terminal flag,
+   * generation or `updatedAt`) is left as that writer left it, with no append or with no write (`readmitted: false`). A
+   * goal write that lands after the last read and before this write, or that was computed from an earlier read and lands
+   * after it, is not caught, as with every goal write.
+   */
+  ruleFinding(runner: { ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun }, goalId: string, card: Card, findingId: string, ruling: Omit<FindingRuling, 'at'>): { run: CardRun; goal: Goal; ruled: boolean; readmitted: boolean } {
+    const goal = this.mustGoal(goalId);
+    const refusal = terminalGoalRefusal(goal, true);
+    if (refusal) throw new Error(refusal);
+    const forReview = goal.state === 'STOP' && goal.stop?.reason === 'review';
+    const before = forReview ? this.store.getCardRun(goal.id, card.id) : undefined;
+    const lifted = before && before.state !== 'STOP' && !before.stop ? before.review.invocations.filter((i) => i.stopLifted).at(-1) : undefined;
+    const rerun = Boolean(before && lifted?.candidateSha && findingsOfCandidate(before.findings, 'formal', lifted.candidateSha).some((f) => f.id === findingId.toUpperCase() && f.ruling));
+    const run = rerun ? before! : runner.ruleFinding(goal, card, findingId, ruling);
+    if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
+    const by = rerun ? lifted!.stopLifted!.by : ruling.by;
+    // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: a resume, a
+    // cancellation or any other goal write that landed since is kept, and an overlapping ruling waits here.
+    let readmitted = false;
+    let seen: Goal | undefined;
+    const changedSince = (current: Goal): boolean => {
+      seen = this.store.getGoal(goal.id);
+      return !seen || seen.state !== current.state || seen.terminal !== current.terminal || seen.generation !== current.generation || seen.updatedAt !== current.updatedAt || JSON.stringify(seen.stop) !== JSON.stringify(current.stop);
+    };
+    const saved = updateJson(this.store.goalFile(goal.id), Goal, (current) => {
+      if (!current || current.state !== 'STOP' || !current.terminal || current.stop?.reason !== 'review' || current.generation !== goal.generation) return current;
+      if (this.store.getCardRun(goal.id, card.id)?.state === 'STOP') return current;
+      const events = this.journal(goal.id).readAll();
+      const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data['ruling']));
+      if (changedSince(current)) return current;
+      if (!journaled) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: current.generation, data: { from: 'STOP', to: 'CARDS', reason: `ruling on ${card.id} by ${by}`, ruling: { cardId: card.id, by } } });
+      if (changedSince(current)) return current;
+      readmitted = true;
+      // Re-entry runs through CARDS: the projection is re-validated before `aidlc next` reads the card run.
+      return Goal.parse({ ...current, terminal: false, stop: undefined, state: 'CARDS', updatedAt: nowIso() });
+    })!;
+    if (readmitted) this.writeBoard(saved);
+    return { run, goal: readmitted ? saved : (seen ?? saved), ruled: !rerun, readmitted };
   }
 
   /** `owners` is the dispatch's decision from `liveOwners`; a caller without it gets that decision at the board's clock. */

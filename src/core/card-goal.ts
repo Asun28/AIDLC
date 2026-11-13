@@ -47,9 +47,13 @@ export interface CardGoalState {
  * STOP or DONE (`GoalController.next`). Returns the text naming the goal, its state, the stop reason and the one command
  * that re-admits it, or nothing when the goal admits card work. A stop for time, and a goal a resume of a time stop left
  * in STOP, is re-admitted by `aidlc goal extend`; any other is re-admitted by `aidlc goal resume`.
+ *
+ * `ruling` is `aidlc review rule`, the one exception (card T1-REVIEW-RULE-GOAL-2): it runs on a goal in STOP with stop reason
+ * `review`, where it records the owner's ruling, and on no other stopped, terminal or DONE goal.
  */
-export function terminalGoalRefusal(goal: CardGoalState): string | undefined {
+export function terminalGoalRefusal(goal: CardGoalState, ruling = false): string | undefined {
   if (!goal.terminal && goal.state !== 'STOP' && goal.state !== 'DONE') return undefined;
+  if (ruling && goal.state === 'STOP' && goal.stop?.reason === 'review') return undefined;
   const reason = goal.stop ? ` (stop reason: ${goal.stop.reason})` : '';
   const forTime = goal.stop?.reason === 'time' || (goal.state === 'STOP' && !goal.terminal);
   const readmit = forTime ? `aidlc goal extend ${goal.id} --until <iso> --by <who> --reason "..."` : `aidlc goal resume ${goal.id} --reason "..."`;
