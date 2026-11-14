@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-LABELS-2
 title: (replaces T1-OUTCOME-LABELS) bench/outcome/labels.ts selects the merge-blocking formal findings of 30 replaced cards, 15 clean cards and every second-pass block, asks Claude and Codex for one label each from a closed set of five under a hard spend ceiling of 48 USD, reading the prompt files only inside the candidate checkout, and writes bench/outcome/labels.jsonl with both labels on every row not left out and a final that is their common label, an owner ruling or null
-status: todo
+status: merged
 branch: T1-OUTCOME-LABELS-2
 worktree: D:\wt\AIDLC\T1-OUTCOME-LABELS-2
 plan_ref: plans/reliability-baseline-2.md#order-of-work
