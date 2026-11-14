@@ -4,6 +4,7 @@ title: A successful card attempt runs the card's dod_command in the card worktre
 status: todo
 branch: T1-DOD-RECORD
 worktree: D:\wt\AIDLC\T1-DOD-RECORD
+superseded_by: T1-DOD-RECORD-2
 plan_ref: plans/loop-evidence.md#order-of-work
 allow_paths:
   - src/review/mutants.ts
