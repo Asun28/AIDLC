@@ -145,7 +145,7 @@ function canonicalPath(p: string, resolve: (p: string) => string): string {
 }
 
 /** Throws when `outDir` is one of the `readOnly` directories or under one, by canonical path. The one place that decides where output may be written. */
-function assertWritable(outDir: string, readOnly: string[], resolve: (p: string) => string): void {
+export function assertWritable(outDir: string, readOnly: string[], resolve: (p: string) => string): void {
   const target = canonicalPath(outDir, resolve);
   for (const dir of readOnly) {
     const rel = path.relative(canonicalPath(dir, resolve), target);

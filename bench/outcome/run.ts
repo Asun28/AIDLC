@@ -1,8 +1,9 @@
-// node bench/outcome/run.ts (cards T1-OUTCOME-INGEST, T1-OUTCOME-USAGE and T1-OUTCOME-GITHUB): writes the outcome tables as JSONL, runs
-// bench/outcome/views/*.sql in name order through the DuckDB CLI and prints each view named summary_* as one JSON line.
+// node bench/outcome/run.ts (cards T1-OUTCOME-INGEST, T1-OUTCOME-USAGE, T1-OUTCOME-GITHUB and T1-OUTCOME-SUMMARY): writes the outcome tables as JSONL, runs
+// bench/outcome/views/*.sql in name order through the DuckDB CLI and prints each view named summary_* as one JSON line; with --summary
+// it then writes the commit, the run time, the table row counts and every view's rows to one JSON file.
 // See bench/outcome/README.md.
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import { loadProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { githubTables } from './github.ts';
-import { ingestState, writeTables, type Row } from './ingest.ts';
+import { assertWritable, ingestState, writeTables, type Row } from './ingest.ts';
 import { attribute, claudeUsage, codexUsage, priceOf, reviewLogUsage, type Prices } from './usage.ts';
 
 /** The view file that reads the GitHub tables; not run with --no-github, which does not write them. */
@@ -26,7 +27,8 @@ const viewsDir = path.join(here, 'views');
 class NoDuckdb extends Error {}
 
 function main(): number {
-  const { values } = parseArgs({ options: { state: { type: 'string' }, cards: { type: 'string' }, out: { type: 'string' }, duckdb: { type: 'string' }, 'claude-dir': { type: 'string', multiple: true }, 'codex-dir': { type: 'string' }, 'no-usage': { type: 'boolean' }, 'no-github': { type: 'boolean' } } });
+  const ranAt = new Date().toISOString();
+  const { values } = parseArgs({ options: { summary: { type: 'string' }, state: { type: 'string' }, cards: { type: 'string' }, out: { type: 'string' }, duckdb: { type: 'string' }, 'claude-dir': { type: 'string', multiple: true }, 'codex-dir': { type: 'string' }, 'no-usage': { type: 'boolean' }, 'no-github': { type: 'boolean' } } });
   const usage = values['no-usage'] !== true;
   const github = values['no-github'] !== true;
   const mainRoot = (): string => resolveRepoIdentity().mainRoot;
@@ -56,7 +58,17 @@ function main(): number {
     const runner: SyncRunner = (command, args, options) => runSync(command, args, { ...options, cwd: repoRoot });
     tables = { ...tables, ...githubTables(runner, config.repository, config.base, config.github.requiredChecks) };
   }
-  // The only write of this script: writeTables refuses an outDir inside a directory this run reads before it creates anything.
+  // --summary: its one git call, then the output rule of writeTables for its directory, both before anything is created.
+  const summaryPath = values.summary === undefined ? undefined : path.resolve(values.summary);
+  let commit = '';
+  if (summaryPath !== undefined) {
+    const repoRoot = mainRoot();
+    const head = runSync('git', ['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: repoRoot, timeoutMs: 120000 });
+    commit = head.stdout.trim();
+    if (head.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(commit)) throw new Error(`--summary: git rev-parse in ${repoRoot} exited ${String(head.exitCode)}: ${head.stderr.split(/\r?\n/)[0] ?? ''}`);
+    assertWritable(path.dirname(summaryPath), readOnly, realpathSync.native);
+  }
+  // The table write of this script: writeTables refuses an outDir inside a directory this run reads before it creates anything.
   writeTables(tables, outDir, readOnly);
   process.stderr.write(`outcome: ${Object.entries(tables as Record<string, Row[]>).map(([name, rows]) => `${name} ${rows.length}`).join(', ')}; written to ${outDir}\n`);
 
@@ -73,7 +85,19 @@ function main(): number {
   };
   try {
     const summaries = query("SELECT view_name FROM duckdb_views() WHERE NOT internal AND starts_with(view_name, 'summary_') ORDER BY view_name;");
-    for (const { view_name: view } of summaries) process.stdout.write(`${JSON.stringify({ view, rows: query(`SELECT * FROM "${String(view)}";`) })}\n`);
+    const viewRows: Record<string, Row[]> = {};
+    for (const { view_name: view } of summaries) {
+      const rows = query(`SELECT * FROM "${String(view)}";`);
+      viewRows[String(view)] = rows;
+      process.stdout.write(`${JSON.stringify({ view, rows })}\n`);
+    }
+    if (summaryPath !== undefined) {
+      // Written only once every view has printed. The entry is removed and the file created exclusively, as writeTables writes a table.
+      const counts = Object.fromEntries(Object.entries(tables as Record<string, Row[]>).map(([name, rows]) => [name, rows.length]));
+      mkdirSync(path.dirname(summaryPath), { recursive: true });
+      rmSync(summaryPath, { force: true });
+      writeFileSync(summaryPath, `${JSON.stringify({ commit, ranAt, tables: counts, views: viewRows }, null, 2)}\n`, { flag: 'wx' });
+    }
   } catch (err) {
     if (!(err instanceof NoDuckdb)) throw err;
     process.stderr.write(`outcome: the DuckDB binary "${bin}" cannot be started (${err.message}). Install it with "winget install DuckDB.cli" or pass --duckdb <path>. The tables are in ${outDir}.\n`);

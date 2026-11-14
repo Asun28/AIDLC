@@ -1,11 +1,11 @@
 # bench/outcome: outcome tables and views
 
-Dev-only measurement scripts (plan `plans/reliability-baseline.md`). They read the state directory, the card registry, Claude Code session logs and Codex session logs and, unless `--no-github` is given, GitHub and the git history of the main checkout, and write only under `--out`. Table and view names may change with the scripts.
+Dev-only measurement scripts (plan `plans/reliability-baseline.md`). They read the state directory, the card registry, Claude Code session logs and Codex session logs and, unless `--no-github` is given, GitHub and the git history of the main checkout, and write only under `--out` and, with `--summary`, the one file it names. Table and view names may change with the scripts.
 
 ## Command
 
 ```bash
-node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>] [--claude-dir <dir>]... [--codex-dir <dir>] [--no-usage] [--no-github]
+node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>] [--claude-dir <dir>]... [--codex-dir <dir>] [--no-usage] [--no-github] [--summary <file>]
 ```
 
 - `--state`: the state directory. Default: the one aidlc resolves for the checkout (`AIDLC_STATE_DIR`, else `<main checkout>/.aidlc`).
@@ -15,18 +15,21 @@ node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckd
 - `--claude-dir` (repeatable): a Claude Code project directory. Default: `~/.claude/projects/<name>` for the main checkout, where `<name>` is its absolute path with every character but letters and digits replaced by `-`. The project directories of worktrees are not read by default: a subagent's requests are stored under the session that started it.
 - `--codex-dir`: the Codex session directory. Default: `~/.codex/sessions`.
 - `--no-usage`: reads no session or reviewer log, writes no usage table and leaves out `views/20-cost.sql`.
-- `--no-github`: no `gh` or git call is made, the six GitHub tables are not written and `views/30-github.sql` is not run. Files of those names that an earlier run left in `--out` stay as they are.
+- `--no-github`: no `gh` call and none of the git calls of the GitHub tables is made, the six GitHub tables are not written and `views/30-github.sql` is not run. Files of those names that an earlier run left in `--out` stay as they are. The main checkout may still be resolved through git (one `git rev-parse`) when a default path or `--summary` needs it.
 - `--no-usage` and `--no-github` together: only the tables of `ingest.ts` are written and only `views/10-cards.sql` is run.
+- `--summary`: a file, resolved against the invocation directory, that receives `{ commit, ranAt, tables, views }` as `JSON.stringify(doc, null, 2)` and one line feed: `commit`, the `HEAD` of the main checkout; `ranAt`, the time the run started (ISO 8601, UTC); `tables`, the row count of each table the run wrote, as on the stderr line; `views`, the rows of each `summary_*` view as printed on stdout, in the same order. It adds one git call, `git rev-parse --verify HEAD^{commit}` in the main checkout (120 s timeout), also under `--no-github`. Before any table is written the run stops with exit 1 and writes nothing when that call does not exit 0 with a 40-hex sha (`outcome: --summary: git rev-parse in <main checkout> exited <code>: <first line of stderr>`), or when the file's directory is the state directory, the registry, a Claude directory or the Codex directory or lies under one (`refusing to write`, the rule of `--out`). The file is written only after every view has run and printed, so a run that exits 1 or 2 before then leaves an existing file as it was. Its directory is created when absent, and the entry at the path is removed and the file created exclusively, so a link there is replaced and not written through; a failure of that write exits 1 and may leave the file absent or partial.
 
 `--state`, `--cards`, `--out`, `--claude-dir` and `--codex-dir` are resolved against the invocation directory too, before the DuckDB child starts in `--out`.
 
-The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` in name order through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`.
+The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` in name order through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order, then writes the `--summary` file when one is given. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`.
+
+`bench/outcome/summary.json` is the `--summary` file of one run of `node bench/outcome/run.ts --summary bench/outcome/summary.json --out <scratch directory>` from a worktree of this repository, with no other option, so it covers the state directory, the registry, the session logs and GitHub of the main checkout at the commit it names. It is committed as written.
 
 ## Tables (`ingest.ts`)
 
 `ingestState({ stateDir, cardsDir })` returns the tables as arrays of plain rows and reads files only. A field the record does not carry is null. `writeTables(tables, outDir)` writes the keys in the column order below and sorts the lines by UTF-16 code unit, so the same rows given in any order write the same bytes; an empty table writes an empty file.
 
-Where output may be written is decided in one place, `writeTables(tables, outDir, readOnly)`, the only write these scripts make (`run.ts` passes the state directory, the registry, every Claude directory and the Codex directory as `readOnly`):
+Where output may be written is decided in one place, `assertWritable(outDir, readOnly, resolve)`, which `writeTables(tables, outDir, readOnly)`, the only table write these scripts make, calls first and `run.ts` calls for the directory of the `--summary` file with the same `readOnly` (`run.ts` passes the state directory, the registry, every Claude directory and the Codex directory as `readOnly`):
 - `outDir` and each `readOnly` directory are compared by canonical path: the nearest ancestor that resolves through every link, then the remainder. An entry that is absent or cannot be resolved for another reason (EACCES on it or on an ancestor) is part of the remainder, so a source directory that cannot be reached still refuses an `outDir` inside it and does not stop the tables, `usage_errors` included, from being written elsewhere; with no ancestor that resolves, the path is compared as given. `writeTables` takes the resolving function as its last parameter (default `realpathSync.native`) for the test of that case. `outDir` equal to a `readOnly` directory or under one throws before anything is created. A name that only begins with `..` (`<state>/..out`) is inside; only the segment `..` leads outside.
 - Each `<table>.jsonl` replaces the entry of its name: the entry is removed and the file is created exclusively, so a symbolic or hard link at that name is removed and never written through.
 
@@ -167,6 +170,8 @@ The file first defines each GitHub table as a view over its JSONL file with expl
 Every boolean is computed from the tables as read: when `github_errors` has rows, the pull requests, commits or checks they name are missing from the views, which makes `checksGreen` false and `noHumanCommit` null, and can leave `notReverted` true.
 
 ## Tests
+
+`tests/surface/outcome-summary.test.ts` checks the shape of `bench/outcome/summary.json` everywhere, and that `run.ts --summary` writes the document only after every view has run (skipped with the reason `no duckdb binary` as below), leaves an existing file as it was when DuckDB cannot be started, and writes neither the file nor a table on either refusal.
 
 `tests/surface/outcome-usage.test.ts` covers the readers, the error rows, the returned keys, attribution and `priceOf` everywhere, over hand-written fixtures that keep the structure of real files with a marker in every text field; its view test (acceptance 8, 10 and 11) is skipped as below, and every `run.ts` it starts is given `--no-github`. `tests/surface/outcome-ingest.test.ts` covers the tables, the writer, the output rule, the `--duckdb` path and the exit 2 path everywhere. `tests/surface/outcome-first-decision.test.ts` covers `summary_review_convergence` over hand-written `review_decisions` rows, one card at a time and all together (acceptance 1 and 2). These view tests, acceptance 5 and 11 of `outcome-ingest.test.ts` and acceptance 1 and 2 of `outcome-first-decision.test.ts`, are skipped with the reason `no duckdb binary` where no DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), which includes CI; run them locally with `DUCKDB_BIN` set.
 
