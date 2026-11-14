@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-FIRST-DECISION
 title: summary_review_convergence counts a card's first formal decision and its decisions to a pass in date order, leaving out second passes and base-sync decisions, so neither column counts those blocks as first-decision blocks any more
-status: todo
+status: merged
 branch: T1-OUTCOME-FIRST-DECISION
 worktree: D:\wt\AIDLC\T1-OUTCOME-FIRST-DECISION
 plan_ref: plans/reliability-baseline-2.md#order-of-work
