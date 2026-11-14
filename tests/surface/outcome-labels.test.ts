@@ -1,12 +1,13 @@
-// Card T1-OUTCOME-LABELS: the selected formal findings, their prompts, the two models' labels and the owner's rulings (bench/outcome/labels.ts).
+// Cards T1-OUTCOME-LABELS and T1-OUTCOME-LABELS-2: the selected formal findings, their prompts, the two models' labels and the owner's rulings (bench/outcome/labels.ts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { claudeAnswer, codexAnswer, labelOf, labelRows, LABELS, mayCall, promptFor, readLog, selectFindings, type Labelled, type Selected } from '../../bench/outcome/labels.ts';
+import { claudeAnswer, codexAnswer, labelOf, labelRows, LABELS, mayCall, promptFor, readInside, readLog, selectFindings, type Labelled, type Selected } from '../../bench/outcome/labels.ts';
 import type { Row, Tables } from '../../bench/outcome/ingest.ts';
+import { cleanup, tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const sha = (id: string): string => createHash('sha256').update(id, 'utf8').digest('hex');
@@ -75,8 +76,8 @@ test('the log decides what is asked again and what was spent', () => {
   const log = readLog([line('K', 'claude', null, 0.05), line('K', 'claude', 'speculative', 0.04), line('K', 'codex', null, 0.03), line('K', 'codex', null, 0.02), line('L', 'claude', null, 0.01), '{garbage'].join('\n') + '\n');
   const ask = (f: string, m: 'claude' | 'codex'): unknown => { const p = log.pair('g', 'T', f, m); return [p.label, p.ask]; };
   assert.deepEqual([ask('K', 'claude'), ask('K', 'codex'), ask('L', 'claude'), ask('L', 'codex')], [['speculative', false], [null, false], [null, true], [null, true]]);
-  assert.ok(Math.abs(log.spend - 0.4) < 1e-12, String(log.spend));
-  assert.deepEqual([mayCall(24.5), mayCall(24.51)], [true, false]);
+  assert.ok(Math.abs(log.spend - 0.65) < 1e-12, String(log.spend));
+  assert.deepEqual([mayCall(39.25), mayCall(39.26)], [true, false]);
 });
 
 test("final is the common label or the owner's ruling, and a bad ruling refuses", () => {
@@ -94,7 +95,7 @@ test("final is the common label or the owner's ruling, and a bad ruling refuses"
   for (const bad of [ruling('B', 'bug'), ruling('A', 'speculative'), ruling('E', 'speculative'), ruling('X', 'speculative'), `${good[0]}\n${good[0]}`, ruling('B', 'true-defect', { note: 'n' })]) assert.ok('error' in labelRows(items, bad), bad);
 });
 
-test('the committed labels.jsonl is complete and every disagreement is ruled', () => {
+test('the committed labels.jsonl has both labels on every row not left out, and final is the common label, a ruling or null', () => {
   const file = path.join(root, 'bench', 'outcome', 'labels.jsonl');
   assert.ok(existsSync(file), 'bench/outcome/labels.jsonl is committed');
   const text = readFileSync(file, 'utf8');
@@ -113,7 +114,9 @@ test('the committed labels.jsonl is complete and every disagreement is ruled', (
     if (i > 0) assert.ok(groups.indexOf(String(r['group'])) >= groups.indexOf(String(rows[i - 1]!['group'])), 'groups in output order');
     const named = rulings.filter((x) => key(x) === key(r));
     if (r['left'] !== null) return assert.deepEqual([r['labelA'], r['labelB'], r['final'], r['ownerRuled'], named.length], [null, null, null, false, 0], JSON.stringify(r));
-    if (r['labelA'] !== null && r['labelA'] === r['labelB']) return assert.deepEqual([r['final'], r['ownerRuled'], named.length], [r['labelA'], false, 0], JSON.stringify(r));
+    assert.ok(LABELS.includes(r['labelA'] as never) && LABELS.includes(r['labelB'] as never), `both labels: ${JSON.stringify(r)}`);
+    if (r['labelA'] === r['labelB']) return assert.deepEqual([r['final'], r['ownerRuled'], named.length], [r['labelA'], false, 0], JSON.stringify(r));
+    if (named.length === 0) return assert.deepEqual([r['final'], r['ownerRuled']], [null, false], `open: ${JSON.stringify(r)}`);
     assert.deepEqual([named.length, r['ownerRuled'], r['final']], [1, true, named[0]?.['label']], `ruled: ${JSON.stringify(r)}`);
     ruled.add(key(r));
   });
@@ -123,4 +126,19 @@ test('the committed labels.jsonl is complete and every disagreement is ruled', (
   const [superseded, clean, second] = groups.map(cards) as [Set<unknown>, Set<unknown>, Set<unknown>];
   assert.deepEqual([superseded.size, clean.size, [...superseded].filter((c) => clean.has(c)).length], [30, 15, 0]);
   assert.ok(rows.filter((r) => r['group'] === 'second-pass').length >= 13 && second.size >= 8, 'at least 13 second-pass rows from at least 8 cards');
+});
+
+test('the prompt files are read only inside the checkout', () => {
+  const dir = tmpDir('aidlc-labels-test-');
+  try {
+    const [checkout, sibling] = [path.join(dir, 'checkout'), path.join(dir, 'sibling')];
+    mkdirSync(checkout);
+    mkdirSync(sibling);
+    writeFileSync(path.join(checkout, 'a.txt'), 'inside');
+    writeFileSync(path.join(sibling, 's.txt'), 'outside');
+    symlinkSync(sibling, path.join(checkout, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    assert.deepEqual(['a.txt', '../sibling/s.txt', 'link/s.txt', 'none.txt'].map((rel) => readInside(checkout, rel)), ['inside', null, null, null]);
+  } finally {
+    cleanup(dir);
+  }
 });
