@@ -134,6 +134,11 @@ export function readLog(text: string): { spend: number; pair: (goalId: string, c
   return { spend, pair: (goalId, cardId, findingId, model) => { const p = pairs.get(JSON.stringify([goalId, cardId, findingId, model])); return { label: p?.label ?? null, ask: !p || (p.label === null && p.lines < 2), tail: p?.tail ?? null }; } };
 }
 
+/** The UTF-8 text of `rel` joined to `checkout`, or null when it cannot be read. */
+export function readInside(checkout: string, rel: string): string | null {
+  try { return readFileSync(path.join(checkout, rel), 'utf8'); } catch { return null; }
+}
+
 export function mayCall(spend: number): boolean {
   return spend + 2 * CALL_CEILING_USD <= SPEND_CEILING_USD + 1e-9;
 }
@@ -216,7 +221,7 @@ async function main(): Promise<number> {
       for (const { finding: f } of due.filter((s) => s.finding['candidateSha'] === sha)) {
         const spend = log().spend;
         if (!mayCall(spend)) return (process.stderr.write(`spend ceiling: ${spend.toFixed(4)} USD of ${SPEND_CEILING_USD}\n`), 3);
-        const read = (rel: string): string | null => { try { return readFileSync(path.join(checkout, rel), 'utf8'); } catch { return null; } };
+        const read = (rel: string): string | null => readInside(checkout, rel);
         const prompt = promptFor(f, read(`${cardsDir}/${String(f['cardId'])}.md`), typeof f['file'] === 'string' ? read(f['file']) : null, cardsDir);
         mkdirSync(logDir, { recursive: true });
         const asks = (['claude', 'codex'] as const).filter((m) => pair(log(), f, m).ask);
