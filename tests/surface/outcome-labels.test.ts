@@ -77,7 +77,7 @@ test('the log decides what is asked again and what was spent', () => {
   const ask = (f: string, m: 'claude' | 'codex'): unknown => { const p = log.pair('g', 'T', f, m); return [p.label, p.ask]; };
   assert.deepEqual([ask('K', 'claude'), ask('K', 'codex'), ask('L', 'claude'), ask('L', 'codex')], [['speculative', false], [null, false], [null, true], [null, true]]);
   assert.ok(Math.abs(log.spend - 0.65) < 1e-12, String(log.spend));
-  assert.deepEqual([mayCall(39.25), mayCall(39.26)], [true, false]);
+  assert.deepEqual([mayCall(47.25), mayCall(47.26)], [true, false]);
 });
 
 test("final is the common label or the owner's ruling, and a bad ruling refuses", () => {
