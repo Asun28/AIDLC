@@ -1,7 +1,7 @@
-// node bench/outcome/labels.ts [--limit <n>] (card T1-OUTCOME-LABELS): selects the merge-blocking formal findings of replaced cards,
+// node bench/outcome/labels.ts [--limit <n>] (cards T1-OUTCOME-LABELS and T1-OUTCOME-LABELS-2): selects the merge-blocking formal findings of replaced cards,
 // clean cards and second-pass blocks, asks Claude and Codex for one of five labels each in a detached checkout of the candidate, logs
 // every call with its cost to _local/outcome/labels/raw.jsonl under the main checkout, stops at SPEND_CEILING_USD, merges the owner's
-// rulings from bench/outcome/labels-rulings.jsonl and writes bench/outcome/labels.jsonl and the sheet of open disagreements.
+// rulings from bench/outcome/labels-rulings.jsonl and writes bench/outcome/labels.jsonl and the sheet of open disagreements (T1-OUTCOME-ADJUDICATE).
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -11,12 +11,14 @@ import { parseArgs } from 'node:util';
 import { parseCardText } from '../../src/artifacts/card.ts';
 import { loadProjectConfig } from '../../src/config.ts';
 import { FINDING_LOCATION } from '../../src/core/review-policy.ts';
+import { resolvesInside } from '../../src/evals/runner.ts';
 import { run, runSync } from '../../src/probes/exec.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { ingestState, type Row, type Tables } from './ingest.ts';
 
 export const CALL_CEILING_USD = 0.25;
-export const SPEND_CEILING_USD = 25;
+export const CODEX_CALL_BOUND_USD = 0.5; // a reservation (R6): codex-cli 0.160.0 has no option that ends a call at a cost, so a call above it ends the run
+export const SPEND_CEILING_USD = 40;
 export const LABELS = ['true-defect', 'out-of-card-scope', 'speculative', 'reviewer-misread', 'ambiguous-card'] as const;
 export type Label = (typeof LABELS)[number];
 export type Group = 'superseded' | 'clean' | 'second-pass';
@@ -39,7 +41,7 @@ ambiguous-card: the finding and the code follow two readings of a card text that
 
 Write at most five lines of reasons, then a last line that is only the label.`;
 const CLAUDE = ['claude', '-p', '--model', 'claude-opus-5-5', '--effort', 'low', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence', '--output-format', 'json', '--max-budget-usd', '0.25'];
-const CODEX = ['codex', 'exec', '-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=low', '--sandbox', 'read-only', '--json'];
+const CODEX = ['codex', 'exec', '-m', 'gpt-5.6-sol', '-c', 'model_reasoning_effort=low', '--sandbox', 'read-only', '--json']; // no bound arguments: the bound is the reservation of CODEX_CALL_BOUND_USD
 
 const isLabel = (v: unknown): v is Label => (LABELS as readonly unknown[]).includes(v);
 const nonEmpty = (v: unknown): boolean => typeof v === 'string' && v !== '';
@@ -125,7 +127,7 @@ export function readLog(text: string): { spend: number; pair: (goalId: string, c
   let spend = 0;
   for (const line of text.split(/\r?\n/).filter((l) => l.trim() !== '')) {
     const e = object(line);
-    spend += typeof e?.['cost'] === 'number' && Number.isFinite(e['cost']) ? e['cost'] : CALL_CEILING_USD;
+    spend += typeof e?.['cost'] === 'number' && Number.isFinite(e['cost']) ? e['cost'] : e?.['model'] === 'claude' ? CALL_CEILING_USD : CODEX_CALL_BOUND_USD;
     if (!e) continue;
     const key = JSON.stringify([e['goalId'], e['cardId'], e['findingId'], e['model']]);
     const p = pairs.get(key) ?? { label: null, lines: 0, tail: null };
@@ -134,13 +136,13 @@ export function readLog(text: string): { spend: number; pair: (goalId: string, c
   return { spend, pair: (goalId, cardId, findingId, model) => { const p = pairs.get(JSON.stringify([goalId, cardId, findingId, model])); return { label: p?.label ?? null, ask: !p || (p.label === null && p.lines < 2), tail: p?.tail ?? null }; } };
 }
 
-/** The UTF-8 text of `rel` joined to `checkout`, or null when it cannot be read. */
+/** The UTF-8 text of `rel` joined to `checkout`, or null when that path, links followed, does not resolve inside the checkout or cannot be read. */
 export function readInside(checkout: string, rel: string): string | null {
-  try { return readFileSync(path.join(checkout, rel), 'utf8'); } catch { return null; }
+  try { const target = path.join(checkout, rel); return resolvesInside(checkout, target) ? readFileSync(target, 'utf8') : null; } catch { return null; }
 }
 
 export function mayCall(spend: number): boolean {
-  return spend + 2 * CALL_CEILING_USD <= SPEND_CEILING_USD + 1e-9;
+  return spend + CALL_CEILING_USD + CODEX_CALL_BOUND_USD <= SPEND_CEILING_USD + 1e-9;
 }
 
 /** The rows of labels.jsonl (R7) with the rulings merged, or the first reason the rulings text is refused (R8). */
@@ -202,14 +204,16 @@ async function main(): Promise<number> {
     if (r.exitCode !== 0) return (process.stderr.write(`labels: ${cli} --version did not exit 0: ${r.stderr.trim()}\n`), 2);
   }
   const prices = JSON.parse(readFileSync(path.join(here, 'prices.json'), 'utf8')) as Prices;
-  const call = async (m: Model, prompt: string, cwd: string): Promise<Omit<Answer, 'text'> & { exitCode: number | null; timedOut: boolean; tail: string }> => {
+  const call = async (m: Model, prompt: string, cwd: string): Promise<{ entry: Omit<Answer, 'text'> & { exitCode: number | null; timedOut: boolean; tail: string }; read: boolean }> => {
     const [cmd, ...args] = m === 'claude' ? CLAUDE : CODEX;
+    const unread = m === 'claude' ? CALL_CEILING_USD : CODEX_CALL_BOUND_USD;
     try {
       const r = await run(cmd!, args, { ...options, cwd, input: prompt });
       const a = m === 'claude' ? claudeAnswer(r.stdout) : codexAnswer(r.stdout, prices);
-      return { label: r.exitCode === 0 && !r.timedOut ? a.label : null, cost: a.cost ?? CALL_CEILING_USD, exitCode: r.exitCode, timedOut: r.timedOut, tail: (a.text || r.stderr).slice(-600) };
+      const read = typeof a.cost === 'number' && Number.isFinite(a.cost);
+      return { entry: { label: r.exitCode === 0 && !r.timedOut ? a.label : null, cost: read ? a.cost : unread, exitCode: r.exitCode, timedOut: r.timedOut, tail: (a.text || r.stderr).slice(-600) }, read };
     } catch (err) {
-      return { label: null, cost: CALL_CEILING_USD, exitCode: null, timedOut: false, tail: (err as Error).message.slice(-600) };
+      return { entry: { label: null, cost: unread, exitCode: null, timedOut: false, tail: (err as Error).message.slice(-600) }, read: false };
     }
   };
   const candidates = [...new Set(due.map((s) => String(s.finding['candidateSha'])))];
@@ -225,7 +229,8 @@ async function main(): Promise<number> {
         const prompt = promptFor(f, read(`${cardsDir}/${String(f['cardId'])}.md`), typeof f['file'] === 'string' ? read(f['file']) : null, cardsDir);
         mkdirSync(logDir, { recursive: true });
         const asks = (['claude', 'codex'] as const).filter((m) => pair(log(), f, m).ask);
-        await Promise.all(asks.map(async (model) => { const r = await call(model, prompt, checkout); appendFileSync(logFile, `${JSON.stringify({ goalId: f['goalId'], cardId: f['cardId'], findingId: f['id'], model, ...r })}\n`); }));
+        const calls = await Promise.all(asks.map(async (model) => { const r = await call(model, prompt, checkout); appendFileSync(logFile, `${JSON.stringify({ goalId: f['goalId'], cardId: f['cardId'], findingId: f['id'], model, ...r.entry })}\n`); return { model, ...r }; }));
+        const over = calls.find((c) => c.model === 'codex' && (!c.read || (c.entry.cost ?? Infinity) > CODEX_CALL_BOUND_USD)); if (over) return (process.stderr.write(`codex call over bound: ${String(over.entry.cost)} USD\n`), 3);
       }
     } finally {
       git(['worktree', 'remove', '--force', checkout]);
@@ -244,7 +249,7 @@ async function main(): Promise<number> {
   const open = result.rows.flatMap((r, i) => (r.final === null && r.left === null ? [{ goalId: r.goalId, cardId: r.cardId, findingId: r.findingId, group: r.group, candidate: r.candidate, file: selected[i]!.finding['file'], reason: selected[i]!.finding['reason'], labelA: r.labelA, labelB: r.labelB, tailA: pair(l, selected[i]!.finding, 'claude').tail, tailB: pair(l, selected[i]!.finding, 'codex').tail }] : []));
   mkdirSync(logDir, { recursive: true });
   writeFileSync(path.join(logDir, 'disagreements.jsonl'), open.map((r) => `${JSON.stringify(r)}\n`).join(''));
-  process.stderr.write(`rulings needed: ${open.length}\n`);
+  process.stderr.write(`disagreements: ${open.length}\n`);
   return 0;
 }
 
