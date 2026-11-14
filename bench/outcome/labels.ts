@@ -114,9 +114,9 @@ export function codexAnswer(stdout: string, prices: Prices): Answer {
   for (const e of stdout.split(/\r?\n/).map(object)) {
     const item = e?.['item'] as Record<string, unknown> | undefined;
     if (e?.['type'] === 'item.completed' && item?.['type'] === 'agent_message' && typeof item['text'] === 'string') text = item['text'];
-    if (e?.['type'] === 'turn.completed' && typeof e['usage'] === 'object' && e['usage'] !== null) usage = e['usage'] as Record<string, unknown>;
+    if (e?.['type'] === 'turn.completed') usage = typeof e['usage'] === 'object' && e['usage'] !== null ? (e['usage'] as Record<string, unknown>) : undefined;
   }
-  const [input, cached, output, price] = [usage?.['input_tokens'], usage?.['cached_input_tokens'] ?? 0, usage?.['output_tokens'], prices['gpt-5.6-sol']];
+  const [input, cached, output, price] = [usage?.['input_tokens'], usage?.['cached_input_tokens'], usage?.['output_tokens'], prices['gpt-5.6-sol']];
   const cost = typeof input === 'number' && typeof cached === 'number' && typeof output === 'number' && price ? ((input - cached) * price.input + cached * price.cacheRead + output * price.output) / 1e6 : null;
   return { label: labelOf(text), cost, text };
 }
