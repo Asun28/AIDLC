@@ -1,7 +1,7 @@
 ---
 id: T1-DOD-RECORD-2
 title: (replaces T1-DOD-RECORD) A successful card attempt runs the card's dod_command in the card worktree through the DoD call of the mutant sweep and records commit, clean, exit or timeout, expected exit, duration, output sha256 and output tail on the attempt; a run with no worktree directory records the DoD as not run without the path; the record changes no state and card status shows it
-status: todo
+status: merged
 branch: T1-DOD-RECORD-2
 worktree: D:\wt\AIDLC\T1-DOD-RECORD-2
 plan_ref: plans/loop-evidence.md#order-of-work
