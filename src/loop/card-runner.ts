@@ -267,7 +267,7 @@ export class CardRunner {
   private loopDod(card: Card, worktree: string | undefined, probe: { sha: string; clean: boolean } | undefined): LoopDod {
     const command = card.dod_command;
     if (!worktree) return { ran: false, command, reason: 'no-worktree' };
-    if (pathKind(worktree) !== 'directory') return { ran: false, command, reason: 'no-directory', worktree };
+    if (pathKind(worktree) !== 'directory') return { ran: false, command, reason: 'no-directory' };
     const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs);
     const receipt = this.runner(cmd, args, { ...options, killTree: true });
     const output = Buffer.from(receipt.stdout + receipt.stderr, 'utf8');
@@ -281,7 +281,7 @@ export class CardRunner {
       expectedExit: card.dod_exit,
       timeoutMs: this.dodTimeoutMs,
       durationMs: receipt.durationMs,
-      outputSha256: createHash('sha256').update(receipt.stdout, 'utf8').update(' ').update(receipt.stderr, 'utf8').digest('hex'),
+      outputSha256: createHash('sha256').update(receipt.stdout, 'utf8').update('\u0000').update(receipt.stderr, 'utf8').digest('hex'),
       outputTail: output.subarray(Math.max(0, output.length - LOOP_DOD_TAIL_BYTES)).toString('utf8'),
     };
   }

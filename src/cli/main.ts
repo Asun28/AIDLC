@@ -108,7 +108,7 @@ function loopDodLine(run: CardRun): string {
   const attempt = run.effort?.attempts.findLast((a) => a.loopDod);
   const d = attempt?.loopDod;
   if (!attempt || !d) return 'loopDod=-';
-  if (!d.ran) return `loopDod=attempt ${attempt.n} not run: ${d.reason}${d.reason === 'no-directory' ? ` ${d.worktree}` : ''}`;
+  if (!d.ran) return `loopDod=attempt ${attempt.n} not run: ${d.reason}`;
   const verdict = !d.timedOut && d.exitCode === d.expectedExit ? 'matches' : 'DIFFERS';
   return `loopDod=attempt ${attempt.n} exit=${d.exitCode ?? 'none'} dod_exit=${d.expectedExit} ${verdict} timedOut=${d.timedOut} commit=${d.commit ?? '-'} clean=${d.clean ?? '-'} durationMs=${d.durationMs} sha256=${d.outputSha256}`;
 }

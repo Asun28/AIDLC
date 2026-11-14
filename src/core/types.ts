@@ -644,7 +644,7 @@ export const LoopDod = z.discriminatedUnion('ran', [
     outputSha256: z.string(),
     outputTail: z.string(),
   }),
-  z.object({ ran: z.literal(false), command: z.string(), reason: z.enum(['no-worktree', 'no-directory']), worktree: z.string().optional() }),
+  z.object({ ran: z.literal(false), command: z.string(), reason: z.enum(['no-worktree', 'no-directory']) }),
 ]);
 export type LoopDod = z.infer<typeof LoopDod>;
 
