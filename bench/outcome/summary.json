@@ -1,0 +1,576 @@
+{
+  "commit": "e74113d066a454725b9ed26dda842ca473081b19",
+  "ranAt": "2026-11-14T09:28:39.315Z",
+  "tables": {
+    "cards": 334,
+    "card_runs": 334,
+    "review_decisions": 1214,
+    "findings": 872,
+    "state_spans": 1293,
+    "attempts": 778,
+    "ingest_errors": 0,
+    "usage": 22912,
+    "usage_errors": 1,
+    "prs": 261,
+    "checks": 2429,
+    "reverts": 1,
+    "branch_commits": 1520,
+    "github_errors": 52,
+    "required_checks": 4
+  },
+  "views": {
+    "summary_cache_share": [
+      {
+        "source": "claude-code",
+        "model": "<synthetic>",
+        "requests": 7,
+        "cache_read_share": null
+      },
+      {
+        "source": "claude-code",
+        "model": "claude-fable-5-2",
+        "requests": 4096,
+        "cache_read_share": 0.9864475784293687
+      },
+      {
+        "source": "claude-code",
+        "model": "claude-haiku-5-5",
+        "requests": 40,
+        "cache_read_share": 0.7176895434447573
+      },
+      {
+        "source": "claude-code",
+        "model": "claude-opus-5-5",
+        "requests": 16665,
+        "cache_read_share": 0.9776811754393272
+      },
+      {
+        "source": "claude-code",
+        "model": "claude-sonnet-5-5",
+        "requests": 1235,
+        "cache_read_share": 0.9548217523158522
+      },
+      {
+        "source": "codex",
+        "model": "codex-auto-review",
+        "requests": 5,
+        "cache_read_share": 0
+      },
+      {
+        "source": "codex",
+        "model": "gpt-5.6-sol",
+        "requests": 12,
+        "cache_read_share": 0.6978672904755967
+      },
+      {
+        "source": "codex",
+        "model": "gpt-6-astra",
+        "requests": 565,
+        "cache_read_share": 0.8822501771481085
+      }
+    ],
+    "summary_ci": [
+      {
+        "merged_prs": 242,
+        "rerun_share": 0.008264462809917356,
+        "first_attempt_failed_share": 0.008264462809917356
+      }
+    ],
+    "summary_cost_by_stage": [
+      {
+        "cards": "merged",
+        "stage": "coordinate",
+        "requests": 2303,
+        "inputTokens": 5255,
+        "cacheReadTokens": 777757100,
+        "cacheWriteTokens": 8302305,
+        "outputTokens": 2520280,
+        "totalTokens": null,
+        "cost_usd": 293.628452,
+        "unpriced_requests": 0
+      },
+      {
+        "cards": "merged",
+        "stage": "implement",
+        "requests": 4447,
+        "inputTokens": 9132,
+        "cacheReadTokens": 656249597,
+        "cacheWriteTokens": 28652954,
+        "outputTokens": 4479152,
+        "totalTokens": null,
+        "cost_usd": 342.6853351999999,
+        "unpriced_requests": 0
+      },
+      {
+        "cards": "merged",
+        "stage": "review",
+        "requests": 300,
+        "inputTokens": 21652746,
+        "cacheReadTokens": 145980160,
+        "cacheWriteTokens": 0,
+        "outputTokens": 878289,
+        "totalTokens": 169707,
+        "cost_usd": 406.42206999999996,
+        "unpriced_requests": 2
+      },
+      {
+        "cards": "merged",
+        "stage": "subagent",
+        "requests": 1036,
+        "inputTokens": 2112,
+        "cacheReadTokens": 247043114,
+        "cacheWriteTokens": 8212263,
+        "outputTokens": 1715649,
+        "totalTokens": null,
+        "cost_usd": 130.81000222,
+        "unpriced_requests": 0
+      },
+      {
+        "cards": "superseded",
+        "stage": "coordinate",
+        "requests": 938,
+        "inputTokens": 2166,
+        "cacheReadTokens": 295296763,
+        "cacheWriteTokens": 2593782,
+        "outputTokens": 1154833,
+        "totalTokens": null,
+        "cost_usd": 114.2874846,
+        "unpriced_requests": 1
+      },
+      {
+        "cards": "superseded",
+        "stage": "implement",
+        "requests": 2496,
+        "inputTokens": 5208,
+        "cacheReadTokens": 460686920,
+        "cacheWriteTokens": 20730122,
+        "outputTokens": 3252825,
+        "totalTokens": null,
+        "cost_usd": 281.63262619999995,
+        "unpriced_requests": 2
+      },
+      {
+        "cards": "superseded",
+        "stage": "review",
+        "requests": 115,
+        "inputTokens": 8659618,
+        "cacheReadTokens": 57848192,
+        "cacheWriteTokens": 0,
+        "outputTokens": 373366,
+        "totalTokens": 1042951,
+        "cost_usd": 163.11267200000003,
+        "unpriced_requests": 13
+      },
+      {
+        "cards": "superseded",
+        "stage": "subagent",
+        "requests": 962,
+        "inputTokens": 1940,
+        "cacheReadTokens": 250643851,
+        "cacheWriteTokens": 6170552,
+        "outputTokens": 1652335,
+        "totalTokens": null,
+        "cost_usd": 122.18011151000006,
+        "unpriced_requests": 2
+      }
+    ],
+    "summary_cost_per_card": [
+      {
+        "families": 133,
+        "priced_families": 132,
+        "p50_usd": 7.652743750000001,
+        "p90_usd": 26.984720579999998,
+        "max_usd": 139.72054888499997
+      }
+    ],
+    "summary_lead_time": [
+      {
+        "measure": "lead_p50",
+        "state": null,
+        "hours": 0.8528058333333334,
+        "n": 157
+      },
+      {
+        "measure": "lead_p90",
+        "state": null,
+        "hours": 3.2124073333333354,
+        "n": 157
+      },
+      {
+        "measure": "state_total",
+        "state": "BUILD",
+        "hours": 0.43228972222222223,
+        "n": 3
+      },
+      {
+        "measure": "state_total",
+        "state": "PREPARE",
+        "hours": 37.008921111111114,
+        "n": 9
+      },
+      {
+        "measure": "state_total",
+        "state": "REVIEW_FIX",
+        "hours": 0.46993805555555557,
+        "n": 1
+      },
+      {
+        "measure": "state_total",
+        "state": "SHIP",
+        "hours": 649.6238130555558,
+        "n": 906
+      },
+      {
+        "measure": "state_total",
+        "state": "STOP",
+        "hours": 302.2636347222222,
+        "n": 27
+      },
+      {
+        "measure": "state_total",
+        "state": "WAIT",
+        "hours": 0.18834916666666668,
+        "n": 2
+      },
+      {
+        "measure": "state_total",
+        "state": "readmitted",
+        "hours": 2.0782097222222222,
+        "n": 23
+      }
+    ],
+    "summary_lead_time_pr": [
+      {
+        "p50_hours": 0.7962952777777778,
+        "p90_hours": 3.4757607777777775,
+        "n": 225,
+        "merged_cards_without_pr": 0
+      }
+    ],
+    "summary_pr_success": [
+      {
+        "card_attempts": 324,
+        "accepted": 161,
+        "pr_success_rate": 0.49691358024691357,
+        "accepted_strict": 120,
+        "pr_success_rate_strict": 0.37037037037037035,
+        "failing_merged": 99,
+        "failing_checksGreen": 7,
+        "failing_notReverted": 0,
+        "failing_noHumanCommit": 39,
+        "failing_noRuling": 46,
+        "unknown_noHumanCommit": 42
+      }
+    ],
+    "summary_reconcile": [
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-BIN-STALE-DIST-3",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-CI-RERUN-STRUCTURED",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-DIRTY-SUCCESS",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-EVAL-CHECKOUT-BUSY",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-GOAL-CARD-COUNT-2",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-OP-TIMESTAMP-NOW",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-PREPARE-WORKTREE",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-SHIP-THROW-SLOT-2",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-STAGING-LEASE-RELEASE",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T0-WORKTREE-RECLAIM",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-BOARD-WATCH",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-BOUND-TELEMETRY-2",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-EFF-R3-PROGRESS-2",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-FINDING-REPRO",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-REVIEW-BENCH",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-REVIEW-BENCH-EXPORT-2",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-RUN-CONTEXT-PACK",
+        "n": 1
+      },
+      {
+        "kind": "closed_unmerged",
+        "cardId": "T1-SWEEP-FLAGS",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-ARC-EXTERN-DEP-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-AUDIT-READMIT",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-CARD-TAKEOVER-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-CI-RED-LOGS-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-CI-RED-LOGS-BOUNDS",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-EXIT-ZERO-NOT-MERGED-3",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-FM-COMMENT-CUT-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-HOOK-CONFIG-CLOSED-3",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-PLANNING-CLAIMS-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-R2-PANEL",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-REVIEWER-UTF8",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-SHIP-BASE-SYNC-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-WORKTREE-ROOT-DEFAULT",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T0-WORKTREE-ROOT-EDGE",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-AUDIT-FACTS-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-LOOP-GATES-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-LOOP-LESSONS",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-LOOP-RESUME",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-LOOP-SKILLS-2",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-REVIEW-COVERAGE-STATS",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-REVIEW-FINDINGS-4",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-REVIEW-INPUTS",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-REVIEW-STATS",
+        "n": 1
+      },
+      {
+        "kind": "merged_pr_without_mergeVerified",
+        "cardId": "T1-STORE-CAS-2",
+        "n": 1
+      }
+    ],
+    "summary_review_convergence": [
+      {
+        "cards": 303,
+        "first_decision_pass_share": 0.4521452145214521,
+        "two_or_more_blocks_share": 0.3333333333333333,
+        "mean_decisions_to_pass": 1.530701754385965,
+        "stop_review_share": 0.08250825082508251
+      }
+    ],
+    "summary_stop_reasons": [
+      {
+        "stopReason": "review",
+        "runs": 82
+      },
+      {
+        "stopReason": "ci",
+        "runs": 9
+      },
+      {
+        "stopReason": "tool",
+        "runs": 6
+      },
+      {
+        "stopReason": "time",
+        "runs": 5
+      },
+      {
+        "stopReason": "card",
+        "runs": 4
+      },
+      {
+        "stopReason": "ownership",
+        "runs": 3
+      },
+      {
+        "stopReason": "risk",
+        "runs": 2
+      }
+    ],
+    "summary_successor_rate": [
+      {
+        "card_attempts": 324,
+        "failed": 93,
+        "merged": 201,
+        "successor_rate": 0.28703703703703703
+      }
+    ],
+    "summary_superseded_spend": [
+      {
+        "cards": 46,
+        "requests": 4511,
+        "tokens": 1110115424,
+        "cost_usd": 681.2128943100003,
+        "unpriced_requests": 18
+      }
+    ],
+    "summary_unattributed": [
+      {
+        "measure": "review_log_same_as_codex",
+        "key": null,
+        "requests": 272,
+        "tokens": 20443764,
+        "request_share": null,
+        "token_share": null
+      },
+      {
+        "measure": "unattributed",
+        "key": null,
+        "requests": 9568,
+        "tokens": 3038246113,
+        "request_share": 0.4175977653631285,
+        "token_share": 0.49059659233139363
+      },
+      {
+        "measure": "unpriced",
+        "key": "<synthetic>",
+        "requests": 7,
+        "tokens": 0,
+        "request_share": null,
+        "token_share": null
+      },
+      {
+        "measure": "unpriced",
+        "key": "codex-auto-review",
+        "requests": 5,
+        "tokens": 971730,
+        "request_share": null,
+        "token_share": null
+      },
+      {
+        "measure": "unpriced",
+        "key": "gpt-6-astra",
+        "requests": 287,
+        "tokens": 21656422,
+        "request_share": null,
+        "token_share": null
+      }
+    ]
+  }
+}
