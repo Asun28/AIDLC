@@ -37,6 +37,7 @@ test('the adjudication log decides what is asked again and what was spent', () =
   assert.deepEqual(['K', 'L', 'M', 'N'].map((f) => log.row('g1', 'C1', f)), [{ label: 'speculative', due: false }, { label: null, due: false }, { label: null, due: true }, { label: null, due: true }]);
   assert.equal(Math.round(log.spend * 1e9) / 1e9, 1.25);
   assert.equal(log.lines, 6);
+  assert.deepEqual(readAdjudications(entry('P', 'speculative', 0.1)).row('g1', 'C1', 'P'), { label: 'speculative', due: false });
   assert.deepEqual([mayAdjudicate(34.5), mayAdjudicate(34.51)], [true, false]);
 });
 
@@ -65,7 +66,7 @@ test('final comes from the two models, a ruling, the owner\'s spot check or the 
     { ...unanswered, final: 'ambiguous-card', source: 'owner', adjudicator: null }];
   const summary = { toAdjudicate: 22, adjudicated: 21, unanswered: 1, spotCheck: { sample: 20, agree: 17, errorRate: 0.15 } };
   for (const text of [`${good.join('\n')}\n`, `${good.join('\r\n')}\r\n\r\n`]) assert.equal(JSON.stringify(finalRows(rows, adjudicator, text)), JSON.stringify({ rows: expected, summary }));
-  const bad = [[line(sample[0]!, 'bug'), ...good.slice(1)], [line(sample[0]!, 'speculative', { note: 'x' }), ...good.slice(1)], [...good, '{not json'], [...good, line(unsampled, 'speculative')], [...good, good[0]!], good.slice(1), good.slice(0, -1)];
+  const bad = [[line(sample[0]!, 'bug'), ...good.slice(1)], [line(sample[0]!, 'speculative', { note: 'x' }), ...good.slice(1)], [...good, '{not json'], [...good, line(unsampled, 'speculative')], [line(unsampled, 'speculative'), ...good.slice(1)], [...good, good[0]!], good.slice(1), good.slice(0, -1)];
   for (const b of bad) assert.ok('error' in finalRows(rows, adjudicator, b.join('\n')), b.join(' / '));
 });
 
