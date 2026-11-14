@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-SUMMARY
 title: node bench/outcome/run.ts --summary writes the main checkout's commit, the run time, the row count of every table and the rows of every summary view to one JSON file once every view has run, and bench/outcome/summary.json is that file from one full run on the main checkout
-status: todo
+status: merged
 branch: T1-OUTCOME-SUMMARY
 worktree: D:\wt\AIDLC\T1-OUTCOME-SUMMARY
 plan_ref: plans/reliability-baseline-2.md#order-of-work
