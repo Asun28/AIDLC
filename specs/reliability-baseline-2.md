@@ -24,8 +24,9 @@ T1-OUTCOME-HISTORY is left for a later goal. No behaviour of the loop changes.
   counts of every table and error table.
 - R3. The repository shall hold one label row per merge-blocking formal finding of a fixed
   selection: 30 replaced cards, 15 clean cards and every second-pass block. Each row carries a
-  label from Claude and one from a model of another vendor, from a closed set, and a final label
-  that is their common value or the owner's ruling.
+  label from Claude and one from a model of another vendor, from a closed set; a final label is
+  their common value, an owner ruling, or, where they differ and the owner has not ruled, the
+  adjudicator's label (bench/outcome/labels-final.jsonl names the source of each).
 - R4. The finally labelled findings shall become confirmed reviewer bench cases under
   `evals/review/`, and one bench run of the formal stage on main's reviewer shall be committed as
   the baseline arm, with three trials on ten cases for verdict instability.
@@ -40,7 +41,8 @@ script, never from a shell string. The bench uses the existing `aidlc review ben
 confirm and `run` commands.
 
 ## Interfaces and contracts
-- `bench/outcome/summary.json`, `bench/outcome/labels.jsonl`, `bench/outcome/replay-main.json`:
+- `bench/outcome/summary.json`, `bench/outcome/labels.jsonl`, `bench/outcome/labels-final.jsonl`,
+  `bench/outcome/adjudication.json`, `bench/outcome/replay-main.json`:
   new committed data files; their fields are fixed by the card that adds them.
 - Label set (closed): `true-defect`, `out-of-card-scope`, `speculative`, `reviewer-misread`,
   `ambiguous-card`.
@@ -49,7 +51,11 @@ confirm and `run` commands.
 none (no persisted record of `.aidlc/` changes)
 
 ## Flagged concerns (route to policy owners)
-- The owner rules on every label disagreement; the labels card waits for those rulings.
+- Owner decisions of 2026-11-14 (intent/loop-evidence.md): a label disagreement is settled by an
+  adjudicator (Claude Opus 5.5, high effort) unless the owner has ruled it; the owner rules a blind,
+  seeded sample of 20 adjudicated rows, and the report states the adjudicator's agreement with the
+  owner on them. T1-OUTCOME-LABELS-2 (budget 400) and T1-OUTCOME-ADJUDICATE replace
+  T1-OUTCOME-LABELS. Spend ceilings: labels $40, adjudication $35, program $450 at list price.
 
 ## Non-goals
 - Any change under `src/`, `templates/`, `.claude/`, `REVIEW.md` or `package.json`.

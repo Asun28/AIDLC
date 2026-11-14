@@ -43,6 +43,11 @@ needs all four.
 - bench/outcome/labels.ts (new)
 - bench/outcome/labels.jsonl (new)
 - bench/outcome/labels-rulings.jsonl (new)
+- bench/outcome/adjudicate.ts (new)
+- bench/outcome/labels-final.jsonl (new)
+- bench/outcome/adjudication.json (new)
+- bench/outcome/labels-spotcheck.jsonl (new)
+- tests/surface/outcome-adjudicate.test.ts (new)
 - tests/surface/outcome-labels.test.ts (new)
 - bench/outcome/replay.ts (new)
 - bench/outcome/replay-main.json (new)
@@ -59,19 +64,23 @@ needs all four.
 T1-OUTCOME-REPLAY writes the confirmed replay cases as new files under evals/review/replay/.
 
 1. T1-OUTCOME-FIRST-DECISION: the view fix and its fixture test.
-2. T1-OUTCOME-LABELS: the selection, the two model labels, the owner's rulings. Starts beside 1
-   (disjoint paths); waits for the owner's rulings before SHIP.
+2. T1-OUTCOME-LABELS-2 (replaces T1-OUTCOME-LABELS and carries its candidate, owner 2026-11-14):
+   the selection and the two model labels, final where they agree. Starts beside 1.
+2a. T1-OUTCOME-ADJUDICATE: the adjudicator settles each disagreement; the owner rules a blind
+   sample of 20; labels-final.jsonl and adjudication.json. Waits for the owner's spot check
+   before SHIP. Depends on 2.
 3. T1-OUTCOME-SUMMARY: the snapshot on the corrected views. Depends on 1.
-4. T1-OUTCOME-REPLAY: the confirmed cases and the baseline arm. Depends on 2.
+4. T1-OUTCOME-REPLAY: the confirmed cases and the baseline arm. Depends on 2a.
 5. T1-OUTCOME-REPORT: the report and the goal's one CHANGELOG entry. Depends on 3 and 4.
 
 ## 7. Task split (dependencies and parallel windows)
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-OUTCOME-FIRST-DECISION | MUST | first-decision pass rate and decisions to a pass counted by date order | - | W1 | - |
-| T1-OUTCOME-LABELS | MUST | two-model labels with owner rulings for 30 replaced, 15 clean cards and the second-pass blocks | - | W1 | - |
+| T1-OUTCOME-LABELS-2 | MUST | two-model labels for 30 replaced, 15 clean cards and the second-pass blocks (replaces T1-OUTCOME-LABELS) | - | W1 | - |
+| T1-OUTCOME-ADJUDICATE | MUST | adjudicated finals, the owner's blind spot check of 20, labels-final.jsonl and adjudication.json | T1-OUTCOME-LABELS-2 | - | - |
 | T1-OUTCOME-SUMMARY | MUST | committed snapshot of every summary view | T1-OUTCOME-FIRST-DECISION | - | - |
-| T1-OUTCOME-REPLAY | MUST | confirmed bench cases from the labels and the baseline arm | T1-OUTCOME-LABELS | - | yes |
+| T1-OUTCOME-REPLAY | MUST | confirmed bench cases from the final labels and the baseline arm | T1-OUTCOME-ADJUDICATE | - | yes |
 | T1-OUTCOME-REPORT | MUST | docs/reliability/baseline.md and the CHANGELOG entry | T1-OUTCOME-SUMMARY, T1-OUTCOME-REPLAY | - | - |
 
 T1-OUTCOME-REPLAY is a freeze point: T1-R3-SUPPORTED-FINDINGS (plans/loop-evidence.md) compares

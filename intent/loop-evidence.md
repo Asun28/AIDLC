@@ -81,5 +81,18 @@ The owner (labels, rulings, approval of the review text); `bench/outcome/`, `doc
 - Bench qualification: with a baseline false-block rate of 0 the candidate must be 0; a baseline
   of null goes to the owner.
 
+## Decisions during the run (owner, 2026-11-14, evening)
+- Both goals extended by 24 h (card deadlines ran out while decisions were pending).
+- T1-DOD-RECORD-2 replaces T1-DOD-RECORD and carries its candidate (budget 320; the no-directory
+  record drops the worktree path, which broke tests/scenarios/t0-flow.test.ts:3726).
+- T1-OUTCOME-LABELS-2 replaces T1-OUTCOME-LABELS and carries its candidate (budget 400, spend
+  ceiling $40): the pilot projected $37 and the built work was 374 lines.
+- In the pilot Codex gpt-5.6-sol labelled all 10 findings `true-defect` and agreed with Claude on 3,
+  so about 166 disagreements were expected. They are settled by an adjudicator (Claude Opus 5.5,
+  high effort; card T1-OUTCOME-ADJUDICATE, ceiling $35); the owner rules a blind sample of 20 and
+  the report states the agreement.
+- Program ceiling raised from $300 to $450 at list price (projection on 2026-11-14: about $420,
+  about $190 of it Codex usage on the owner's subscription).
+
 ## Open questions
 - (none)

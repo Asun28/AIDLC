@@ -4,6 +4,7 @@ title: bench/outcome/labels.ts selects the merge-blocking formal findings of 30 
 status: todo
 branch: T1-OUTCOME-LABELS
 worktree: D:\wt\AIDLC\T1-OUTCOME-LABELS
+superseded_by: T1-OUTCOME-LABELS-2
 plan_ref: plans/reliability-baseline-2.md#order-of-work
 allow_paths:
   - bench/outcome/labels.ts
