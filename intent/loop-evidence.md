@@ -91,6 +91,9 @@ The owner (labels, rulings, approval of the review text); `bench/outcome/`, `doc
   so about 166 disagreements were expected. They are settled by an adjudicator (Claude Opus 5.5,
   high effort; card T1-OUTCOME-ADJUDICATE, ceiling $35); the owner rules a blind sample of 20 and
   the report states the agreement.
+- T1-OUTCOME-LABELS-2, after its start: ceiling amended from $40 to $48 by a recorded amendment
+  (the run cost $18.81 for 105 of 243 findings, projected $43.50); the owner chose this over a
+  successor card.
 - Program ceiling raised from $300 to $450 at list price (projection on 2026-11-14: about $420,
   about $190 of it Codex usage on the owner's subscription).
 
