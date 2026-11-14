@@ -18,7 +18,7 @@ import { ingestState, type Row, type Tables } from './ingest.ts';
 
 export const CALL_CEILING_USD = 0.25;
 export const CODEX_CALL_BOUND_USD = 0.5; // a reservation (R6): codex-cli 0.160.0 has no option that ends a call at a cost, so a call above it ends the run
-export const SPEND_CEILING_USD = 40;
+export const SPEND_CEILING_USD = 48;
 export const LABELS = ['true-defect', 'out-of-card-scope', 'speculative', 'reviewer-misread', 'ambiguous-card'] as const;
 export type Label = (typeof LABELS)[number];
 export type Group = 'superseded' | 'clean' | 'second-pass';
