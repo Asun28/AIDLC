@@ -128,17 +128,13 @@ test('the committed labels.jsonl has both labels on every row not left out, and 
   assert.ok(rows.filter((r) => r['group'] === 'second-pass').length >= 13 && second.size >= 8, 'at least 13 second-pass rows from at least 8 cards');
 });
 
-test('the prompt files are read only inside the checkout', () => {
+test('the prompt files are read only inside the checkout', (t) => {
   const dir = tmpDir('aidlc-labels-test-');
-  try {
-    const [checkout, sibling] = [path.join(dir, 'checkout'), path.join(dir, 'sibling')];
-    mkdirSync(checkout);
-    mkdirSync(sibling);
-    writeFileSync(path.join(checkout, 'a.txt'), 'inside');
-    writeFileSync(path.join(sibling, 's.txt'), 'outside');
-    symlinkSync(sibling, path.join(checkout, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
-    assert.deepEqual(['a.txt', '../sibling/s.txt', 'link/s.txt', 'none.txt'].map((rel) => readInside(checkout, rel)), ['inside', null, null, null]);
-  } finally {
-    cleanup(dir);
-  }
+  t.after(() => cleanup(dir));
+  const [checkout, sibling] = [path.join(dir, 'checkout'), path.join(dir, 'sibling')];
+  for (const d of [checkout, sibling]) mkdirSync(d);
+  writeFileSync(path.join(checkout, 'a.txt'), 'inside');
+  writeFileSync(path.join(sibling, 's.txt'), 'outside');
+  symlinkSync(sibling, path.join(checkout, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.deepEqual(['a.txt', '../sibling/s.txt', 'link/s.txt', 'none.txt'].map((rel) => readInside(checkout, rel)), ['inside', null, null, null]);
 });
