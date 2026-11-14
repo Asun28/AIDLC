@@ -137,4 +137,6 @@ test('the prompt files are read only inside the checkout', (t) => {
   writeFileSync(path.join(sibling, 's.txt'), 'outside');
   symlinkSync(sibling, path.join(checkout, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.deepEqual(['a.txt', '../sibling/s.txt', 'link/s.txt', 'none.txt'].map((rel) => readInside(checkout, rel)), ['inside', null, null, null]);
+  const turn = (usage: unknown): string => JSON.stringify({ type: 'turn.completed', usage });
+  assert.deepEqual([[turn({ input_tokens: 10, cached_input_tokens: 0, output_tokens: 10 }), turn(null)], [turn({ input_tokens: 10000, output_tokens: 1000 })]].map((l) => codexAnswer(l.join('\n'), { 'gpt-5.6-sol': { input: 4, cacheRead: 0.4, output: 20 } }).cost), [null, null]);
 });
