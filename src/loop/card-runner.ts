@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -32,7 +32,7 @@ import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
+import { dodCall, mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
 import { REPRO_REQUEST } from '../review/repro.ts';
 import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
@@ -65,7 +65,14 @@ export interface CardRunnerDeps {
   /** Refuse shipping in a driver worker; ordinary card commands retain their default. */
   allowShip?: boolean;
   now?: () => string;
+  /** How long the DoD a recorded success runs may take (card T1-DOD-RECORD); `LOOP_DOD_TIMEOUT_MS` when absent. */
+  dodTimeoutMs?: number;
 }
+
+/** The DoD timeout of `card attempt --outcome success`: 9 minutes, so the attempt fits in one 10-minute shell call of the worker. */
+export const LOOP_DOD_TIMEOUT_MS = 540_000;
+/** The bytes of DoD output a recorded success keeps (card T1-DOD-RECORD R3). */
+const LOOP_DOD_TAIL_BYTES = 4096;
 
 export type CardDirective =
   | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; lessons?: LessonsContext; narration: string }
@@ -232,6 +239,7 @@ export class CardRunner {
   readonly shipPath: ShipPath;
   private readonly allowShip: boolean;
   private readonly clock: () => string;
+  private readonly dodTimeoutMs: number;
 
   constructor(deps: CardRunnerDeps) {
     this.paths = deps.paths;
@@ -249,6 +257,33 @@ export class CardRunner {
     this.clock = deps.now ?? (() => new Date().toISOString());
     this.shipPath = deps.shipPath ?? shipPathFor(deps.config, deps.repo.mainRoot, this.runner);
     this.allowShip = deps.allowShip ?? true;
+    this.dodTimeoutMs = deps.dodTimeoutMs ?? LOOP_DOD_TIMEOUT_MS;
+  }
+
+  /**
+   * Run the card's DoD in the run's worktree, as the mutant sweep calls it, with the tree kill at the timeout (card
+   * T1-DOD-RECORD R2-R5). `probe` is what the candidate probe of the same call read; without it no commit or clean is recorded.
+   */
+  private loopDod(card: Card, worktree: string | undefined, probe: { sha: string; clean: boolean } | undefined): LoopDod {
+    const command = card.dod_command;
+    if (!worktree) return { ran: false, command, reason: 'no-worktree' };
+    if (pathKind(worktree) !== 'directory') return { ran: false, command, reason: 'no-directory' };
+    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs);
+    const receipt = this.runner(cmd, args, { ...options, killTree: true });
+    const output = Buffer.from(receipt.stdout + receipt.stderr, 'utf8');
+    return {
+      ran: true,
+      command,
+      worktree,
+      ...(probe ? { commit: probe.sha, clean: probe.clean } : {}),
+      exitCode: receipt.timedOut ? null : receipt.exitCode,
+      timedOut: receipt.timedOut,
+      expectedExit: card.dod_exit,
+      timeoutMs: this.dodTimeoutMs,
+      durationMs: receipt.durationMs,
+      outputSha256: createHash('sha256').update(receipt.stdout, 'utf8').update('\u0000').update(receipt.stderr, 'utf8').digest('hex'),
+      outputTail: output.subarray(Math.max(0, output.length - LOOP_DOD_TAIL_BYTES)).toString('utf8'),
+    };
   }
 
   /** The repository copy of the lessons file: read at PREPARE, appended at CLOSE. */
@@ -1127,15 +1162,19 @@ export class CardRunner {
       episode = startAttempt(episode, action.effort, now);
       owed.push(this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, implicit: true, startedAt: now }));
     }
+    const finishedN = episode.attempts.find((a) => a.outcome === 'running')?.n;
     episode = finishAttempt(episode, { finishedAt: now, outcome: input.outcome, cause: input.cause, notCountedReason: input.notCountedReason, progress: input.progress, evidence: input.evidence, checksGained: input.checksGained, checksLost: input.checksLost });
     owed.push(this.owe(goal, 'ATTEMPT_FINISHED', { outcome: input.outcome, cause: input.cause, progress: input.progress, evidence: input.evidence }));
     let candidate = run.candidate;
     if (input.outcome === 'success') {
+      // What the probe of this call read, for the DoD record; a probe that threw, or none, leaves it unset.
+      let probed: { sha: string; clean: boolean } | undefined;
       if (this.config.shipPath !== 'dry-run' && run.worktree && existsSync(run.worktree)) {
         let entries: string[] = [];
         try {
           const c = this.git.candidate(run.worktree);
           candidate = { sha: c.sha, dirty: c.dirty, untracked: c.untracked, digest: c.digest };
+          probed = { sha: c.sha, clean: !c.dirty };
           entries = c.entries;
         } catch {
           /* keep prior */
@@ -1159,6 +1198,10 @@ export class CardRunner {
       if (candidate && (clearsMerge || repairsBaseSync)) candidate = { ...candidate, baseSync: true };
       // The DoD receipt is the session's own statement and has no default (card T0-DOD-RECEIPT-REQUIRED): after every refusal above, before the save.
       if (typeof input.dodReceipt !== 'string' || input.dodReceipt.trim() === '') throw new Error(`a successful attempt on card ${card.id} needs a DoD receipt: the attempt carries none or a blank one, and nothing was recorded; record it again with --dod-receipt "<command: exit code and counts>"`);
+      // Every refusal has passed: the loop runs the DoD once and records what it gave on the attempt; nothing reads the
+      // record, and it rides on the one save below (card T1-DOD-RECORD).
+      const loopDod = this.loopDod(card, run.worktree, probed);
+      episode = { ...episode, attempts: episode.attempts.map((a) => (a.n === finishedN ? { ...a, loopDod } : a)) };
     }
     // A failed check, or lost checks, leave no DoD evidence: neither the active receipt nor the one a block retained.
     const checksHold = input.outcome === 'not-counted' && !input.checksLost?.length;

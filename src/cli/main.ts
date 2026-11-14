@@ -57,7 +57,7 @@ import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../mainta
 import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
-import { Goal, OperationKind, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
+import { Goal, OperationKind, nowIso, type CardRun, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
 import { disputeKindOf, parseDisputeKind, parseRuling, parseVerdictDocument } from '../core/review-policy.ts';
 
 interface Ctx {
@@ -101,6 +101,16 @@ function sweepAfter(c: Ctx): void {
   } catch (err) {
     note(`worktree sweep did not finish: ${oneLine((err as Error).message)}`);
   }
+}
+
+/** The `card status` line of the DoD the loop ran on the last attempt that carries one (card T1-DOD-RECORD R7), else `loopDod=-`. */
+function loopDodLine(run: CardRun): string {
+  const attempt = run.effort?.attempts.findLast((a) => a.loopDod);
+  const d = attempt?.loopDod;
+  if (!attempt || !d) return 'loopDod=-';
+  if (!d.ran) return `loopDod=attempt ${attempt.n} not run: ${d.reason}`;
+  const verdict = !d.timedOut && d.exitCode === d.expectedExit ? 'matches' : 'DIFFERS';
+  return `loopDod=attempt ${attempt.n} exit=${d.exitCode ?? 'none'} dod_exit=${d.expectedExit} ${verdict} timedOut=${d.timedOut} commit=${d.commit ?? '-'} clean=${d.clean ?? '-'} durationMs=${d.durationMs} sha256=${d.outputSha256}`;
 }
 
 function out(c: { json: boolean }, data: unknown, human?: () => string): void {
@@ -743,7 +753,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         lease = { unreadable: code };
         leaseLine = `unreadable (${code})`;
       }
-      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline} ownerGeneration=${run.ownerGeneration ?? '-'}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
+      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline} ownerGeneration=${run.ownerGeneration ?? '-'}\nlease=${leaseLine}\n${loopDodLine(run)}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
     });
   card
     .command('takeover <cardId>')
