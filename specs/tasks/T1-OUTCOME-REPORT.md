@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-REPORT
 title: docs/reliability/baseline.md reports the numbers of bench/outcome/summary.json, labels.jsonl, labels-final.jsonl, adjudication.json and replay-main.json, each in a table row that names its source and is checked against it, with the measured gaps and no target, and CHANGELOG.md carries the one entry of goal reliability-baseline-2
-status: todo
+status: merged
 branch: T1-OUTCOME-REPORT
 worktree: D:\wt\AIDLC\T1-OUTCOME-REPORT
 plan_ref: plans/reliability-baseline-2.md#order-of-work
