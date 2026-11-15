@@ -1,7 +1,7 @@
 ---
 id: T0-REPRO-SAME-SHA
 title: aidlc review repro refuses a finding whose reviewed candidate is the card run's current candidate, so a repro run before the repair attempt is recorded no longer tests the reviewed commit twice and records reproduced false (issue 317)
-status: todo
+status: merged
 branch: T0-REPRO-SAME-SHA
 worktree: D:\wt\AIDLC\T0-REPRO-SAME-SHA
 allow_paths:
