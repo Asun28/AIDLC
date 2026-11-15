@@ -139,7 +139,7 @@ test('assembly refuses each case of R8 before any write', () => {
     const input: AssembleInput = { status: '', commit: C(7), run: undefined, trials: {}, cases, rows, hasCommit: () => true, readDoc: docs({ b: 'pass', [`${B}.1`]: 'no-verdict' }), selfCheck: () => {} };
     change({ run, trials, input });
     // Whole case results, as the bench writes them: the removable keys in `cases` and in every `trialResults` element.
-    const whole = (r: Report): string => { const results = r.trialResults.map((t) => ({ cases: t.cases.map((c) => ({ id: c.id, kind: 'bug', confirmed: true, runStatus: 'ran', cited: 'why', matched: ['m'], verdictRef: 'v', logRef: 'log', durationMs: 7, ...c })), totals: { hits: 1 } })); return JSON.stringify({ ...r, cases: results[0]?.cases ?? [], totals: { hits: 1 }, trialResults: results }); };
+    const whole = (r: Report): string => { const results = r.trialResults.map((t) => ({ cases: t.cases.map((c) => ({ kind: 'bug', confirmed: true, runStatus: 'ran', cited: 'why', matched: ['m'], verdictRef: 'v', logRef: 'log', durationMs: 7, ...c })), totals: { hits: 1 } })); return JSON.stringify({ ...r, cases: results[0]?.cases ?? [], totals: { hits: 1 }, trialResults: results }); };
     const texts = { run: input.run ?? whole(run), trials: { ...Object.fromEntries(Object.entries(trials).map(([k, r]) => [k, whole(r)])), ...input.trials } };
     const written: string[] = [];
     return { result: assembleReplay({ ...input, ...texts, run: input.run === 'missing' ? undefined : texts.run }, (t) => written.push(t)), written, texts };
