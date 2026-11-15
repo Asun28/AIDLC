@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F3",
+  "candidate": "72aa08e37694924c9ca41beeda37be05d1853ea0",
+  "base": "64a8081b85fdb2b0e2d52d5efe6dbbd654aa2627",
+  "card": {
+    "id": "T0-FM-COMMENT-CUT",
+    "path": "specs/tasks/T0-FM-COMMENT-CUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-FM-COMMENT-CUT F3 (goal g-20260927013916-530194)",
+  "note": "R3 decision 1, open, resolved: [standards] 17 root cause @ src/artifacts/frontmatter.ts:98: Bugs: referenceCuts requires whitespace after a colon, while scalar accepts none. `title:foo #97` parses as title `foo` with no finding, leaving a supported reader spelling silently truncated. -> Match the readers' key/value separator rules and add a regression test.",
+  "expected": [
+    {
+      "file": "src/artifacts/frontmatter.ts",
+      "line": 98,
+      "window": 5,
+      "class": "dim-17"
+    }
+  ]
+}

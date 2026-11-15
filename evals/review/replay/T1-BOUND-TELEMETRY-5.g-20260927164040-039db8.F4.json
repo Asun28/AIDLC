@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+  "candidate": "25e3559518a5658be10faa288e661524d967bb29",
+  "base": "e7e5b48a0c9b12443bdfa6a458565b2c901c47c7",
+  "card": {
+    "id": "T1-BOUND-TELEMETRY-5",
+    "path": "specs/tasks/T1-BOUND-TELEMETRY-5.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-BOUND-TELEMETRY-5 F4 (goal g-20260927164040-039db8)",
+  "note": "R3 decision 1, open: [standards] 2 hard boundaries @ src/loop/card-runner.ts:2674: Compliance: ship review completion persists the second blocking decision and REVIEW_DECIDED without its STOP or pendingFiring. If the subsequent queue settlement fails, retry attempts to replay that note before deriving the stop; a refused journal leaves the card in SHIP with two blocks. This violates the forbidden journal-dependent bound stop -> atomically persist the decision, resulting stop, firing and complete note batch before queue settlement or journal replay.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2674,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}

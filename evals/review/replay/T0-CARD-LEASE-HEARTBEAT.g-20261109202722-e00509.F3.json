@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F3",
+  "candidate": "a1b3a05489c2e2837043b525042614a94c23471f",
+  "base": "08c052031019dc63e96bedf6bc0e078cd68bfe17",
+  "card": {
+    "id": "T0-CARD-LEASE-HEARTBEAT",
+    "path": "specs/tasks/T0-CARD-LEASE-HEARTBEAT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-CARD-LEASE-HEARTBEAT F3 (goal g-20261109202722-e00509)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: non-atomic-heartbeat-throttle) @ src/hooks/index.ts:578: [Compliance] The marker check and update are not atomic. Concurrent hooks from subagents sharing their parent's session can both observe an absent or old marker and scan within the same 60-second interval, violating amended R3. An interleaving reproduced two scans at the same fixed time. -> Use a nonblocking atomic per-session scan reservation, preserving the no-leases-directory behavior, and test overlapping hooks.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 578,
+      "window": 5,
+      "class": "non-atomic-heartbeat-throttle"
+    }
+  ]
+}

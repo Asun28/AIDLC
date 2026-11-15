@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-SHIP-FAILURE-UNSETTLED.g-20260926091323-f7022a.F2",
+  "candidate": "7e1262976b15719a03dc97a87084b23785f9c77e",
+  "base": "7872cb896111f707567404daae5d37286a00ddf8",
+  "card": {
+    "id": "T0-SHIP-FAILURE-UNSETTLED",
+    "path": "specs/tasks/T0-SHIP-FAILURE-UNSETTLED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-SHIP-FAILURE-UNSETTLED F2 (goal g-20260926091323-f7022a)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 Tests missing / Compliance @ tests/core/effort.test.ts:438: The escalationUsed assertion compares against the input after the call, allowing shared-object mutation to pass. Resetting episode.escalationUsed to false inside the guard passes all 33 tests, violating acceptance 1. -> Clone the elevated running episode before calling afterShipFailure and compare both input and returned episode against that snapshot.",
+  "expected": [
+    {
+      "file": "tests/core/effort.test.ts",
+      "line": 438,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

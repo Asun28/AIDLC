@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F1",
+  "candidate": "87ac4ae0c24a877178cf840ad03a465830c0495a",
+  "base": "338ae27d26b3c5dd270bd71aab860701890515ab",
+  "card": {
+    "id": "T0-CARD-TERMINAL-GOAL",
+    "path": "specs/tasks/T0-CARD-TERMINAL-GOAL.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CARD-TERMINAL-GOAL F1 (goal g-20261109102435-0217aa)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: run-read-before-terminal-guard) @ src/cli/main.ts:490: [Compliance] For an explicit stopped goal retaining a removed card's run, cardGoalId invokes holdsRun, which loads that run through getCardRun before terminalGoalRefusal executes. This violates R1's refusal before any card-run read. -> Use an existence-only lookup for work-command resolution while preserving resolveCardGoal's selection rules; test a stopped goal retaining an unprojected run.",
+  "expected": [
+    {
+      "file": "src/cli/main.ts",
+      "line": 490,
+      "window": 5,
+      "class": "run-read-before-terminal-guard"
+    }
+  ]
+}

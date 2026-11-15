@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F12",
+  "candidate": "42b211cc57ef504a948cd6e020228d69d46cd984",
+  "base": "f96855926254f0b5a7eb5c5cafd2a4e631a3dda3",
+  "card": {
+    "id": "T1-OUTCOME-GITHUB",
+    "path": "specs/tasks/T1-OUTCOME-GITHUB.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T1-OUTCOME-GITHUB F12 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 4, open: [standards] 15 API-version correctness (class: api-history-truncation) @ bench/outcome/github.ts:90: Bugs/Compliance: For a commit with over 1,000 check suites, this endpoint silently excludes older suites even with pagination and filter=all. checks.jsonl therefore omits available check runs, violating R2 and potentially losing first-attempt failures. [GitHub documents this limit](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference). -> Paginate check suites and each suite's check runs with filter=all; add coverage proving older suites remain included.",
+  "expected": [
+    {
+      "file": "bench/outcome/github.ts",
+      "line": 90,
+      "window": 5,
+      "class": "api-history-truncation"
+    }
+  ]
+}

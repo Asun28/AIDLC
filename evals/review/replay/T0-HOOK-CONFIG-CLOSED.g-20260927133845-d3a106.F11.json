@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F11",
+  "candidate": "ab549ffe20304e2465eb4974eaf24bb870a3dc72",
+  "base": "4bf8767456674a92349041ab66cad0a0d25b1c73",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-CLOSED F11 (goal g-20260927133845-d3a106)",
+  "note": "R3 decision 2, open: [spec] 14 scope fidelity @ src/hooks/index.ts:176: Bugs/Compliance: SUBSTITUTION denies `grep -F '$(' src`, although the single-quoted text performs no substitution and the command only reads. This blocks a promised diagnostic repair. -> Detect executable substitutions with shell quoting awareness and test literal substitution syntax.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 176,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

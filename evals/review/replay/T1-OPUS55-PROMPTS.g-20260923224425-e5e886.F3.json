@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OPUS55-PROMPTS.g-20260923224425-e5e886.F3",
+  "candidate": "6ecccdfb2fb2d78e8639d20b47d4040bb5531b7f",
+  "base": "76f5f560a7aa58e4587123ac3324bf02a007482c",
+  "card": {
+    "id": "T1-OPUS55-PROMPTS",
+    "path": "specs/tasks/T1-OPUS55-PROMPTS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-OPUS55-PROMPTS F3 (goal g-20260923224425-e5e886)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing or fake @ tests/surface/prose.test.ts:87: acceptance 5 covers every review prompt file, but PROMPT_FILES scans only .claude/agents, .claude/skills and templates/claude, and reviewPromptTexts (:93) builds prompts with reviewPolicy 'policy'; REVIEW.md and templates/REVIEW.md, the policy text pasted into every R2 and R3 prompt and part of the card's own sweep grep, are never checked -> add REVIEW.md and templates/REVIEW.md to the scanned files, or build reviewPromptTexts from the real REVIEW.md text",
+  "expected": [
+    {
+      "file": "tests/surface/prose.test.ts",
+      "line": 87,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

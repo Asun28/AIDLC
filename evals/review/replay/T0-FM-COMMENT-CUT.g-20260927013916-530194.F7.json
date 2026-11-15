@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F7",
+  "candidate": "ed90921846e3a6b13058cc1386064dda96b79d81",
+  "base": "f38c8ff01306a9eb0ee966c7eefb1c6362bc49fb",
+  "card": {
+    "id": "T0-FM-COMMENT-CUT",
+    "path": "specs/tasks/T0-FM-COMMENT-CUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-FM-COMMENT-CUT F7 (goal g-20260927013916-530194)",
+  "note": "R3 decision 2, open: [standards] 17 root cause @ src/artifacts/frontmatter.ts:159: Bugs: recognizing a block header suppresses reporting its own cut comment: `sweep: | #97` is shortened to `|` without a finding. Only the body is exempt under R2, so the repair silently exempts additional reference cuts. -> Report qualifying header comments independently of setting blockIndent, and correct the test that expects headers ending in `#3` to remain unreported.",
+  "expected": [
+    {
+      "file": "src/artifacts/frontmatter.ts",
+      "line": 159,
+      "window": 5,
+      "class": "dim-17"
+    }
+  ]
+}

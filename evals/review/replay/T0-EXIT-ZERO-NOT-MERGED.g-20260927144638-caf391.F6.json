@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F6",
+  "candidate": "3bbc4308fda70a8dd3f02a28b88370525f976d74",
+  "base": "e8ec9e6c687233182abdbee7ad640c5e82c200ff",
+  "card": {
+    "id": "T0-EXIT-ZERO-NOT-MERGED",
+    "path": "specs/tasks/T0-EXIT-ZERO-NOT-MERGED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-EXIT-ZERO-NOT-MERGED F6 (goal g-20260927144638-caf391)",
+  "note": "R3 decision 3, open: [standards] 9 Error handling (Bugs) @ src/loop/card-runner.ts:2368: A missing candidate SHA turns an answered MERGED PR into a permanent STOP/tool and marks its operation failed. This is reachable: recordAttempt can retain no candidate, and shipping gates require receipts but not a SHA. An in-memory reproduction confirmed the false failure. Without a candidate, a head mismatch is unproven. -> For MERGED with no candidate SHA, preserve UNKNOWN and WAIT on merge-verify; add a regression test. Keep OPEN/CLOSED and proven head mismatches as failures.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2368,
+      "window": 5,
+      "class": "dim-9"
+    }
+  ]
+}

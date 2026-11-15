@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-BOARD-WATCH-2.g-20261109210509-be7b14.F1",
+  "candidate": "4293611967b63e062208098644985cfbbc4963b0",
+  "base": "0d82396b98db2799d182cbc1f41b192254ebfe79",
+  "card": {
+    "id": "T1-BOARD-WATCH-2",
+    "path": "specs/tasks/T1-BOARD-WATCH-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-BOARD-WATCH-2 F1 (goal g-20261109210509-be7b14)",
+  "note": "R3 decision 2, open, resolved: [spec] 6 tests missing (class: missing-hostile-title-test) @ tests/infra/board.test.ts:168: Compliance: acceptance 2 requires a title containing the listed control characters to be tested. This comment and ID-only registry stub never supply a title; the CLI fixture also uses an ordinary title. The required hostile-title behavior is therefore untested. -> Add a hostile-title card fixture exercised through the registry-to-watch path and assert that its title and control characters never reach the screen.",
+  "expected": [
+    {
+      "file": "tests/infra/board.test.ts",
+      "line": 168,
+      "window": 5,
+      "class": "missing-hostile-title-test"
+    }
+  ]
+}

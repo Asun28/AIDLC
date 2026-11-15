@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-REVIEW-ADMIT-FOREIGN.g-20261023175939-6222d2.F2",
+  "candidate": "3f037cc11f8fa726f89e399769923937121553ba",
+  "base": "e8cd3c2e381539d75e0da948871a83ec0d16c7d2",
+  "card": {
+    "id": "T0-REVIEW-ADMIT-FOREIGN",
+    "path": "specs/tasks/T0-REVIEW-ADMIT-FOREIGN.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-REVIEW-ADMIT-FOREIGN F2 (goal g-20261023175939-6222d2)",
+  "note": "R3 decision 2, open, resolved: [standards] 2 hard boundaries (class: dropped-expiry-on-empty) @ src/coordination/review-queue.ts:150: Bugs/Compliance: the repair defers deadline cancellations but drops them on `empty`, violating the forbid on changing deadline cancellation. Confirmed in memory: with two free slots, eligible Y followed by expired Z, admit(..., keyZ) returns empty and leaves Z queued; the previous candidate cancelled Z. -> Flush deferred cancellations before returning empty, continue discarding them on behind, and add regression tests for expired and not-yet-due caller requests.",
+  "expected": [
+    {
+      "file": "src/coordination/review-queue.ts",
+      "line": 150,
+      "window": 5,
+      "class": "dropped-expiry-on-empty"
+    }
+  ]
+}

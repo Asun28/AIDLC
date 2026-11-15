@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F17",
+  "candidate": "337fd798dc47e69183678a7cbee1d65d95cc2d7c",
+  "base": "c8596bd428adc1bf7ca0fd24fe7c4a09d6759534",
+  "card": {
+    "id": "T0-R2-FALLBACK",
+    "path": "specs/tasks/T0-R2-FALLBACK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-R2-FALLBACK F17 (goal g-20260926223417-fc5458)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries @ src/loop/card-runner.ts:2053: Compliance: unconditional effort expansion changes commands and records without a fallback, violating forbid -> retain original behavior when preReview.fallback is absent.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2053,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}

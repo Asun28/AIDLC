@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-R2-FALLBACK-2.g-20260926232206-9774a5.F1",
+  "candidate": "a58592346272f43a88f69870ff92b486f2320775",
+  "base": "108c27ffb605e453b923069fb5a6c4a9e14949a5",
+  "card": {
+    "id": "T0-R2-FALLBACK-2",
+    "path": "specs/tasks/T0-R2-FALLBACK-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-R2-FALLBACK-2 F1 (goal g-20260926232206-9774a5)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing @ tests/scenarios/r2-fallback.test.ts:346: Compliance: acceptance 5 requires field-for-field equality of the post-hold directive, but preReviewDirective discards cardId and maxRounds; the assertions also permit unexpected fields. A changed routing target or round budget would pass this compatibility test. -> Return the complete directive and deepEqual it against the complete pre-fallback expected record, including cardId and maxRounds.",
+  "expected": [
+    {
+      "file": "tests/scenarios/r2-fallback.test.ts",
+      "line": 346,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

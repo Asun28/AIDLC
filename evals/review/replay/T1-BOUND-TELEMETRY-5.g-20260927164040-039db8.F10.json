@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F10",
+  "candidate": "25e3559518a5658be10faa288e661524d967bb29",
+  "base": "e7e5b48a0c9b12443bdfa6a458565b2c901c47c7",
+  "card": {
+    "id": "T1-BOUND-TELEMETRY-5",
+    "path": "specs/tasks/T1-BOUND-TELEMETRY-5.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-BOUND-TELEMETRY-5 F10 (goal g-20260927164040-039db8)",
+  "note": "R3 decision 1, open: [standards] 12 observability @ src/review/stats.ts:260: Bugs: one find combines exact reservation identity and legacy positional identity, so an earlier legacy artifact wins even when the correct reservation-specific artifact exists. A mixed-history probe reports 75000 ms instead of 130000 ms -> look up the exact reservation identity first, use the legacy identity only as fallback, and add a mixed-format regression.",
+  "expected": [
+    {
+      "file": "src/review/stats.ts",
+      "line": 260,
+      "window": 5,
+      "class": "dim-12"
+    }
+  ]
+}

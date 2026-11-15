@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-AUDIT-FACTS.g-20260927085317-93da2d.F5",
+  "candidate": "cd7285123b66d60041d8b81cbbe52dd08df381ca",
+  "base": "f7cfc52331e35645d00d6fd766f2a159dae515ec",
+  "card": {
+    "id": "T1-AUDIT-FACTS",
+    "path": "specs/tasks/T1-AUDIT-FACTS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-AUDIT-FACTS F5 (goal g-20260927085317-93da2d)",
+  "note": "R3 decision 2, open: [standards] 13 data and persistence design (Bugs) @ src/loop/card-runner.ts:628: runningOp is the first issued/running operation for the card, without checking its kind or identity. A mergeVerified card with an unrelated running operation therefore marks that operation succeeded using the old PR's facts and enters CLOSE. An in-memory reproduction settled a deploy this way. -> Recover only the exact merge operation awaiting facts, matched by kind and candidate identity; leave unrelated operations unresolved and test this case.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 628,
+      "window": 5,
+      "class": "dim-13"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F10",
+  "candidate": "d1a2fa7882892bd543f48a6a07a2b623599abba6",
+  "base": "5f24887b680f30250efc8311c7b311a67107302f",
+  "card": {
+    "id": "T1-OUTCOME-USAGE",
+    "path": "specs/tasks/T1-OUTCOME-USAGE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T1-OUTCOME-USAGE F10 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 1, open, resolved: [standards] 9 error handling (class: uncaught-metadata-stat) @ bench/outcome/usage.ts:83: [Bugs] Metadata stat errors escape the reader and prevent other sources and error tables from returning. -> Catch the failure, record the metadata path, and continue with null metadata.",
+  "expected": [
+    {
+      "file": "bench/outcome/usage.ts",
+      "line": 83,
+      "window": 5,
+      "class": "uncaught-metadata-stat"
+    }
+  ]
+}

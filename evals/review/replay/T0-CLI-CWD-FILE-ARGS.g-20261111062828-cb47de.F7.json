@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CLI-CWD-FILE-ARGS.g-20261111062828-cb47de.F7",
+  "candidate": "0d400f85959779264335060a0fb612fcd196c750",
+  "base": "64b6a9701615848f2566d5cac814873f22a30035",
+  "card": {
+    "id": "T0-CLI-CWD-FILE-ARGS",
+    "path": "specs/tasks/T0-CLI-CWD-FILE-ARGS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CLI-CWD-FILE-ARGS F7 (goal g-20261111062828-cb47de)",
+  "note": "R3 decision 3, open, resolved: [spec] 14 scope fidelity (class: resolved-cwd-discarded) @ src/cli/main.ts:242: Bugs/Compliance: R1 requires commands to use the resolved -C directory, but r.path is discarded after validation and g().cwd remains raw. On POSIX, from a checkout, -C missing/../src passes validation when src exists, but repository discovery spawns git with the unresolved cwd and fails ENOENT. It then treats src as a non-repository root, so goal new can persist state under src/.aidlc instead of the checkout's state directory. -> Preserve the explicit value for diagnostics, store the validated absolute directory separately, and use it for every command context and direct cwd consumer; add a POSIX regression asserting repository and state selection for this input.",
+  "expected": [
+    {
+      "file": "src/cli/main.ts",
+      "line": 242,
+      "window": 5,
+      "class": "resolved-cwd-discarded"
+    }
+  ]
+}

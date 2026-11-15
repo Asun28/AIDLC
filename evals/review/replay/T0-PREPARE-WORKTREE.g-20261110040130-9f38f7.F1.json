@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+  "candidate": "123855d6da041675e3c1e4697a0e8f05c542bec0",
+  "base": "38e97ec7fbcffe25ac8ad436f4533248a0d6c2b2",
+  "card": {
+    "id": "T0-PREPARE-WORKTREE",
+    "path": "specs/tasks/T0-PREPARE-WORKTREE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-PREPARE-WORKTREE F1 (goal g-20261110040130-9f38f7)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: worktree-file-counts-as-prepared) @ src/loop/card-runner.ts:662: [Bugs][Compliance] R2 requires an existing directory, but existsSync also accepts regular files. An existing run whose recorded worktree path is occupied by a file passes prepared and selects BUILD despite having no usable worktree directory; confirmed against CardRunner.assess. -> Require statSync(path).isDirectory(), handle missing paths as unprepared, preserve the dry-run bypass, and add a regression test for a file at the recorded path.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 662,
+      "window": 5,
+      "class": "worktree-file-counts-as-prepared"
+    }
+  ]
+}

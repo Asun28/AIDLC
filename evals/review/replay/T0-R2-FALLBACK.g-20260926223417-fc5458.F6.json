@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F6",
+  "candidate": "337fd798dc47e69183678a7cbee1d65d95cc2d7c",
+  "base": "c8596bd428adc1bf7ca0fd24fe7c4a09d6759534",
+  "card": {
+    "id": "T0-R2-FALLBACK",
+    "path": "specs/tasks/T0-R2-FALLBACK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-R2-FALLBACK F6 (goal g-20260926223417-fc5458)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing @ tests/scenarios/r2-fallback.test.ts:98: Compliance: the high case checks only the event reviewer and evidence-note prefix, missing both required effort assertions; its ship check also accepts STOP or BUILD. These assertions allow actual metadata omissions to pass -> use a shared outcome helper that checks reviewer and effort in round, event and evidence, plus the explicit successful ship directive.",
+  "expected": [
+    {
+      "file": "tests/scenarios/r2-fallback.test.ts",
+      "line": 98,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

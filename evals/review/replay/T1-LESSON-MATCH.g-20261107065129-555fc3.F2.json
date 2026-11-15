@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-LESSON-MATCH.g-20261107065129-555fc3.F2",
+  "candidate": "424bad753c701148747c54fd3fb8f5d1d8a9361b",
+  "base": "499adac01f25f4beff41da59dfd488333743dce8",
+  "card": {
+    "id": "T1-LESSON-MATCH",
+    "path": "specs/tasks/T1-LESSON-MATCH.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T1-LESSON-MATCH F2 (goal g-20261107065129-555fc3)",
+  "note": "R3 decision 1, open, resolved: [standards] 9 error handling (class: quoted-git-path-parsing) @ src/probes/git.ts:232: Bugs/Compliance: core.quotePath=false still leaves Git quoting filenames containing tabs, quotes or backslashes. The parser retains those quotes and escapes, so history paths cannot match the candidate's NUL-decoded paths; quoted docs paths also bypass NO_CODE_PATH, violating R4. -> Read filenames with NUL delimiters and unambiguous commit framing, then filter decoded paths; test quoted filenames and excluded directories.",
+  "expected": [
+    {
+      "file": "src/probes/git.ts",
+      "line": 232,
+      "window": 5,
+      "class": "quoted-git-path-parsing"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F6",
+  "candidate": "d1a2fa7882892bd543f48a6a07a2b623599abba6",
+  "base": "5f24887b680f30250efc8311c7b311a67107302f",
+  "card": {
+    "id": "T1-OUTCOME-USAGE",
+    "path": "specs/tasks/T1-OUTCOME-USAGE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T1-OUTCOME-USAGE F6 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: attribution-field-passthrough) @ bench/outcome/usage.ts:185: [Security] The non-review branch also returns arbitrary input fields through the row spread; a Claude row containing text retains it after attribution. This independently violates R5's output-field restriction. -> Apply the same permitted-field projection to this return path and test it.",
+  "expected": [
+    {
+      "file": "bench/outcome/usage.ts",
+      "line": 185,
+      "window": 5,
+      "class": "attribution-field-passthrough"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F9",
+  "candidate": "6dc214810d1d5f573f7226bd41dc2e4d6789fb66",
+  "base": "9e40449bab15d072aaa73241a60a5c44c29219ee",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED-2",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-CLOSED-2 F9 (goal g-20260927143009-4be68e)",
+  "note": "R3 decision 2, open: [spec] 6 tests missing @ tests/surface/hooks.test.ts:543: [Compliance] Revised acceptance 1 requires real-filesystem failure cases and their denials where supported. This block tests only loader results for dangling links and inaccessible directories, omits their Bash/Edit denial assertions, and never constructs a real link loop. -> Add exact Bash/Edit denial assertions to both real cases and a platform-supported real ELOOP case with the same assertions.",
+  "expected": [
+    {
+      "file": "tests/surface/hooks.test.ts",
+      "line": 543,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F1",
+  "candidate": "f3463b496446dcab4c67cfabab2c4942cad58155",
+  "base": "99fbde2d3b283f7ba3c6047e6cd027fed9d25876",
+  "card": {
+    "id": "T0-TEST-TEMP-SWEEP",
+    "path": "specs/tasks/T0-TEST-TEMP-SWEEP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-TEST-TEMP-SWEEP F1 (goal g-20261112034634-24880e)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: fs-expression-wrapper-missed) @ tests/surface/test-temp.test.ts:47: Bugs: isFsObject unwraps parentheses but not non-null assertions or type assertions. Verified that `import fs from 'node:fs'; fs!.mkdtempSync('x')` and `(fs as typeof fs).mkdtempSync('x')` produce no report, allowing unregistered directories through the gate despite R2 covering namespace property calls. -> Unwrap these TypeScript expressions during namespace resolution and add regression rows.",
+  "expected": [
+    {
+      "file": "tests/surface/test-temp.test.ts",
+      "line": 47,
+      "window": 5,
+      "class": "fs-expression-wrapper-missed"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+  "candidate": "d1a2fa7882892bd543f48a6a07a2b623599abba6",
+  "base": "5f24887b680f30250efc8311c7b311a67107302f",
+  "card": {
+    "id": "T1-OUTCOME-USAGE",
+    "path": "specs/tasks/T1-OUTCOME-USAGE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-OUTCOME-USAGE F8 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: merges-requestless-lines) @ bench/outcome/usage.ts:99: [Compliance] Lines sharing message.id without requestId collapse into one row despite the explicit non-goal. -> Preserve each requestless line separately and add a regression test.",
+  "expected": [
+    {
+      "file": "bench/outcome/usage.ts",
+      "line": 99,
+      "window": 5,
+      "class": "merges-requestless-lines"
+    }
+  ]
+}

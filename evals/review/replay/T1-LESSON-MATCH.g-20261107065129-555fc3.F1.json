@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-LESSON-MATCH.g-20261107065129-555fc3.F1",
+  "candidate": "424bad753c701148747c54fd3fb8f5d1d8a9361b",
+  "base": "499adac01f25f4beff41da59dfd488333743dce8",
+  "card": {
+    "id": "T1-LESSON-MATCH",
+    "path": "specs/tasks/T1-LESSON-MATCH.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-LESSON-MATCH F1 (goal g-20261107065129-555fc3)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: lesson-term-underrecognition) @ src/artifacts/lessons.ts:193: Bugs/Compliance: R3 requires words containing underscores or inner capitals, but lessonTerms('foo__bar __dirname parse2JSON') returns []. Rules naming these identifiers lose their required matching score and can fall outside the cap. -> Recognize underscores and capitals after the first character independently of adjacent lowercase letters; add extraction and ranking regressions.",
+  "expected": [
+    {
+      "file": "src/artifacts/lessons.ts",
+      "line": 193,
+      "window": 5,
+      "class": "lesson-term-underrecognition"
+    }
+  ]
+}

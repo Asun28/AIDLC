@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F8",
+  "candidate": "7c585f6eec280f76c7544d6c5bec5345b11212f7",
+  "base": "ba808af269c87b5be06149fb68b94d4d7cebb728",
+  "card": {
+    "id": "T1-EFF-R3-PROGRESS",
+    "path": "specs/tasks/T1-EFF-R3-PROGRESS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T1-EFF-R3-PROGRESS F8 (goal g-20261019092137-6fcee2)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries @ src/loop/card-runner.ts:1911: [Bugs] Concurrent completions shift the repeat window and can permit an unresolved re-raise. -> Preserve dispatch-time repeat eligibility through completion and recovery; count completions separately for the cap.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 1911,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F1",
+  "candidate": "7c585f6eec280f76c7544d6c5bec5345b11212f7",
+  "base": "ba808af269c87b5be06149fb68b94d4d7cebb728",
+  "card": {
+    "id": "T1-EFF-R3-PROGRESS",
+    "path": "specs/tasks/T1-EFF-R3-PROGRESS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-EFF-R3-PROGRESS F1 (goal g-20261019092137-6fcee2)",
+  "note": "R3 decision 1, open: [standards] 2 hard boundaries @ src/loop/card-runner.ts:523: [Bugs] A superseded decision loses its mandatory stop: decision 2 re-raising F1 after the author records another candidate commits only history, leaving SHIP with two decisions and allowance 4. Verified in memory. The removed two-block predicate previously prevented continuation; base-sync blocks can also escape through this path. -> Preserve the stopping outcome for subsequent admission and enforce it without overwriting the newer candidate's receipts; add superseded-repeat and base-sync regression tests.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 523,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F5",
+  "candidate": "48ddc8331c8ee1a6e83f259fda2f82f483ad0ce9",
+  "base": "9e40449bab15d072aaa73241a60a5c44c29219ee",
+  "card": {
+    "id": "T0-EXIT-ZERO-NOT-MERGED",
+    "path": "specs/tasks/T0-EXIT-ZERO-NOT-MERGED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-EXIT-ZERO-NOT-MERGED F5 (goal g-20260927144638-caf391)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 data integrity @ src/loop/card-runner.ts:2373: [Bugs] When gh verifies the candidate despite a stale token, headRefOid still prefers token.tip. Reproduced CLOSE/succeeded with the stale head persisted as MERGED, contradicting the verified candidate. -> For merge-unconfirmed, persist the candidate head that passed verification; extend the stale-token scenario to assert the stored PR head.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2373,
+      "window": 5,
+      "class": "dim-13"
+    }
+  ]
+}

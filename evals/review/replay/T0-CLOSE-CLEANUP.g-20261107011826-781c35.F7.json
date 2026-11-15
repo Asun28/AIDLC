@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F7",
+  "candidate": "7a79e17cd206ae6d88b347eae18d64d215b1b8da",
+  "base": "5200e140d2822773895a351a2bae78f1a8381152",
+  "card": {
+    "id": "T0-CLOSE-CLEANUP",
+    "path": "specs/tasks/T0-CLOSE-CLEANUP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-CLOSE-CLEANUP F7 (goal g-20261107011826-781c35)",
+  "note": "R3 decision 3, open, resolved: [spec] 14 scope fidelity (class: failed-closure-keeps-true) @ src/loop/card-runner.ts:2984: [Bugs][Compliance] Deleting the requested flag preserves an earlier true value when current.closure is spread at line 2991. A repeated markClosure whose metadata step now fails, including a missing main-checkout card file, therefore persists metadata:true despite the failure, allowing subsequent closure to reach DONE. This violates R2's false-on-failure requirement. -> Set recorded[step] to false on failure and test failure after an earlier successful step.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2984,
+      "window": 5,
+      "class": "failed-closure-keeps-true"
+    }
+  ]
+}

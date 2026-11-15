@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F8",
+  "candidate": "ed90921846e3a6b13058cc1386064dda96b79d81",
+  "base": "f38c8ff01306a9eb0ee966c7eefb1c6362bc49fb",
+  "card": {
+    "id": "T0-FM-COMMENT-CUT",
+    "path": "specs/tasks/T0-FM-COMMENT-CUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-FM-COMMENT-CUT F8 (goal g-20260927013916-530194)",
+  "note": "R3 decision 2, open: [standards] 17 root cause @ src/artifacts/frontmatter.ts:74: Bugs: every colon resets scalarStart, including a colon within a plain flow item. For valid YAML `non_goals: [a:\"b, c\", d]`, YAML reads three items but flowItems returns two because the embedded quote incorrectly opens a quoted scalar. This changes parsed list contents. -> Distinguish mapping-separator colons from plain-scalar colons before opening quotes; add a regression asserting all three items.",
+  "expected": [
+    {
+      "file": "src/artifacts/frontmatter.ts",
+      "line": 74,
+      "window": 5,
+      "class": "dim-17"
+    }
+  ]
+}

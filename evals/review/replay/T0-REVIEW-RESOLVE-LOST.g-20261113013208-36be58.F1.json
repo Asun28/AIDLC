@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-REVIEW-RESOLVE-LOST.g-20261113013208-36be58.F1",
+  "candidate": "de9a26fc0b34c8e019576d4756e5ae34a4b3100d",
+  "base": "3548e757c5ee20168bd0d2ac57b61646c2293db4",
+  "card": {
+    "id": "T0-REVIEW-RESOLVE-LOST",
+    "path": "specs/tasks/T0-REVIEW-RESOLVE-LOST.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-REVIEW-RESOLVE-LOST F1 (goal g-20261113013208-36be58)",
+  "note": "R3 decision 2, open, resolved: [spec] 1 out of scope (class: unregistered-contract-amendment) @ specs/tasks/T0-REVIEW-RESOLVE-LOST.md:21: [Compliance] R4 changes joining from normalized component equality to shortKey equality and qualifies deadline cancellation, but the registered contract on main still requires the original rules. Branch-local rulings cannot amend that review contract. -> Amend R4 and its acceptance detail on main before the next formal decision, then synchronize the candidate.",
+  "expected": [
+    {
+      "file": "specs/tasks/T0-REVIEW-RESOLVE-LOST.md",
+      "line": 21,
+      "window": 5,
+      "class": "unregistered-contract-amendment"
+    }
+  ]
+}

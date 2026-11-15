@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F9",
+  "candidate": "c2f635d6683f518128c3d35ec7907fd139a2f499",
+  "base": "4bfa0e44fa20fb02c9c4b90665840479b38e1b21",
+  "card": {
+    "id": "T1-OUTCOME-GITHUB",
+    "path": "specs/tasks/T1-OUTCOME-GITHUB.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-OUTCOME-GITHUB F9 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 2, open, resolved: [spec] 14 scope fidelity (class: null-first-attempt-omitted) @ bench/outcome/views/30-github.sql:27: Bugs/Compliance: An initial cancelled check with null startedAt followed by a successful attempt is excluded from first_run because MIN ignores null. summary_ci consequently reports no first-attempt failure, violating R8. -> Determine first attempts using runAttempt where available and explicitly handle unstarted initial checks; test cancellation followed by success.",
+  "expected": [
+    {
+      "file": "bench/outcome/views/30-github.sql",
+      "line": 27,
+      "window": 5,
+      "class": "null-first-attempt-omitted"
+    }
+  ]
+}

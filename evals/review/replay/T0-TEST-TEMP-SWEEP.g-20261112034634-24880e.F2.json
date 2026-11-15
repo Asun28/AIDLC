@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F2",
+  "candidate": "f3463b496446dcab4c67cfabab2c4942cad58155",
+  "base": "99fbde2d3b283f7ba3c6047e6cd027fed9d25876",
+  "card": {
+    "id": "T0-TEST-TEMP-SWEEP",
+    "path": "specs/tasks/T0-TEST-TEMP-SWEEP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-TEST-TEMP-SWEEP F2 (goal g-20261112034634-24880e)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: fs-default-binding-missed) @ tests/surface/test-temp.test.ts:62: Compliance: bindName ignores the module's default export. Verified that both `import { default as fs } from 'node:fs'; fs.mkdtempSync('x')` and `const { default: fs } = await import('node:fs'); fs.mkdtempSync('x')` pass undetected. These are named imports and initializer destructuring covered by R2, not the excluded later assignments or re-exports. -> Recognize default namespace bindings from these modules and add regression rows for both forms.",
+  "expected": [
+    {
+      "file": "tests/surface/test-temp.test.ts",
+      "line": 62,
+      "window": 5,
+      "class": "fs-default-binding-missed"
+    }
+  ]
+}

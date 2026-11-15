@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+  "candidate": "2a8b5ffe61412bfe8f2993053107621171ef5cfe",
+  "base": "dbbe27da77b2f41f99112152a562cce51241c677",
+  "card": {
+    "id": "T0-CI-RERUN-STRUCTURED",
+    "path": "specs/tasks/T0-CI-RERUN-STRUCTURED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CI-RERUN-STRUCTURED F3 (goal g-20260927181905-433c41)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (Bugs/Compliance) @ src/core/ci-policy.ts:191: Unparseable red pairs are considered only for security names and otherwise disappear from transient eligibility. '[CI-GATE-RED] build,linux=failure' beside a structured startup_failure classifies transient although the first red check has no evidence. -> Track unresolved red lines and prevent transient classification while any remain, preserving security/code-defect precedence; add this regression.",
+  "expected": [
+    {
+      "file": "src/core/ci-policy.ts",
+      "line": 191,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

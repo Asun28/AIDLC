@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F5",
+  "candidate": "39312c40dfeff084340d828d9b992f7efcab52c7",
+  "base": "4bf8767456674a92349041ab66cad0a0d25b1c73",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-CLOSED F5 (goal g-20260927133845-d3a106)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity @ src/hooks/index.ts:148: Bugs/Compliance: a legitimate invocation such as `node \"D:/repo with spaces/bin/aidlc.js\" doctor` is denied under broken config. The regex cannot recognize quoted script paths, blocking the diagnostic repair route for installations whose paths contain spaces. -> Recognize safely quoted literal doctor executable paths and add quoted-path acceptance tests.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 148,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

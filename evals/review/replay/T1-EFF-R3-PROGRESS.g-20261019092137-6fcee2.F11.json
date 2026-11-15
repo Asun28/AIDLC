@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F11",
+  "candidate": "787d272327a93ba2c2a6cf40916a19f3bd060c76",
+  "base": "55599cd2076788c69b20ea65d9d7f6eacf18a6a0",
+  "card": {
+    "id": "T1-EFF-R3-PROGRESS",
+    "path": "specs/tasks/T1-EFF-R3-PROGRESS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-EFF-R3-PROGRESS F11 (goal g-20261019092137-6fcee2)",
+  "note": "R3 decision 2, open: [spec] 14 scope fidelity @ src/core/card-machine.ts:108: [Compliance] Superseded repeat stops lose the finding IDs and contested/deadlocked detail required by R5. -> Carry the stopping decision's detail into assessment.",
+  "expected": [
+    {
+      "file": "src/core/card-machine.ts",
+      "line": 108,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F3",
+  "candidate": "950e5c3bb5b06fc257b11e582a4ebff1dd2c180c",
+  "base": "4a2514ee0801e158dfabfad1d88e3fd0096aa9e9",
+  "card": {
+    "id": "T1-REVIEW-BENCH-EXPORT-2",
+    "path": "specs/tasks/T1-REVIEW-BENCH-EXPORT-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-REVIEW-BENCH-EXPORT-2 F3 (goal g-20261106045034-cc1c92)",
+  "note": "R3 decision 1, open, resolved: [standards] 11 test organization and hygiene (class: test-probe-lazy-fetch) @ tests/surface/review-bench-export.test.ts:510: Bugs/Compliance: the missing-blob observer sets only GIT_NO_LAZY_FETCH. On Git that ignores it, held(noFetch) itself fetches the blob and fails acceptance 13 despite a correct export; the second export then cannot exercise a missing blob. -> Deny every protocol in the observer environment too, retaining the unrestricted final read as the fixture-liveness check.",
+  "expected": [
+    {
+      "file": "tests/surface/review-bench-export.test.ts",
+      "line": 510,
+      "window": 5,
+      "class": "test-probe-lazy-fetch"
+    }
+  ]
+}

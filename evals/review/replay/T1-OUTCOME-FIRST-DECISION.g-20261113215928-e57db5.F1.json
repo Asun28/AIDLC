@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-FIRST-DECISION.g-20261113215928-e57db5.F1",
+  "candidate": "d9bef605d7021158d1ee5f410530f5d00659109c",
+  "base": "5b9fa3fc4f851a8034bedca814e08b05c98030dc",
+  "card": {
+    "id": "T1-OUTCOME-FIRST-DECISION",
+    "path": "specs/tasks/T1-OUTCOME-FIRST-DECISION.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T1-OUTCOME-FIRST-DECISION F1 (goal g-20261113215928-e57db5)",
+  "note": "R3 decision 2, open, resolved: [spec] 6 tests missing (class: untested-decision-tiebreaks) @ bench/outcome/views/10-cards.sql:51: Compliance: R2's null-number placement, goalId tie-break and outcome tie-break lack behavioral coverage. Independently changing these to NULLS FIRST, goalId DESC or outcome DESC preserves every fixture result. T1-TIE distinguishes only numbered decisions. -> Add separate assertions with opposing outcomes tied on preceding keys, proving each ordering rule independently.",
+  "expected": [
+    {
+      "file": "bench/outcome/views/10-cards.sql",
+      "line": 51,
+      "window": 5,
+      "class": "untested-decision-tiebreaks"
+    }
+  ]
+}

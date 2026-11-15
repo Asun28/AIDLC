@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F4",
+  "candidate": "7c585f6eec280f76c7544d6c5bec5345b11212f7",
+  "base": "ba808af269c87b5be06149fb68b94d4d7cebb728",
+  "card": {
+    "id": "T1-EFF-R3-PROGRESS",
+    "path": "specs/tasks/T1-EFF-R3-PROGRESS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-EFF-R3-PROGRESS F4 (goal g-20261019092137-6fcee2)",
+  "note": "R3 decision 1, open: [spec] 14 scope fidelity @ .claude/skills/aidlc-loop/card-loop.md:79: [Compliance] The new instruction stops any block re-raising a disputed finding, including decision 1 re-raising an R2 dispute, which R1 explicitly sends to repair. The same incorrect condition appears at templates/claude/skills/aidlc-loop/card-loop.md:79, README.md:83 and docs/OPERATIONS.md:355. -> Qualify repeat-triggered stops as decision 2 onward and specify that the fourth decision stops only when it blocks; keep both skill copies identical.",
+  "expected": [
+    {
+      "file": ".claude/skills/aidlc-loop/card-loop.md",
+      "line": 79,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

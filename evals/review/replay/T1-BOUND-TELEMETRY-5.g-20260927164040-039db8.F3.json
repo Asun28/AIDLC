@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F3",
+  "candidate": "25e3559518a5658be10faa288e661524d967bb29",
+  "base": "e7e5b48a0c9b12443bdfa6a458565b2c901c47c7",
+  "card": {
+    "id": "T1-BOUND-TELEMETRY-5",
+    "path": "specs/tasks/T1-BOUND-TELEMETRY-5.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-BOUND-TELEMETRY-5 F3 (goal g-20260927164040-039db8)",
+  "note": "R3 decision 1, open: [spec] 6 tests missing @ tests/scenarios/t0-flow.test.ts:5702: Compliance: the locked R2/R3 admission regression injects only pendingEvents; it does not cover late goal STOP or resume/stale generation required by acceptances 50–51. The ship test at tests/scenarios/review-block.test.ts:618 likewise omits the late terminal case required by acceptance 49 -> add boundary-injected terminal and generation-change cases asserting zero external calls and no admitted reservation or operation.",
+  "expected": [
+    {
+      "file": "tests/scenarios/t0-flow.test.ts",
+      "line": 5702,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}
