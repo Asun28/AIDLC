@@ -71,7 +71,8 @@ function secondOf(iso: string | null | undefined): number | undefined {
  * `started_at` second to the end of its `completed_at` second (a line without a timestamp takes the time of the line
  * before it); the step starts at its own header, a `run` step's `##[group]Run ` line whose group holds the runner's
  * `shell: ` line, the (k+1)-th such header in its first second when that second holds one per step after step 1 that
- * started in it (k counting the earlier ones), or at the window start for step 1 (`Set up job`, which prints none); it ends
+ * started in it (k counting the earlier ones; for a step with a name of its own, card T0-CI-STEP-NAMED, when that
+ * second holds exactly k+1 run headers), or at the window start for step 1 (`Set up job`, which prints none); it ends
  * before the first `##[error]Process completed with exit code N.` line after its start, or, without one, at the window
  * end when the record has an end time and no later step started in that second; when a later step started in the end
  * second, the exit line must come before every `##[group]Run ` line of that second after the start. The lines lose the byte order mark, the timestamps and the colour codes, every other
@@ -112,7 +113,13 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
   const own = window.flatMap((l, i) => (l.time < start + 1000 && l.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}` ? [i] : []));
   const before = own[0] === undefined ? -1 : window.slice(0, own[0]).filter((l) => l.text.startsWith('##[group]Run ')).length;
   const earlier = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
-  const from = failed.number === 1 ? 0 : own.length === 1 && runHeader(own[0]!) && before === earlier ? own[0] : undefined;
+  const named = own.length === 1 && runHeader(own[0]!) && before === earlier ? own[0] : undefined;
+  // A step with a name of its own (T0-CI-STEP-NAMED) prints `##[group]Run <command>`: when the name rule does not place
+  // it, the start is the (k+1)-th run header of its first second, k = `earlier`, only when that second holds exactly k+1
+  // run headers (a `uses:` step's one counts) and that header's group holds the `shell: ` line.
+  const heads = window.flatMap((l, i) => (l.time < start + 1000 && l.text.startsWith('##[group]Run ') ? [i] : []));
+  const counted = heads.length === earlier + 1 && runHeader(heads[earlier]!) ? heads[earlier] : undefined;
+  const from = failed.number === 1 ? 0 : (named ?? counted);
   if (from === undefined) return undefined;
   const exit = window.findIndex((l, i) => i > from && /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
   const laterInEnd = steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);

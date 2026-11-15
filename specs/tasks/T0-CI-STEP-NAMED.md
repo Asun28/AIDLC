@@ -1,7 +1,7 @@
 ---
 id: T0-CI-STEP-NAMED
 title: The failed-step excerpt of a red Actions job places a step with a name of its own by the run-header count of its first second, so the failing test of a named workflow step reaches the CI classifier instead of stopping the card as step unknown (issue 316 item 1)
-status: todo
+status: merged
 branch: T0-CI-STEP-NAMED
 worktree: D:\wt\AIDLC\T0-CI-STEP-NAMED
 allow_paths:
@@ -45,3 +45,16 @@ npm run typecheck && node --test tests/infra/github-ship.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Attempt 1, effort medium. RED commit d08c0725 (tests only): 7 of 68 tests failed on the old rule, each on `step unknown` for a named step (RED-LOGS-2 acceptance 2, BOUNDS acceptance 1, STEP-NAMED acceptance 1 and 2) or on the doc sentences not yet written (BOUNDS acceptance 5, RED-LOGS-2 acceptance 4, STEP-NAMED acceptance 4). Replay of the issue 316 downloads through `failedStepLines`: job 132368615236 placed (60 lines, class code-defect), job 132209813313 placed (60 lines, class unknown, the syrupy failure of non_goals).
+
+| Item | Test | Result |
+| --- | --- | --- |
+| 1 | github-ship.test.ts "T0-CI-STEP-NAMED acceptance 1: the two job shapes of issue 316 ..." (job 147 and job 145 shapes, a later-second run header, four refusals) | pass; fails on main: step unknown |
+| 2 | github-ship.test.ts "T0-CI-STEP-NAMED acceptance 2: through the card runner ..." (build counted 1; rerun under run 123; STOP/ci counted 0, no rerun) | pass; fails on main: stop instead of build |
+| 3 | github-ship.test.ts "T0-CI-RED-LOGS-2 acceptance 2 ..." and "T0-CI-RED-LOGS-BOUNDS acceptance 1 ..." (the two labels moved out of the refusal tables, asserting the step's lines from its header); every other refusal row and BOUNDS acceptance 4 unchanged | pass |
+| 4 | github-ship.test.ts "T0-CI-STEP-NAMED acceptance 4 ..." (NAMED_DOC_SENTENCES, NAMED_CHANGELOG_SENTENCES); DOC_SENTENCES limit sentence revised, read by RED-LOGS-2 acceptance 4 and BOUNDS acceptance 5 | pass |
+
+Revert check (each new branch reverted alone, github-ship.test.ts run, source restored): count rule removed fails 4 tests (STEP-NAMED 1, 2, RED-LOGS-2 2, BOUNDS 1); exact count k+1 relaxed to at least k+1 fails 5; shell line of the (k+1)-th header not required fails 2; k ignored fails STEP-NAMED 1; first-second bound dropped fails STEP-NAMED 1; count rule before the name rule passes (equivalent: when the name rule places, its line is the (k+1)-th header).

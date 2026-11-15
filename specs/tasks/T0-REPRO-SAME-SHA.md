@@ -1,7 +1,7 @@
 ---
 id: T0-REPRO-SAME-SHA
 title: aidlc review repro refuses a finding whose reviewed candidate is the card run's current candidate, so a repro run before the repair attempt is recorded no longer tests the reviewed commit twice and records reproduced false (issue 317)
-status: todo
+status: merged
 branch: T0-REPRO-SAME-SHA
 worktree: D:\wt\AIDLC\T0-REPRO-SAME-SHA
 allow_paths:
@@ -44,3 +44,12 @@ npm run typecheck && node --test tests/scenarios/finding-repro.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+| Item | Proving test (tests/scenarios/finding-repro.test.ts) | Result |
+|---|---|---|
+| 1 [R1] | `T0-REPRO-SAME-SHA acceptance 1: a current candidate that is the finding's reviewed commit (full or abbreviated), or a sha that names no commit, is refused with exit 1 before any run [R1]` (full, 7-character, unresolvable current and unresolvable reviewed SHA; exit 1, message, card run bytes, no `aidlc-repro-` entry, one worktree) | pass; RED at b59f809 (T1-SAME exit 0: both runs ran) |
+| 2 [R2] | `acceptance 1: review repro with --files naming the repair's test records a non-zero exit ...` and `acceptance 2 and 10: each refusal of R1 exits 1 before any run ...`, unchanged | pass |
+| 3 [R3] | `T0-REPRO-SAME-SHA acceptance 3: docs/OPERATIONS.md (Repros) and CHANGELOG.md Unreleased carry the refusal under the card id [R3]` (asserts each exact sentence separately) | pass; RED at b59f809 |
+
+Revert table: equality refusal disabled -> acceptance 1 fails at `T1-SAME: exit 1 ()` (0 !== 1); unresolvable-SHA refusal disabled -> acceptance 1 fails at `T1-GHOST: the refusal says /... does not resolve to a commit/`. Source restored after each.
