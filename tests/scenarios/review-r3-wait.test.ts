@@ -84,6 +84,24 @@ describe('T0-R3-POOL-WAIT: formalReview throws the exported wait error with its 
     assert.deepEqual(fx.events(goalId), journalBefore, 'no journal event is added');
     assert.equal(spawned.r3, 0);
   });
+
+  it('F1: a pool reset-pending until a future reset rejects with status reset-pending, its resetAt and the unchanged message, and the run and journal are unchanged [R1]', async () => {
+    const { fx, runner, goalId, spawned } = atReview();
+    const resetAt = '2026-09-11T06:00:00.000Z';
+    const foreign = fx.queue.enqueue({ pool: 'default', repository: fx.goal(goalId).repository, candidateDigest: 'digest-x', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'other', requester: OTHER, deadline: fx.store.getCardRun(goalId, Z)!.deadline, now: fx.now() }).request;
+    assert.equal(fx.queue.admit('default', actorB, fx.now()).status, 'admitted');
+    fx.queue.hold(foreign.key, resetAt, 'quota', fx.now());
+    const runBefore = fx.store.getCardRun(goalId, Z)!;
+    const journalBefore = fx.events(goalId);
+    await assert.rejects(runner.formalReview(fx.goal(goalId), fx.card(Z), runBefore), (err: unknown) => {
+      assert.ok(err instanceof ReviewPoolWaitError);
+      assert.deepEqual({ message: err.message, cardId: err.cardId, pool: err.pool, status: err.status, ahead: err.ahead, resetAt: err.resetAt }, { message: 'review pool "default" is reset-pending; the formal review waits for admission (aidlc review status --pool "default")', cardId: Z, pool: 'default', status: 'reset-pending', ahead: [], resetAt });
+      return true;
+    });
+    assert.deepEqual(fx.store.getCardRun(goalId, Z), runBefore, "Z's card run is unchanged");
+    assert.deepEqual(fx.events(goalId), journalBefore, 'no journal event is added');
+    assert.equal(spawned.r3, 0);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -99,38 +117,59 @@ function git(cwd: string, ...args: string[]): string {
   return r.stdout.trim();
 }
 
+/** A git repository on `main` with card T0-PW, a temporary state directory and a goal for the card at RUN. */
+function cliRepo() {
+  const repo = tmpDir('aidlc-r3wait-repo-');
+  const state = tmpDir('aidlc-r3wait-state-');
+  mkdirSync(path.join(repo, 'specs', 'tasks'), { recursive: true });
+  mkdirSync(path.join(repo, 'src'), { recursive: true });
+  writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks', worktreeRoot: path.join(state, 'wt'), base: 'main', mode: 'remote', gateRequired: true, formalReview: { command: ['aidlc-test-no-reviewer'], reviewer: 'primary', timeoutMs: 1000, shell: false } }));
+  writeFileSync(path.join(repo, '.gitignore'), '_local/\n.review/\n');
+  writeFileSync(path.join(repo, 'src', 't0-pw.ts'), 'export const pw = 0;\n');
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'review r3 pool wait', allowPaths: ['src/t0-pw.ts'] });
+    copyFileSync(path.join(fx.cardsDir, `${CARD}.md`), path.join(repo, 'specs', 'tasks', `${CARD}.md`));
+  } finally {
+    fx.cleanup();
+  }
+  git(repo, 'init', '-q', '-b', 'main');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'base');
+
+  const env = { ...process.env, AIDLC_STATE_DIR: state };
+  const raw = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 60_000 });
+  const cli = (...args: string[]) => {
+    const r = raw(...args, '--json');
+    assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
+    return JSON.parse(r.stdout) as Record<string, any>;
+  };
+  const created = cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
+  const goalId = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
+  cli('report', '--goal', goalId, '--result', 'cards-projected', '--cards', CARD);
+  /** Commit the candidate on the card branch and bring the card to its R3 step through the CLI. */
+  const toReview = (): void => {
+    git(repo, 'checkout', '-q', '-b', CARD);
+    writeFileSync(path.join(repo, 'src', 't0-pw.ts'), 'export const pw = 1;\n');
+    git(repo, 'commit', '-q', '-am', 'candidate');
+    const sha = git(repo, 'rev-parse', 'HEAD');
+
+    assert.equal(cli('card', 'next', CARD, '--goal', goalId)['directive']['kind'], 'prepare');
+    assert.equal(cli('card', 'next', CARD, '--goal', goalId)['directive']['kind'], 'build');
+    cli('card', 'attempt', CARD, '--goal', goalId, '--outcome', 'success', '--dod-receipt', 'dod:cli', '--red-receipt', 'red:cli', '--candidate-sha', sha);
+    assert.equal(cli('card', 'next', CARD, '--goal', goalId)['directive']['kind'], 'review');
+  };
+  const cleanup = (): void => {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(state, { recursive: true, force: true });
+  };
+  return { repo, state, raw, cli, goalId, toReview, cleanup };
+}
+
 describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
   it('acceptance 2 and 3: an unknown error is one aidlc: line and exit 1; a busy pool and a running match are the wait directive and exit 75 [R2] [R3]', () => {
-    const repo = tmpDir('aidlc-r3wait-repo-');
-    const state = tmpDir('aidlc-r3wait-state-');
+    const { state, raw, cli, goalId, toReview, cleanup } = cliRepo();
     try {
-      mkdirSync(path.join(repo, 'specs', 'tasks'), { recursive: true });
-      mkdirSync(path.join(repo, 'src'), { recursive: true });
-      writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks', worktreeRoot: path.join(state, 'wt'), base: 'main', mode: 'remote', gateRequired: true, formalReview: { command: ['aidlc-test-no-reviewer'], reviewer: 'primary', timeoutMs: 1000, shell: false } }));
-      writeFileSync(path.join(repo, '.gitignore'), '_local/\n.review/\n');
-      writeFileSync(path.join(repo, 'src', 't0-pw.ts'), 'export const pw = 0;\n');
-      const fx = makeFixture();
-      try {
-        writeCard(fx, { id: CARD, title: 'review r3 pool wait', allowPaths: ['src/t0-pw.ts'] });
-        copyFileSync(path.join(fx.cardsDir, `${CARD}.md`), path.join(repo, 'specs', 'tasks', `${CARD}.md`));
-      } finally {
-        fx.cleanup();
-      }
-      git(repo, 'init', '-q', '-b', 'main');
-      git(repo, 'add', '-A');
-      git(repo, 'commit', '-q', '-m', 'base');
-
-      const env = { ...process.env, AIDLC_STATE_DIR: state };
-      const raw = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 60_000 });
-      const cli = (...args: string[]) => {
-        const r = raw(...args, '--json');
-        assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
-        return JSON.parse(r.stdout) as Record<string, any>;
-      };
-      const created = cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
-      const goalId = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
-      cli('report', '--goal', goalId, '--result', 'cards-projected', '--cards', CARD);
-
       // Acceptance 3: the card has no card run and the checkout no candidate diff against main, so the command throws.
       const failed = raw('review', 'r3', CARD, '--goal', goalId);
       assert.equal(failed.status, 1, `${failed.stderr}\n${failed.stdout}`);
@@ -139,15 +178,7 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
       assert.ok(errLines[0]!.startsWith('aidlc: '), errLines[0]);
       assert.ok(!failed.stderr.split(/\r?\n/).some((l) => l.startsWith('    at ')), 'no stack frame');
 
-      git(repo, 'checkout', '-q', '-b', CARD);
-      writeFileSync(path.join(repo, 'src', 't0-pw.ts'), 'export const pw = 1;\n');
-      git(repo, 'commit', '-q', '-am', 'candidate');
-      const sha = git(repo, 'rev-parse', 'HEAD');
-
-      assert.equal(cli('card', 'next', CARD, '--goal', goalId)['directive']['kind'], 'prepare');
-      assert.equal(cli('card', 'next', CARD, '--goal', goalId)['directive']['kind'], 'build');
-      cli('card', 'attempt', CARD, '--goal', goalId, '--outcome', 'success', '--dod-receipt', 'dod:cli', '--red-receipt', 'red:cli', '--candidate-sha', sha);
-      assert.equal(cli('card', 'next', CARD, '--goal', goalId)['directive']['kind'], 'review');
+      toReview();
 
       const store = new GoalStore(statePathsFromRoot(state));
       const queue = new ReviewQueue(statePathsFromRoot(state).reviewQueue);
@@ -178,8 +209,45 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
       assert.deepEqual({ kind: waitRunning['kind'], cardId: waitRunning['cardId'], on: waitRunning['on'], pollSeconds: waitRunning['pollSeconds'] }, { kind: 'wait', cardId: CARD, on: `review:${own.key}`, pollSeconds: 60 });
       assert.ok(String(waitRunning['narration']).includes(`aidlc review r3 ${CARD}`), String(waitRunning['narration']));
     } finally {
-      rmSync(repo, { recursive: true, force: true });
-      rmSync(state, { recursive: true, force: true });
+      cleanup();
+    }
+  });
+
+  it('F1: a pool reset-pending until a future reset is the wait directive on review-pool:default:reset-pending, exit 75 and empty stderr [R2]', () => {
+    const { state, raw, goalId, toReview, cleanup } = cliRepo();
+    try {
+      toReview();
+      const store = new GoalStore(statePathsFromRoot(state));
+      const queue = new ReviewQueue(statePathsFromRoot(state).reviewQueue);
+      const goal = store.getGoal(goalId)!;
+      const resetAt = store.getCardRun(goalId, CARD)!.deadline;
+      const foreign = queue.enqueue({ pool: 'default', repository: goal.repository, candidateDigest: 'digest-x', base: 'main', policyVersion: ProjectConfig.parse({}).reviewPolicyVersion, reviewer: 'other', requester: OTHER, deadline: resetAt, now: goal.createdAt }).request;
+      assert.equal(queue.admit('default', actorB, goal.createdAt).status, 'admitted');
+      queue.hold(foreign.key, resetAt, 'quota', goal.createdAt);
+      const pending = raw('review', 'r3', CARD, '--goal', goalId);
+      assert.equal(pending.status, 75, `${pending.stderr}\n${pending.stdout}`);
+      assert.equal(pending.stderr, '');
+      const wait = JSON.parse(pending.stdout) as Record<string, unknown>;
+      assert.deepEqual({ kind: wait['kind'], cardId: wait['cardId'], on: wait['on'], pollSeconds: wait['pollSeconds'] }, { kind: 'wait', cardId: CARD, on: 'review-pool:default:reset-pending', pollSeconds: 120 });
+      assert.ok(String(wait['narration']).includes(`until ${resetAt}`) && String(wait['narration']).includes(`aidlc review r3 ${CARD}`), String(wait['narration']));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('F2: a rejection whose message spans lines is one aidlc: line and exit 1 through bin/aidlc.js and the direct entry [R3]', () => {
+    const { repo, state, raw, goalId, cleanup } = cliRepo();
+    try {
+      const direct = spawnSync(process.execPath, [path.resolve(path.dirname(bin), '..', 'src', 'cli', 'main.ts'), '-C', repo, 'report', '--goal', goalId, '--result', 'invalid'], { cwd: repo, env: { ...process.env, AIDLC_STATE_DIR: state }, encoding: 'utf8', timeout: 60_000 });
+      for (const [entry, r] of [['bin/aidlc.js', raw('report', '--goal', goalId, '--result', 'invalid')], ['src/cli/main.ts', direct]] as const) {
+        assert.equal(r.status, 1, `${entry}: ${r.stderr}\n${r.stdout}`);
+        const lines = r.stderr.split(/\r?\n/).filter((l) => l !== '');
+        assert.equal(lines.length, 1, `${entry}: exactly one stderr line: ${r.stderr}`);
+        assert.ok(lines[0]!.startsWith('aidlc: '), `${entry}: ${lines[0]}`);
+        assert.ok(!r.stderr.split(/\r?\n/).some((l) => l.startsWith('    at ')), `${entry}: no stack frame`);
+      }
+    } finally {
+      cleanup();
     }
   });
 });
