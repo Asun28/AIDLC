@@ -119,6 +119,9 @@ The owner (labels, rulings, approval of the review text); `bench/outcome/`, `doc
   whole bench reports in replay-main.json put the candidate diff at 1330835 bytes, above R3's
   `maxDiffBytes` of 800000, and the code at 307 lines; the file keeps reduced case results and the
   sha256 of each whole report.
+- T1-OUTCOME-REPORT, after its start: budget amended from 250 to 300 by a recorded amendment (the
+  built work is 299 lines, the 72 required table rows among them); the owner chose this over a
+  successor card.
 
 ## Open questions
 - (none)
