@@ -70,7 +70,8 @@ T1-OUTCOME-REPLAY writes the confirmed replay cases as new files under evals/rev
    sample of 20; labels-final.jsonl and adjudication.json. Waits for the owner's spot check
    before SHIP. Depends on 2.
 3. T1-OUTCOME-SUMMARY: the snapshot on the corrected views. Depends on 1.
-4. T1-OUTCOME-REPLAY: the confirmed cases and the baseline arm. Depends on 2a.
+4. T1-OUTCOME-REPLAY: a recall baseline (owner, 2026-11-15): bug cases from findings labelled
+   true-defect by both models or by the owner, and the baseline arm; no clean cases. Depends on 2a.
 5. T1-OUTCOME-REPORT: the report and the goal's one CHANGELOG entry. Depends on 3 and 4.
 
 ## 7. Task split (dependencies and parallel windows)
@@ -80,11 +81,12 @@ T1-OUTCOME-REPLAY writes the confirmed replay cases as new files under evals/rev
 | T1-OUTCOME-LABELS-2 | MUST | two-model labels for 30 replaced, 15 clean cards and the second-pass blocks (replaces T1-OUTCOME-LABELS) | - | W1 | - |
 | T1-OUTCOME-ADJUDICATE | MUST | adjudicated finals, the owner's blind spot check of 20, labels-final.jsonl and adjudication.json | T1-OUTCOME-LABELS-2 | - | - |
 | T1-OUTCOME-SUMMARY | MUST | committed snapshot of every summary view | T1-OUTCOME-FIRST-DECISION | - | - |
-| T1-OUTCOME-REPLAY | MUST | confirmed bench cases from the final labels and the baseline arm | T1-OUTCOME-ADJUDICATE | - | yes |
+| T1-OUTCOME-REPLAY | MUST | recall baseline: bug cases from owner-consistent true defects and the baseline arm | T1-OUTCOME-ADJUDICATE | - | yes |
 | T1-OUTCOME-REPORT | MUST | docs/reliability/baseline.md and the CHANGELOG entry | T1-OUTCOME-SUMMARY, T1-OUTCOME-REPLAY | - | - |
 
-T1-OUTCOME-REPLAY is a freeze point: T1-R3-SUPPORTED-FINDINGS (plans/loop-evidence.md) compares
-against its baseline arm.
+T1-OUTCOME-REPLAY is a freeze point: a later change to what R3 may block on must keep recall on
+its baseline arm. T1-R3-SUPPORTED-FINDINGS, which was to compare against it, was cancelled by the
+owner on 2026-11-15 (intent/loop-evidence.md).
 
 ## Risks
 - The owner's rulings on label disagreements can take longer than the 12 h arc deadline. The

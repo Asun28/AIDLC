@@ -97,5 +97,22 @@ The owner (labels, rulings, approval of the review text); `bench/outcome/`, `doc
 - Program ceiling raised from $300 to $450 at list price (projection on 2026-11-14: about $420,
   about $190 of it Codex usage on the owner's subscription).
 
+## Decisions after the spot check (owner, 2026-11-15)
+- T1-OUTCOME-LABELS-2's R3 decision 2 stopped for review; the owner ruled its six test-gap
+  findings and the defect F15 (a stale Codex answer) deferred to issue 319, and it shipped.
+- Labels: the two models agreed on 126 of 243 findings (104 of them true defects). The Claude
+  adjudicator labelled 103 of its 117 disagreements as non-defects. In a blind sample of 20 of
+  them the owner labelled all 20 true defects, siding with the reviewer's model family every
+  time; owner and adjudicator agreed on 3 of 20 (adjudication.json).
+- Measured consequence: on labels consistent with the owner, R3's contested blocks were real
+  defects, and only about 3 candidates in the selection have no true-defect finding.
+- T1-R3-SUPPORTED-FINDINGS (the R3 finding standard) is cancelled: the owner's labels contradict
+  its premise. A later change to what R3 may block on must keep recall on the owner-consistent
+  true-defect cases.
+- T1-OUTCOME-REPLAY becomes a recall baseline only: bug cases from findings labelled true-defect
+  by both models or by the owner; no clean cases; the adjudicator's labels are not used as truth.
+- T1-OUTCOME-ADJUDICATE ships as a measurement; the report states its disagreement with the owner.
+- T1-EVIDENCE-DOCS documents only the loop-run DoD record and the worker's shell timeout.
+
 ## Open questions
 - (none)

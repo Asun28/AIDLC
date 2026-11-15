@@ -27,9 +27,10 @@ T1-OUTCOME-HISTORY is left for a later goal. No behaviour of the loop changes.
   label from Claude and one from a model of another vendor, from a closed set; a final label is
   their common value, an owner ruling, or, where they differ and the owner has not ruled, the
   adjudicator's label (bench/outcome/labels-final.jsonl names the source of each).
-- R4. The finally labelled findings shall become confirmed reviewer bench cases under
-  `evals/review/`, and one bench run of the formal stage on main's reviewer shall be committed as
-  the baseline arm, with three trials on ten cases for verdict instability.
+- R4. The findings labelled true-defect by both models or by the owner shall become confirmed
+  reviewer bench bug cases under `evals/review/`, and one bench run of the formal stage on main's
+  reviewer shall be committed as the recall baseline, with three trials on ten cases for verdict
+  instability (owner, 2026-11-15: no clean cases; the adjudicator's labels are not used as truth).
 - R5. `docs/reliability/baseline.md` shall report the numbers of R2 to R4, each traced to its
   source file, with the gaps measured and no target for a later phase.
 

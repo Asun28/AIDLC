@@ -1,14 +1,19 @@
 ---
 slug: loop-evidence
-title: The loop records the DoD it runs, and R3 blocks only on supported findings
+title: The loop records the DoD it runs
 intent: intent/loop-evidence.md
 status: draft
 created: 2026-11-14T08:55:00Z
 skills_applied: []
 ---
 
-# Spec: the loop records the DoD it runs, and R3 blocks only on supported findings
+# Spec: the loop records the DoD it runs
 From intent: intent/loop-evidence.md. Status: draft. Skills applied: (none).
+
+On 2026-11-15 the owner cancelled the second half of this spec, the R3 finding standard
+(T1-R3-SUPPORTED-FINDINGS): in a blind check of 20 disputed findings the owner labelled all 20
+true defects, siding with the reviewer's model family every time, so the loosening it proposed is
+not supported by the owner's own judgement (intent, Decisions after the spot check).
 
 ## Requirements (EARS)
 - R1. WHEN `aidlc card attempt <card> --outcome success` is recorded, the loop shall run the card's
@@ -17,51 +22,34 @@ From intent: intent/loop-evidence.md. Status: draft. Skills applied: (none).
   4 KB.
 - R2. The record of R1 shall change no card state, outcome or allowance in this goal; `aidlc card
   status` shall show it and say when the exit differs from `dod_exit`.
-- R3. IF the DoD does not end within the timeout, THEN the loop shall stop its process tree and
-  record a timeout in place of an exit code.
-- R4. The reviewer instructions the R3 prompt builder writes, and REVIEW.md, shall not contain
-  "actively try to disprove", "when uncertain, block" or "be exhaustive" (card, diff and finding
-  text quoted into a prompt are evidence and may contain them), and shall require that a blocking finding cite a file and line of the
-  candidate and state either an observable failure (input, then wrong result or crash) or the
-  stated requirement, acceptance item or forbid item it breaks; anything else is a question or a
-  suggestion and does not block. The hard boundaries (security, secrets, data loss, forbid items,
-  frozen paths) keep blocking.
-- R5. Before SHIP of the card that makes R4, the bench result of its candidate shall be compared
-  with the baseline arm of T1-OUTCOME-REPLAY, and the owner shall decide the card's manual
-  acceptance item on that comparison.
-- R6. CHANGELOG.md, docs/OPERATIONS.md and docs/ARCHITECTURE.md shall describe R1 to R4.
+- R3. IF the DoD does not end within the timeout, THEN the loop shall stop its process tree with
+  the runner's existing tree kill and record a timeout in place of an exit code.
+- R4. CHANGELOG.md, docs/OPERATIONS.md and docs/ARCHITECTURE.md shall describe R1 to R3, and the
+  implementer agent shall tell the worker to run `card attempt --outcome success` with the shell
+  tool's timeout at its 10-minute maximum.
 
 ## Design
-R1 reuses the DoD runner of the mutant sweep (`src/review/mutants.ts`) rather than a second one,
-through one shared function. The record is an optional field on the attempt, so records written
-before it parse unchanged. R4 is a text change in the prompt builder and REVIEW.md, versioned as
-`REVIEW.md@7`.
+R1 reuses the DoD call of the mutant sweep (`src/review/mutants.ts`, `dodCall`). The record is an
+optional field on the attempt, so records written before it parse unchanged.
 
 ## Interfaces and contracts
-- New optional field on the card-run attempt record (zod schema in `src/core/types.ts`).
-- `reviewPolicyVersion`: `REVIEW.md@6` becomes `REVIEW.md@7`.
+- New optional field `loopDod` on the card-run attempt record (zod schema in `src/core/types.ts`).
 
 ## Data model and migration impact
 Additive optional field; no migration.
 
 ## Flagged concerns (route to policy owners)
-- The owner approves the exact R4 text before T1-R3-SUPPORTED-FINDINGS starts.
-- The card of R4 changes the gate that reviews it. Every aidlc command of its run is run from the
-  clean main checkout (`node D:\Projects\AIDLC\bin\aidlc.js`), which runs main's code,
-  configuration and REVIEW.md until the card merges; the main commit and the sha256 of REVIEW.md
-  and aidlc.config.json are recorded at its PREPARE and checked before its SHIP.
+- (none open; the R3 text change was cancelled by the owner on 2026-11-15)
 
 ## Non-goals
 - A SHIP gate on the loop-run DoD; removing the worker's DoD receipt.
+- Any change to the R3 prompt, REVIEW.md or `reviewPolicyVersion`.
 - The card contract pin, an `[unstated]` tag, the delta rule, a dimension filter, a two-decision
   cap, removing the second pass.
-- A configuration key for the DoD timeout (a constant this goal).
+- A configuration key for the DoD timeout (a constant, 9 minutes).
 
 ## Acceptance
 - 1. A scenario records a loop-run DoD on a successful attempt, with the fields of R1, and the
   card state is the same as without it. [R1] [R2]
 - 2. A scenario with a DoD that runs past the timeout records a timeout and leaves no process. [R3]
-- 3. A surface test finds none of the three phrases and finds the R4 text in the prompt and in
-  REVIEW.md and its template. [R4]
-- 4. The bench comparison is attached and the owner has decided it (manual). [R5]
-- 5. The docs carry R1 to R4 (surface tests). [R6]
+- 3. The docs and the implementer agent carry R1 to R4 (surface tests). [R4]
