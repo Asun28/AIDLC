@@ -235,17 +235,22 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
     }
   });
 
-  it('F2: a rejection whose message spans lines is one aidlc: line and exit 1 through bin/aidlc.js and the direct entry [R3]', () => {
+  it('F2: a rejection whose message spans lines is one aidlc: line and exit 1 through bin/aidlc.js, and the direct entry prints it as thrown [R3]', () => {
     const { repo, state, raw, goalId, cleanup } = cliRepo();
     try {
+      const viaBin = raw('report', '--goal', goalId, '--result', 'invalid');
+      assert.equal(viaBin.status, 1, `${viaBin.stderr}\n${viaBin.stdout}`);
+      const binLines = viaBin.stderr.split(/\r?\n/).filter((l) => l !== '');
+      assert.equal(binLines.length, 1, `bin/aidlc.js: exactly one stderr line: ${viaBin.stderr}`);
+      assert.ok(binLines[0]!.startsWith('aidlc: ') && binLines[0]!.includes(' | '), `bin/aidlc.js: ${binLines[0]}`);
+      assert.ok(!binLines.some((l) => l.startsWith('    at ')), 'bin/aidlc.js: no stack frame');
+
       const direct = spawnSync(process.execPath, [path.resolve(path.dirname(bin), '..', 'src', 'cli', 'main.ts'), '-C', repo, 'report', '--goal', goalId, '--result', 'invalid'], { cwd: repo, env: { ...process.env, AIDLC_STATE_DIR: state }, encoding: 'utf8', timeout: 60_000 });
-      for (const [entry, r] of [['bin/aidlc.js', raw('report', '--goal', goalId, '--result', 'invalid')], ['src/cli/main.ts', direct]] as const) {
-        assert.equal(r.status, 1, `${entry}: ${r.stderr}\n${r.stdout}`);
-        const lines = r.stderr.split(/\r?\n/).filter((l) => l !== '');
-        assert.equal(lines.length, 1, `${entry}: exactly one stderr line: ${r.stderr}`);
-        assert.ok(lines[0]!.startsWith('aidlc: '), `${entry}: ${lines[0]}`);
-        assert.ok(!r.stderr.split(/\r?\n/).some((l) => l.startsWith('    at ')), `${entry}: no stack frame`);
-      }
+      assert.equal(direct.status, 1, `${direct.stderr}\n${direct.stdout}`);
+      const directLines = direct.stderr.split(/\r?\n/).filter((l) => l !== '');
+      assert.ok(directLines.length > 1, `src/cli/main.ts: the multi-line message as thrown: ${direct.stderr}`);
+      assert.ok(directLines[0]!.startsWith('aidlc: '), `src/cli/main.ts: ${directLines[0]}`);
+      assert.ok(!directLines.some((l) => l.startsWith('    at ')), 'src/cli/main.ts: no stack frame');
     } finally {
       cleanup();
     }
@@ -258,11 +263,11 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
 
 const OPERATIONS_SENTENCES = [
   'Pool wait (card T0-R3-POOL-WAIT): when the shared review pool does not admit the request (`busy`, `behind` or `reset-pending`) or a matching request is already running, `aidlc review r3 <card>` writes to stdout the JSON of the `wait` directive `card next` gives for that state (`on` `review-pool:<pool>:<status>` with `pollSeconds` 120, or `review:<request key>` with 60), writes nothing to stderr and exits 75; run it again once the pool admits the request.',
-  'Any other error of the command, as of every command run through `bin/aidlc.js`, is one `aidlc: <message>` line on stderr, the lines of a multi-line message joined with ` | `, and exit 1, with no stack trace.',
+  'Any other error thrown in the action of this or any command run through `bin/aidlc.js` is one `aidlc: <message>` line on stderr, its line breaks joined with ` | `, and exit 1, with no stack trace; the direct entry `node src/cli/main.ts` prints the message as thrown, and an error commander reports itself, such as a missing argument, keeps commander\'s own usage error (issue 330).',
 ];
 const CHANGELOG_SENTENCES = [
   '- T0-R3-POOL-WAIT (bugfix, issue 318): `aidlc review r3` answers a review pool that does not admit the request (`busy`, `behind`, `reset-pending`), and a matching request already running, with the `wait` directive JSON that `card next` gives for the same state and exit 75, with nothing on stderr; `CardRunner.formalReview` throws the exported `ReviewPoolWaitError` (card id, pool, status, requesters ahead, reset time) with the message it threw before.',
-  '`bin/aidlc.js` prints a rejection of `main` as one `aidlc: <message>` line on stderr with exit 1, the lines of a multi-line message joined with ` | `, as `node src/cli/main.ts` now does too.',
+  '`bin/aidlc.js` prints a rejection of `main` (an error thrown in a command\'s action) as one `aidlc: <message>` line on stderr, its line breaks joined with ` | `, and exit 1, where the direct entry `node src/cli/main.ts` prints the message as thrown; an error commander reports itself, such as a missing argument, still prints commander\'s own usage error (issue 330).',
   'Before, a pool that did not admit the request ended `review r3` with an unhandled rejection, its stack trace and exit 1.',
 ];
 

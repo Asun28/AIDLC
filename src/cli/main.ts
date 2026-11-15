@@ -1575,17 +1575,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   await program.parseAsync(argv);
 }
 
-/** A rejection of `main` as one stderr line, its message lines joined with ` | ` (card T0-R3-POOL-WAIT R3); bin/aidlc.js writes the same. */
-export function errorLine(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  return `aidlc: ${message.split(/\r\n|\r|\n/).map((l) => l.trim()).filter((l) => l !== '').join(' | ')}\n`;
-}
-
 // Direct execution (`node src/cli/main.ts`) — bin/aidlc.js imports `main` instead.
 const invokedDirectly = process.argv[1] && /[\\/]cli[\\/]main\.(ts|js)$/.test(process.argv[1]);
 if (invokedDirectly) {
   main().catch((err: unknown) => {
-    process.stderr.write(errorLine(err));
+    process.stderr.write(`aidlc: ${(err as Error).message}\n`);
     process.exit(1);
   });
 }

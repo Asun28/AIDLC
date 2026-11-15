@@ -13,11 +13,13 @@ const chosen = resolveEntry({ dist, src, srcRoot: path.join(here, '..', 'src') }
 if (process.env['AIDLC_ENTRY_DEBUG']) process.stderr.write(`[aidlc entry] target=${chosen.target} reason=${chosen.reason}\n`);
 const mod = await import(pathToFileURL(chosen.target).href);
 if (typeof mod.main === 'function') {
-  // A rejection is one line and exit 1, written by the direct entry's `errorLine`, never a stack trace (card T0-R3-POOL-WAIT).
+  // A rejection is one `aidlc: <message>` line, its line breaks joined with ` | `, and exit 1, never a stack trace (card
+  // T0-R3-POOL-WAIT); the direct entry `node src/cli/main.ts` prints the message as thrown.
   try {
     await mod.main(process.argv);
   } catch (err) {
-    process.stderr.write(mod.errorLine(err));
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`aidlc: ${message.split(/\r\n|\r|\n/).map((l) => l.trim()).filter((l) => l !== '').join(' | ')}\n`);
     process.exit(1);
   }
 }

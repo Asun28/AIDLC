@@ -59,4 +59,5 @@ npm run typecheck && node --test tests/scenarios/review-r3-wait.test.ts tests/sc
 | 4 [R1] | tests/scenarios/fault-points.test.ts unchanged | pass |
 | 5 [R4] | tests/scenarios/review-r3-wait.test.ts "acceptance 5: ..." (both tests) | pass |
 | R3 F1 [R1] [R2] | tests/scenarios/review-r3-wait.test.ts "F1: ... rejects with status reset-pending ..." (in process) and "F1: ... review-pool:default:reset-pending, exit 75 ..." (bin/aidlc.js) | pass |
-| R3 F2 [R3] | tests/scenarios/review-r3-wait.test.ts "F2: a rejection whose message spans lines ..." (bin/aidlc.js and src/cli/main.ts) | pass |
+| R3 F2 [R3] | tests/scenarios/review-r3-wait.test.ts "F2: a rejection whose message spans lines ..." (bin/aidlc.js one joined line; src/cli/main.ts the message as thrown) | pass |
+| CI 43712476165 | tests/scenarios/manifest-lock.test.ts (direct entry prints the multi-line message as thrown again); `npm run check` | pass |
