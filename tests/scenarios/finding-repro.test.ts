@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, type Fixture } from './_harness.ts';
@@ -180,6 +181,61 @@ test('acceptance 2 and 10: each refusal of R1 exits 1 before any run and writes 
     fx.cleanup();
   }
 });
+
+test('T0-REPRO-SAME-SHA acceptance 1: a current candidate that is the finding\'s reviewed commit (full or abbreviated), or a sha that names no commit, is refused with exit 1 before any run [R1]', () => {
+  const fx = makeFixture();
+  try {
+    const repo = makeRepo(fx);
+    const ghost = 'f'.repeat(40);
+    const cases: Array<[string, { reviewed: string; current: string }, RegExp[]]> = [
+      ['T1-SAME', { reviewed: repo.reviewed, current: repo.reviewed }, [new RegExp(repo.reviewed), /record the repair attempt first/, /`aidlc card attempt T1-SAME --outcome success --candidate-sha <sha>`/]],
+      ['T1-SHORT', { reviewed: repo.reviewed, current: repo.reviewed.slice(0, 7) }, [new RegExp(repo.reviewed), /record the repair attempt first/, /`aidlc card attempt T1-SHORT --outcome success --candidate-sha <sha>`/]],
+      ['T1-GHOST', { reviewed: repo.reviewed, current: ghost }, [new RegExp(`"${ghost}" .*does not resolve to a commit`)]],
+      ['T1-GHOSTREV', { reviewed: ghost, current: repo.current }, [new RegExp(`"${ghost}" .*does not resolve to a commit`)]],
+    ];
+    for (const [cardId] of cases) writeCard(fx, { id: cardId, title: 'a repro refused before any run' });
+    const goal = goalForCards(fx, cases.map(([cardId]) => cardId));
+    for (const [cardId, shas] of cases) seedRun(fx, goal.id, cardId, shas);
+    const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: fx.paths.root };
+    delete env['CLAUDE_CODE_SESSION_ID'];
+    delete env['AIDLC_SESSION'];
+    delete env['NODE_TEST_CONTEXT'];
+    const marker = path.join(fx.tmp, 'ran.txt');
+    const argv = JSON.stringify([process.execPath, '-e', `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`]);
+    const reproDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith('aidlc-repro-')).sort();
+    const worktrees = () => git(repo.dir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((l) => l.startsWith('worktree '));
+    for (const [cardId, , messages] of cases) {
+      const file = fx.store.cardFile(goal.id, cardId);
+      const bytes = readFileSync(file);
+      const dirs = reproDirs();
+      const r = spawnSync(process.execPath, [MAIN, '--json', 'review', 'repro', cardId, 'F1', '--argv', argv, '--goal', goal.id], { cwd: repo.dir, env, encoding: 'utf8', timeout: 120_000, windowsHide: true });
+      assert.equal(r.status, 1, `${cardId}: exit 1 (${r.stderr})`);
+      for (const m of messages) assert.match(r.stderr, m, `${cardId}: the refusal says ${m}`);
+      assert.equal(existsSync(marker), false, `${cardId}: the argv never ran`);
+      assert.deepEqual(readFileSync(file), bytes, `${cardId}: the card run is byte-for-byte unchanged`);
+      assert.equal(fx.store.getCardRun(goal.id, cardId)!.findings.find((f) => f.id === 'F1')!.repro, undefined, `${cardId}: the finding has no repro`);
+      assert.deepEqual(reproDirs(), dirs, `${cardId}: no aidlc-repro- checkout or state directory is created`);
+      assert.equal(worktrees().length, 1, `${cardId}: no temporary checkout is listed`);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-REPRO-SAME-SHA acceptance 3: docs/OPERATIONS.md (Repros) and CHANGELOG.md Unreleased carry the refusal under the card id [R3]', () => {
+  const read = (...p: string[]) => readFileSync(fileURLToPath(new URL(`../../${p.join('/')}`, import.meta.url)), 'utf8').replace(/\r\n/g, '\n');
+  const ops = read('docs', 'OPERATIONS.md');
+  const repros = ops.slice(ops.indexOf('Repros (card T1-FINDING-REPRO-2). `aidlc review repro'), ops.indexOf('\n### ', ops.indexOf('Repros (card T1-FINDING-REPRO-2). `aidlc review repro')));
+  assert.ok(repros.includes(OPS_SAME_SHA), `docs/OPERATIONS.md Repros states: ${OPS_SAME_SHA}`);
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  assert.ok(unreleased.split('\n').includes(CHANGELOG_SAME_SHA), `CHANGELOG.md Unreleased carries: ${CHANGELOG_SAME_SHA}`);
+});
+
+const OPS_SAME_SHA =
+  'Also refused before any run (card T0-REPRO-SAME-SHA): a current candidate that is the finding\'s reviewed candidate, compared as the commits `git rev-parse --verify <sha>^{commit}` resolves in the main checkout, with a message that names the commit and says to record the repair attempt first (`aidlc card attempt <cardId> --outcome success --candidate-sha <sha>`), since both runs would test the reviewed commit; and a `candidateSha` or current candidate that does not resolve to a commit, named.';
+const CHANGELOG_SAME_SHA =
+  '- T0-REPRO-SAME-SHA (issue 317): `aidlc review repro` refuses, with exit 1 before any run and nothing written, a finding whose `candidateSha` is the card run\'s current candidate (the same commit, abbreviated or full), and says to record the repair attempt first with `aidlc card attempt <cardId> --outcome success --candidate-sha <sha>`; before, both runs tested the reviewed commit and the record said reproduced false. A `candidateSha` or current candidate that does not resolve to a commit is refused, named.';
 
 test('R3 decision 1 F1: with no --goal the goal is the one the card commands resolve; an active goal that projects the card with no run is refused and an older terminal goal\'s run is left alone [R1] [R7]', async () => {
   const { fx, goal, repo } = setup();
