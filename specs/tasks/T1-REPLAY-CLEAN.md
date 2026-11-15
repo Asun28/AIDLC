@@ -1,7 +1,7 @@
 ---
 id: T1-REPLAY-CLEAN
 title: The reviewer bench holds 15 confirmed clean cases under evals/review/clean/, chosen by a fixed seeded rule from card runs whose first R3 decision passed, whose card merged and has no successor
-status: todo
+status: merged
 branch: T1-REPLAY-CLEAN
 worktree: D:\wt\AIDLC\T1-REPLAY-CLEAN
 plan_ref: plans/review-recall.md#order-of-work
