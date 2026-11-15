@@ -1,0 +1,13 @@
+{
+  "seed": "T1-OUTCOME-ADJUDICATE 2026-11-14",
+  "toAdjudicate": 117,
+  "adjudicated": 117,
+  "unanswered": 0,
+  "calls": 117,
+  "spendUsd": 14.189528200000005,
+  "spotCheck": {
+    "sample": 20,
+    "agree": 3,
+    "errorRate": 0.85
+  }
+}
