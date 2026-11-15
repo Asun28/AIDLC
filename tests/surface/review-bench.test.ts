@@ -174,7 +174,7 @@ test('T1-REVIEW-BENCH acceptance 3: the formal bench scores hit, miss, pass, fal
     const report = await bench(fx, reviewer(fx, calls));
     const byId = new Map(report.cases.map((c) => [c.id, c]));
     assert.deepEqual(report.cases.map((c) => [c.id, c.outcome]), [['a-hit', 'hit'], ['b-miss', 'miss'], ['c-pass', 'pass'], ['d-false-block', 'false-block'], ['e-no-verdict', 'no-verdict']]);
-    assert.deepEqual(byId.get('a-hit')!.matched, { reason: HIT_REASON, file: 'src/calc.ts', line: 12 });
+    assert.deepEqual(byId.get('a-hit')!.matched, { reason: HIT_REASON, file: 'src/calc.ts', line: 12, severity: 'P1' });
     assert.deepEqual(byId.get('b-miss')!.cited, [HIT_REASON, RANGE_REASON]);
     assert.equal(byId.get('e-no-verdict')!.runStatus, 'tool_error');
     assert.deepEqual(report.totals, { bugCases: 3, hits: 1, misses: 1, recall: 0.5, cleanCases: 2, cleanPasses: 1, falseBlocks: 1, falseBlockRate: 0.5, noVerdict: 1, errors: 0, skippedUnconfirmed: 1 });
@@ -924,6 +924,23 @@ test('T1-BENCH-TRIALS-2 acceptance 8: case order is no rule, so a report with th
       assert.equal(ok.status, 0, `${name}: ${ok.stderr}`);
       assert.equal(JSON.parse(ok.stdout).verdict, 'no-measurable-difference', name);
     }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-SEVERITY acceptance 5: a bench hit carries the severity of its matched reason', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    const tagged = '[spec] [P2] 2 wrong value @ src/calc.ts:13: v13 is 14 -> restore 13';
+    const untagged = '[spec] 2 wrong value @ src/calc.ts:8: v8 is 9 -> restore 8';
+    const table: Record<string, Partial<ExecReceipt>> = { [fx.heads.c1]: { stdout: verdict('block', [tagged]) }, [fx.heads.c4]: { stdout: verdict('block', [untagged]) } };
+    const runner: Runner = async (command, args, options = {}) => scriptedRunner({ [command]: table[args.find((a) => /^[0-9a-f]{40}$/.test(a)) ?? ''] ?? { exitCode: 2 } })(command, args, options);
+    writeCase(fx, 'evals/sev', bugCase(fx, 'a-tagged', fx.heads.c1, 13, 0));
+    writeCase(fx, 'evals/sev', bugCase(fx, 'b-untagged', fx.heads.c4, 8, 0));
+    const report = await bench(fx, runner, { dir: 'evals/sev' });
+    assert.deepEqual(report.cases.map((c) => [c.id, c.outcome, (c.matched as Record<string, unknown> | undefined)?.['severity']]), [['a-tagged', 'hit', 'P2'], ['b-untagged', 'hit', 'P1']]);
   } finally {
     fx.cleanup();
   }

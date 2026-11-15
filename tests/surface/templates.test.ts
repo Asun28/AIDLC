@@ -199,7 +199,7 @@ describe('templates (Q14 packaging)', () => {
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
     }
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
@@ -560,7 +560,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
       assert.ok(reviewer.indexOf(REVIEWER_STEP) > reviewer.indexOf('8. End your turn'), `${file}: the class step follows step 8`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
     }
   });
 
@@ -568,7 +568,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs');
+    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs');
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(opsHolds(operations), 'OPERATIONS.md carries the class paragraph and the policy version');
     assert.ok(architecture.includes(ARCHITECTURE), 'ARCHITECTURE.md names the finding class in the persisted-state table');
@@ -672,7 +672,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
       assert.equal(lines.indexOf(REVIEW_PRE_EXISTING), tags + 1, `${file}: the pre-existing line follows it`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
     }
   });
 
@@ -680,7 +680,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const architecture = lf(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'));
     const changelog = lf(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
-    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs');
+    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs');
     const statsHold = (text: string) => sectionOf(text, '### Review statistics').includes(STATS.join(' '));
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(preReviewHolds(operations), 'OPERATIONS.md Pre-review carries the pre-existing paragraph and the policy version');
@@ -691,7 +691,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     for (const sentence of PRE_REVIEW) assert.equal(preReviewHolds(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of STATS) assert.equal(statsHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
-    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@6` in both configs', '')), false, 'removing the version sentence fails');
+    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@7` in both configs', '')), false, 'removing the version sentence fails');
   });
 });
 
@@ -738,12 +738,12 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
   test('acceptance 3: OPERATIONS.md names REVIEW.md@6 as the current version with every move before it, and names @5 as current nowhere; removing a move fails [R2]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const HISTORY = [
-      '(card T0-REVIEW-IMPACT-BAR added the impact bar;',
+      '(card T1-REVIEW-SEVERITY added the severity section;', ' T0-REVIEW-IMPACT-BAR moved it to `REVIEW.md@6` with the impact bar;',
       ' T1-REVIEW-PRE-EXISTING moved it to `REVIEW.md@5` with the `[pre-existing]` tag;',
       ' T1-REVIEW-CLASS-SWEEP to `REVIEW.md@4` with the class tag,',
       ' T1-REVIEW-INPUTS to `REVIEW.md@3`)',
     ];
-    const holds = (text: string) => text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs ' + HISTORY.join(''));
+    const holds = (text: string) => text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs ' + HISTORY.join(''));
     assert.ok(holds(operations), 'the current version and every move before it');
     for (const clause of HISTORY) assert.equal(holds(operations.replace(clause, '')), false, `removing this clause still passes: ${clause}`);
     assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');

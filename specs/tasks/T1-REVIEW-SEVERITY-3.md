@@ -78,3 +78,50 @@ npm run typecheck && node --test tests/core/finding-severity.test.ts tests/core/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the only changed lines of existing tests are the R10 literals.
+
+## Attempt evidence
+
+Attempt 1 (effort medium), carrying candidate 3edf4987 of T1-REVIEW-SEVERITY-2 (R3 decision 2 and the second pass passed there; CI run 43757539597 failed tests/surface/pre-review.test.ts:863).
+
+RED:
+- Commit `9511700e` adds acceptance tests 1 to 5; on main they fail as stated: acceptance 1 `TypeError: policy.findingSeverity is not a function`; acceptance 2 `AssertionError: ADVISORY_TAG: [standards] [P2] [suggestion] x` (actual false); acceptance 3 `AssertionError: pre: severity of each new finding` (actual `[['F1', undefined], ...]`); acceptance 4 `AssertionError: the formal findings by stored severity; ...` (actual undefined); acceptance 5 `AssertionError` (actual `[['a-tagged', 'hit', undefined], ['b-untagged', 'hit', undefined]]`).
+- Commit `80f4dc69` (repair of R3 decision 1 F1 on T1-REVIEW-SEVERITY-2): acceptance 2 failed with `AssertionError: ADVISORY_TAG: [standards][P2] [suggestion] @ src/a.ts:3: broken -> fix` (actual true, expected false).
+- Acceptance 7 at the carried candidate 08fa9fa6 (3edf4987 plus main): `AssertionError: pre/single with coverage off is the pre-change prompt`, actual `8f62e0bc...`, expected `727bbd90...`, as in CI.
+
+R11: `VERDICT_CONTRACT` is emitted once per prompt (src/review/pre-review.ts:409, `verdictContract(coverage)`), and neither REVIEW.md copy nor the test fixture holds `[P0|P1|P2]`, so the one `.replace` puts the pattern back in every pinned prompt; the six `PRE_CHANGE` hashes are unchanged.
+
+| Item | Proof | Result |
+| --- | --- | --- |
+| 1 | tests/core/finding-severity.test.ts, acceptance 1 | pass |
+| 2 | tests/core/finding-severity.test.ts, acceptance 2 | pass |
+| 3 | tests/core/finding-severity.test.ts, acceptance 3 | pass |
+| 4 | tests/surface/stats.test.ts, acceptance 4 | pass |
+| 5 | tests/surface/review-bench.test.ts, acceptance 5 | pass |
+| 6 | DoD: review-policy, templates, stats, review-bench and pre-existing test files | pass |
+| 6 | `git diff main -- <file>`: review-policy.test.ts :674; stats.test.ts :131, :141, :177, :549 plus acceptance 4; review-bench.test.ts :177 plus acceptance 5; templates.test.ts :202, :563, :571, :675, :683, :694, :741, :746; pre-existing.test.ts empty | R10 literals and new tests only |
+| 7 | DoD: tests/surface/pre-review.test.ts, "T1-REVIEW-COVERAGE R3 decision 1 (F2): the off prompts are byte-equal ..." included | pass |
+| 7 | `git diff main -- tests/surface/pre-review.test.ts`: `SEVERITY_PATTERN` and its comment beside `DECISIONS_CLAUSE`, two doc-comment lines naming T1-REVIEW-SEVERITY, one `.replace` in `withoutAddedSentences` | R11 lines only |
+| 8 | diff of REVIEW.md, templates/REVIEW.md, pre-review.ts contract, both configs, OPERATIONS.md, ARCHITECTURE.md | reviewer to verify |
+
+Input forms the changed patterns handle (all in tests/core/finding-severity.test.ts):
+
+| Form | Example | Result | Test |
+| --- | --- | --- | --- |
+| axis, white space, severity, advisory tag | `[standards] [P2] [suggestion] x` | advisory | acceptance 2 |
+| axis, white space, severity (findingSeverity) | `[standards] [P0] 9 ...` | P0 | acceptance 1 |
+| axis, no white space, severity, advisory tag | `[standards][P2] [suggestion] @ src/a.ts:3: broken -> fix` | block (stripAdvisoryTags, citedReasonsOf) | acceptance 2 |
+| axis, no white space, severity, `[pre-existing]` | `[standards][P2] [pre-existing] @ src/a.ts:3: broken -> fix` | not pre-existing, cited | acceptance 2 |
+| axis, no white space, severity (findingSeverity) | `[standards][P0] 9 ...` | P1 | acceptance 1 |
+| no axis, severity, advisory tag | `[P2] [suggestion] x`, `  [p0] @ a.ts:3: [question] y` | advisory | acceptance 2 |
+| no axis, severity, `[pre-existing]` | `[P1] [pre-existing] @ a.ts:3: z` | pre-existing | acceptance 2 |
+| no axis, severity (findingSeverity) | `[P0] 9 ...`, `  [P0] 9 ...` | P0 | acceptance 1 |
+| lower case | `[spec] [p1] [question] y`; `[standards] [p0] 9 ...` | advisory; P0 | acceptance 2; acceptance 1 |
+| severity before a location | `[spec] [P1] @ a.ts:3: [question] y`; `[standards] [P2] [pre-existing] @ a.ts:3: z` | advisory; pre-existing | acceptance 2 |
+| no white space, tag after the location | `[spec][P1] @ a.ts:3: [question] y` | advisory, as on main | acceptance 2 |
+| severity elsewhere | `[standards] 9 errors [P2] [suggestion] @ a.ts:3: w`; `... [P0] @ ...`, `... @ src/a.ts:3: [P2] ...` | block; P1 | acceptance 2; acceptance 1 |
+| `[question]`, `[suggestion]` without severity | existing reasons of review-policy and pre-existing tests | advisory | acceptance 2 |
+| `[pre-existing]` without severity | existing reasons of pre-existing tests | pre-existing, cited without a changed-line map | acceptance 2 |
+
+DoD: `npm run typecheck && node --test <7 files>` exit 0; 228 tests, 27 suites, 228 pass, 0 fail; typecheck clean.
+
+Full suite: `npm run check` exit 0; 3719 tests, 259 suites, 3691 pass, 0 fail, 0 cancelled, 28 skipped, 0 todo.

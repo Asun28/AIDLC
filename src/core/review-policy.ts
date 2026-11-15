@@ -15,7 +15,7 @@
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
 import { detectQuotaHold, quotaOutput } from './parse-guard.ts';
-import { DisputeKind, FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type CardRun, type FindingDisposition, type FindingRuling, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
+import { DisputeKind, FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type CardRun, type FindingDisposition, type FindingRuling, type FindingSeverity, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
 export type ReviewOutcomeClass = 'pass' | 'block-defect' | 'block-advisory' | 'no-verdict' | 'quota-hold' | 'routed-skip';
 
@@ -256,9 +256,22 @@ export function findingLocation(reason: string): string | undefined {
  * A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). The
  * tag counts only where the output contract puts it: opening the reason (after the axis tag if any), or opening the text after
  * the `@ <file:line>:` location. A path or prose that merely contains the bracket text is no tag, so a cited block is never
- * downgraded by its wording.
+ * downgraded by its wording. One severity tag (`[P0]`, `[P1]`, `[P2]`) may open the reason or follow the axis tag, in the
+ * position `findingSeverity` reads (white space required after the axis tag), and stand before the rest (card
+ * T1-REVIEW-SEVERITY); `[standards][P2] [suggestion]` is no tag, as on main.
  */
-export const ADVISORY_TAG = /^\s*(?:\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
+export const ADVISORY_TAG = /^\s*(?:(?:\[(?:spec|standards)\]\s+)?\[P[012]\]\s*|\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
+
+/** A severity tag opening a reason, or directly after its axis tag and white space (card T1-REVIEW-SEVERITY). */
+const SEVERITY_TAG = /^\s*(?:\[(?:spec|standards)\]\s+)?\[(P[012])\]/i;
+
+/**
+ * The severity a block reason states (card T1-REVIEW-SEVERITY): the `[P0]`, `[P1]` or `[P2]` tag in its position, in any
+ * case; a reason without one, or with one elsewhere, is P1. Recorded and counted only: no gate, allowance or verdict reads it.
+ */
+export function findingSeverity(reason: string): FindingSeverity {
+  return (SEVERITY_TAG.exec(reason)?.[1]?.toUpperCase() as FindingSeverity | undefined) ?? 'P1';
+}
 
 /** `(class: <slug>)` anywhere in a reason, the keyword in any case with at most one space after the colon; the first group decides. */
 const FINDING_CLASS_TAG = /\(class: ?([^)]*)\)/i;
@@ -416,7 +429,7 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
       continue;
     }
     const id = nextFindingId(next);
-    const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [], revision: 0 };
+    const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), severity: findingSeverity(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [], revision: 0 };
     const cls = findingClass(reason);
     if (cls) finding.class = cls;
     if (input.advisory) finding.advisory = true;

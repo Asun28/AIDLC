@@ -128,7 +128,7 @@ describe('review statistics (R11, R12)', () => {
     assert.deepEqual(summary?.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 1, durationMs: 90_000, blocksByPerspective: { bugs: 1 } });
     // 15:00 - 10:00 for the blocked decision, 33:00 - 30:00 for the passing one.
     assert.deepEqual(summary?.r3, { decisions: 2, blocks: 1, durationMs: 8 * MIN, secondPasses: 0, secondPassBlocks: 0 });
-    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0 });
+    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0, bySeverity: { P0: 0, P1: 0, P2: 0, none: 1 } });
     // First request at 00:00, last pass decided at 33:00.
     assert.equal(summary?.wallMs, 33 * MIN);
   });
@@ -138,7 +138,7 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(summary?.cardId, 'T1-QUIET');
     assert.deepEqual(summary?.r2, { rounds: 0, blocks: 0, noVerdict: 0, quotaHolds: 0, durationMs: 0, blocksByPerspective: {} });
     assert.deepEqual(summary?.r3, { decisions: 0, blocks: 0, durationMs: 0, secondPasses: 0, secondPassBlocks: 0 });
-    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0 });
+    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0, bySeverity: { P0: 0, P1: 0, P2: 0, none: 0 } });
     assert.equal(summary?.wallMs, 0);
     assert.equal(summary?.family, undefined, 'a card that supersedes nothing reports no family');
   });
@@ -174,7 +174,7 @@ describe('review statistics (R11, R12)', () => {
     // The round that blocked carries no panel record, so the block counts under the reviewer that decided it.
     assert.deepEqual(family?.totals.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 0, durationMs: 60_000, blocksByPerspective: { deepseek: 1 } });
     assert.deepEqual(family?.totals.r3, { decisions: 1, blocks: 0, durationMs: 2 * MIN, secondPasses: 0, secondPassBlocks: 0 });
-    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0 });
+    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0, bySeverity: { P0: 0, P1: 0, P2: 0, none: 1 } });
     // 10s on the first card, 3 min on the second, 30s on the third.
     assert.equal(family?.totals.wallMs, 220_000);
     assert.equal(summaries.find((s) => s.cardId === 'T1-A')?.family, undefined, 'the oldest card of a family supersedes nothing');
@@ -546,7 +546,7 @@ function preExistingRun(overrides: Record<string, unknown> = {}): CardRun {
 describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-EXISTING)', () => {
   test('acceptance 9: findings.preExistingAdvisory counts the tagged advisory reasons of every decided R2 round and R3 decision, outside total, per card and in the family totals [R9]', () => {
     const [summary] = stats.summarizeReviews([preExistingRun()], []);
-    assert.deepEqual(summary?.findings, { total: 1, pre: 1, formal: 0, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 3 });
+    assert.deepEqual(summary?.findings, { total: 1, pre: 1, formal: 0, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 3, bySeverity: { P0: 0, P1: 0, P2: 0, none: 0 } });
     assert.equal(stats.summarizeReviews([reviewedRun()], [])[0]?.findings.preExistingAdvisory, 0, 'a run with no advisory reason counts none');
     // A round that decided nothing (no verdict, still reserved) adds nothing, whatever notes it carries.
     const decided = preExistingRun();
@@ -634,5 +634,15 @@ describe('repro records in the review statistics (T1-FINDING-REPRO-2)', () => {
     const family = summaries.find((s) => s.cardId === 'T1-RP-2')?.family;
     assert.deepEqual(family?.totals.repro, { fixed: 4, fixedReproduced: 2, wrongPassedAtReviewed: 2 });
     assert.ok(stats.formatReviewStats(summaries).includes('family total (2 cards)'), 'the family line is printed');
+  });
+});
+
+describe('finding severity in the review statistics (T1-REVIEW-SEVERITY)', () => {
+  test('T1-REVIEW-SEVERITY acceptance 4: stats count formal findings by severity', () => {
+    const finding = (id: string, stage: 'pre' | 'formal', severity?: string) => ({ id, stage, round: 1, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 1 @ src/a.ts:${id.slice(1)}: wrong -> fix`, raisedAt: at(MIN), disposition: 'open', ...(severity ? { severity } : {}) });
+    const graded = run({ cardId: 'T1-SEV', findings: [finding('F1', 'formal', 'P0'), finding('F2', 'formal', 'P1'), finding('F3', 'formal', 'P1'), finding('F4', 'formal', 'P2'), finding('F5', 'formal'), finding('F6', 'pre', 'P0')] });
+    const bySeverity = (r: CardRun) => (stats.summarizeReviews([r], [])[0]?.findings as unknown as Record<string, unknown>)['bySeverity'];
+    assert.deepEqual(bySeverity(graded), { P0: 1, P1: 2, P2: 1, none: 1 }, 'the formal findings by stored severity; the R2 finding is not counted');
+    assert.deepEqual(bySeverity(run({ cardId: 'T1-NONE' })), { P0: 0, P1: 0, P2: 0, none: 0 }, 'a run with no finding');
   });
 });

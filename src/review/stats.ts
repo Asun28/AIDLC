@@ -50,6 +50,8 @@ export interface FindingStats {
   responses: ResponseStats;
   /** Advisory reasons carrying the `[pre-existing]` tag over every decided R2 round and R3 decision, counted outside `total` (card T1-REVIEW-PRE-EXISTING). */
   preExistingAdvisory: number;
+  /** The formal findings by stored severity, `none` for a finding recorded without one (card T1-REVIEW-SEVERITY). */
+  bySeverity: { P0: number; P1: number; P2: number; none: number };
 }
 
 /**
@@ -67,6 +69,7 @@ export interface ResponseStats {
 
 /** The responses in the order the line form prints them. */
 const RESPONSE_KEYS = ['fixed', 'wrong', 'intentional', 'notWorthFixing', 'open'] as const;
+const SEVERITY_KEYS = ['P0', 'P1', 'P2', 'none'] as const;
 
 /**
  * Acceptance coverage over the rounds that asked for it (`preReview.coverage: shadow`), read off the
@@ -164,7 +167,7 @@ function emptyCoverage(): CoverageStats {
 }
 
 function emptyFindings(): FindingStats {
-  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0 };
+  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0, bySeverity: { P0: 0, P1: 0, P2: 0, none: 0 } };
 }
 
 /**
@@ -288,7 +291,10 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
   for (const f of findings) {
     into.total += 1;
     if (f.stage === 'pre') into.pre += 1;
-    else into.formal += 1;
+    else {
+      into.formal += 1;
+      into.bySeverity[f.severity ?? 'none'] += 1;
+    }
     if (f.resolvedAt) into.resolved += 1;
     else if (f.disposition === 'disputed') into.disputed += 1;
     else into.open += 1;
@@ -440,6 +446,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     findings.resolved += s.findings.resolved;
     for (const key of RESPONSE_KEYS) findings.responses[key] += s.findings.responses[key];
     findings.preExistingAdvisory += s.findings.preExistingAdvisory;
+    for (const key of SEVERITY_KEYS) findings.bySeverity[key] += s.findings.bySeverity[key];
     coverage.roundsRequested += s.coverage.roundsRequested;
     coverage.roundsComplete += s.coverage.roundsComplete;
     coverage.unaccounted += s.coverage.unaccounted;

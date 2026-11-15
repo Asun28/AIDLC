@@ -22,9 +22,9 @@ import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, matchedLessons, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
-import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
+import { FINDING_LOCATION, classifyVerdict, findingLocation, findingSeverity } from '../core/review-policy.ts';
 import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
-import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
+import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
@@ -40,8 +40,8 @@ export interface BenchCaseResult {
   runStatus?: RunStatus;
   /** The cited reasons of a block (`citedReasonsOf` over the candidate's changed paths); empty otherwise. */
   cited: string[];
-  /** For a hit: the cited reason and the expected site (file and line) it landed on. */
-  matched?: { reason: string; file: string; line: number };
+  /** For a hit: the cited reason, the expected site (file and line) it landed on, and the reason's `findingSeverity` (always set on a hit the bench scores; absent in a report saved before card T1-REVIEW-SEVERITY). */
+  matched?: { reason: string; file: string; line: number; severity?: FindingSeverity };
   detail?: string;
   verdictRef?: string;
   logRef?: string;
@@ -332,7 +332,7 @@ function score(c: ReviewBenchCase, panel: PanelResult, changedPaths: string[]): 
   for (const reason of cited) {
     const at = citedSite(reason);
     const site = at && c.expected.find((e) => e.file === at.file && at.from <= e.line + e.window && at.to >= e.line - e.window);
-    if (site) return { ...common, outcome: 'hit', matched: { reason, file: site.file, line: site.line } };
+    if (site) return { ...common, outcome: 'hit', matched: { reason, file: site.file, line: site.line, severity: findingSeverity(reason) } };
   }
   return { ...common, outcome: 'miss' };
 }
@@ -592,7 +592,7 @@ const Rate = z.number().min(0).max(1).nullable();
 const Count = z.number().int().min(0);
 const SavedTotals = z.object({ bugCases: Count, hits: Count, misses: Count, recall: Rate, cleanCases: Count, cleanPasses: Count, falseBlocks: Count, falseBlockRate: Rate, noVerdict: Count, errors: Count, skippedUnconfirmed: Count });
 const SavedCases = z.array(
-  z.object({ id: z.string(), kind: z.enum(['bug', 'clean']), confirmed: z.boolean(), outcome: BenchOutcome, runStatus: RunStatus.optional(), cited: z.array(z.string()), matched: z.object({ reason: z.string(), file: z.string(), line: z.number() }).optional(), detail: z.string().optional(), verdictRef: z.string().optional(), logRef: z.string().optional(), durationMs: z.number().min(0) }),
+  z.object({ id: z.string(), kind: z.enum(['bug', 'clean']), confirmed: z.boolean(), outcome: BenchOutcome, runStatus: RunStatus.optional(), cited: z.array(z.string()), matched: z.object({ reason: z.string(), file: z.string(), line: z.number(), severity: FindingSeverity.optional() }).optional(), detail: z.string().optional(), verdictRef: z.string().optional(), logRef: z.string().optional(), durationMs: z.number().min(0) }),
 );
 /** The outcomes a case of each kind can have. */
 const KIND_OUTCOMES = { bug: ['hit', 'miss', 'no-verdict', 'error'], clean: ['pass', 'false-block', 'no-verdict', 'error'] };

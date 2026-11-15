@@ -43,6 +43,17 @@ block, on either axis, merge-blocking.
 Reserve Important for findings that would break behavior, leak data or breach
 a policy. Style and naming are nits.
 
+## Severity
+Every block reason opens with `[P0]`, `[P1]` or `[P2]` directly after its
+axis tag: `[spec] [P0] 6 tests @ src/a.ts:3: ...`.
+- `[P0]`: a finding on dimensions 1 to 6, or a Security finding.
+- `[P1]`: a Bugs finding on a path a normal run reaches that breaks
+  behaviour, a gate, a decision or a persisted record.
+- `[P2]`: every other block reason.
+A `[question]`, `[suggestion]` or `[pre-existing]` reason carries no
+severity. The tag changes no outcome: a cited block reason blocks whatever
+its severity. A reason without the tag is recorded as `[P1]`.
+
 ## Impact bar
 Applies to Bugs and Security findings, on every dimension. A block names a path a normal run can reach: who supplies the input and what breaks for them. A finding is a `[suggestion]`, not a block, in two cases, unless the card's requirements or `forbid:` name it:
 - The defect needs the person running the program, or a process of theirs, to swap, link or race their own files during the run. Concurrent runs the project supports are normal runs, so they are not this case.
