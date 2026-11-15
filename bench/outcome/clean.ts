@@ -51,8 +51,7 @@ function main(): number {
     const file = path.join(root, 'specs', 'tasks', `${d.card.id}.md`);
     const parsed = existsSync(file) ? parseCardText(readFileSync(file, 'utf8'), file, { strict: false }) : undefined;
     const card = parsed && !('error' in parsed) ? parsed.card : undefined;
-    const base = { cardStatus: card?.status, supersededBy: card?.superseded_by, replayCandidate: replay.has(d.candidate) };
-    return { ...base, scorable: base.cardStatus === 'merged' && base.supersededBy === undefined && !base.replayCandidate && scorable(d, maxBytes) };
+    return { cardStatus: card?.status, supersededBy: card?.superseded_by, scorable: scorable(d, maxBytes), replayCandidate: replay.has(d.candidate) };
   };
   const result = selectClean(cases, facts);
   mkdirSync(out, { recursive: true });
