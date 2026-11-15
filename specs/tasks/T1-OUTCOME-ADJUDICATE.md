@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-ADJUDICATE
 title: bench/outcome/adjudicate.ts asks Claude Opus 5.5 at high effort, in a checkout of the candidate, for one label of each finding of bench/outcome/labels.jsonl whose two labels differ, puts a seeded sample of 20 of its labels to the owner, and writes bench/outcome/labels-final.jsonl and bench/outcome/adjudication.json with the owner's agreement on that sample
-status: todo
+status: merged
 branch: T1-OUTCOME-ADJUDICATE
 worktree: D:\wt\AIDLC\T1-OUTCOME-ADJUDICATE
 plan_ref: plans/reliability-baseline-2.md#order-of-work
