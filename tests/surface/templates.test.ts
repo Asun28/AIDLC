@@ -199,7 +199,7 @@ describe('templates (Q14 packaging)', () => {
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
     }
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
@@ -560,7 +560,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
       assert.ok(reviewer.indexOf(REVIEWER_STEP) > reviewer.indexOf('8. End your turn'), `${file}: the class step follows step 8`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
     }
   });
 
@@ -568,7 +568,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs');
+    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs');
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(opsHolds(operations), 'OPERATIONS.md carries the class paragraph and the policy version');
     assert.ok(architecture.includes(ARCHITECTURE), 'ARCHITECTURE.md names the finding class in the persisted-state table');
@@ -672,7 +672,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
       assert.equal(lines.indexOf(REVIEW_PRE_EXISTING), tags + 1, `${file}: the pre-existing line follows it`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
     }
   });
 

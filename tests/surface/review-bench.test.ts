@@ -174,7 +174,7 @@ test('T1-REVIEW-BENCH acceptance 3: the formal bench scores hit, miss, pass, fal
     const report = await bench(fx, reviewer(fx, calls));
     const byId = new Map(report.cases.map((c) => [c.id, c]));
     assert.deepEqual(report.cases.map((c) => [c.id, c.outcome]), [['a-hit', 'hit'], ['b-miss', 'miss'], ['c-pass', 'pass'], ['d-false-block', 'false-block'], ['e-no-verdict', 'no-verdict']]);
-    assert.deepEqual(byId.get('a-hit')!.matched, { reason: HIT_REASON, file: 'src/calc.ts', line: 12 });
+    assert.deepEqual(byId.get('a-hit')!.matched, { reason: HIT_REASON, file: 'src/calc.ts', line: 12, severity: 'P1' });
     assert.deepEqual(byId.get('b-miss')!.cited, [HIT_REASON, RANGE_REASON]);
     assert.equal(byId.get('e-no-verdict')!.runStatus, 'tool_error');
     assert.deepEqual(report.totals, { bugCases: 3, hits: 1, misses: 1, recall: 0.5, cleanCases: 2, cleanPasses: 1, falseBlocks: 1, falseBlockRate: 0.5, noVerdict: 1, errors: 0, skippedUnconfirmed: 1 });

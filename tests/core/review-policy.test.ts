@@ -671,7 +671,7 @@ describe('defect classes (T1-REVIEW-CLASS-SWEEP)', () => {
     assert.equal('class' in tagged.findings[1]!, false, 'an untagged reason records no class key');
     const plain = '[standards] 9 error handling @ src/a.ts:3: x -> y';
     const malformed = reason('Two Words');
-    const asMain = (text: string) => [{ id: 'F1', stage: 'formal', cycle: undefined, round: 1, perspective: undefined, reason: text, file: 'src/a.ts', candidateSha: 'sha-1', raisedAt: T0, disposition: 'open', disputes: [], reraised: [], revision: 0 }];
+    const asMain = (text: string) => [{ id: 'F1', stage: 'formal', cycle: undefined, round: 1, perspective: undefined, reason: text, file: 'src/a.ts', severity: 'P1', candidateSha: 'sha-1', raisedAt: T0, disposition: 'open', disputes: [], reraised: [], revision: 0 }];
     assert.deepEqual(rec([], 1, [plain]).findings, asMain(plain), 'an untagged reason records the finding main records');
     assert.deepEqual(rec([], 1, [malformed]).findings, asMain(malformed), 'a malformed tag records the finding main records');
 
