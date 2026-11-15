@@ -337,9 +337,12 @@ export class CardRunner {
 
   /**
    * The identity of each cited reason of a formal decision (card T1-FINDING-IDENTITY), with the cited lines read by
-   * `git show <candidateSha>:<file>` in the review checkout. A missing sha, or a read git refuses (a file the commit does
-   * not hold, a path that leaves the repository) or a runner that throws (an argument it refuses, such as a NUL byte in the
-   * path) gives the reason no identity and no error. Reads only; writes nothing.
+   * `git --no-lazy-fetch cat-file blob <candidateSha>:<file>` in the review checkout: the blob `git show` would print, and
+   * nothing else. A tree, a gitlink or any other non-blob is refused, and `--no-lazy-fetch` makes an object a partial clone
+   * lacks an error instead of a fetch from its promisor remote, so no identity read touches the network. A missing sha, a
+   * read git refuses (a file the commit does not hold, a path that leaves the repository, a missing object, a git without
+   * the option) or a runner that throws (an argument it refuses, such as a NUL byte in the path) gives the reason no
+   * identity and no error. Reads only; writes nothing.
    */
   private findingIdentities(checkout: string, candidateSha: string | undefined, reasons: string[]): Record<string, string> {
     const identities: Record<string, string> = {};
@@ -350,7 +353,7 @@ export class CardRunner {
         // A cited path comes from the reviewer: one the runner refuses (a NUL byte) or any other throw is an unread file, never an error of the decision.
         let lines: string[] | undefined;
         try {
-          const shown = this.runner('git', ['show', `${candidateSha}:${file}`], { cwd: checkout, timeoutMs: 30_000 });
+          const shown = this.runner('git', ['--no-lazy-fetch', 'cat-file', 'blob', `${candidateSha}:${file}`], { cwd: checkout, timeoutMs: 30_000 });
           lines = shown.exitCode === 0 && !shown.timedOut ? shown.stdout.split(/\r?\n/) : undefined;
         } catch {
           lines = undefined;

@@ -5,10 +5,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { makeFixture, writeCard, type Fixture } from './_harness.ts';
+import { cleanup, tmpDir } from '../infra/helpers.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import type { CardRun, ReviewFinding } from '../../src/core/types.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -17,16 +18,17 @@ import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.
 const CARD = 'T1-FI';
 const FILE = 'src/t1-fi.ts';
 const GONE = 'src/t1-gone.ts';
+const SUB = 'sub';
 const HERE = `[spec] [P1] 1 correctness @ ${FILE}:2-3: the sum is wrong -> fix it`;
 const MISSING = `[spec] 1 correctness @ ${GONE}:1: the file was deleted -> restore it`;
 /** The identity of HERE from R1 by hand: file, dimension 1, and lines 2 and 3 of the candidate commit, trimmed and collapsed. */
 const HERE_ID = createHash('sha256').update(`${FILE}\n1\nexport const b = a + 1;\nexport const c = b;`).digest('hex').slice(0, 16);
 const blockOf = (reasons: string[]) => ({ verdict: 'block' as const, reasons, axes: { spec: { verdict: 'block' as const, reasons }, standards: { verdict: 'pass' as const, reasons: [] } } });
 
-/** Git calls go to real git, except that `git show` throws when `throwOnShow` is set (a runner that throws). */
-const realGit = (throwOnShow = false): SyncRunner => (command, args, options) => {
+/** Git calls go to real git, except that a `cat-file` or `show` call throws when `throwOnRead` is set (a runner that throws). */
+const realGit = (throwOnRead = false): SyncRunner => (command, args, options) => {
   if (command !== 'git') return scriptedRunner({})(command, args, options);
-  if (throwOnShow && args[0] === 'show') throw new Error('injected runner failure');
+  if (throwOnRead && (args.includes('cat-file') || args.includes('show'))) throw new Error('injected runner failure');
   return runSync(command, args, options);
 };
 
@@ -36,9 +38,9 @@ function git(cwd: string, args: string[]): string {
   return r.stdout.trim();
 }
 
-/** A repository whose candidate commit changes FILE and deletes GONE; returns the candidate sha. */
+/** A repository whose candidate commit changes FILE, deletes GONE and adds the gitlink SUB to the base commit (an object the repository holds); returns the candidate sha. */
 function repoWithCandidate(fx: Fixture, tier?: 'S'): string {
-  writeCard(fx, { id: CARD, title: 'identity', allowPaths: [FILE, GONE], ...(tier ? { tier, reviewGate: 'codex {verdict:pass}' } : {}) });
+  writeCard(fx, { id: CARD, title: 'identity', allowPaths: [FILE, GONE, SUB], ...(tier ? { tier, reviewGate: 'codex {verdict:pass}' } : {}) });
   mkdirSync(path.join(fx.tmp, 'src'), { recursive: true });
   writeFileSync(path.join(fx.tmp, FILE), 'export const a = 1;\n');
   writeFileSync(path.join(fx.tmp, GONE), 'export const gone = 1;\n');
@@ -50,6 +52,8 @@ function repoWithCandidate(fx: Fixture, tier?: 'S'): string {
   writeFileSync(path.join(fx.tmp, FILE), 'export const a = 1;\n    export const b   = a + 1;\n\texport const c = b;\n');
   rmSync(path.join(fx.tmp, GONE));
   git(fx.tmp, ['add', '-A']);
+  mkdirSync(path.join(fx.tmp, SUB)); // an uninitialised submodule: an empty directory, so the tree stays clean
+  git(fx.tmp, ['update-index', '--add', '--cacheinfo', `160000,${git(fx.tmp, ['rev-parse', 'HEAD'])},${SUB}`]);
   git(fx.tmp, ['commit', '-q', '-m', 'candidate']);
   return git(fx.tmp, ['rev-parse', 'HEAD']);
 }
@@ -67,11 +71,11 @@ function attempt(fx: Fixture, cards: CardRunner, candidate: string) {
 }
 
 /** One R3 decision on the candidate with the scripted reviewer answering a block of `reasons`; returns the stored run. */
-async function r3Block(reasons: string[], throwOnShow = false): Promise<{ run: CardRun; fx: Fixture }> {
+async function r3Block(reasons: string[], throwOnRead = false): Promise<{ run: CardRun; fx: Fixture }> {
   const fx = makeFixture({ config: { gateRequired: true, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   const candidate = repoWithCandidate(fx);
   const reviewer = scriptedRunner({ 'fake-r3': () => ({ stdout: `${JSON.stringify(blockOf(reasons))}\n` }) });
-  const git = realGit(throwOnShow);
+  const git = realGit(throwOnRead);
   const runner: SyncRunner = (command, args, options) => (command === 'git' ? git(command, args, options) : reviewer(command, args, options));
   const cards = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner });
   const { goalId, card, after } = attempt(fx, cards, candidate);
@@ -81,11 +85,12 @@ async function r3Block(reasons: string[], throwOnShow = false): Promise<{ run: C
 }
 
 /** One ship-path decision on the candidate whose verdict document blocks with `reasons`; returns the stored run and the directive. */
-function shipBlock(reasons: string[], throwOnShow = false): { run: CardRun; directive: string; fx: Fixture } {
+function shipBlock(reasons: string[], options: { throwOnRead?: boolean; prepare?: (fx: Fixture, candidate: string) => void } = {}): { run: CardRun; directive: string; fx: Fixture } {
   const fx = makeFixture();
   const candidate = repoWithCandidate(fx, 'S');
+  options.prepare?.(fx, candidate);
   const ship = new DryRunShipPath(['review-blocked'], { ...blockOf(reasons), sha: candidate, run_status: 'success' });
-  const cards = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: realGit(throwOnShow) });
+  const cards = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: realGit(options.throwOnRead) });
   const { goalId, after } = attempt(fx, cards, candidate);
   return { run: fx.store.getCardRun(goalId, CARD)!, directive: after.directive.kind, fx };
 }
@@ -126,6 +131,8 @@ const FORMS: Array<[string, string, string | undefined]> = [
   ['a .. segment that leaves the repository', '[spec] 1 correctness @ src/../../outside.ts:1: x -> y', undefined],
   ['an absolute path', '[spec] 1 correctness @ /etc/hosts:1: x -> y', undefined],
   ['a line past the end of the file', `[spec] 1 correctness @ ${FILE}:99999999999999999999: x -> y`, undefined],
+  ['a directory (a tree, whose listing git show would print)', '[spec] 1 correctness @ src:1: x -> y', undefined],
+  ['a gitlink to a commit the repository holds (git show would print the commit)', `[spec] 1 correctness @ ${SUB}:1: x -> y`, undefined],
   ['a range past 40 lines, cut to the lines the file holds', `[spec] 1 correctness @ ${FILE}:2-100000: x -> y`, HERE_ID],
 ];
 
@@ -142,7 +149,7 @@ test('T1-FINDING-IDENTITY repair F1: a ship-path block citing every reviewer pat
 });
 
 test('T1-FINDING-IDENTITY repair F1: a runner that throws on the read gives no identity and leaves the ship-path decision as without it', () => {
-  const shipped = shipBlock([HERE, MISSING], true);
+  const shipped = shipBlock([HERE, MISSING], { throwOnRead: true });
   try {
     assert.equal(shipped.directive, 'review-fix');
     assert.deepEqual(identities(shipped.run.findings), [[HERE, undefined], [MISSING, undefined]]);
@@ -159,5 +166,50 @@ test('T1-FINDING-IDENTITY repair F1: a runner that throws on the read gives no i
     assert.deepEqual(identities(reviewed.run.findings), [[HERE, undefined], [MISSING, undefined]], 'the R3 path records the cited reasons (the NUL path is no changed path, so it is not cited) with no identity');
   } finally {
     reviewed.fx.cleanup();
+  }
+});
+
+test('T1-FINDING-IDENTITY repair F2: in a partial clone, a cited file whose blob the clone lacks gets no identity and is never fetched from the promisor remote', () => {
+  const remote = tmpDir('aidlc-fi-remote-');
+  let blob = '';
+  const prepare = (fx: Fixture, candidate: string): void => {
+    // The fixture repository becomes a partial clone of a bare copy that holds every object and serves any of them on request.
+    const bare = path.join(remote, 'bare.git');
+    git(fx.tmp, ['clone', '-q', '--bare', fx.tmp, bare]);
+    git(bare, ['config', 'uploadpack.allowFilter', 'true']);
+    git(bare, ['config', 'uploadpack.allowAnySHA1InWant', 'true']);
+    git(fx.tmp, ['remote', 'add', 'origin', bare]);
+    git(fx.tmp, ['config', 'remote.origin.promisor', 'true']);
+    git(fx.tmp, ['config', 'remote.origin.partialclonefilter', 'blob:none']);
+    git(fx.tmp, ['config', 'extensions.partialClone', 'origin']);
+    blob = git(fx.tmp, ['rev-parse', `${candidate}:${FILE}`]);
+    const loose = path.join(fx.tmp, '.git', 'objects', blob.slice(0, 2), blob.slice(2));
+    assert.ok(existsSync(loose), 'the candidate blob of FILE is a loose object');
+    rmSync(loose);
+  };
+  const present = (fx: Fixture): boolean => spawnSync('git', ['--no-lazy-fetch', 'cat-file', '-e', blob], { cwd: fx.tmp, windowsHide: true }).status === 0;
+  const { run, directive, fx } = shipBlock([HERE, MISSING], { prepare });
+  try {
+    assert.equal(directive, 'review-fix', 'the decision is recorded');
+    assert.deepEqual(identities(run.findings), [[HERE, undefined], [MISSING, undefined]], 'the missing blob is unreadable: no identity');
+    assert.equal(present(fx), false, 'the blob was not fetched from the promisor remote');
+    // The fixture is a working partial clone: a read without --no-lazy-fetch fetches the blob.
+    git(fx.tmp, ['cat-file', 'blob', `HEAD:${FILE}`]);
+    assert.equal(present(fx), true, 'a lazy read does fetch it, so the check above can fail');
+  } finally {
+    fx.cleanup();
+    cleanup(remote);
+  }
+});
+
+test('T1-FINDING-IDENTITY repair F3: on the R3 path a cited gitlink (a changed path) gets no identity, a directory is no changed path, and the decision stands', async () => {
+  const LINK = `[spec] 1 correctness @ ${SUB}:1: x -> y`;
+  const DIR = '[spec] 1 correctness @ src:1: x -> y';
+  const { run, fx } = await r3Block([HERE, LINK, DIR]);
+  try {
+    assert.equal(run.state, 'REVIEW_FIX');
+    assert.deepEqual(identities(run.findings), [[HERE, HERE_ID], [LINK, undefined]], 'the gitlink names a commit, not a blob; the directory is not cited on the R3 path');
+  } finally {
+    fx.cleanup();
   }
 });

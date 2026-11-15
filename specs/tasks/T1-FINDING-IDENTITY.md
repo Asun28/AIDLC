@@ -150,3 +150,49 @@ Repair hunks reread: the `try` wraps only the runner call and the split of its s
 Verify skill verify-card-run-writes after the repair: covered file `src/loop/card-runner.ts` changed, no write or append line in the repair diff, fault-point test passes in the DoD with no pin added: in sync.
 DoD (repair): exit 0, tests 135, pass 135, fail 0.
 Full suite (repair, `npm run check`): exit 0, tests 3731, pass 3703, fail 0, skipped 28.
+
+### Repair of R3 decision 2 (findings F2 identity-lazy-fetch, F3 identity-from-tree-listing)
+
+Fix (src/loop/card-runner.ts, `findingIdentities`, the only git call this card adds; `git diff eaed61f0 -- src` shows no other): each read is `git --no-lazy-fetch cat-file blob <candidateSha>:<file>`.
+- F2: `--no-lazy-fetch` (the option src/probes/base-sync.ts puts before every git command) makes an object a partial clone lacks an error instead of a fetch from the promisor remote. Chosen alone, without `GIT_NO_LAZY_FETCH=1` in the environment: the option is git's switch for exactly this (git sets that variable for its own subprocesses), and resolving `<sha>:<path>` uses no other transport. A git older than the option (2.44) refuses it, which is a failed read: no identity, no error.
+- F3: `cat-file blob` prints only a blob and refuses a tree, a gitlink or any other object type.
+- Deviation from R3's wording: R3 names `git show <candidateSha>:<file>`. For a file, `cat-file blob` prints the same bytes `git show` prints; it is a narrower read of the same object that refuses what has no cited lines (a tree listing, a commit), which keeps R3's intent (no identity for unreadable lines). Acceptance 4 still gives the expected identity.
+
+Regression tests (tests/scenarios/finding-identity.test.ts):
+- `repair F2: in a partial clone, ...`: the fixture repository is made a partial clone (promisor remote `origin`, a bare copy with `uploadpack.allowFilter` and `uploadpack.allowAnySHA1InWant`) and the candidate blob of the cited file is deleted; the ship-path decision is recorded, the finding has no identity, and `git --no-lazy-fetch cat-file -e <blob>` still fails afterwards. The test then reads the blob without the option and asserts it is fetched, so the fixture is a working partial clone.
+- `repair F3: on the R3 path a cited gitlink ...`: the candidate adds the gitlink `sub` (to the base commit, an object the repository holds); its citation gets no identity; a directory citation is no changed path on the R3 path, so it is not recorded.
+- The ship-path path-form test gains a directory (`@ src:1`) and the gitlink (`@ sub:1`), both without identity.
+
+Mutants (edit card-runner.ts, run tests/scenarios/finding-identity.test.ts, restore; none committed):
+| Mutant | Result |
+|---|---|
+| N1 `--no-lazy-fetch` removed | killed: repair F2 |
+| N2 `git --no-lazy-fetch show` instead of `cat-file blob` | killed: repair F1 path forms (directory, gitlink), repair F3 |
+| N3 `git show` as at f2937173 | killed: repair F1 path forms, F2, F3 |
+| N4 catch removed | killed: repair F1 path forms and both throwing-runner tests |
+
+Input forms, complete (replaces the table of the decision 1 repair; the ship path reaches the reader with any path, R3 only with a changed path of the candidate):
+| Input form | Behaviour | Test |
+|---|---|---|
+| NUL byte in the path | runner throws, caught: no identity | F1 path-form test (ship); not a changed path on R3 |
+| runner throws for any other reason | no identity, decision recorded | F1 throwing-runner tests, ship and R3 |
+| path that leaves the repository (`../outside.ts`) | git exits 128: no identity | F1 path-form test |
+| `..` segment that leaves the repository | git exits 128: no identity | F1 path-form test |
+| absolute path (`/etc/hosts`) | git exits 128: no identity | F1 path-form test |
+| file the candidate commit does not hold | git exits 128: no identity | acceptance 4, both tests |
+| directory (tree) | `cat-file blob` refuses: no identity; not a changed path on R3 | F1 path-form test (ship), F3 test (R3) |
+| gitlink (submodule entry) | `cat-file blob` refuses the commit type: no identity | F1 path-form test (ship), F3 test (R3, a changed path) |
+| blob a partial clone lacks | no fetch, read fails: no identity | F2 test |
+| empty path, or a path with no letter or digit | no file: reader never called | acceptance 2 |
+| no line number | reader never called | acceptance 2 |
+| very long range (`:2-100000`) | cut to 40 lines from 2 | F1 path-form test, acceptance 2 |
+| line past the end | no text: no identity | F1 path-form test |
+| timed-out read | failed read: no identity | same branch as a non-zero exit; no separate test |
+| symlink | the blob is the link target text: an identity over that text, as `git show` would print it | no test; recorded and reported only |
+| `..` that stays inside the repository | git resolves it to the blob: an identity over the path text as cited | no test; recorded and reported only |
+
+Repair hunks reread: the read now needs git 2.44 or later for any identity (older git: no identities, no error; base-sync already relies on the option); for a file the bytes are those `git show` printed, so acceptance 4's expected identity is unchanged; the fault-point check's scripted runner answers `git --no-lazy-fetch cat-file` with no entry (exit 127), so its runs get no identity and the same writes. No store write or journal append added, removed or reordered.
+
+Verify skill verify-card-run-writes after the second repair: covered file `src/loop/card-runner.ts` changed, no write or append line in the repair diff, fault-point test passes in the DoD with no pin added: in sync.
+DoD (second repair): exit 0, tests 137, pass 137, fail 0.
+Full suite (second repair, `npm run check`): exit 1, tests 3733, pass 3704, fail 1, skipped 28. The one failure is tests/infra/exec.test.ts, "T0-EXEC-TREE-KILL ... acceptance 3", a timing fixture: "fixture not ready before the timeout at scale 2: the machine got slower after calibration (the sleeper's pid file was written 3722 ms after the call, the timeout was 3000 ms)". This card changes nothing under src/probes/ or tests/infra/; `node --test tests/infra/exec.test.ts` alone: tests 70, pass 70, fail 0.
