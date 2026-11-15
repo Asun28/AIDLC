@@ -1,7 +1,7 @@
 ---
 id: T0-R3-POOL-WAIT-2
 title: (replaces T0-R3-POOL-WAIT and carries its candidate) aidlc review r3 answers a review pool that does not admit the request with the wait directive card next gives and exit 75, and bin/aidlc.js prints an error thrown in a command's action as one line, so a busy pool is no longer an uncaught error with a stack trace (issue 318)
-status: todo
+status: merged
 branch: T0-R3-POOL-WAIT-2
 worktree: D:\wt\AIDLC\T0-R3-POOL-WAIT-2
 size_exception: "the coordinating session, 2026-11-15, under the owner's (asun28) instruction of that day to fix issues 316-318 through the loop and to pick answers itself while the owner is away: budget 380 for the successor of T0-R3-POOL-WAIT, which carries its candidate fe6b4f9c (377 changed lines: tests/scenarios/review-r3-wait.test.ts 300, src 51, bin 10, docs 4, card 12); the tests are the acceptance the card and its R3 findings call for"
