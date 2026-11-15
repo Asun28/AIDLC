@@ -3,6 +3,7 @@ id: T1-OUTCOME-REPLAY
 title: The findings that bench/outcome/labels-final.jsonl labels true-defect with the source agreed or owner become confirmed bug cases in evals/review/replay/, and bench/outcome/replay-main.json holds one formal bench run of main's reviewer over them and three trials of ten of them, the recall baseline
 status: todo
 branch: T1-OUTCOME-REPLAY
+superseded_by: T1-OUTCOME-REPLAY-2
 worktree: D:\wt\AIDLC\T1-OUTCOME-REPLAY
 plan_ref: plans/reliability-baseline-2.md#order-of-work
 allow_paths:

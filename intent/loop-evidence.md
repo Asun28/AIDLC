@@ -113,6 +113,12 @@ The owner (labels, rulings, approval of the review text); `bench/outcome/`, `doc
   by both models or by the owner; no clean cases; the adjudicator's labels are not used as truth.
 - T1-OUTCOME-ADJUDICATE ships as a measurement; the report states its disagreement with the owner.
 - T1-EVIDENCE-DOCS documents only the loop-run DoD record and the worker's shell timeout.
+- Goal reliability-baseline-2 extended by 6 h to 2026-11-15T16:00:30Z: the replay run (87 reviews,
+  121.80 USD, recall 89 of 124) outlasted T1-OUTCOME-REPLAY's 3 h limit.
+- T1-OUTCOME-REPLAY-2 replaces T1-OUTCOME-REPLAY and carries its cases and runs (budget 330): the
+  whole bench reports in replay-main.json put the candidate diff at 1330835 bytes, above R3's
+  `maxDiffBytes` of 800000, and the code at 307 lines; the file keeps reduced case results and the
+  sha256 of each whole report.
 
 ## Open questions
 - (none)
