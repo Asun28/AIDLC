@@ -5,6 +5,7 @@
  * start. Result pages are paginated. CI reruns inspect the actual attempt before repeating a
  * lost-response rerun.
  */
+import { z } from 'zod';
 import { runSync, type ExecReceipt, type SyncRunner } from './exec.ts';
 import type { PrInfo } from '../core/types.ts';
 
@@ -61,6 +62,10 @@ export const MERGEABLE = ['MERGEABLE', 'CONFLICTING', 'UNKNOWN'] as const;
 export type Mergeable = (typeof MERGEABLE)[number];
 export const MERGE_STATE_STATUS = ['BEHIND', 'BLOCKED', 'CLEAN', 'DIRTY', 'DRAFT', 'HAS_HOOKS', 'UNKNOWN', 'UNSTABLE'] as const;
 export type MergeStateStatus = (typeof MERGE_STATE_STATUS)[number];
+
+/** One issue as `gh issue list --json number,body` prints it (T1-GH-ISSUES). */
+const IssueListSchema = z.array(z.object({ number: z.number().int(), body: z.string() }));
+export type IssueEntry = z.infer<typeof IssueListSchema>[number];
 
 export class GhProbe {
   readonly runner: SyncRunner;
@@ -177,6 +182,39 @@ export class GhProbe {
   jobLog(repo: string, jobId: string, cwd?: string): string | undefined {
     const r = this.gh(['api', `repos/${repo}/actions/jobs/${jobId}/logs`], cwd);
     return r.exitCode === 0 && !r.timedOut ? r.stdout : undefined;
+  }
+
+  /** Every issue that carries `label`, open or closed (listed by label, not by search, so a new issue is seen at once). Throws on a failed call or output that does not parse. */
+  issuesWithLabel(repo: string, label: string, cwd?: string): IssueEntry[] {
+    const args = ['issue', 'list', '--repo', repo, '--label', label, '--state', 'all', '--limit', '100', '--json', 'number,body'];
+    const r = this.gh(args, cwd);
+    if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(args, r);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(r.stdout);
+    } catch (err) {
+      throw new GhProbeError(args, r, `malformed JSON: ${(err as Error).message}`);
+    }
+    const parsed = IssueListSchema.safeParse(raw);
+    if (!parsed.success) throw new GhProbeError(args, r, `unexpected issue list: ${parsed.error.message}`);
+    return parsed.data;
+  }
+
+  /**
+   * Creates (or updates) `label`, then an issue with that label and `body` on stdin; returns the issue number from the
+   * URL gh prints last. Throws, naming the call, on a failed call or stdout whose last line is not an issue URL of `repo`.
+   */
+  createIssue(repo: string, title: string, body: string, label: string, cwd?: string): number {
+    const labelArgs = ['label', 'create', label, '--repo', repo, '--force', '--description', 'aidlc review follow-ups'];
+    const l = this.gh(labelArgs, cwd);
+    if (l.exitCode !== 0 || l.timedOut) throw new GhProbeError(labelArgs, l);
+    const issueArgs = ['issue', 'create', '--repo', repo, '--title', title, '--label', label, '--body-file', '-'];
+    const r = this.runner('gh', issueArgs, { cwd, timeoutMs: 120_000, input: body });
+    if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(issueArgs, r);
+    const last = r.stdout.trimEnd().split('\n').pop()?.trim() ?? '';
+    const m = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\/(\d+)$/.exec(last);
+    if (!m || m[1]!.toLowerCase() !== repo.toLowerCase()) throw new GhProbeError(issueArgs, r, `no issue URL of ${repo} on the last line of stdout`);
+    return Number(m[2]);
   }
 
   rerunFailed(repo: string, runId: string, cwd?: string): ExecReceipt {
