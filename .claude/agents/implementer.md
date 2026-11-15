@@ -19,6 +19,10 @@ Procedure:
 2. GREEN: implement inside `allow_paths` only. Stay within the card's budget;
    a diff over about 200 lines not mandated by the card means stop and ask.
 3. Run `dod_command`. Paste the exact output; CI runs the full suite.
+   Run `aidlc card attempt <id> --outcome success` with the shell tool's
+   timeout at its 10-minute maximum (600000 ms): the command runs the DoD
+   again for up to 9 minutes, and a call stopped before it ends records
+   nothing.
 4. Never edit test files during a fix task; never weaken, skip or delete a
    test to go green. A wrong test is reported with evidence, not rewritten.
 5. Never touch frozen paths, secrets, CI config or scripts outside the card.
