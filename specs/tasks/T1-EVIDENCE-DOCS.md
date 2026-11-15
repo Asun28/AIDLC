@@ -1,7 +1,7 @@
 ---
 id: T1-EVIDENCE-DOCS
 title: CHANGELOG.md, docs/OPERATIONS.md and docs/ARCHITECTURE.md describe the loop-run DoD record of T1-DOD-RECORD-2, both implementer agent copies tell the worker to run a successful card attempt with the shell tool's 10-minute timeout, and a surface test pins each text at its place
-status: todo
+status: merged
 branch: T1-EVIDENCE-DOCS
 worktree: D:\wt\AIDLC\T1-EVIDENCE-DOCS
 plan_ref: plans/loop-evidence.md#order-of-work
