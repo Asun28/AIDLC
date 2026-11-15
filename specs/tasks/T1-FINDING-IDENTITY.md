@@ -117,3 +117,36 @@ Hand mutants (edit, run the named test file, restore; none committed):
 DoD: `npm run typecheck && node --test tests/core/finding-identity.test.ts tests/scenarios/finding-identity.test.ts tests/surface/stats.test.ts tests/core/review-policy.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/second-pass.test.ts`: exit 0, tests 132, pass 132, fail 0 (final tree).
 
 Full suite (`npm run check`): exit 0, tests 3728, pass 3700, fail 0, skipped 28.
+
+### Repair of R3 decision 1 (finding F1, identity-read-throws)
+
+Cause: `CardRunner.findingIdentities` called the runner without a catch; a ship-path reason citing a path with a NUL byte made `runSync` throw `ERR_INVALID_ARG_VALUE` out of `applyShipResult` before its decision was saved. Fix (src/loop/card-runner.ts, `findingIdentities`): each file's read runs inside `try`; a throw, a non-zero exit or a timeout caches `undefined` for that file, so the reason gets no identity and the decision is recorded as without it. No store write or journal append added, removed or reordered.
+
+Regression tests (tests/scenarios/finding-identity.test.ts), each failing on 79d9af32's card-runner.ts (catch removed) and passing with the fix:
+- `repair F1: a ship-path block citing every reviewer path form ...`: on 79d9af32, `The argument 'args[1]' must be a string without null bytes`.
+- `repair F1: a runner that throws on the read ... ship-path decision ...`: on 79d9af32, `injected runner failure`.
+- `repair F1: a runner that throws on the read ... R3 decision ...`: on 79d9af32, `injected runner failure`.
+
+Class sweep: every way the reader can be reached with input from a reviewer. The R3 path reads only reasons whose file is a changed path of the candidate (`citedReasonsOf(verdict, changedPaths)`); the ship path checks no changed path, so every form below reaches the reader there.
+| Input form | Behaviour | Test |
+|---|---|---|
+| NUL byte in the path (the runner refuses the argument and throws) | no identity, decision recorded | repair F1 path-form test (ship); on R3 the NUL path is no changed path, so it is never read (repair F1 R3 test asserts it is not recorded) |
+| a runner that throws for any other reason | no identity, decision recorded | repair F1 throwing-runner tests, ship and R3 |
+| path that leaves the repository (`../outside.ts`) | git exits 128: no identity | repair F1 path-form test |
+| `..` segment that leaves the repository (`src/../../outside.ts`) | git exits 128: no identity | repair F1 path-form test |
+| absolute path (`/etc/hosts`) | git exits 128: no identity | repair F1 path-form test |
+| file the candidate commit does not hold | git exits 128: no identity | acceptance 4, both tests |
+| empty path (`@ :1`) or a path with no letter or digit | no file (`FINDING_LOCATION`, `findingLocation`): the reader is never called, no identity | acceptance 2 ("no file") |
+| no line (`@ file:` without a number) | no identity, reader never called | acceptance 2 ("no line") |
+| very long range (`:2-100000`) | cut to 40 lines from 2; the identity of the lines the file holds | repair F1 path-form test, acceptance 2 |
+| line past the end (`:99999999999999999999`) | empty text: no identity | repair F1 path-form test |
+| timed-out read | treated as failed: no identity | code path shared with the non-zero exit; no separate test |
+| `..` segment that stays inside the repository (`src/../src/a.ts`) | git resolves it and returns the file: an identity over the path text as cited | no test; recorded and reported only |
+| a directory path (ship path only) | `git show <sha>:<dir>` exits 0 with git's tree listing: an identity over the listing, no error | no test; follow-up candidate (`git cat-file blob` would refuse a tree, but R3 names `git show`) |
+
+Mutant: catch removed (card-runner.ts as at 79d9af32): the three repair tests fail as listed above; restored, all five tests of the file pass.
+Repair hunks reread: the `try` wraps only the runner call and the split of its stdout; the cache, the identity computation and both call sites are unchanged, and nothing the catch swallows reaches a store write.
+
+Verify skill verify-card-run-writes after the repair: covered file `src/loop/card-runner.ts` changed, no write or append line in the repair diff, fault-point test passes in the DoD with no pin added: in sync.
+DoD (repair): exit 0, tests 135, pass 135, fail 0.
+Full suite (repair, `npm run check`): exit 0, tests 3731, pass 3703, fail 0, skipped 28.

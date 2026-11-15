@@ -338,7 +338,8 @@ export class CardRunner {
   /**
    * The identity of each cited reason of a formal decision (card T1-FINDING-IDENTITY), with the cited lines read by
    * `git show <candidateSha>:<file>` in the review checkout. A missing sha, or a read git refuses (a file the commit does
-   * not hold, a path that leaves the repository), gives the reason no identity and no error. Reads only; writes nothing.
+   * not hold, a path that leaves the repository) or a runner that throws (an argument it refuses, such as a NUL byte in the
+   * path) gives the reason no identity and no error. Reads only; writes nothing.
    */
   private findingIdentities(checkout: string, candidateSha: string | undefined, reasons: string[]): Record<string, string> {
     const identities: Record<string, string> = {};
@@ -346,8 +347,15 @@ export class CardRunner {
     const files = new Map<string, string[] | undefined>();
     const readLines = (file: string, from: number, to: number): string[] | undefined => {
       if (!files.has(file)) {
-        const shown = this.runner('git', ['show', `${candidateSha}:${file}`], { cwd: checkout, timeoutMs: 30_000 });
-        files.set(file, shown.exitCode === 0 && !shown.timedOut ? shown.stdout.split(/\r?\n/) : undefined);
+        // A cited path comes from the reviewer: one the runner refuses (a NUL byte) or any other throw is an unread file, never an error of the decision.
+        let lines: string[] | undefined;
+        try {
+          const shown = this.runner('git', ['show', `${candidateSha}:${file}`], { cwd: checkout, timeoutMs: 30_000 });
+          lines = shown.exitCode === 0 && !shown.timedOut ? shown.stdout.split(/\r?\n/) : undefined;
+        } catch {
+          lines = undefined;
+        }
+        files.set(file, lines);
       }
       return files.get(file)?.slice(from - 1, to);
     };
