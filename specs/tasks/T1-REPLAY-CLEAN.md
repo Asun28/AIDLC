@@ -10,6 +10,7 @@ allow_paths:
   - evals/review/clean/*.json
   - evals/review/README.md
   - tests/surface/outcome-clean.test.ts
+  - tests/surface/review-bench.test.ts
   - specs/tasks/T1-REPLAY-CLEAN.md
 dod_command: npm run typecheck && node --test tests/surface/outcome-clean.test.ts tests/surface/outcome-replay.test.ts tests/surface/review-bench-export.test.ts
 dod_exit: 0
@@ -17,7 +18,7 @@ requirements:
   - R1. `selectClean(drafts, facts)` (new, exported from bench/outcome/clean.ts) shall take clean drafts of the `ReviewBenchCase` shape and, per draft, the facts `cardStatus`, `supersededBy`, `scorable` and whether its candidate is the candidate of a case under evals/review/replay/, and return the confirmed cases: drafts whose card file has `status: merged`, no `superseded_by`, are scorable and share no candidate with a replay case; one per card (the draft with the smallest id); ordered by the sha256 of the id, hex ascending; the first 15 with distinct candidates. Each returned case has `confirmed: true` and `confirmedBy` equal to the constant `CLEAN_RULE` (the rule of this requirement in one sentence ending `no person checked this case`). Fewer than 15 eligible drafts returns them all and a `shortBy` count.
   - R2. `node bench/outcome/clean.ts` shall read the drafts of `aidlc review bench export --clean --dir _local/clean-drafts` (run first by the implementer; the directory is gitignored), compute the facts (card file from specs/tasks/<id>.md through `parseCardText`; scorable as `bench/outcome/replay.ts` `scorable` decides it, with `formalReview.maxDiffBytes`), write each selected case to `evals/review/clean/<id>.json` through `ReviewBenchCase.parse`, and print the counts of drafts, eligible drafts and written cases. It refuses (exit 2, nothing written) when evals/review/clean/ already holds a file.
   - R3. evals/review/clean/ shall hold exactly 15 case files written by R2, each a confirmed `kind: clean` case.
-  - R4. evals/review/README.md shall name evals/review/clean/, the rule of R1 and the command of R2.
+  - R4. evals/review/README.md shall name evals/review/clean/, the rule of R1 and the command of R2. `CASES_README` of tests/surface/review-bench.test.ts (:453), which pins that file's paragraphs exactly, shall gain the R4 paragraph as added element(s) at its place in the list; no other line of that test changes.
 acceptance:
   - 1. `tests/surface/outcome-clean.test.ts` (new), "T1-REPLAY-CLEAN acceptance 1: selectClean keeps merged cards with no successor, one per card, ordered by the sha256 of the id, with distinct candidates". Fixture drafts cover each exclusion of R1 (status not merged, a successor, not scorable, a replay candidate, a second draft of one card, a repeated candidate) and more than 15 eligible drafts. Fails on main (no module). [R1] [dod arm 1]
   - 2. Same file, "T1-REPLAY-CLEAN acceptance 2: selectClean reports how many it is short of 15". Fails on main. [R1] [dod arm 1]
@@ -29,7 +30,7 @@ budget: 200
 tdd: true
 sweep: "Main at 0f28b51e. `aidlc review bench export --clean` drafts one clean case per card run whose first R3 decision passed and pins each candidate under refs/aidlc/bench/ (src/cli/main.ts, `review bench export`); it never overwrites a case and writes no state. `ReviewBenchCase` src/core/types.ts:870-886: the `clean` variant has no `expected`, and `confirmed: true` needs `confirmedBy`. bench/outcome/replay.ts `scorable` (:96-100 region) checks the card id at the candidate and the diff size; it is not exported, so clean.ts calls the same functions (`parseCardText`, `collectCandidateDiff`). evals/review/replay/ holds 124 bug cases on 57 triples. `loadBenchCases` reads one directory and does not descend, so a new subdirectory changes no run over evals/review/replay/."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test other than the `CASES_README` addition of R4
   - editing a file under evals/review/replay/ or bench/outcome/*.json
   - a case confirmed by any rule other than R1, or a case chosen by hand
   - editing .aidlc state by hand
