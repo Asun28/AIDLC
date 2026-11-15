@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-REPLAY-2
 title: (replaces T1-OUTCOME-REPLAY and carries its candidate) The findings that bench/outcome/labels-final.jsonl labels true-defect with the source agreed or owner become confirmed bug cases in evals/review/replay/, and bench/outcome/replay-main.json holds one formal bench run of main's reviewer over them and three trials of ten of them, each case result reduced to its id, kind, confirmed, outcome, run status, detail and duration, the recall baseline
-status: todo
+status: merged
 branch: T1-OUTCOME-REPLAY-2
 worktree: D:\wt\AIDLC\T1-OUTCOME-REPLAY-2
 size_exception: "owner (asun28), 2026-11-15: budget 330 for the successor of T1-OUTCOME-REPLAY, which carries its candidate (307 lines at 4f04a989: script 147, test 157, README 2, element 1)"
