@@ -24,7 +24,7 @@ import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError, createExclusive, interruptedWritesReport } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { runGoal } from '../loop/run-driver.ts';
-import { CardRunner } from '../loop/card-runner.ts';
+import { CardRunner, ReviewPoolWaitError } from '../loop/card-runner.ts';
 import { ReleaseRunner } from '../loop/release-runner.ts';
 import { ReportInput } from '../loop/directive.ts';
 import { loadCardRegistry, validateRegistry, renderCard, type ParsedCard } from '../artifacts/card.ts';
@@ -1043,7 +1043,16 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action(async (cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
-      const r = await runnerFor(c).formalReview(goalRec, parsed.card, run);
+      let r: Awaited<ReturnType<CardRunner['formalReview']>>;
+      try {
+        r = await runnerFor(c).formalReview(goalRec, parsed.card, run);
+      } catch (err) {
+        if (!(err instanceof ReviewPoolWaitError)) throw err;
+        // An expected wait, not a failure (card T0-R3-POOL-WAIT): the directive `card next` gives for the same state, exit 75.
+        out(c, err.waitDirective());
+        process.exitCode = 75;
+        return;
+      }
       c.controller.writeBoard(goalRec);
       const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: r.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
       out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
