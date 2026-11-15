@@ -33,7 +33,7 @@ acceptance:
   - 5. `tests/surface/stats.test.ts`, new test "T1-FINDING-IDENTITY acceptance 5: stats count findings with an identity and repeat findings by identity". A run whose decision 2 raises, with no `re:F<n>`, a finding with the identity of a decision 1 finding, and one with a new identity. Fails on main by assertion. [R4] [dod arm 1]
   - 6. tests/core/review-policy.test.ts, tests/scenarios/second-pass.test.ts and tests/scenarios/fault-points.test.ts pass with no line changed and no pin added. At CLOSE, .claude/skills/verify-card-run-writes/SKILL.md moves its sync commit to the merge commit on main. [R3] [dod arm 1]
   - 7. The doc sentences are as R5 states (reviewer-verified against the diff). [R5]
-depends_on: [T1-REVIEW-SEVERITY-2]
+depends_on: [T1-REVIEW-SEVERITY-3]
 budget: 240
 tdd: true
 sweep: "Main at 0f28b51e. `FINDING_LOCATION` src/core/review-policy.ts:240 and `findingLocation` :247-252 give the file; `findingSite` :274-279 shows how the range is cut from the match. `findingClass` :266-271. `RecordFindingsInput` :314-340, `recordFindings` :385-440 (new findings created at :417-425). Formal `round` is `rec.ledger.substantiveDecisions` at card-runner.ts:2452 (R3) and :2877 (ship path), so `round` is the decision number. `commitReviewed` :2512-2557 calls `recordFindings` at :2539 on the locked record with the `findingsInput` built in `decide`. `countFindings` stats.ts:287-305. card-runner.ts is named by the verify-card-run-writes coverage record; this card adds no store write or journal append."

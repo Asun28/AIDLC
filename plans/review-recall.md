@@ -102,7 +102,7 @@ at a budget of 250 (`MAX_CODE_CARD_BUDGET`) and no size exception is recorded.
 ## 7. Task split (dependencies and parallel windows)
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
-| T1-REVIEW-SEVERITY-2 | MUST | severity tag recorded on every finding, gating nothing (replaces T1-REVIEW-SEVERITY and carries its candidate) | - | W1 | - |
+| T1-REVIEW-SEVERITY-3 | MUST | severity tag recorded on every finding, gating nothing (replaces T1-REVIEW-SEVERITY-2, which replaced T1-REVIEW-SEVERITY; carries its candidate) | - | W1 | - |
 | T1-REPLAY-CLEAN | MUST | 15 confirmed clean cases | - | W1 | - |
 | T1-FINDING-IDENTITY | MUST | identity on every formal finding, repeat findings in stats | T1-REVIEW-SEVERITY | - | - |
 | T1-BENCH-ROUNDS | MUST | rounds inside one decision in the bench | T1-REVIEW-SEVERITY, T1-FINDING-IDENTITY | - | - |

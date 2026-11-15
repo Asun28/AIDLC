@@ -2,6 +2,7 @@
 id: T1-REVIEW-SEVERITY-2
 title: (replaces T1-REVIEW-SEVERITY and carries its candidate) Every R2 and R3 block reason opens with a [P0], [P1] or [P2] severity tag that the finding record stores, stats count and the bench reports for each hit, and no gate reads
 status: todo
+superseded_by: T1-REVIEW-SEVERITY-3
 branch: T1-REVIEW-SEVERITY-2
 worktree: D:\wt\AIDLC\T1-REVIEW-SEVERITY-2
 plan_ref: plans/review-recall.md#order-of-work
