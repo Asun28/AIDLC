@@ -58,3 +58,5 @@ npm run typecheck && node --test tests/scenarios/review-r3-wait.test.ts tests/sc
 | 3 [R2] [R3] | tests/scenarios/review-r3-wait.test.ts "acceptance 2 and 3: ..." (no card run: exit 1, one `aidlc: ` line, no `    at `) | pass |
 | 4 [R1] | tests/scenarios/fault-points.test.ts unchanged | pass |
 | 5 [R4] | tests/scenarios/review-r3-wait.test.ts "acceptance 5: ..." (both tests) | pass |
+| R3 F1 [R1] [R2] | tests/scenarios/review-r3-wait.test.ts "F1: ... rejects with status reset-pending ..." (in process) and "F1: ... review-pool:default:reset-pending, exit 75 ..." (bin/aidlc.js) | pass |
+| R3 F2 [R3] | tests/scenarios/review-r3-wait.test.ts "F2: a rejection whose message spans lines ..." (bin/aidlc.js and src/cli/main.ts) | pass |

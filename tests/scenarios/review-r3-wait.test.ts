@@ -258,11 +258,11 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
 
 const OPERATIONS_SENTENCES = [
   'Pool wait (card T0-R3-POOL-WAIT): when the shared review pool does not admit the request (`busy`, `behind` or `reset-pending`) or a matching request is already running, `aidlc review r3 <card>` writes to stdout the JSON of the `wait` directive `card next` gives for that state (`on` `review-pool:<pool>:<status>` with `pollSeconds` 120, or `review:<request key>` with 60), writes nothing to stderr and exits 75; run it again once the pool admits the request.',
-  'Any other error of the command, as of every command run through `bin/aidlc.js`, is one `aidlc: <message>` line on stderr and exit 1, with no stack trace.',
+  'Any other error of the command, as of every command run through `bin/aidlc.js`, is one `aidlc: <message>` line on stderr, the lines of a multi-line message joined with ` | `, and exit 1, with no stack trace.',
 ];
 const CHANGELOG_SENTENCES = [
   '- T0-R3-POOL-WAIT (bugfix, issue 318): `aidlc review r3` answers a review pool that does not admit the request (`busy`, `behind`, `reset-pending`), and a matching request already running, with the `wait` directive JSON that `card next` gives for the same state and exit 75, with nothing on stderr; `CardRunner.formalReview` throws the exported `ReviewPoolWaitError` (card id, pool, status, requesters ahead, reset time) with the message it threw before.',
-  '`bin/aidlc.js` prints a rejection of `main` as one `aidlc: <message>` line on stderr with exit 1, as `node src/cli/main.ts` does.',
+  '`bin/aidlc.js` prints a rejection of `main` as one `aidlc: <message>` line on stderr with exit 1, the lines of a multi-line message joined with ` | `, as `node src/cli/main.ts` now does too.',
   'Before, a pool that did not admit the request ended `review r3` with an unhandled rejection, its stack trace and exit 1.',
 ];
 
