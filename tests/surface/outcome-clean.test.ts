@@ -42,6 +42,18 @@ test('T1-REPLAY-CLEAN acceptance 1: selectClean keeps merged cards with no succe
   assert.ok(result.cases.every((c) => c.confirmed && c.confirmedBy === CLEAN_RULE && c.kind === 'clean'));
   assert.equal(new Set(result.cases.map((c) => c.candidate)).size, 15);
   assert.equal(result.shortBy, undefined);
+  // Below the limit every eligible draft is returned, so each exclusion, the per-card choice and the candidate rule shows in the result.
+  const few = Array.from({ length: 5 }, (_, i) => draft(`T1-FEW-${i}`, 1, 400 + i));
+  const [small, large] = [draft('T1-TWO', 1, 410), draft('T1-TWO', 2, 411)]; // one card, distinct candidates; T1-TWO.g-1 < T1-TWO.g-2
+  const dup = draft('T1-DUP', 1, 400); // the candidate of T1-FEW-0
+  const bug = { ...draft('T1-BUG', 1, 420), kind: 'bug', expected: [{ file: 'src/a.ts', line: 1, window: 0, class: 'dim-1' }] } as ReviewBenchCase;
+  const kept = sha(dup.id) < sha(few[0]!.id) ? dup : few[0]!;
+  const want = byHash([kept, ...few.slice(1), small].map((d) => d.id));
+  for (const input of [[...excluded.map(([d]) => d), bug, small, large, ...few, dup], [dup, ...few, large, small, bug, ...excluded.map(([d]) => d)]]) {
+    const below = selectClean(input, (d) => facts.get(d.id) ?? ok);
+    assert.deepEqual(below.cases.map((c) => c.id), want);
+    assert.equal(below.shortBy, 15 - want.length);
+  }
 });
 
 test('T1-REPLAY-CLEAN acceptance 2: selectClean reports how many it is short of 15', async () => {
