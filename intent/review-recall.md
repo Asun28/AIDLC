@@ -137,6 +137,11 @@ not evidence.
   follow-up card, and the candidate ships. "Big" is read as P0 or P1 by
   the severity rule above (a reason with no tag is P1); a card that stops
   with an open P0 or P1 finding stays stopped for the owner.
+- Delegated decisions (owner, 2026-11-16, in the session): a decision that
+  would need the owner during this run is settled by consulting Claude
+  Fable 5.2 or by the coordinator's own pick; each is recorded with its
+  reason in the commit or card amendment that applies it. This does not
+  widen the ruling rule above.
 
 ## Open questions
 - (none)
