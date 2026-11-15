@@ -256,10 +256,11 @@ export function findingLocation(reason: string): string | undefined {
  * A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). The
  * tag counts only where the output contract puts it: opening the reason (after the axis tag if any), or opening the text after
  * the `@ <file:line>:` location. A path or prose that merely contains the bracket text is no tag, so a cited block is never
- * downgraded by its wording. One severity tag (`[P0]`, `[P1]`, `[P2]`) may stand between the axis tag and the rest
- * (card T1-REVIEW-SEVERITY).
+ * downgraded by its wording. One severity tag (`[P0]`, `[P1]`, `[P2]`) may open the reason or follow the axis tag, in the
+ * position `findingSeverity` reads (white space required after the axis tag), and stand before the rest (card
+ * T1-REVIEW-SEVERITY); `[standards][P2] [suggestion]` is no tag, as on main.
  */
-export const ADVISORY_TAG = /^\s*(?:\[(?:spec|standards)\]\s*)?(?:\[P[012]\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
+export const ADVISORY_TAG = /^\s*(?:(?:\[(?:spec|standards)\]\s+)?\[P[012]\]\s*|\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
 
 /** A severity tag opening a reason, or directly after its axis tag and white space (card T1-REVIEW-SEVERITY). */
 const SEVERITY_TAG = /^\s*(?:\[(?:spec|standards)\]\s+)?\[(P[012])\]/i;

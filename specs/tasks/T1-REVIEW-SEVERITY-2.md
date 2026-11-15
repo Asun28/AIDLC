@@ -102,3 +102,31 @@ Attempt 1 failed on a card conflict (templates.test.ts :683, :694, :741, :746 pi
 | 7 | diff of REVIEW.md, templates/REVIEW.md, pre-review.ts contract, both configs, OPERATIONS.md, ARCHITECTURE.md | reviewer to verify |
 
 DoD: `npm run typecheck && node --test <6 files>` exit 0; 154 tests, 26 suites, 154 pass, 0 fail; typecheck clean.
+
+### Repair of R3 decision 1 (attempt 4)
+
+RED commit `80f4dc69`: acceptance 2 failed with `AssertionError: ADVISORY_TAG: [standards][P2] [suggestion] @ src/a.ts:3: broken -> fix` (actual true, expected false).
+- F1 (severity-prefix-whitespace): removing the severity group alone would fix this site but make `[standards] [P2] [suggestion] x` a block again (R4), so the group stays and now needs white space after an axis tag, the rule `findingSeverity` applies. `ADVISORY_TAG` is the one site; `PRE_EXISTING_TAG` is built from it.
+- F2 (pre-existing-citation-coverage): acceptance 2 now passes every `[pre-existing]` reason through `citedReasonsOf` with its cited path allowed and no changed-line map; each stays cited.
+- F3 (incomplete-severity-documentation): docs/ARCHITECTURE.md now states the three levels, the advisory exemption, the tag positions and letter case, the `P1` default, storage on create and re-raise, the `none` bucket and that no gate reads it. docs/OPERATIONS.md names the white-space rule.
+
+Input forms the changed patterns handle (all in tests/core/finding-severity.test.ts):
+
+| Form | Example | Result | Test |
+| --- | --- | --- | --- |
+| axis, white space, severity, advisory tag | `[standards] [P2] [suggestion] x` | advisory | acceptance 2 |
+| axis, white space, severity (findingSeverity) | `[standards] [P0] 9 ...` | P0 | acceptance 1 |
+| axis, no white space, severity, advisory tag | `[standards][P2] [suggestion] @ src/a.ts:3: broken -> fix` | block (stripAdvisoryTags, citedReasonsOf) | acceptance 2 |
+| axis, no white space, severity, `[pre-existing]` | `[standards][P2] [pre-existing] @ src/a.ts:3: broken -> fix` | not pre-existing, cited | acceptance 2 |
+| axis, no white space, severity (findingSeverity) | `[standards][P0] 9 ...` | P1 | acceptance 1 |
+| no axis, severity, advisory tag | `[P2] [suggestion] x`, `  [p0] @ a.ts:3: [question] y` | advisory | acceptance 2 |
+| no axis, severity, `[pre-existing]` | `[P1] [pre-existing] @ a.ts:3: z` | pre-existing | acceptance 2 |
+| no axis, severity (findingSeverity) | `[P0] 9 ...`, `  [P0] 9 ...` | P0 | acceptance 1 |
+| lower case | `[spec] [p1] [question] y`; `[standards] [p0] 9 ...` | advisory; P0 | acceptance 2; acceptance 1 |
+| severity before a location | `[spec] [P1] @ a.ts:3: [question] y`; `[standards] [P2] [pre-existing] @ a.ts:3: z` | advisory; pre-existing | acceptance 2 |
+| no white space, tag after the location | `[spec][P1] @ a.ts:3: [question] y` | advisory, as on main | acceptance 2 |
+| severity elsewhere | `[standards] 9 errors [P2] [suggestion] @ a.ts:3: w`; `... [P0] @ ...`, `... @ src/a.ts:3: [P2] ...` | block; P1 | acceptance 2; acceptance 1 |
+| `[question]`, `[suggestion]` without severity | existing reasons of review-policy and pre-existing tests | advisory | acceptance 2 |
+| `[pre-existing]` without severity | existing reasons of pre-existing tests | pre-existing, cited without a changed-line map | acceptance 2 |
+
+Repair DoD: `npm run typecheck && node --test <6 files>` exit 0; 154 tests, 26 suites, 154 pass, 0 fail; typecheck clean.

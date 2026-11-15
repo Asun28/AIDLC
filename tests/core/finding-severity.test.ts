@@ -67,6 +67,8 @@ describe('finding severity (T1-REVIEW-SEVERITY)', () => {
     }
     assert.equal(stripAdvisoryTags(block(['[standards] [P2] [suggestion] @ src/a.ts:3: broken -> fix'])).verdict.verdict, 'pass', 'with the white space the tag is advisory');
     assert.equal(stripAdvisoryTags(block(['[spec][P1] @ a.ts:3: [question] y'])).verdict.verdict, 'pass', 'a tag after the location stays advisory, as on main');
+    for (const r of ['[P2] [suggestion] x', '  [p0] @ a.ts:3: [question] y', '[spec] [p1] [question] y']) assert.equal(stripAdvisoryTags(block([r])).verdict.verdict, 'pass', `no axis or lower case, still advisory: ${r}`);
+    assert.equal(PRE_EXISTING_TAG.test('[P1] [pre-existing] @ a.ts:3: z'), true, 'no axis before [pre-existing]');
   });
 
   test('T1-REVIEW-SEVERITY acceptance 3: recordFindings stores the severity of each new finding and keeps it on a re-raise', () => {
