@@ -636,3 +636,13 @@ describe('repro records in the review statistics (T1-FINDING-REPRO-2)', () => {
     assert.ok(stats.formatReviewStats(summaries).includes('family total (2 cards)'), 'the family line is printed');
   });
 });
+
+describe('finding severity in the review statistics (T1-REVIEW-SEVERITY)', () => {
+  test('T1-REVIEW-SEVERITY acceptance 4: stats count formal findings by severity', () => {
+    const finding = (id: string, stage: 'pre' | 'formal', severity?: string) => ({ id, stage, round: 1, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 1 @ src/a.ts:${id.slice(1)}: wrong -> fix`, raisedAt: at(MIN), disposition: 'open', ...(severity ? { severity } : {}) });
+    const graded = run({ cardId: 'T1-SEV', findings: [finding('F1', 'formal', 'P0'), finding('F2', 'formal', 'P1'), finding('F3', 'formal', 'P1'), finding('F4', 'formal', 'P2'), finding('F5', 'formal'), finding('F6', 'pre', 'P0')] });
+    const bySeverity = (r: CardRun) => (stats.summarizeReviews([r], [])[0]?.findings as unknown as Record<string, unknown>)['bySeverity'];
+    assert.deepEqual(bySeverity(graded), { P0: 1, P1: 2, P2: 1, none: 1 }, 'the formal findings by stored severity; the R2 finding is not counted');
+    assert.deepEqual(bySeverity(run({ cardId: 'T1-NONE' })), { P0: 0, P1: 0, P2: 0, none: 0 }, 'a run with no finding');
+  });
+});
