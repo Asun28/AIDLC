@@ -130,5 +130,13 @@ not evidence.
   goal written from this goal's report. The arc deadline is extended by
   24 h to 2026-11-16T22:48Z.
 
+- Unattended run (owner, 2026-11-16, in the session): the owner is not
+  available; the goal runs to its end. When a card stops at R3 and its
+  open findings hold no big blocker, each open finding is deferred with
+  `aidlc review rule --defer`, its follow-up recorded as a bug or
+  follow-up card, and the candidate ships. "Big" is read as P0 or P1 by
+  the severity rule above (a reason with no tag is P1); a card that stops
+  with an open P0 or P1 finding stays stopped for the owner.
+
 ## Open questions
 - (none)
