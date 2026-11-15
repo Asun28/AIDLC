@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-INTAKE-TARGET-2.g-20261107061914-d4ca11.clean",
+  "candidate": "72db08978dbfcab46bed0585faaca98514f5a006",
+  "base": "72b4a06b5680c03ac8115ae369dbc43c585d4b97",
+  "card": {
+    "id": "T0-INTAKE-TARGET-2",
+    "path": "specs/tasks/T0-INTAKE-TARGET-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-INTAKE-TARGET-2 clean (goal g-20261107061914-d4ca11)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -52,3 +52,57 @@ npm run typecheck && node --test tests/surface/outcome-clean.test.ts tests/surfa
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; no existing test line changes.
+
+## Attempt evidence
+
+Attempt 1 (base main c1583bb6).
+
+RED: commit 8f511a9e, `node --test tests/surface/outcome-clean.test.ts`, pass 0, fail 3:
+- `not ok 1 - T1-REPLAY-CLEAN acceptance 1: ...`: `ERR_MODULE_NOT_FOUND` for bench/outcome/clean.ts.
+- `not ok 2 - T1-REPLAY-CLEAN acceptance 2: ...`: `ERR_MODULE_NOT_FOUND` for bench/outcome/clean.ts.
+- `not ok 3 - T1-REPLAY-CLEAN acceptance 3: ...`: `ENOENT: no such file or directory, scandir '...\evals\review\clean'`.
+
+Export: `aidlc review bench export --clean --dir _local/clean-drafts` wrote 140 drafts.
+Selection: `node bench/outcome/clean.ts` printed `drafts 140, eligible drafts 130, written cases 15` (exit 0); a second run printed `clean: evals\review\clean already holds a file; nothing written` (exit 2).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/outcome-clean.test.ts, acceptance 1 | pass |
+| 2 | tests/surface/outcome-clean.test.ts, acceptance 2 | pass |
+| 3 | tests/surface/outcome-clean.test.ts, acceptance 3 | pass |
+| 4 | tests/surface/outcome-replay.test.ts and tests/surface/review-bench-export.test.ts, unchanged | pass |
+| 5 | printed counts above; evals/review/README.md last paragraph | reviewer-verified |
+| R4 (`CASES_README`) | tests/surface/review-bench.test.ts, "T1-REVIEW-BENCH acceptance 9"; `git diff main -- tests/surface/review-bench.test.ts` is one added line, the README's R4 paragraph as the last element of `CASES_README` (after the `evals/review/replay/` element), and no other line | pass |
+
+First full suite (`npm run check`, before the amendment): tests 3722, pass 3693, fail 1, skipped 28. The failure was tests/surface/review-bench.test.ts:497, "T1-REVIEW-BENCH acceptance 9": it pins the paragraphs of evals/review/README.md exactly, so the R4 paragraph broke it. Resolved by the amendment ba044b07 (merged as 0977737a): `CASES_README` gains the R4 paragraph.
+
+`scorable` fact: clean.ts first skipped the git check for a draft already excluded by its card status, successor or replay candidate, and recorded it as `false`. It now computes `scorable` for every draft, so each fact is true as R1 states it. A rerun of `node bench/outcome/clean.ts` on an empty evals/review/clean/ printed `drafts 140, eligible drafts 130, written cases 15` and wrote the same 15 files byte for byte (`diff -r` empty).
+
+DoD (final, after the amendment): `npm run typecheck && node --test tests/surface/outcome-clean.test.ts tests/surface/outcome-replay.test.ts tests/surface/review-bench-export.test.ts`: exit 0, tests 48, pass 48, fail 0.
+
+Full suite (final, `npm run check`): tests 3722, pass 3693, fail 1, skipped 28. Review-bench acceptance 9 passes. The one failure is tests/infra/exec.test.ts:623, "T0-EXEC-TREE-KILL ... acceptance 5", a timing fixture: "fixture not ready before the timeout at scale 2: the machine got slower after calibration (the sleeper's pid file was written 3556 ms after the call, the timeout was 3000 ms)". This diff changes nothing under src/ or tests/infra/; `node --test --test-name-pattern "T0-EXEC-TREE-KILL" tests/infra/exec.test.ts` alone: tests 25, pass 25, fail 0.
+
+### Repair of R3 decision 1 (finding F1, masked-card-dedup-coverage)
+
+Acceptance 1 gains a fixture below the 15 limit: five eligible drafts, two drafts of card T1-TWO on distinct candidates (`T1-TWO.g-1.clean` and `T1-TWO.g-2.clean`), a draft T1-DUP on the candidate of T1-FEW-0, a `kind: bug` draft, and the five excluded drafts. It is run in two input orders, and each run asserts the exact ids (the smaller T1-TWO draft, the first of T1-DUP and T1-FEW-0 by sha256, in sha256 order) and `shortBy`. Only tests/surface/outcome-clean.test.ts changes; bench/outcome/clean.ts and the 15 case files are unchanged.
+
+Hand mutants of `selectClean` (each edits bench/outcome/clean.ts, runs `node --test --test-name-pattern "acceptance [12]:" tests/surface/outcome-clean.test.ts` and restores the file; none committed):
+
+| Mutant | Killed by |
+|---|---|
+| M1 kind check removed | acceptance 1 |
+| M2 card status check removed | acceptance 1, 2 |
+| M3 successor check removed | acceptance 1 |
+| M4 scorable check removed | acceptance 1 |
+| M5 replay-candidate check removed | acceptance 1 |
+| M6 per-card choice removed | acceptance 1 |
+| M7 per-card choice reversed (largest id) | acceptance 1 |
+| M8 sha256 order reversed | acceptance 1, 2 |
+| M9 ordered by id instead of its sha256 | acceptance 1, 2 |
+| M10 candidate dedup removed | acceptance 1 |
+| M11 15 cap removed | acceptance 1 |
+| M12 shortBy never set | acceptance 1, 2 |
+| M13 shortBy off by one | acceptance 1, 2 |
+| M14 `confirmed` false | acceptance 1 |
+
+DoD (after the repair): exit 0, tests 48, pass 48, fail 0. Full suite (`npm run check`, after the repair): exit 0, tests 3722, pass 3694, fail 0, skipped 28; the exec.test.ts:623 timing failure did not recur.

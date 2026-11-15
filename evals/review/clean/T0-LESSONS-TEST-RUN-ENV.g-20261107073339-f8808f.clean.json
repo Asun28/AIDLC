@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-LESSONS-TEST-RUN-ENV.g-20261107073339-f8808f.clean",
+  "candidate": "23b857afc70ee768a3adaffd6c3ae599c63d4030",
+  "base": "1c8f6ea28b706f397ba47ef616ca9440050d5b16",
+  "card": {
+    "id": "T0-LESSONS-TEST-RUN-ENV",
+    "path": "specs/tasks/T0-LESSONS-TEST-RUN-ENV.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-LESSONS-TEST-RUN-ENV clean (goal g-20261107073339-f8808f)",
+  "note": "R3 decision 1 passed (codex)"
+}

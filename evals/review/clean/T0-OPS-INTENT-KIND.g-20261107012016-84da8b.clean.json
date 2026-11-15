@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-OPS-INTENT-KIND.g-20261107012016-84da8b.clean",
+  "candidate": "1f7f5115ca4e3662abb924874f0de4986f22b1f5",
+  "base": "1514ef5a6ca1abba5b15d05ee43f242be6720962",
+  "card": {
+    "id": "T0-OPS-INTENT-KIND",
+    "path": "specs/tasks/T0-OPS-INTENT-KIND.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-OPS-INTENT-KIND clean (goal g-20261107012016-84da8b)",
+  "note": "R3 decision 1 passed (codex)"
+}

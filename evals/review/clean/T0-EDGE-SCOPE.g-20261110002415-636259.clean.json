@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-EDGE-SCOPE.g-20261110002415-636259.clean",
+  "candidate": "222a8543568c3a9eebe08cbfd9826514094ac629",
+  "base": "19682498f7f8ee9d76307b0d57db71f224a66cce",
+  "card": {
+    "id": "T0-EDGE-SCOPE",
+    "path": "specs/tasks/T0-EDGE-SCOPE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-EDGE-SCOPE clean (goal g-20261110002415-636259)",
+  "note": "R3 decision 1 passed (codex)"
+}

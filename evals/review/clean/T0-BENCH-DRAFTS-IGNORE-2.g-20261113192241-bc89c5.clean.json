@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-BENCH-DRAFTS-IGNORE-2.g-20261113192241-bc89c5.clean",
+  "candidate": "d8270870effb7c3fbcba0ec4afe103475a6f625e",
+  "base": "340101e4748106275b7b16d892d3e95019fbe4d0",
+  "card": {
+    "id": "T0-BENCH-DRAFTS-IGNORE-2",
+    "path": "specs/tasks/T0-BENCH-DRAFTS-IGNORE-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-BENCH-DRAFTS-IGNORE-2 clean (goal g-20261113192241-bc89c5)",
+  "note": "R3 decision 1 passed (codex)"
+}

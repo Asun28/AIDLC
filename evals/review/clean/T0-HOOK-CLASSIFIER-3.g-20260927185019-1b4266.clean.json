@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-HOOK-CLASSIFIER-3.g-20260927185019-1b4266.clean",
+  "candidate": "f9f0d0349077b20644aba3ef459a6eba38f4616f",
+  "base": "0f9c553781196895a86c3de13fa0f1df111f0adb",
+  "card": {
+    "id": "T0-HOOK-CLASSIFIER-3",
+    "path": "specs/tasks/T0-HOOK-CLASSIFIER-3.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-HOOK-CLASSIFIER-3 clean (goal g-20260927185019-1b4266)",
+  "note": "R3 decision 1 passed (codex)"
+}

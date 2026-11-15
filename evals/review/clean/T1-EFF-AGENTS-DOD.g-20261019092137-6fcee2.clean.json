@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-EFF-AGENTS-DOD.g-20261019092137-6fcee2.clean",
+  "candidate": "bc2852bd8279e5025136ae9930e73aa65e2496d2",
+  "base": "af109ebb331cb102b62e26dd1ba4985e552700c0",
+  "card": {
+    "id": "T1-EFF-AGENTS-DOD",
+    "path": "specs/tasks/T1-EFF-AGENTS-DOD.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-EFF-AGENTS-DOD clean (goal g-20261019092137-6fcee2)",
+  "note": "R3 decision 1 passed (codex)"
+}

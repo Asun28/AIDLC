@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-BOARD-OWNER-WAIT.g-20261110004006-d26e06.clean",
+  "candidate": "8bed5f5796ed5f14d6b3e22c79e898fdac971297",
+  "base": "ebc97ce4c525ce23decf8296b196bea673c75911",
+  "card": {
+    "id": "T0-BOARD-OWNER-WAIT",
+    "path": "specs/tasks/T0-BOARD-OWNER-WAIT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-BOARD-OWNER-WAIT clean (goal g-20261110004006-d26e06)",
+  "note": "R3 decision 1 passed (codex)"
+}

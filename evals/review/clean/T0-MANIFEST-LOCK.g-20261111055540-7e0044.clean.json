@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-MANIFEST-LOCK.g-20261111055540-7e0044.clean",
+  "candidate": "ce42c27dc87842364feb359aab2da650d29296d6",
+  "base": "4a339defa462fbb718912c8ec78e9cd549725040",
+  "card": {
+    "id": "T0-MANIFEST-LOCK",
+    "path": "specs/tasks/T0-MANIFEST-LOCK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-MANIFEST-LOCK clean (goal g-20261111055540-7e0044)",
+  "note": "R3 decision 1 passed (codex)"
+}
