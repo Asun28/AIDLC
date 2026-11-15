@@ -163,12 +163,12 @@ function cliRepo() {
     rmSync(repo, { recursive: true, force: true });
     rmSync(state, { recursive: true, force: true });
   };
-  return { repo, state, raw, cli, goalId, toReview, cleanup };
+  return { repo, state, raw, goalId, toReview, cleanup };
 }
 
 describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
   it('acceptance 2 and 3: an unknown error is one aidlc: line and exit 1; a busy pool and a running match are the wait directive and exit 75 [R2] [R3]', () => {
-    const { state, raw, cli, goalId, toReview, cleanup } = cliRepo();
+    const { state, raw, goalId, toReview, cleanup } = cliRepo();
     try {
       // Acceptance 3: the card has no card run and the checkout no candidate diff against main, so the command throws.
       const failed = raw('review', 'r3', CARD, '--goal', goalId);
