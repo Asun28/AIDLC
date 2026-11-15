@@ -49,3 +49,12 @@ npm run typecheck && node --test tests/scenarios/review-r3-wait.test.ts tests/sc
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+| Item | Proving test | Result |
+|---|---|---|
+| 1 [R1] | tests/scenarios/review-r3-wait.test.ts "acceptance 1: behind a foreign admitted request ..."; tests/scenarios/review-admit-foreign.test.ts unchanged | pass |
+| 2 [R2] | tests/scenarios/review-r3-wait.test.ts "acceptance 2 and 3: ..." (busy: exit 75, `review-pool:default:busy`, 120; running: `review:<key>`, 60; empty stderr) | pass |
+| 3 [R2] [R3] | tests/scenarios/review-r3-wait.test.ts "acceptance 2 and 3: ..." (no card run: exit 1, one `aidlc: ` line, no `    at `) | pass |
+| 4 [R1] | tests/scenarios/fault-points.test.ts unchanged | pass |
+| 5 [R4] | tests/scenarios/review-r3-wait.test.ts "acceptance 5: ..." (both tests) | pass |

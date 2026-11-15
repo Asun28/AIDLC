@@ -86,6 +86,37 @@ export type CardDirective =
   | { kind: 'done'; cardId: string; narration: string }
   | { kind: 'stop'; cardId: string; stop: StopRecord; narration: string };
 
+/**
+ * The formal review waits (card T0-R3-POOL-WAIT): the shared review pool did not admit the request (`status` is the admission
+ * status) or a matching request is already running (`status` `running`). `aidlc review r3` answers it with `waitDirective`.
+ */
+export class ReviewPoolWaitError extends Error {
+  readonly cardId: string;
+  readonly pool: string;
+  readonly status: string;
+  readonly key: string;
+  readonly ahead: string[];
+  readonly resetAt: string | undefined;
+  constructor(message: string, wait: { cardId: string; pool: string; status: string; key: string; ahead?: string[]; resetAt?: string }) {
+    super(message);
+    this.name = 'ReviewPoolWaitError';
+    this.cardId = wait.cardId;
+    this.pool = wait.pool;
+    this.status = wait.status;
+    this.key = wait.key;
+    this.ahead = wait.ahead ?? [];
+    this.resetAt = wait.resetAt;
+  }
+
+  /** The `wait` directive `card next` gives for the same state, naming `aidlc review r3` as the command to run again. */
+  waitDirective(): Extract<CardDirective, { kind: 'wait' }> {
+    const again = `\`aidlc review r3 ${this.cardId}\` again`;
+    if (this.status === 'running') return { kind: 'wait', cardId: this.cardId, on: `review:${this.key}`, pollSeconds: 60, narration: `A matching formal review is already running in review pool ${this.pool}; run ${again} once it completes.` };
+    const until = this.resetAt ? ` until ${this.resetAt}` : this.status === 'behind' ? ` the request of ${this.ahead.join(', ')}` : '';
+    return { kind: 'wait', cardId: this.cardId, on: `review-pool:${this.pool}:${this.status}`, pollSeconds: 120, narration: `Review pool ${this.pool} is ${this.status}${until}; waiting holds no active slot. Run ${again} once the pool admits the request (aidlc review status --pool ${JSON.stringify(this.pool)}).` };
+  }
+}
+
 /** One review result to commit under the card-run lock (`CardRunner.commitReviewed`). */
 interface CommitReviewInput {
   /** The candidate the result is bound to; a record whose candidate moved on keeps the result as history only. */
@@ -2008,9 +2039,12 @@ export class CardRunner {
     const pool = this.queue.get(key)?.pool ?? this.formalPool(goal, cfg);
     let enq = this.queue.enqueue({ pool, repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requester: `${goal.id}:${card.id}`, deadline: run.deadline, now });
     if (enq.status === 'completed') enq = { status: 'enqueued', request: this.queue.requeue(key, now) };
-    if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${JSON.stringify(pool)}; join it, do not dispatch another`);
+    if (enq.status === 'joined' && enq.request.state === 'running') throw new ReviewPoolWaitError(`a matching formal review is already running in pool ${JSON.stringify(pool)}; join it, do not dispatch another`, { cardId: card.id, pool, status: 'running', key });
     const admit = this.admitReview(goal, card, key, now, pool);
-    if (admit.status !== 'admitted') throw new Error(`review pool ${JSON.stringify(pool)} is ${admit.status === 'behind' ? `behind the request of ${admit.ahead.requesters.join(', ')}` : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
+    if (admit.status !== 'admitted') {
+      const wait = { cardId: card.id, pool, status: admit.status, key, ...(admit.status === 'behind' ? { ahead: admit.ahead.requesters } : {}), ...(admit.status === 'reset-pending' ? { resetAt: admit.resetAt } : {}) };
+      throw new ReviewPoolWaitError(`review pool ${JSON.stringify(pool)} is ${admit.status === 'behind' ? `behind the request of ${admit.ahead.requesters.join(', ')}` : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`, wait);
+    }
     const admittedSeq = admit.request.seq;
     // Reserve the invocation under the card-run lock before dispatch so a concurrent call cannot spend the same decision.
     // The guards are re-checked on the locked record (a dispute withdrawn or a decision recorded since the first read
