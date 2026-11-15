@@ -75,12 +75,14 @@ npm run typecheck && node --test tests/core/finding-severity.test.ts tests/core/
 
 ## Attempt evidence
 
-Attempt 1 (effort medium), carrying candidate 42abbcbe of T1-REVIEW-SEVERITY. RED commit `9511700e` adds acceptance tests 1 to 5; on main they fail as stated:
+Attempt 2 (effort medium), carrying candidate 42abbcbe of T1-REVIEW-SEVERITY. RED commit `9511700e` adds acceptance tests 1 to 5; on main they fail as stated:
 - acceptance 1: `TypeError: policy.findingSeverity is not a function`
 - acceptance 2: `AssertionError: ADVISORY_TAG: [standards] [P2] [suggestion] x` (actual false, expected true)
 - acceptance 3: `AssertionError: pre: severity of each new finding` (actual `[['F1', undefined], ...]`)
 - acceptance 4: `AssertionError: the formal findings by stored severity; ...` (actual undefined)
 - acceptance 5: `AssertionError` (actual `[['a-tagged', 'hit', undefined], ['b-untagged', 'hit', undefined]]`)
+
+Attempt 1 failed on a card conflict (templates.test.ts :683, :694, :741, :746 pinned the OPERATIONS.md version sentence at `@6`); R10 as amended at 092cd5ca lists them.
 
 | Item | Proof | Result |
 | --- | --- | --- |
@@ -89,11 +91,14 @@ Attempt 1 (effort medium), carrying candidate 42abbcbe of T1-REVIEW-SEVERITY. RE
 | 3 | tests/core/finding-severity.test.ts, acceptance 3 | pass |
 | 4 | tests/surface/stats.test.ts, acceptance 4 | pass |
 | 5 | tests/surface/review-bench.test.ts, acceptance 5 | pass |
-| 6 | DoD: review-policy, pre-existing, stats, review-bench pass; templates fails at :683 and :746 (below) | FAIL |
-| 6 | `git diff main -- <file>` for the five files: review-policy 1 line (:674), stats 4 lines (:131, :141, :177, :549) plus acceptance 4, review-bench 1 line (:177) plus acceptance 5, templates 4 lines (:202, :563, :571, :675), pre-existing none | only R10 literals and new tests |
+| 6 | DoD: review-policy, pre-existing, stats, review-bench and templates test files | pass |
+| 6 | `git diff main -- <file>`: review-policy.test.ts :674 | R10 literal only |
+| 6 | `git diff main -- <file>`: stats.test.ts :131, :141, :177, :549, plus acceptance 4 | R10 literals and new test only |
+| 6 | `git diff main -- <file>`: review-bench.test.ts :177, plus acceptance 5 | R10 literal and new test only |
+| 6 | `git diff main -- <file>`: templates.test.ts :202, :563, :571, :675 | R10 literals only |
+| 6 | `git diff main -- <file>`: templates.test.ts :683, :694, :746 (`@6` -> `@7`) | R10 literals only (amended) |
+| 6 | `git diff main -- <file>`: templates.test.ts :741 (two `HISTORY` elements, matching the OPERATIONS.md sentence) | R10 literal only (amended) |
+| 6 | `git diff main -- tests/scenarios/pre-existing.test.ts` | empty |
 | 7 | diff of REVIEW.md, templates/REVIEW.md, pre-review.ts contract, both configs, OPERATIONS.md, ARCHITECTURE.md | reviewer to verify |
 
-DoD: exit 1; 154 tests, 152 pass, 2 fail; typecheck clean. R9 changes the OPERATIONS.md sentence to `REVIEW.md@7`, and three more assertions R10 does not list pin that sentence at `@6`:
-- tests/surface/templates.test.ts:683 and :694 (`preReviewHolds`, '`reviewPolicyVersion` is `REVIEW.md@6` in both configs').
-- tests/surface/templates.test.ts:746 (same text joined with `HISTORY`), with :741, the first `HISTORY` clause '(card T0-REVIEW-IMPACT-BAR added the impact bar;', which the new sentence reads as '(card T1-REVIEW-SEVERITY added the severity section; T0-REVIEW-IMPACT-BAR moved it to `REVIEW.md@6` with the impact bar;'.
-These need the same ruling as R10 (expected literal to the new text, nothing else); no test line outside R10 was changed in this attempt.
+DoD: `npm run typecheck && node --test <6 files>` exit 0; 154 tests, 26 suites, 154 pass, 0 fail; typecheck clean.
