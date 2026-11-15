@@ -11,6 +11,7 @@ allow_paths:
   - src/cli/main.ts
   - tests/surface/review-bench-rounds.test.ts
   - docs/OPERATIONS.md
+  - tests/surface/review-bench.test.ts
   - specs/tasks/T1-BENCH-ROUNDS.md
 dod_command: npm run typecheck && node --test tests/surface/review-bench-rounds.test.ts tests/surface/review-bench.test.ts tests/surface/pre-review.test.ts tests/surface/lesson-match.test.ts tests/surface/r2-pass-notes.test.ts tests/surface/edge-scope.test.ts tests/surface/prose.test.ts
 dod_exit: 0
@@ -33,7 +34,7 @@ budget: 230
 tdd: true
 sweep: "Main at 0f28b51e. bench.ts: `runReviewBench` :147-188 (stage config :153, groups :166-170, trials :173-179, quota hold :176 and :294), `reviewGroup` :199-215 (detached checkout), `reviewIn` :257-300 (prompt `common` with `priorFindings: []` and `round: 1` at :278; formal :287-292), `bindToCandidate` :318-325, `score` :327-338, `totalsOf` :340-356, `ReviewBenchReport` :69-85, `BenchCaseResult` :35-49. pre-review.ts: `buildReviewPrompt` :393-478 (Prior findings at :450), `renderPriorFindings` :264-290. CLI: `review bench run` src/cli/main.ts:1167-1187 (`--rules` checked :1179, `--trials` :1180)."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, or the exact shape of a record or report whose fields this card's requirements add (a deepEqual of `FindingStats`, `ReviewFinding`, a bench report or case result, or `CardRun['closure']`), updated to the new text or by the added fields and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - a change to the prompt, schema or verdict handling of the card runner's R2 or R3
   - writing aidlc.config.json or any configuration file from the bench
 non_goals: [rounds in the card loop, the verdict field order and an R2 reviewer argv (T1-BENCH-ORDER-PRE), running the arms, a change to CHANGELOG.md]

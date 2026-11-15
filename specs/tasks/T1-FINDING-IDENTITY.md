@@ -16,6 +16,7 @@ allow_paths:
   - .claude/skills/verify-card-run-writes/SKILL.md
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
+  - tests/core/review-policy.test.ts
   - specs/tasks/T1-FINDING-IDENTITY.md
 dod_command: npm run typecheck && node --test tests/core/finding-identity.test.ts tests/scenarios/finding-identity.test.ts tests/surface/stats.test.ts tests/core/review-policy.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/second-pass.test.ts
 dod_exit: 0
@@ -38,7 +39,7 @@ budget: 240
 tdd: true
 sweep: "Main at 0f28b51e. `FINDING_LOCATION` src/core/review-policy.ts:240 and `findingLocation` :247-252 give the file; `findingSite` :274-279 shows how the range is cut from the match. `findingClass` :266-271. `RecordFindingsInput` :314-340, `recordFindings` :385-440 (new findings created at :417-425). Formal `round` is `rec.ledger.substantiveDecisions` at card-runner.ts:2452 (R3) and :2877 (ship path), so `round` is the decision number. `commitReviewed` :2512-2557 calls `recordFindings` at :2539 on the locked record with the `findingsInput` built in `decide`. `countFindings` stats.ts:287-305. card-runner.ts is named by the verify-card-run-writes coverage record; this card adds no store write or journal append."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, or the exact shape of a record or report whose fields this card's requirements add (a deepEqual of `FindingStats`, `ReviewFinding`, a bench report or case result, or `CardRun['closure']`), updated to the new text or by the added fields and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - linking, resolving, reopening or blocking a finding by its identity
   - a model call or a network call to compute an identity
   - a new store write or journal append

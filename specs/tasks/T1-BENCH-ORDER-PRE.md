@@ -11,6 +11,8 @@ allow_paths:
   - src/cli/main.ts
   - tests/surface/review-bench-order-pre.test.ts
   - docs/OPERATIONS.md
+  - tests/surface/review-bench.test.ts
+  - tests/surface/review-bench-rounds.test.ts
   - specs/tasks/T1-BENCH-ORDER-PRE.md
 dod_command: npm run typecheck && node --test tests/surface/review-bench-order-pre.test.ts tests/surface/review-bench-rounds.test.ts tests/surface/review-bench.test.ts tests/surface/pre-review.test.ts tests/surface/r2-pass-notes.test.ts tests/surface/prose.test.ts
 dod_exit: 0
@@ -31,7 +33,7 @@ budget: 180
 tdd: true
 sweep: "Main at 0f28b51e; lines move with T1-BENCH-ROUNDS. pre-review.ts: `VERDICT_CONTRACT` :298-299, `verdictContract` :308-310, `VERDICT_SCHEMA` :313-330 (properties `verdict`, `reasons`, `axes`; `required` in that order; `additionalProperties: false`), `materialiseVerdictSchema` :333-338 writes `<reviewDir>/verdict.schema.json`, called by the loop at card-runner.ts:2001 and by the bench at bench.ts:290. bench.ts: reviewer config chosen at :153, refused when its command is empty at :154; pre dispatch :282-286 (no fallback). `PreReviewFallback` src/config.ts:19-28 has the keys R3 names. The DeepSeek CLI the arms run uses reads its prompt from stdin and prints `=== answer ===` before the answer, which is the `answerMarker` of aidlc.config.json."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, or the exact shape of a record or report whose fields this card's requirements add (a deepEqual of `FindingStats`, `ReviewFinding`, a bench report or case result, or `CardRun['closure']`), updated to the new text or by the added fields and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - a change to the prompt, schema or verdict handling of the card runner's R2 or R3
   - writing aidlc.config.json or any configuration file from the bench
 non_goals: [R2 switched on in the loop, a spend cap inside the bench (the arms run reads the DeepSeek balance between batches), running the arms, a change to CHANGELOG.md]
