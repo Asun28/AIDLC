@@ -2,6 +2,7 @@
 id: T0-R3-POOL-WAIT
 title: aidlc review r3 answers a review pool that does not admit the request with the wait directive card next gives and exit 75, and the CLI entry prints a thrown error as one line, so a busy pool is no longer an uncaught error with a stack trace (issue 318)
 status: todo
+superseded_by: T0-R3-POOL-WAIT-2
 branch: T0-R3-POOL-WAIT
 worktree: D:\wt\AIDLC\T0-R3-POOL-WAIT
 allow_paths:
