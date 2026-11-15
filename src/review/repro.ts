@@ -86,6 +86,13 @@ const git = (args: string[], cwd: string): ExecReceipt | undefined => {
   }
 };
 
+/** The full name of the commit `sha` resolves to in the main checkout (`git rev-parse --verify <sha>^{commit}`); refused when there is none. */
+function resolveCommit(root: string, sha: string): string {
+  const parsed = git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${sha}^{commit}`], root);
+  if (parsed?.exitCode !== 0 || !parsed.stdout.trim()) throw new Error(`${q(sha)} does not resolve to a commit in ${q(root)}: ${q(parsed?.stderr.trim() || 'git rev-parse --verify found none')}`);
+  return parsed.stdout.trim();
+}
+
 /** Each path's entry in the current candidate: refused when it has none or when it is a symbolic link (mode 120000). */
 function checkFiles(root: string, sha: string, files: string[]): void {
   for (const file of files) {
@@ -202,6 +209,9 @@ export async function runRepro(o: ReproOptions): Promise<ReproResult> {
   if (!finding.candidateSha) throw new Error(`finding ${findingId} records no candidateSha: there is no reviewed candidate to run at`);
   const currentSha = found.candidate?.sha;
   if (!currentSha) throw new Error(`card ${q(o.cardId)} has no current candidate: record an attempt first`);
+  // Before the repair attempt is recorded the current candidate is still the reviewed one, and both runs would test it.
+  const reviewedCommit = resolveCommit(o.root, finding.candidateSha);
+  if (reviewedCommit === resolveCommit(o.root, currentSha)) throw new Error(`the current candidate of card ${q(o.cardId)} is ${q(reviewedCommit)}, the commit finding ${findingId} was raised on, so both runs would test it: record the repair attempt first with \`aidlc card attempt ${o.cardId} --outcome success --candidate-sha <sha>\``);
   checkFiles(o.root, currentSha, files);
 
   const timeoutMs = o.timeoutMs ?? REPRO_TIMEOUT_MS;
