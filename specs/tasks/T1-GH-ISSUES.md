@@ -1,7 +1,7 @@
 ---
 id: T1-GH-ISSUES
 title: GhProbe lists the issues that carry a label and creates a labelled issue with its body on stdin, both through argv gh calls that fail with GhProbeError on a non-zero exit
-status: todo
+status: merged
 branch: T1-GH-ISSUES
 worktree: D:\wt\AIDLC\T1-GH-ISSUES
 plan_ref: plans/review-recall.md#order-of-work
