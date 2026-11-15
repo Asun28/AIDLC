@@ -189,3 +189,60 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
     assert.equal(probe.jobRecord(REPO, '83'), undefined, 'a command that cannot run is no record');
   });
 });
+
+describe('probes/gh (review follow-up issues)', () => {
+  type Call = { args: string[]; input?: string };
+  function recording(script: Parameters<typeof scriptedRunner>[0]): { probe: GhProbe; calls: Call[] } {
+    const inner = scriptedRunner(script);
+    const calls: Call[] = [];
+    const probe = new GhProbe((command, args, options = {}) => {
+      calls.push({ args, input: options.input });
+      return inner(command, args, options);
+    });
+    return { probe, calls };
+  }
+  const LABEL_ARGS = ['label', 'create', 'review-followup', '--repo', REPO, '--force', '--description', 'aidlc review follow-ups'];
+  const ISSUE_ARGS = ['issue', 'create', '--repo', REPO, '--title', 'Review follow-ups', '--label', 'review-followup', '--body-file', '-'];
+
+  it('T1-GH-ISSUES acceptance 1: issuesWithLabel passes the argv of R1 and parses number and body', () => {
+    const { probe, calls } = recording({ 'gh issue list': { stdout: JSON.stringify([{ number: 12, body: 'first' }, { number: 3, body: '' }]) } });
+    assert.deepEqual(probe.issuesWithLabel(REPO, 'review-followup'), [
+      { number: 12, body: 'first' },
+      { number: 3, body: '' },
+    ]);
+    assert.deepEqual(calls, [{ args: ['issue', 'list', '--repo', REPO, '--label', 'review-followup', '--state', 'all', '--limit', '100', '--json', 'number,body'], input: undefined }]);
+  });
+
+  it('T1-GH-ISSUES acceptance 2: createIssue creates the label, then the issue with the body on stdin, and returns the number from the URL', () => {
+    const { probe, calls } = recording({
+      'gh label create': { stdout: '' },
+      'gh issue create': { stdout: `Creating issue in ${REPO}\n\nhttps://github.com/${REPO}/issues/41\n` },
+    });
+    assert.equal(probe.createIssue(REPO, 'Review follow-ups', 'line one\n--title not a flag', 'review-followup'), 41);
+    assert.deepEqual(calls, [
+      { args: LABEL_ARGS, input: undefined },
+      { args: ISSUE_ARGS, input: 'line one\n--title not a flag' },
+    ]);
+  });
+
+  it('T1-GH-ISSUES acceptance 3: a failed label call, a failed issue call, unparsable list output and a missing or foreign URL each throw GhProbeError and stop further calls', () => {
+    const labelFails = recording({ 'gh label create': { exitCode: 1, stderr: 'HTTP 403' }, 'gh issue create': { stdout: `https://github.com/${REPO}/issues/41\n` } });
+    assert.throws(() => labelFails.probe.createIssue(REPO, 'Review follow-ups', 'b', 'review-followup'), (e: unknown) => e instanceof GhProbeError && /label create/.test(e.message));
+    assert.deepEqual(labelFails.calls.map((c) => c.args), [LABEL_ARGS], 'no issue call after a failed label call');
+
+    const issueFails = recording({ 'gh label create': { stdout: '' }, 'gh issue create': { exitCode: 1, stderr: 'HTTP 422' } });
+    assert.throws(() => issueFails.probe.createIssue(REPO, 'Review follow-ups', 'b', 'review-followup'), (e: unknown) => e instanceof GhProbeError && /issue create/.test(e.message));
+
+    for (const stdout of ['', 'created\n', `https://github.com/other/repo/issues/41\n`, `https://github.com/${REPO}/issues/41\nnot a url\n`, `https://github.com/${REPO}/pull/41\n`]) {
+      const { probe } = recording({ 'gh label create': { stdout: '' }, 'gh issue create': { stdout } });
+      assert.throws(() => probe.createIssue(REPO, 'Review follow-ups', 'b', 'review-followup'), (e: unknown) => e instanceof GhProbeError && /issue create/.test(e.message), `no issue URL of the repo: ${JSON.stringify(stdout)}`);
+    }
+
+    for (const stdout of ['not json', JSON.stringify({ number: 1, body: 'x' }), JSON.stringify([{ number: '1', body: 'x' }]), JSON.stringify([{ number: 1 }])]) {
+      const { probe } = recording({ 'gh issue list': { stdout } });
+      assert.throws(() => probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, `unparsable list output: ${stdout}`);
+    }
+    const listFails = recording({ 'gh issue list': { exitCode: 1, stderr: 'HTTP 404', stdout: '[]' } });
+    assert.throws(() => listFails.probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, 'a failed list call is an error, not an empty list');
+  });
+});

@@ -46,3 +46,20 @@ npm run typecheck && node --test tests/infra/gh.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; no existing test line changes.
+
+## Attempt evidence
+Attempt 1, effort medium. PREPARE check: `ExecOptions.input` exists in src/probes/exec.ts and `runSync` passes it to the child's stdin, so `--body-file -` goes through the injected runner unchanged; no deviation from R2.
+
+RED: commit 8d8a6ca2 (tests only). `node --test tests/infra/gh.test.ts`: 12 pass, 3 fail, each for the missing method:
+- acceptance 1: `TypeError: probe.issuesWithLabel is not a function`
+- acceptance 2: `TypeError: probe.createIssue is not a function`
+- acceptance 3: `TypeError: labelFails.probe.createIssue is not a function`
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/infra/gh.test.ts "T1-GH-ISSUES acceptance 1: issuesWithLabel passes the argv of R1 and parses number and body" | pass |
+| 2 | tests/infra/gh.test.ts "T1-GH-ISSUES acceptance 2: createIssue creates the label, then the issue with the body on stdin, and returns the number from the URL" | pass |
+| 3 | tests/infra/gh.test.ts "T1-GH-ISSUES acceptance 3: a failed label call, a failed issue call, unparsable list output and a missing or foreign URL each throw GhProbeError and stop further calls" | pass |
+| 4 | `git diff 3c740123 --numstat -- tests/infra/gh.test.ts`: `57 0` (additions only); the 12 existing tests pass | pass |
+
+DoD: `npm run typecheck && node --test tests/infra/gh.test.ts`: exit 0, tests 15, pass 15, fail 0.
