@@ -23,7 +23,7 @@ test('a true-defect finding of both models or of the owner is a bug case, and ev
   assert.equal(OWNER, 'the owner\'s label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case');
   const fillers = Array.from({ length: 9 }, (_, i) => row(`X${i}`, 'true-defect', 'agreed', { candidate: C(10 + i) }));
   const [F1, F2, F3, F4, F5, F6] = [row('F1', 'true-defect', 'agreed'), row('F2', 'speculative', 'agreed'), row('F3', 'true-defect', 'owner'), row('F4', 'true-defect', 'adjudicator'), row('F5', 'speculative', 'adjudicator'), row('F6', 'true-defect', 'agreed')];
-  const rows = [...fillers, F1, F2, F3, F4, F5, F6, row('F7', 'true-defect', 'owner')];
+  const rows = [...fillers, F1, F2, F3, F4, F5, F6, row('F7', 'true-defect', 'owner'), row('clean', 'true-defect', 'agreed'), row('L1', null, null, { left: 'gone' })];
   const keep = [...fillers.map((r) => draft(r)), draft(F1), draft(F3)];
   const { expected: _e, ...clean } = draft(row('clean', null, null)) as Extract<ReviewBenchCase, { kind: 'bug' }>;
   const gone = [draft(F2), draft(F4), draft(F5), { ...clean, kind: 'clean' } as ReviewBenchCase, draft(row('F9', 'true-defect', 'agreed')), draft(F6)];
@@ -32,7 +32,7 @@ test('a true-defect finding of both models or of the owner is a bug case, and ev
   assert.deepEqual(plan.write, keep.map((d) => ({ ...d, confirmed: true, confirmedBy: d.id === idOf(F3) ? OWNER : AGREED })));
   assert.deepEqual([...plan.remove].sort(), gone.map((d) => d.id).sort());
   assert.equal(plan.stop, undefined);
-  assert.deepEqual([plan.counts.withoutDraft, plan.counts.notScorable, plan.counts.adjudicator], [1, 1, 2]);
+  assert.deepEqual([plan.counts.withoutDraft, plan.counts.notScorable, plan.counts.adjudicator, plan.counts.left], [1, 1, 2, 1]);
   assert.throws(() => planReplay({ rows: [...rows, row('F8', null, null)], drafts: keep, scorable }));
   assert.throws(() => planReplay({ rows, drafts: [...keep.slice(1), { ...draft(F1), confirmed: true, confirmedBy: 'x' }], scorable }));
 });
@@ -47,6 +47,8 @@ test('the preflight stops below ten distinct candidates and prints the reviews a
   const ten = planReplay({ rows, drafts, scorable: () => true });
   assert.equal(ten.stop, undefined);
   assert.deepEqual([ten.counts.candidates, ten.counts.triples, ten.counts.reviews, ten.counts.spendUsd], [10, 11, 41, 57.4]);
+  const based = planReplay({ rows, drafts: drafts.map((d, i) => (i === 1 ? { ...d, base: C(998) } : d)), scorable: () => true }); // same candidate and card path, another base
+  assert.deepEqual([based.counts.triples, based.counts.reviews, based.counts.spendUsd], [12, 42, 58.8]);
 });
 
 test('the ten trial cases come by the hash of the case id with distinct candidates', () => {
@@ -57,6 +59,8 @@ test('the ten trial cases come by the hash of the case id with distinct candidat
   const [s12, s6] = [byHash(ids), byHash(ids.slice(0, 6))];
   assert.deepEqual(trialCases(make(ids)).map((c) => c.id), [s12[0], ...s12.slice(2, 11)]);
   assert.deepEqual(trialCases(make(ids.slice(0, 6))).map((c) => c.id), [s6[0], ...s6.slice(2)]);
+  const z = Array.from({ length: 64 }, (_, i) => `T1-X.g1.Z${i}`).find((id) => sha(id) < sha(s6[0]!))!; // a clean case first by hash, on its own candidate
+  assert.deepEqual(trialCases([...make(ids.slice(0, 6)), { ...draft(row('Z', null, null)), id: z, kind: 'clean', candidate: C(300) } as ReviewBenchCase]).map((c) => c.id), [s6[0], ...s6.slice(2)]);
 });
 
 test('the committed replay cases agree with labels-final.jsonl', () => {
@@ -133,8 +137,8 @@ test('assembly refuses each case of R8 before any write', () => {
   const cases = [draft(row('F1', 'true-defect', 'agreed')), draft(row('F2', 'true-defect', 'owner', { candidate: C(2) }))].map((c) => ({ ...c, confirmed: true, confirmedBy: AGREED }));
   const [A, B] = cases.map((c) => c.id) as [string, string];
   const build = (change: (o: { run: Report; trials: Record<string, Report>; input: AssembleInput }) => void = () => {}) => {
-    const run: Report = { stage: 'formal', policyHash: 'h', leftCheckouts: [], trialResults: [{ cases: [{ id: A, outcome: 'hit' }, { id: B, outcome: 'miss', verdictRef: 'b' }] }] };
-    const trials: Record<string, Report> = { [A]: report(A, ['hit', 'hit', 'hit']), [B]: report(B, ['hit', 'no-verdict', 'hit']) };
+    const run: Report = { stage: 'formal', policyHash: 'h', leftCheckouts: [], trialResults: [{ cases: [{ id: A, outcome: 'hit', detail: 'kept' }, { id: B, outcome: 'miss', verdictRef: 'b' }] }] };
+    const trials: Record<string, Report> = { [A]: report(A, ['hit', 'hit', 'hit'], { detail: 'kept' }), [B]: report(B, ['hit', 'no-verdict', 'hit']) };
     const rows = [row('F1', 'true-defect', 'agreed'), row('F2', 'true-defect', 'owner', { candidate: C(2) }), row('F3', 'true-defect', 'agreed'), row('F4', null, null, { candidate: null, left: 'gone' })];
     const input: AssembleInput = { status: '', commit: C(7), run: undefined, trials: {}, cases, rows, hasCommit: () => true, readDoc: docs({ b: 'pass', [`${B}.1`]: 'no-verdict' }), selfCheck: () => {} };
     change({ run, trials, input });
@@ -154,6 +158,9 @@ test('assembly refuses each case of R8 before any write', () => {
   const reduced = (text: string): string => { const r = JSON.parse(text) as Saved; return JSON.stringify({ ...r, cases: r.cases.map(reduce), trialResults: r.trialResults.map((t) => ({ ...t, cases: t.cases.map(reduce) })) }); };
   assert.equal(JSON.stringify(value.run), reduced(ok.texts.run));
   assert.deepEqual(value.trials.map((t) => JSON.stringify(t.report)), order.map((id) => reduced(ok.texts.trials[id]!)));
+  const gone = build((o) => { o.input.hasCommit = (s) => s !== C(2); }); // a valid --commit and a row candidate the store lacks
+  assert.deepEqual((JSON.parse(gone.written[0]!) as { leftOut: unknown }).leftOut, { candidateGone: 2, trueDefectWithoutCase: 1 });
+  const nv = (o: { run: Report; input: AssembleInput }, read?: () => string) => { o.run.trialResults[0]!.cases[1] = { id: B, outcome: 'no-verdict', verdictRef: 'm' }; const d = o.input.readDoc; if (read) o.input.readDoc = (ref) => (ref === 'm' ? read() : d(ref)); };
   const changes: Array<Parameters<typeof build>[0]> = [
     (o) => { o.input.commit = undefined; }, (o) => { o.input.hasCommit = (s) => s !== C(7); },
     (o) => { o.input.status = ' M src/a.ts'; }, (o) => { o.input.run = 'missing'; }, (o) => { o.input.trials = { [A]: '{' }; }, (o) => { o.input.selfCheck = () => { throw new Error('rule (h)'); }; },
@@ -163,6 +170,7 @@ test('assembly refuses each case of R8 before any write', () => {
     (o) => { o.run.trialResults.push(o.run.trialResults[0]!); }, (o) => { o.run.trialResults[0]!.cases[0]!.id = 'T1-X.g1.F9'; },
     (o) => { o.trials[A]!.trialResults.pop(); }, (o) => { o.trials[A] = report(B, ['hit', 'hit', 'hit']); }, (o) => { delete o.trials[A]; },
     (o) => { o.trials['T1-X.g1.F3'] = report('T1-X.g1.F3', ['hit', 'hit', 'hit']); }, (o) => { o.trials[B]!.policyHash = 'other'; },
+    (o) => nv(o), (o) => nv(o, () => '{'), (o) => nv(o, () => { throw new Error('read'); }),
   ];
   for (const [i, change] of changes.entries()) {
     const r = build(change);
