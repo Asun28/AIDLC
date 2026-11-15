@@ -2,14 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FinalRow } from '../../bench/outcome/adjudicate.ts';
 import { AGREED, assembleReplay, OWNER, planReplay, trialCases, trialEntry, type AssembleInput, type Report, type TrialCase } from '../../bench/outcome/replay.ts';
 import type { ReviewBenchCase } from '../../src/core/types.ts';
-import { compareBenchReports, loadBenchCases } from '../../src/review/bench.ts';
-import { cleanup, tmpDir } from '../infra/helpers.ts';
+import { loadBenchCases } from '../../src/review/bench.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const C = (n: number): string => n.toString(16).padStart(40, '0');
@@ -76,19 +75,26 @@ test('the committed replay cases agree with labels-final.jsonl', () => {
 });
 
 const implied: Record<string, string> = { hit: 'block', 'no-verdict': 'no-verdict' };
+type Saved = Report & { cases: TrialCase[]; totals: Record<string, number> };
+const KEEP = ['id', 'kind', 'confirmed', 'outcome', 'runStatus', 'detail', 'durationMs'];
+const reduce = (c: object): object => Object.fromEntries(KEEP.filter((k) => k in c).map((k) => [k, (c as Record<string, unknown>)[k]]));
+const reducedKeys = (c: object): boolean => Object.keys(c).join() === KEEP.filter((k) => k in c).join();
 
 test('replay-main.json is one formal run over every replay case and three trials of the ten', () => {
   const file = path.join(root, 'bench', 'outcome', 'replay-main.json');
   assert.ok(existsSync(file), 'bench/outcome/replay-main.json exists');
   const text = readFileSync(file, 'utf8');
   assert.ok(!text.includes('\r') && text.endsWith('}\n'));
-  const v = JSON.parse(text) as { commit: string; policyHash: string; run: Report; trials: Array<{ case: string; outcomes: string[]; agree: boolean; verdicts: string[]; verdictAgree: boolean; report: Report }>; leftOut: { candidateGone: number; trueDefectWithoutCase: number } };
-  assert.deepEqual(Object.keys(v), ['commit', 'policyHash', 'run', 'trials', 'leftOut']);
+  assert.ok(Buffer.byteLength(text, 'utf8') < 200000, 'replay-main.json is under 200000 bytes');
+  const v = JSON.parse(text) as { commit: string; policyHash: string; reports: Record<string, string>; run: Saved; trials: Array<{ case: string; outcomes: string[]; agree: boolean; verdicts: string[]; verdictAgree: boolean; report: Saved }>; leftOut: { candidateGone: number; trueDefectWithoutCase: number } };
+  assert.deepEqual(Object.keys(v), ['commit', 'policyHash', 'reports', 'run', 'trials', 'leftOut']);
   assert.match(v.commit, /^[0-9a-f]{40}$/);
-  const tmp = tmpDir('aidlc-replay-');
-  try {
-    for (const [i, r] of [v.run, ...v.trials.map((t) => t.report)].entries()) { const f = path.join(tmp, `${i}.json`); writeFileSync(f, JSON.stringify(r)); assert.equal(compareBenchReports(f, f).verdict.length > 0, true); }
-  } finally { cleanup(tmp); }
+  assert.deepEqual(Object.keys(v.reports), ['run', ...v.trials.map((t) => t.case)]);
+  assert.ok(Object.values(v.reports).every((h) => /^[0-9a-f]{64}$/.test(h)), 'each report hash is 64 lowercase hex');
+  for (const r of [v.run, ...v.trials.map((t) => t.report)]) assert.ok([r.cases, ...r.trialResults.map((t) => t.cases)].flat().every(reducedKeys), 'every case result is reduced');
+  const count = (o: string): number => v.run.cases.filter((c) => c.outcome === o).length;
+  assert.deepEqual([v.run.totals['hits'], v.run.totals['misses'], v.run.totals['noVerdict'], v.run.totals['errors']], [count('hit'), count('miss'), count('no-verdict'), count('error')]);
+  assert.deepEqual(v.run.trialResults.map((t) => t.cases), [v.run.cases]);
   const cases = loadBenchCases(path.join(root, 'evals', 'review', 'replay'));
   const runCases = v.run.trialResults[0]!.cases;
   assert.ok(v.run.stage === 'formal' && v.run.trialResults.length === 1 && v.run.leftCheckouts.length === 0 && v.policyHash === v.run.policyHash);
@@ -130,18 +136,26 @@ test('assembly refuses each case of R8 before any write', () => {
     const run: Report = { stage: 'formal', policyHash: 'h', leftCheckouts: [], trialResults: [{ cases: [{ id: A, outcome: 'hit' }, { id: B, outcome: 'miss', verdictRef: 'b' }] }] };
     const trials: Record<string, Report> = { [A]: report(A, ['hit', 'hit', 'hit']), [B]: report(B, ['hit', 'no-verdict', 'hit']) };
     const rows = [row('F1', 'true-defect', 'agreed'), row('F2', 'true-defect', 'owner', { candidate: C(2) }), row('F3', 'true-defect', 'agreed'), row('F4', null, null, { candidate: null, left: 'gone' })];
-    const input: AssembleInput = { status: '', head: C(7), run: undefined, trials: {}, cases, rows, hasCommit: () => true, readDoc: docs({ b: 'pass', [`${B}.1`]: 'no-verdict' }), selfCheck: () => {} };
+    const input: AssembleInput = { status: '', commit: C(7), run: undefined, trials: {}, cases, rows, hasCommit: () => true, readDoc: docs({ b: 'pass', [`${B}.1`]: 'no-verdict' }), selfCheck: () => {} };
     change({ run, trials, input });
-    const texts = { run: input.run ?? JSON.stringify(run), trials: { ...Object.fromEntries(Object.entries(trials).map(([k, r]) => [k, JSON.stringify(r)])), ...input.trials } };
+    // Whole case results, as the bench writes them: the removable keys in `cases` and in every `trialResults` element.
+    const whole = (r: Report): string => { const results = r.trialResults.map((t) => ({ cases: t.cases.map((c) => ({ id: c.id, kind: 'bug', confirmed: true, runStatus: 'ran', cited: 'why', matched: ['m'], verdictRef: 'v', logRef: 'log', durationMs: 7, ...c })), totals: { hits: 1 } })); return JSON.stringify({ ...r, cases: results[0]?.cases ?? [], totals: { hits: 1 }, trialResults: results }); };
+    const texts = { run: input.run ?? whole(run), trials: { ...Object.fromEntries(Object.entries(trials).map(([k, r]) => [k, whole(r)])), ...input.trials } };
     const written: string[] = [];
-    return { result: assembleReplay({ ...input, ...texts, run: input.run === 'missing' ? undefined : texts.run }, (t) => written.push(t)), written };
+    return { result: assembleReplay({ ...input, ...texts, run: input.run === 'missing' ? undefined : texts.run }, (t) => written.push(t)), written, texts };
   };
   const ok = build();
   assert.equal(ok.result, undefined);
   assert.equal(ok.written.length, 1);
-  const value = JSON.parse(ok.written[0]!) as Record<string, unknown>;
-  assert.deepEqual([Object.keys(value), value['leftOut']], [['commit', 'policyHash', 'run', 'trials', 'leftOut'], { candidateGone: 1, trueDefectWithoutCase: 1 }]);
+  const value = JSON.parse(ok.written[0]!) as { commit: string; reports: unknown; run: unknown; trials: Array<{ report: unknown }>; leftOut: unknown };
+  assert.deepEqual([Object.keys(value), value.commit, value.leftOut], [['commit', 'policyHash', 'reports', 'run', 'trials', 'leftOut'], C(7), { candidateGone: 1, trueDefectWithoutCase: 1 }]);
+  const order = [A, B].sort((x, y) => (sha(x) < sha(y) ? -1 : 1));
+  assert.equal(JSON.stringify(value.reports), JSON.stringify({ run: sha(ok.texts.run), ...Object.fromEntries(order.map((id) => [id, sha(ok.texts.trials[id]!)])) }));
+  const reduced = (text: string): string => { const r = JSON.parse(text) as Saved; return JSON.stringify({ ...r, cases: r.cases.map(reduce), trialResults: r.trialResults.map((t) => ({ ...t, cases: t.cases.map(reduce) })) }); };
+  assert.equal(JSON.stringify(value.run), reduced(ok.texts.run));
+  assert.deepEqual(value.trials.map((t) => JSON.stringify(t.report)), order.map((id) => reduced(ok.texts.trials[id]!)));
   const changes: Array<Parameters<typeof build>[0]> = [
+    (o) => { o.input.commit = undefined; }, (o) => { o.input.hasCommit = (s) => s !== C(7); },
     (o) => { o.input.status = ' M src/a.ts'; }, (o) => { o.input.run = 'missing'; }, (o) => { o.input.trials = { [A]: '{' }; }, (o) => { o.input.selfCheck = () => { throw new Error('rule (h)'); }; },
     (o) => { o.run.stage = 'pre'; }, (o) => { o.run.leftCheckouts = ['x']; }, (o) => { o.trials[A]!.trialResults[1]!.cases[0]!.outcome = 'error'; },
     (o) => { o.run.trialResults[0]!.cases[0] = { id: A, outcome: 'no-verdict', detail: 'not reviewed: a quota hold stopped the run' }; },
