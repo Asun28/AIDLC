@@ -2,7 +2,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 // Namespace import: on the baseline `findingSeverity` is absent and each test fails at its first call, not at link time.
 import * as policy from '../../src/core/review-policy.ts';
-import { ADVISORY_TAG, PRE_EXISTING_TAG, citedReasonsOf } from '../../src/review/pre-review.ts';
+import { ADVISORY_TAG, PRE_EXISTING_TAG, citedReasonsOf, stripAdvisoryTags } from '../../src/review/pre-review.ts';
 import { ReviewFinding, type Verdict } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
@@ -54,12 +54,19 @@ describe('finding severity (T1-REVIEW-SEVERITY)', () => {
     for (const r of [...preExisting, ...existingPreExisting]) {
       assert.equal(PRE_EXISTING_TAG.test(r), true, `PRE_EXISTING_TAG: ${r}`);
       assert.equal(ADVISORY_TAG.test(r), false, `ADVISORY_TAG: ${r}`);
+      // Without a changed-line map the tag is ignored: the reason stays a cited block (R3 decision 1 F2).
+      assert.deepEqual(citedReasonsOf(block([r]), ['a.ts', 'src/a.ts', 'src/hello.ts']), [r], `citedReasonsOf: ${r}`);
     }
-    for (const r of [onMain, existingBlock]) {
+    // A severity tag with no white space after the axis tag is not in its position, as findingSeverity reads it (R3 decision 1 F1).
+    const noWhiteSpace = ['[standards][P2] [suggestion] @ src/a.ts:3: broken -> fix', '[standards][P2] [pre-existing] @ src/a.ts:3: broken -> fix'];
+    for (const r of [onMain, existingBlock, ...noWhiteSpace]) {
       assert.equal(ADVISORY_TAG.test(r), false, `ADVISORY_TAG: ${r}`);
       assert.equal(PRE_EXISTING_TAG.test(r), false, `PRE_EXISTING_TAG: ${r}`);
       assert.deepEqual(citedReasonsOf(block([r]), ['a.ts', 'src/a.ts']), [r], `citedReasonsOf: ${r}`);
+      assert.equal(stripAdvisoryTags(block([r])).verdict.verdict, 'block', `stripAdvisoryTags keeps the block: ${r}`);
     }
+    assert.equal(stripAdvisoryTags(block(['[standards] [P2] [suggestion] @ src/a.ts:3: broken -> fix'])).verdict.verdict, 'pass', 'with the white space the tag is advisory');
+    assert.equal(stripAdvisoryTags(block(['[spec][P1] @ a.ts:3: [question] y'])).verdict.verdict, 'pass', 'a tag after the location stays advisory, as on main');
   });
 
   test('T1-REVIEW-SEVERITY acceptance 3: recordFindings stores the severity of each new finding and keeps it on a re-raise', () => {
