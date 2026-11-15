@@ -646,3 +646,30 @@ describe('finding severity in the review statistics (T1-REVIEW-SEVERITY)', () =>
     assert.deepEqual(bySeverity(run({ cardId: 'T1-NONE' })), { P0: 0, P1: 0, P2: 0, none: 0 }, 'a run with no finding');
   });
 });
+
+describe('repeat findings by identity in the review statistics (T1-FINDING-IDENTITY)', () => {
+  test('T1-FINDING-IDENTITY acceptance 5: stats count findings with an identity and repeat findings by identity', () => {
+    const finding = (id: string, stage: 'pre' | 'formal', round: number, identity?: string) => ({ id, stage, round, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 1 @ src/a.ts:${id.slice(1)}: wrong -> fix`, raisedAt: at(round * MIN), disposition: 'open', ...(identity ? { identity } : {}) });
+    const X = 'aaaaaaaaaaaaaaaa';
+    const Y = 'bbbbbbbbbbbbbbbb';
+    const Z = 'cccccccccccccccc';
+    // Decision 1 raises X and Y; decision 2 raises X again with no re:F<n>, and a new Z; an R2 finding with X and a formal one with none are not counted.
+    const repeated = (cardId: string) => run({ cardId, findings: [finding('F1', 'formal', 1, X), finding('F2', 'formal', 1, Y), finding('F3', 'formal', 2, X), finding('F4', 'formal', 2, Z), finding('F5', 'pre', 2, X), finding('F6', 'formal', 2)] });
+    const counts = (f: unknown) => {
+      const r = f as Record<string, unknown>;
+      return { withIdentity: r['withIdentity'], repeatByIdentity: r['repeatByIdentity'] };
+    };
+    assert.deepEqual(counts(stats.summarizeReviews([repeated('T1-ID')], [])[0]?.findings), { withIdentity: 4, repeatByIdentity: 1 });
+    // The same identity raised twice by decision 1 is no repeat: only a smaller round counts.
+    const same = run({ cardId: 'T1-SAME', findings: [finding('F1', 'formal', 1, X), finding('F2', 'formal', 1, X)] });
+    assert.deepEqual(counts(stats.summarizeReviews([same], [])[0]?.findings), { withIdentity: 2, repeatByIdentity: 0 });
+    // Another card run of the card is not the same run: its decision 1 finding makes no repeat of this run's decision 2 one.
+    const earlier = run({ cardId: 'T1-RUNS', goalId: 'g-one', findings: [finding('F1', 'formal', 1, X)] });
+    const later = run({ cardId: 'T1-RUNS', goalId: 'g-two', findings: [finding('F1', 'formal', 2, X)] });
+    assert.deepEqual(counts(stats.summarizeReviews([earlier, later], [])[0]?.findings), { withIdentity: 2, repeatByIdentity: 0 });
+    assert.deepEqual(counts(stats.summarizeReviews([run({ cardId: 'T1-NONE' })], [])[0]?.findings), { withIdentity: 0, repeatByIdentity: 0 }, 'a run with no finding');
+    const registry = [{ id: 'T1-ID', superseded_by: 'T1-ID-2' }, { id: 'T1-ID-2' }];
+    const family = stats.summarizeReviews([repeated('T1-ID'), repeated('T1-ID-2')], registry).find((s) => s.cardId === 'T1-ID-2')?.family;
+    assert.deepEqual(counts(family?.totals.findings), { withIdentity: 8, repeatByIdentity: 2 }, 'the family totals add both members');
+  });
+});
