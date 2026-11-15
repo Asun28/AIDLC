@@ -69,3 +69,29 @@ npm run typecheck && node --test tests/core/finding-severity.test.ts tests/core/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; no existing test line changes.
+
+## Attempt evidence
+
+Attempt 1 (effort medium). RED commit `9511700e` adds the five acceptance tests; on main they fail as stated:
+- acceptance 1: `TypeError: policy.findingSeverity is not a function`
+- acceptance 2: `AssertionError: ADVISORY_TAG: [standards] [P2] [suggestion] x` (actual false, expected true)
+- acceptance 3: `AssertionError: pre: severity of each new finding` (actual `[['F1', undefined], ...]`)
+- acceptance 4: `AssertionError: the formal findings by stored severity; ...` (actual undefined)
+- acceptance 5: `AssertionError` (actual `[['a-tagged', 'hit', undefined], ['b-untagged', 'hit', undefined]]`)
+
+| Item | Proof | Result |
+| --- | --- | --- |
+| 1 | tests/core/finding-severity.test.ts, acceptance 1 | pass |
+| 2 | tests/core/finding-severity.test.ts, acceptance 2 | pass |
+| 3 | tests/core/finding-severity.test.ts, acceptance 3 | pass |
+| 4 | tests/surface/stats.test.ts, acceptance 4 | pass |
+| 5 | tests/surface/review-bench.test.ts, acceptance 5 | pass |
+| 6 | review-policy, pre-existing and templates tests unchanged | FAIL: card conflict, below |
+| 7 | diff of REVIEW.md, templates/REVIEW.md, pre-review.ts contract, both configs, OPERATIONS.md, ARCHITECTURE.md | reviewer to verify |
+
+DoD: exit 1, 154 tests, 145 pass, 9 fail; typecheck clean. Every failure is an existing assertion that pins the pre-card shape, which R5, R6, R7 or R8 changes, so no implementation passes both the requirement and the unchanged test:
+- R5 vs tests/core/review-policy.test.ts:674-675 (`asMain` deepEqual of an untagged finding; R5 sets `severity: 'P1'` on it).
+- R6 vs tests/surface/stats.test.ts:131, 141, 177, 549 (deepEqual of `findings` without `bySeverity`).
+- R7 vs tests/surface/review-bench.test.ts:177 (deepEqual of `matched` without `severity`).
+- R8 vs tests/surface/templates.test.ts:202, 563, 675 (`reviewPolicyVersion` equal to `REVIEW.md@6`); the OPERATIONS.md sentence that templates.test.ts:571 pins ("`reviewPolicyVersion` is `REVIEW.md@6` in both configs") is left as it is, so it now reads one version behind.
+The forbid list bars changing a line of an existing test, and acceptance 6 names review-policy and templates; this needs a ruling (update those expected literals, or change the requirement), not a test edit in this attempt.

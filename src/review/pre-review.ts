@@ -296,7 +296,7 @@ export function citedReasonsOf(verdict: Verdict, changedPaths?: string[]): strin
 }
 
 export const VERDICT_CONTRACT =
-  '{"verdict":"pass|block","reasons":["[spec|standards] <dimension> @ <file:line>: <why> -> <fix>"],"axes":{"spec":{"verdict":"pass|block","reasons":[]},"standards":{"verdict":"pass|block","reasons":[]}}}';
+  '{"verdict":"pass|block","reasons":["[spec|standards] [P0|P1|P2] <dimension> @ <file:line>: <why> -> <fix>"],"axes":{"spec":{"verdict":"pass|block","reasons":[]},"standards":{"verdict":"pass|block","reasons":[]}}}';
 
 /** The one angle asked to account for the acceptance list; the coverage request reaches no other angle and no other stage. */
 export const COVERAGE_ANGLE = 'ac-coverage';

@@ -508,6 +508,10 @@ export type FindingRepro = z.infer<typeof FindingRepro>;
 export const FindingRuling = z.object({ at: IsoTimestamp, by: z.string().min(1), decision: z.enum(['rejected', 'deferred']), reason: z.string().min(1), issue: z.number().int().positive().optional() });
 export type FindingRuling = z.infer<typeof FindingRuling>;
 
+/** The severity tag of a block reason (card T1-REVIEW-SEVERITY); no gate reads it. */
+export const FindingSeverity = z.enum(['P0', 'P1', 'P2']);
+export type FindingSeverity = z.infer<typeof FindingSeverity>;
+
 export const ReviewFinding = z.object({
   id: z.string().regex(/^F\d+$/),
   stage: FindingStage,
@@ -521,6 +525,8 @@ export const ReviewFinding = z.object({
   file: z.string().optional(),
   /** The defect class a `(class: <slug>)` tag named, on the raising reason or on the first tagged re-raise; absent on records written before card T1-REVIEW-CLASS-SWEEP. */
   class: FindingClass.optional(),
+  /** `findingSeverity` of the raising reason, kept on a re-raise; absent on records written before card T1-REVIEW-SEVERITY. */
+  severity: FindingSeverity.optional(),
   candidateSha: z.string().optional(),
   raisedAt: IsoTimestamp,
   disposition: FindingDisposition.default('open'),
