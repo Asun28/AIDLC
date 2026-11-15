@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-BASE-SYNC-REVIEW.g-20260925230004-dc3659.F4",
+  "candidate": "8687a8b6893c04b17f8509b6b0897b15096da104",
+  "base": "c9228b6da2825a9f4ec767ba349cd0a9f3425bf7",
+  "card": {
+    "id": "T0-BASE-SYNC-REVIEW",
+    "path": "specs/tasks/T0-BASE-SYNC-REVIEW.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-BASE-SYNC-REVIEW F4 (goal g-20260925230004-dc3659)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 data and persistence design @ src/loop/card-runner.ts:1226: formalPool now moves the PRIMARY reviewer to `<reviewPool>/<primary>` whenever formalReview.baseSync is set, although the card only gives the base-sync reviewer its own pool; this repository's aidlc.config.json has no fallback but now sets baseSync, so every new primary (claude-opus-5-5) R3 request leaves the shared `default` pool: a maxConcurrent raised on `default` via setPoolLimit no longer applies to it, primary R3 no longer contends with ship admissions for the slot, a primary quota hold no longer holds `default`, and docs/OPERATIONS.md:218 ('Without a fallback every behaviour, the pool and the candidate-scoped hold included, is unchanged') is now false; no test covers the baseSync-only layout -> return `${goal.reviewPool}/${cfg.reviewer}` for the base-sync reviewer alone when no fallback is configured (e.g. `this.config.formalReview.fallback !== undefined || cfg === this.config.formalReview.baseSync ? ... : goal.reviewPool`), add a test that with baseSync only the primary still queues in goal.reviewPool, and update the formalPool doc comment",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 1226,
+      "window": 5,
+      "class": "dim-13"
+    }
+  ]
+}

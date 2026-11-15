@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F16",
+  "candidate": "cc7bbea1f0c7811844d40813948ce07e31a10f68",
+  "base": "878a6e669b51caa54850840df84b829841c336e6",
+  "card": {
+    "id": "T1-OUTCOME-USAGE",
+    "path": "specs/tasks/T1-OUTCOME-USAGE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-OUTCOME-USAGE F16 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 2, open, resolved: [standards] 9 error handling (class: source-guard-aborts-export) @ bench/outcome/run.ts:43: [Bugs] For a supplied source beneath an inaccessible directory, the reader records EACCES, but writeTables canonicalizes the same readOnly path and throws again. Reproduced with injected filesystem failures: neither usage_errors nor valid sibling/source rows reach disk, violating R4/R8. -> Handle inaccessible source paths conservatively in the output guard, protecting their nearest resolvable ancestor while permitting demonstrably separate output directories; test that the error and valid rows are written.",
+  "expected": [
+    {
+      "file": "bench/outcome/run.ts",
+      "line": 43,
+      "window": 5,
+      "class": "source-guard-aborts-export"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F1",
+  "candidate": "bb0513df998c345b8cf784d1a13e9721ae5cc14d",
+  "base": "c9df7736637bdbc56c3c85c041800a3aa8f95742",
+  "card": {
+    "id": "T0-EXEC-TREE-KILL",
+    "path": "specs/tasks/T0-EXEC-TREE-KILL.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-EXEC-TREE-KILL F1 (goal g-20261023133953-5e60ed)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing or fake (class: elapsed-bound-not-asserted) @ tests/infra/exec.test.ts:223: [Compliance] raceFixture measures elapsedMs but never asserts it against boundMs. Acceptance 3, 4 stay, and 5 can accept a late receipt when synchronous work delays the competing timer; a local reproduction returned a receipt after 150 ms against a 50 ms race bound. -> Assert elapsedMs <= boundMs in the shared helper and verify that a blocking late completion fails.",
+  "expected": [
+    {
+      "file": "tests/infra/exec.test.ts",
+      "line": 223,
+      "window": 5,
+      "class": "elapsed-bound-not-asserted"
+    }
+  ]
+}

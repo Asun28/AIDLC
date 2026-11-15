@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F13",
+  "candidate": "a59721ef9d21d433b07a802df2ddb256352edaf2",
+  "base": "a3bd26ce0861aceae5e75bc62c2eb917db31c993",
+  "card": {
+    "id": "T0-SHIP-THROW-SLOT",
+    "path": "specs/tasks/T0-SHIP-THROW-SLOT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-SHIP-THROW-SLOT F13 (goal g-20261104204311-d59d18)",
+  "note": "R3 decision 2, open: [standards] 13 data and persistence design (class: release-note-race) @ src/cli/main.ts:740: [Bugs] Concurrent release commands can both pass the NOTE lookup and append before either acquires the release lock. This violates the one-NOTE requirement and can corrupt the hash chain when both appends read the same journal head. -> Serialize validation, NOTE deduplication, append and release for the request; add a concurrent CLI test that verifies NOTE counts and journal integrity.",
+  "expected": [
+    {
+      "file": "src/cli/main.ts",
+      "line": 740,
+      "window": 5,
+      "class": "release-note-race"
+    }
+  ]
+}

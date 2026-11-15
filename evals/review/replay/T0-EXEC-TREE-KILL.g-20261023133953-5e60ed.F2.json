@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F2",
+  "candidate": "bb0513df998c345b8cf784d1a13e9721ae5cc14d",
+  "base": "c9df7736637bdbc56c3c85c041800a3aa8f95742",
+  "card": {
+    "id": "T0-EXEC-TREE-KILL",
+    "path": "specs/tasks/T0-EXEC-TREE-KILL.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-EXEC-TREE-KILL F2 (goal g-20261023133953-5e60ed)",
+  "note": "R3 decision 1, open, resolved: [standards] 17 bugfix root cause (class: pending-stdin-keeps-runner-alive) @ src/probes/exec.ts:193: [Bugs] child.unref() releases only the process handle, not stdin. If tree killing fails and a surviving root does not consume a large input, child.stdin.end(input) retains a pending pipe write after the receipt resolves, keeping aidlc alive despite R3's cleanup requirement. Node's local implementation confirms stdin is normally destroyed on root exit, which this path cannot assume. -> Destroy stdin at timeout or before finishing at the grace bound; add a subprocess test with unread input and a no-op tree kill that verifies the runner process exits without waiting for the surviving root.",
+  "expected": [
+    {
+      "file": "src/probes/exec.ts",
+      "line": 193,
+      "window": 5,
+      "class": "pending-stdin-keeps-runner-alive"
+    }
+  ]
+}

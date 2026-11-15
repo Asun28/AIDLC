@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+  "candidate": "a1b3a05489c2e2837043b525042614a94c23471f",
+  "base": "08c052031019dc63e96bedf6bc0e078cd68bfe17",
+  "card": {
+    "id": "T0-CARD-LEASE-HEARTBEAT",
+    "path": "specs/tasks/T0-CARD-LEASE-HEARTBEAT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CARD-LEASE-HEARTBEAT F1 (goal g-20261109202722-e00509)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: heartbeat-after-release) @ src/hooks/index.ts:609: [Bugs/Security] A concurrent owner command can release a lease after the scan. Release preserves its generation, and heartbeat checks only generation and owner, so this call rewrites the released lease's heartbeatAt and expiresAt. This violates the explicit prohibition on renewing released leases; reproduced in memory. -> Check released status atomically under the heartbeat's lease lock and add a release-between-scan-and-write regression test; amend allow_paths if the lease module must change.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 609,
+      "window": 5,
+      "class": "heartbeat-after-release"
+    }
+  ]
+}

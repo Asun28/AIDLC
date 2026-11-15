@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-FINDING-REPRO.g-20261107095106-c08940.F1",
+  "candidate": "52832a5c331d89a786f75e0f05ea996987847014",
+  "base": "5396626f046ea77cbbd40824d677383b79df261f",
+  "card": {
+    "id": "T1-FINDING-REPRO",
+    "path": "specs/tasks/T1-FINDING-REPRO.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-FINDING-REPRO F1 (goal g-20261107095106-c08940)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 persistence (class: wrong-goal-selection) @ src/review/repro.ts:100: [Bugs/Compliance] findRun selects by existing runs instead of the repository's resolveCardGoal policy. When an active goal projects the card but has no run yet, an older terminal goal's run is selected and its finding is modified; when both have runs, the command incorrectly refuses as ambiguous. -> Resolve the goal with resolveCardGoal, then load only that goal's run; test both cases.",
+  "expected": [
+    {
+      "file": "src/review/repro.ts",
+      "line": 100,
+      "window": 5,
+      "class": "wrong-goal-selection"
+    }
+  ]
+}

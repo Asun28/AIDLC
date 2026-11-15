@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F4",
+  "candidate": "c2108334dbe9225f2dfa119824e34bb4a32e2477",
+  "base": "167d6cb56e6c36ee525d8f9ce5f6dbd9945809fb",
+  "card": {
+    "id": "T0-STAGING-LEASE-RELEASE",
+    "path": "specs/tasks/T0-STAGING-LEASE-RELEASE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-STAGING-LEASE-RELEASE F4 (goal g-20261111073728-3443ce)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: ledger-failure-docs) @ docs/OPERATIONS.md:157: Compliance: unreadable-ledger handling is described as continuing other releases and naming a lease key, contrary to R5/R9. -> Document that every lease is kept and the narration names the operation ledger, error and retry command.",
+  "expected": [
+    {
+      "file": "docs/OPERATIONS.md",
+      "line": 157,
+      "window": 5,
+      "class": "ledger-failure-docs"
+    }
+  ]
+}

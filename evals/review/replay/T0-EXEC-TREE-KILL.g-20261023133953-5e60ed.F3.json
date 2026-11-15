@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+  "candidate": "6754f647228e8d7c1d63b3fa37f949262ac50c8b",
+  "base": "c9df7736637bdbc56c3c85c041800a3aa8f95742",
+  "card": {
+    "id": "T0-EXEC-TREE-KILL",
+    "path": "specs/tasks/T0-EXEC-TREE-KILL.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-EXEC-TREE-KILL F3 (goal g-20261023133953-5e60ed)",
+  "note": "R3 decision 2, open, resolved: [spec] 6 tests missing or fake (class: process-death-check-weakened) @ tests/infra/exec.test.ts:183: [Compliance] The repair makes acceptance 3 pass for a Linux zombie even though process.kill(pid, 0) succeeds; a /proc read failure also counts as death. The closed acceptance explicitly requires process.kill(pid, 0) to throw. -> Restore a bounded check for that failure, preferably ESRCH, and assert it directly; do not substitute zombie state or a filesystem error.",
+  "expected": [
+    {
+      "file": "tests/infra/exec.test.ts",
+      "line": 183,
+      "window": 5,
+      "class": "process-death-check-weakened"
+    }
+  ]
+}

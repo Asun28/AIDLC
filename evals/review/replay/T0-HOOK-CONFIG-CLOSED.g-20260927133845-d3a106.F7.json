@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F7",
+  "candidate": "ab549ffe20304e2465eb4974eaf24bb870a3dc72",
+  "base": "4bf8767456674a92349041ab66cad0a0d25b1c73",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-CLOSED F7 (goal g-20260927133845-d3a106)",
+  "note": "R3 decision 2, open: [standards] 2 hard boundaries @ src/hooks/index.ts:161: Security: on Windows, `node bin\\aidlc.js doctor` passes both guards because path.resolve treats the backslash as a separator. Bash consumes that unquoted escape and executes binaidlc.js instead, allowing another script through the diagnostic exemption. -> Decode Bash words before validating executable paths, or reject ambiguous unquoted escapes; test the actual shell argument.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 161,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}

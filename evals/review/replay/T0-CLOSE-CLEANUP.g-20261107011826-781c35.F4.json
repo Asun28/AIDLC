@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F4",
+  "candidate": "e055244a65727e23da00c944521b3cf27f9a905f",
+  "base": "f1763dc4b57d9a0135c5d51cfba38647204089e8",
+  "card": {
+    "id": "T0-CLOSE-CLEANUP",
+    "path": "specs/tasks/T0-CLOSE-CLEANUP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CLOSE-CLEANUP F4 (goal g-20261107011826-781c35)",
+  "note": "R3 decision 2, open, resolved: [spec] 14 scope fidelity (class: worktree-path-case-mismatch) @ src/loop/card-runner.ts:3000: [Bugs][Compliance] Cleanup relies on findWorktree's unconditional lowercase path comparison. On Linux, configured /repo/wt/T0-CARD and actual /repo/WT/T0-CARD are different directories, but cleanup accepts and removes the latter, violating R4. -> Compare canonical paths with filesystem-appropriate case sensitivity and test a case-only path mismatch.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 3000,
+      "window": 5,
+      "class": "worktree-path-case-mismatch"
+    }
+  ]
+}

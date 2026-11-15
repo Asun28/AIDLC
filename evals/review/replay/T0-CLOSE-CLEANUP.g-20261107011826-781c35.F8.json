@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+  "candidate": "937fa2d85a151dd625e71d64f044e7af824f0268",
+  "base": "87927b9bf81a7586c9cede26afd95e18923e76b5",
+  "card": {
+    "id": "T0-CLOSE-CLEANUP",
+    "path": "specs/tasks/T0-CLOSE-CLEANUP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CLOSE-CLEANUP F8 (goal g-20261107011826-781c35)",
+  "note": "R3 decision 4, open: [spec] 6 tests missing (class: collision-test-false-skip) @ tests/scenarios/card-close-cleanup.test.ts:334: [Compliance] On a case-insensitive filesystem with symlink support, report.json already names Report.json, so symlinkSync fails with EEXIST and this catch skips acceptance 12 despite symlinks being available. -> Use two filenames that differ beyond case, link their destinations together, and skip only verified lack of symlink support or permission; rethrow other errors.",
+  "expected": [
+    {
+      "file": "tests/scenarios/card-close-cleanup.test.ts",
+      "line": 334,
+      "window": 5,
+      "class": "collision-test-false-skip"
+    }
+  ]
+}

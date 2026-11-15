@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F1",
+  "candidate": "72aa08e37694924c9ca41beeda37be05d1853ea0",
+  "base": "64a8081b85fdb2b0e2d52d5efe6dbbd654aa2627",
+  "card": {
+    "id": "T0-FM-COMMENT-CUT",
+    "path": "specs/tasks/T0-FM-COMMENT-CUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-FM-COMMENT-CUT F1 (goal g-20260927013916-530194)",
+  "note": "R3 decision 1, open: [spec] 14 scope fidelity @ src/artifacts/frontmatter.ts:97: Compliance: `notes: |\\n  - issue #45` produces a blocking finding even though the hash is block-scalar text, not a cut comment. This adds blocking validation to out-of-scope multiline content. -> Track block-scalar boundaries and skip their bodies; test literal and folded scalars.",
+  "expected": [
+    {
+      "file": "src/artifacts/frontmatter.ts",
+      "line": 97,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

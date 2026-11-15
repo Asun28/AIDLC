@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F4",
+  "candidate": "39312c40dfeff084340d828d9b992f7efcab52c7",
+  "base": "4bf8767456674a92349041ab66cad0a0d25b1c73",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-CLOSED F4 (goal g-20260927133845-d3a106)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity @ src/hooks/index.ts:145: Bugs/Compliance: `aidlc doctor &>/dev/null` and `aidlc doctor &>>/dev/null` are denied because redirect removal leaves `&`, which fails DOCTOR_RUN. These are legitimate diagnostic commands writing only to the null device, contrary to R2/R3's repair exemption. -> Recognize complete Bash combined-stream redirects and test both spellings.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 145,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F8",
+  "candidate": "337fd798dc47e69183678a7cbee1d65d95cc2d7c",
+  "base": "c8596bd428adc1bf7ca0fd24fe7c4a09d6759534",
+  "card": {
+    "id": "T0-R2-FALLBACK",
+    "path": "specs/tasks/T0-R2-FALLBACK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-R2-FALLBACK F8 (goal g-20260926223417-fc5458)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing @ tests/scenarios/r2-fallback.test.ts:117: Compliance: both no-verdict outcomes come from the fallback, so this test cannot distinguish a shared retry allowance from separate per-reviewer allowances -> add a primary no-verdict, primary hold, then fallback no-verdict sequence and assert STOP without another dispatch.",
+  "expected": [
+    {
+      "file": "tests/scenarios/r2-fallback.test.ts",
+      "line": 117,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-GOAL-CARD-COUNT.g-20260926103738-6d05ad.F1",
+  "candidate": "1b06edbf7efcbb6c6690549ed65cfb4b5b7bd408",
+  "base": "b08d0737a33286c054f9e8bc2d714e77b8d7877c",
+  "card": {
+    "id": "T0-GOAL-CARD-COUNT",
+    "path": "specs/tasks/T0-GOAL-CARD-COUNT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-GOAL-CARD-COUNT F1 (goal g-20260926103738-6d05ad)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity @ src/loop/controller.ts:131: [Bugs, Compliance] Explicit T1/T2 release goals still get 3 hours: reproduced createGoal with text 'release to staging' for both sizes. standaloneRelease=true overrides the new unknown count, violating R3's explicit-size arc requirement. -> Pass standaloneRelease: routing.kind === 'release' && !arcBySize; add behavioral tests for both explicit sizes while preserving ordinary release deadlines and tighter user limits.",
+  "expected": [
+    {
+      "file": "src/loop/controller.ts",
+      "line": 131,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

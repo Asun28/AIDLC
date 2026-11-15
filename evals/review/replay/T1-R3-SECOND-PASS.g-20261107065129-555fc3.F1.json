@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+  "candidate": "af18c793e9a4d8be10a9ac52d946fbd715d8cb3f",
+  "base": "72b4a06b5680c03ac8115ae369dbc43c585d4b97",
+  "card": {
+    "id": "T1-R3-SECOND-PASS",
+    "path": "specs/tasks/T1-R3-SECOND-PASS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-R3-SECOND-PASS F1 (goal g-20261107065129-555fc3)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: missing-rollout-docs) @ docs/ARCHITECTURE.md:196: Compliance: R7 requires the replay figures and a check after 15 cards; the new entry includes neither. -> Add the one-pass versus two-pass defect and clean-case results and the 15-card evaluation criterion.",
+  "expected": [
+    {
+      "file": "docs/ARCHITECTURE.md",
+      "line": 196,
+      "window": 5,
+      "class": "missing-rollout-docs"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-AUDIT-FACTS.g-20260927085317-93da2d.F3",
+  "candidate": "cd7285123b66d60041d8b81cbbe52dd08df381ca",
+  "base": "f7cfc52331e35645d00d6fd766f2a159dae515ec",
+  "card": {
+    "id": "T1-AUDIT-FACTS",
+    "path": "specs/tasks/T1-AUDIT-FACTS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-AUDIT-FACTS F3 (goal g-20260927085317-93da2d)",
+  "note": "R3 decision 2, open: [spec] 14 scope fidelity (Compliance) @ src/loop/card-runner.ts:2539: The ledger becomes succeeded before the facts are journaled. If append fails or the process exits between these writes, recovery finds no running operation and enters CLOSE without facts. The verifier also omits this shipped card and can report verified; reproduced with an injected append failure. -> Make result journaling idempotent and recoverable before settling the operation, and block full-audit claims for succeeded ledger merges missing their journal result.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2539,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

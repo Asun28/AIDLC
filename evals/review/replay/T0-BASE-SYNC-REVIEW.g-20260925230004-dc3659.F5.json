@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-BASE-SYNC-REVIEW.g-20260925230004-dc3659.F5",
+  "candidate": "8687a8b6893c04b17f8509b6b0897b15096da104",
+  "base": "c9228b6da2825a9f4ec767ba349cd0a9f3425bf7",
+  "card": {
+    "id": "T0-BASE-SYNC-REVIEW",
+    "path": "specs/tasks/T0-BASE-SYNC-REVIEW.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-BASE-SYNC-REVIEW F5 (goal g-20260925230004-dc3659)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 data and persistence design @ src/loop/card-runner.ts:1226: formalPool moves the primary reviewer to a per-reviewer pool whenever baseSync is set; with this repository's config (no fallback, baseSync set) primary R3 leaves `default`, losing its pool limit and its shared-slot and hold coupling with ship admission, contradicting docs/OPERATIONS.md:218 and untested -> split out only the base-sync reviewer's pool when no fallback is configured, test the baseSync-only layout, fix the doc comment",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 1226,
+      "window": 5,
+      "class": "dim-13"
+    }
+  ]
+}

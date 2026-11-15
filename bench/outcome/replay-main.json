@@ -1,0 +1,3389 @@
+{
+  "commit": "c27b19105912f9d35c258582be28bd4cc8a8d761",
+  "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+  "reports": {
+    "run": "db8aec776eb686418f989cdcbbeebddcd1ef2b7832311d2e04cfd84dc0421e7b",
+    "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4": "a44f6355b4bed4b59fb314cd17b720f24742e1807a2de56d30755f8d37ee3368",
+    "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3": "9fa49282ef0b4e5e62766d7a12f367317e2a69175286a4b0e47447a4f9ed3298",
+    "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8": "2155475efcf5da19282a35420317459883f0e6051356307cae214460620822b0",
+    "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1": "8af8a7352b7e7e0cb1b017fdd31891210d4c83fb3234bec0055ec16167d56ff7",
+    "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3": "312989d3a79dfc5805a195e7efbc078c52d21e69282daf5d6f8fb2f87f0a5d85",
+    "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8": "c42096f6ddead45da2373ee1ee011afe7da16de5b0e55ba84d40330b706efcfe",
+    "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18": "558fbcd7ce4ff28ad23c872eb96a90f51c4b7296a53ff95be5bab227046ebc33",
+    "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1": "bcdbec8c0fad72a864a39913d71955ea9980ca5bc71e54fd5472f1ca7895ee05",
+    "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1": "8de2ea1ec7d6bdc837d443219f225ae9e13ae2ce83665a02fa5c160dc13cffc1",
+    "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3": "a73fc50ec67352f057d9b289f06eb1238fd6a47a26cfc946bd93ebc30a629bf0"
+  },
+  "run": {
+    "stage": "formal",
+    "reviewer": "codex",
+    "rules": "newest",
+    "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+    "leftCheckouts": [],
+    "cases": [
+      {
+        "id": "T0-BASE-SYNC-REVIEW.g-20260925230004-dc3659.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 131099
+      },
+      {
+        "id": "T0-BASE-SYNC-REVIEW.g-20260925230004-dc3659.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 131099
+      },
+      {
+        "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 131440
+      },
+      {
+        "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 131440
+      },
+      {
+        "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 217411
+      },
+      {
+        "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 70058
+      },
+      {
+        "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 70058
+      },
+      {
+        "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 70058
+      },
+      {
+        "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 70058
+      },
+      {
+        "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 158389
+      },
+      {
+        "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 158389
+      },
+      {
+        "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 158389
+      },
+      {
+        "id": "T0-CLI-CWD-FILE-ARGS.g-20261111062828-cb47de.F7",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 96903
+      },
+      {
+        "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 148425
+      },
+      {
+        "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 148425
+      },
+      {
+        "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 209275
+      },
+      {
+        "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F7",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 137825
+      },
+      {
+        "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 131235
+      },
+      {
+        "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 91356
+      },
+      {
+        "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 91356
+      },
+      {
+        "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 94720
+      },
+      {
+        "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 138997
+      },
+      {
+        "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 138997
+      },
+      {
+        "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F6",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 125248
+      },
+      {
+        "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 137555
+      },
+      {
+        "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 137555
+      },
+      {
+        "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 137555
+      },
+      {
+        "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 137555
+      },
+      {
+        "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F7",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 134847
+      },
+      {
+        "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F8",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 134847
+      },
+      {
+        "id": "T0-GOAL-CARD-COUNT.g-20260926103738-6d05ad.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 91724
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 113392
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 113392
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 113392
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F6",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 113392
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F9",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 143313
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 207421
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F10",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 116728
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F11",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 116728
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 207421
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 207421
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 207421
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 207421
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F6",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 116728
+      },
+      {
+        "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F7",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 116728
+      },
+      {
+        "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 72333
+      },
+      {
+        "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 49288
+      },
+      {
+        "id": "T0-PROBE-STOP-TEXT.g-20260927123329-a7efc6.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 52462
+      },
+      {
+        "id": "T0-R2-FALLBACK-2.g-20260926232206-9774a5.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 152649
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F10",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F11",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F15",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F16",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F17",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F18",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F19",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F20",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F21",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 146203
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F6",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F8",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 107861
+      },
+      {
+        "id": "T0-REVIEW-ADMIT-FOREIGN.g-20261023175939-6222d2.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 83406
+      },
+      {
+        "id": "T0-REVIEW-RELEASE.g-20261104222914-91327d.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 155701
+      },
+      {
+        "id": "T0-REVIEW-RESOLVE-LOST.g-20261113013208-36be58.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 40957
+      },
+      {
+        "id": "T0-REVIEW-RESOLVE-LOST.g-20261113013208-36be58.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 152884
+      },
+      {
+        "id": "T0-SHIP-FAILURE-UNSETTLED.g-20260926091323-f7022a.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 49494
+      },
+      {
+        "id": "T0-SHIP-FAILURE-UNSETTLED.g-20260926091323-f7022a.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 49494
+      },
+      {
+        "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F10",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 167236
+      },
+      {
+        "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F13",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 154050
+      },
+      {
+        "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 167236
+      },
+      {
+        "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F8",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 167236
+      },
+      {
+        "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 112094
+      },
+      {
+        "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 112094
+      },
+      {
+        "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 112094
+      },
+      {
+        "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 112094
+      },
+      {
+        "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 159167
+      },
+      {
+        "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 159167
+      },
+      {
+        "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 159167
+      },
+      {
+        "id": "T1-AUDIT-FACTS.g-20260927085317-93da2d.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 125762
+      },
+      {
+        "id": "T1-AUDIT-FACTS.g-20260927085317-93da2d.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 125762
+      },
+      {
+        "id": "T1-BOARD-WATCH-2.g-20261109210509-be7b14.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 134008
+      },
+      {
+        "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F10",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 465301
+      },
+      {
+        "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 465301
+      },
+      {
+        "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 465301
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS-2.g-20261019092137-6fcee2.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 113156
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 125922
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F10",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 221820
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F11",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 221820
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 125922
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 125922
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F5",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 125922
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F6",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 125922
+      },
+      {
+        "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F8",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 125922
+      },
+      {
+        "id": "T1-FINDING-REPRO.g-20261107095106-c08940.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 144433
+      },
+      {
+        "id": "T1-LESSON-MATCH.g-20261107065129-555fc3.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 113457
+      },
+      {
+        "id": "T1-LESSON-MATCH.g-20261107065129-555fc3.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 113457
+      },
+      {
+        "id": "T1-OPUS55-PROMPTS.g-20260923224425-e5e886.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 86717
+      },
+      {
+        "id": "T1-OPUS55-PROMPTS.g-20260923224425-e5e886.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 86717
+      },
+      {
+        "id": "T1-OUTCOME-FIRST-DECISION.g-20261113215928-e57db5.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 156472
+      },
+      {
+        "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F12",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 271047
+      },
+      {
+        "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 311462
+      },
+      {
+        "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 311462
+      },
+      {
+        "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F7",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 311462
+      },
+      {
+        "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F9",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 234165
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F10",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F11",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F16",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 428990
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 160530
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F2",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F4",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F6",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F9",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 262575
+      },
+      {
+        "id": "T1-PARSE-GUARD.g-20260926084954-89a33c.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 111569
+      },
+      {
+        "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 108134
+      },
+      {
+        "id": "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F1",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 217734
+      },
+      {
+        "id": "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "miss",
+        "runStatus": "success",
+        "durationMs": 217734
+      },
+      {
+        "id": "T1-REVIEW-PRE-EXISTING.g-20261023072913-94f64f.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 154513
+      },
+      {
+        "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+        "kind": "bug",
+        "confirmed": true,
+        "outcome": "hit",
+        "runStatus": "success",
+        "durationMs": 235012
+      }
+    ],
+    "totals": {
+      "bugCases": 124,
+      "hits": 89,
+      "misses": 35,
+      "recall": 0.717741935483871,
+      "cleanCases": 0,
+      "cleanPasses": 0,
+      "falseBlocks": 0,
+      "falseBlockRate": null,
+      "noVerdict": 0,
+      "errors": 0,
+      "skippedUnconfirmed": 0
+    },
+    "trialResults": [
+      {
+        "cases": [
+          {
+            "id": "T0-BASE-SYNC-REVIEW.g-20260925230004-dc3659.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 131099
+          },
+          {
+            "id": "T0-BASE-SYNC-REVIEW.g-20260925230004-dc3659.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 131099
+          },
+          {
+            "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 131440
+          },
+          {
+            "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 131440
+          },
+          {
+            "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 217411
+          },
+          {
+            "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 70058
+          },
+          {
+            "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 70058
+          },
+          {
+            "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 70058
+          },
+          {
+            "id": "T0-CARD-TERMINAL-GOAL.g-20261109102435-0217aa.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 70058
+          },
+          {
+            "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 158389
+          },
+          {
+            "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 158389
+          },
+          {
+            "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 158389
+          },
+          {
+            "id": "T0-CLI-CWD-FILE-ARGS.g-20261111062828-cb47de.F7",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 96903
+          },
+          {
+            "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 148425
+          },
+          {
+            "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 148425
+          },
+          {
+            "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 209275
+          },
+          {
+            "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F7",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 137825
+          },
+          {
+            "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 131235
+          },
+          {
+            "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 91356
+          },
+          {
+            "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 91356
+          },
+          {
+            "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 94720
+          },
+          {
+            "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 138997
+          },
+          {
+            "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 138997
+          },
+          {
+            "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F6",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 125248
+          },
+          {
+            "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 137555
+          },
+          {
+            "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 137555
+          },
+          {
+            "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 137555
+          },
+          {
+            "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 137555
+          },
+          {
+            "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F7",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 134847
+          },
+          {
+            "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 134847
+          },
+          {
+            "id": "T0-GOAL-CARD-COUNT.g-20260926103738-6d05ad.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 91724
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 113392
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 113392
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 113392
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F6",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 113392
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F9",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 143313
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 207421
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F10",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 116728
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F11",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 116728
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 207421
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 207421
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 207421
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 207421
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F6",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 116728
+          },
+          {
+            "id": "T0-HOOK-CONFIG-CLOSED.g-20260927133845-d3a106.F7",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 116728
+          },
+          {
+            "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 72333
+          },
+          {
+            "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 49288
+          },
+          {
+            "id": "T0-PROBE-STOP-TEXT.g-20260927123329-a7efc6.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 52462
+          },
+          {
+            "id": "T0-R2-FALLBACK-2.g-20260926232206-9774a5.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 152649
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F10",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F11",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F15",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F16",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F17",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F18",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F19",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F20",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F21",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 146203
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F6",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 107861
+          },
+          {
+            "id": "T0-REVIEW-ADMIT-FOREIGN.g-20261023175939-6222d2.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 83406
+          },
+          {
+            "id": "T0-REVIEW-RELEASE.g-20261104222914-91327d.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 155701
+          },
+          {
+            "id": "T0-REVIEW-RESOLVE-LOST.g-20261113013208-36be58.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 40957
+          },
+          {
+            "id": "T0-REVIEW-RESOLVE-LOST.g-20261113013208-36be58.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 152884
+          },
+          {
+            "id": "T0-SHIP-FAILURE-UNSETTLED.g-20260926091323-f7022a.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 49494
+          },
+          {
+            "id": "T0-SHIP-FAILURE-UNSETTLED.g-20260926091323-f7022a.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 49494
+          },
+          {
+            "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F10",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 167236
+          },
+          {
+            "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F13",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 154050
+          },
+          {
+            "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 167236
+          },
+          {
+            "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 167236
+          },
+          {
+            "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 112094
+          },
+          {
+            "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 112094
+          },
+          {
+            "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 112094
+          },
+          {
+            "id": "T0-STAGING-LEASE-RELEASE.g-20261111073728-3443ce.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 112094
+          },
+          {
+            "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 159167
+          },
+          {
+            "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 159167
+          },
+          {
+            "id": "T0-TEST-TEMP-SWEEP.g-20261112034634-24880e.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 159167
+          },
+          {
+            "id": "T1-AUDIT-FACTS.g-20260927085317-93da2d.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 125762
+          },
+          {
+            "id": "T1-AUDIT-FACTS.g-20260927085317-93da2d.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 125762
+          },
+          {
+            "id": "T1-BOARD-WATCH-2.g-20261109210509-be7b14.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 134008
+          },
+          {
+            "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F10",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 465301
+          },
+          {
+            "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 465301
+          },
+          {
+            "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 465301
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS-2.g-20261019092137-6fcee2.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 113156
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 125922
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F10",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 221820
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F11",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 221820
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 125922
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 125922
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F5",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 125922
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F6",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 125922
+          },
+          {
+            "id": "T1-EFF-R3-PROGRESS.g-20261019092137-6fcee2.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 125922
+          },
+          {
+            "id": "T1-FINDING-REPRO.g-20261107095106-c08940.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 144433
+          },
+          {
+            "id": "T1-LESSON-MATCH.g-20261107065129-555fc3.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 113457
+          },
+          {
+            "id": "T1-LESSON-MATCH.g-20261107065129-555fc3.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 113457
+          },
+          {
+            "id": "T1-OPUS55-PROMPTS.g-20260923224425-e5e886.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 86717
+          },
+          {
+            "id": "T1-OPUS55-PROMPTS.g-20260923224425-e5e886.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 86717
+          },
+          {
+            "id": "T1-OUTCOME-FIRST-DECISION.g-20261113215928-e57db5.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 156472
+          },
+          {
+            "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F12",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 271047
+          },
+          {
+            "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 311462
+          },
+          {
+            "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 311462
+          },
+          {
+            "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F7",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 311462
+          },
+          {
+            "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F9",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 234165
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F10",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F11",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F16",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 428990
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 160530
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F2",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F6",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F9",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 262575
+          },
+          {
+            "id": "T1-PARSE-GUARD.g-20260926084954-89a33c.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 111569
+          },
+          {
+            "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 108134
+          },
+          {
+            "id": "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 217734
+          },
+          {
+            "id": "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 217734
+          },
+          {
+            "id": "T1-REVIEW-PRE-EXISTING.g-20261023072913-94f64f.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 154513
+          },
+          {
+            "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 235012
+          }
+        ],
+        "totals": {
+          "bugCases": 124,
+          "hits": 89,
+          "misses": 35,
+          "recall": 0.717741935483871,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        }
+      }
+    ],
+    "summary": {
+      "trials": 1,
+      "recall": {
+        "median": 0.717741935483871,
+        "min": 0.717741935483871,
+        "max": 0.717741935483871
+      },
+      "falseBlockRate": null,
+      "noVerdict": 0,
+      "errors": 0
+    }
+  },
+  "trials": [
+    {
+      "case": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+      "outcomes": [
+        "miss",
+        "miss",
+        "hit"
+      ],
+      "agree": false,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 383715
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 0,
+          "misses": 1,
+          "recall": 0,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 383715
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 501482
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-BOUND-TELEMETRY-5.g-20260927164040-039db8.F4",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 407379
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 0,
+            "min": 0,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 192157
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 192157
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 136562
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 142582
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 294430
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 294430
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 280919
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F8",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 259791
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 100263
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 100263
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 92816
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-R3-SECOND-PASS.g-20261107065129-555fc3.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 78563
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 80443
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 80443
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 82074
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-EXEC-TREE-KILL.g-20261023133953-5e60ed.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 102720
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+      "outcomes": [
+        "miss",
+        "miss",
+        "miss"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 120325
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 0,
+          "misses": 1,
+          "recall": 0,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 120325
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 125232
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F8",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 143043
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 175986
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 175986
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 183936
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T1-OUTCOME-USAGE.g-20261110081857-67a4dc.F18",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 169622
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 171059
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 171059
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 162888
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 182486
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+      "outcomes": [
+        "hit",
+        "hit",
+        "hit"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "hit",
+            "runStatus": "success",
+            "durationMs": 93370
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 1,
+          "misses": 0,
+          "recall": 1,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 93370
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 91228
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F1",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "hit",
+                "runStatus": "success",
+                "durationMs": 66343
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 1,
+              "misses": 0,
+              "recall": 1,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 1,
+            "min": 1,
+            "max": 1
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    },
+    {
+      "case": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+      "outcomes": [
+        "miss",
+        "miss",
+        "miss"
+      ],
+      "agree": true,
+      "verdicts": [
+        "block",
+        "block",
+        "block"
+      ],
+      "verdictAgree": true,
+      "report": {
+        "stage": "formal",
+        "reviewer": "codex",
+        "rules": "newest",
+        "policyHash": "e5aa06ae30dad4883b96af4aa9865824fb82db865224e20dc5b7892a4ab81e2d",
+        "leftCheckouts": [],
+        "cases": [
+          {
+            "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+            "kind": "bug",
+            "confirmed": true,
+            "outcome": "miss",
+            "runStatus": "success",
+            "durationMs": 247348
+          }
+        ],
+        "totals": {
+          "bugCases": 1,
+          "hits": 0,
+          "misses": 1,
+          "recall": 0,
+          "cleanCases": 0,
+          "cleanPasses": 0,
+          "falseBlocks": 0,
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0,
+          "skippedUnconfirmed": 0
+        },
+        "trialResults": [
+          {
+            "cases": [
+              {
+                "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 247348
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 117860
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          },
+          {
+            "cases": [
+              {
+                "id": "T0-CI-RERUN-STRUCTURED.g-20260927181905-433c41.F3",
+                "kind": "bug",
+                "confirmed": true,
+                "outcome": "miss",
+                "runStatus": "success",
+                "durationMs": 281739
+              }
+            ],
+            "totals": {
+              "bugCases": 1,
+              "hits": 0,
+              "misses": 1,
+              "recall": 0,
+              "cleanCases": 0,
+              "cleanPasses": 0,
+              "falseBlocks": 0,
+              "falseBlockRate": null,
+              "noVerdict": 0,
+              "errors": 0,
+              "skippedUnconfirmed": 0
+            }
+          }
+        ],
+        "summary": {
+          "trials": 3,
+          "recall": {
+            "median": 0,
+            "min": 0,
+            "max": 0
+          },
+          "falseBlockRate": null,
+          "noVerdict": 0,
+          "errors": 0
+        }
+      }
+    }
+  ],
+  "leftOut": {
+    "candidateGone": 9,
+    "trueDefectWithoutCase": 0
+  }
+}

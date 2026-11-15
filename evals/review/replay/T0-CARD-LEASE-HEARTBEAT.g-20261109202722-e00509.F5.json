@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CARD-LEASE-HEARTBEAT.g-20261109202722-e00509.F5",
+  "candidate": "b9cf7c5b2072adebacb82ffa80eaf4040f2e8d23",
+  "base": "08c052031019dc63e96bedf6bc0e078cd68bfe17",
+  "card": {
+    "id": "T0-CARD-LEASE-HEARTBEAT",
+    "path": "specs/tasks/T0-CARD-LEASE-HEARTBEAT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CARD-LEASE-HEARTBEAT F5 (goal g-20261109202722-e00509)",
+  "note": "R3 decision 2, open, resolved: [spec] 14 scope fidelity (class: extra-directory-listing) @ src/hooks/index.ts:585: [Compliance] With leases present but none belonging to the event's session, renewal lists heartbeat/ here and leases/ at line 589. This exceeds R3's explicit maximum of one added directory listing; an in-memory filesystem counter confirmed two. -> Remove the heartbeat-directory enumeration from the scan path, track the prior reservation directly, and assert the filesystem-operation limit in a regression test.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 585,
+      "window": 5,
+      "class": "extra-directory-listing"
+    }
+  ]
+}

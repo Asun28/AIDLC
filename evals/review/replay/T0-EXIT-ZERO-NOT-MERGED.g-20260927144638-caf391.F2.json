@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F2",
+  "candidate": "48ddc8331c8ee1a6e83f259fda2f82f483ad0ce9",
+  "base": "9e40449bab15d072aaa73241a60a5c44c29219ee",
+  "card": {
+    "id": "T0-EXIT-ZERO-NOT-MERGED",
+    "path": "specs/tasks/T0-EXIT-ZERO-NOT-MERGED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-EXIT-ZERO-NOT-MERGED F2 (goal g-20260927144638-caf391)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity @ src/delivery/ship.ts:208: [Compliance] [SAGA-DONE] short-circuits the failure scan: exit-0 output containing it alongside [SHIP-MERGE-FAIL] or [CI-GATE-RED] returns merged. R1 requires an exit-0 failure sentinel to classify as that failure. -> Check SENTINEL_MAP before accepting the merge contract and test combined success/failure markers.",
+  "expected": [
+    {
+      "file": "src/delivery/ship.ts",
+      "line": 208,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

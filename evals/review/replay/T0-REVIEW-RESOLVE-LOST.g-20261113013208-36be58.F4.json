@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-REVIEW-RESOLVE-LOST.g-20261113013208-36be58.F4",
+  "candidate": "ea42cf3b06988faac5cb06091d6ebff52c0b1c2a",
+  "base": "d0f17adf6c79413cd6bd8b6be31386bf37620e6d",
+  "card": {
+    "id": "T0-REVIEW-RESOLVE-LOST",
+    "path": "specs/tasks/T0-REVIEW-RESOLVE-LOST.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "the owner's label in the spot check of bench/outcome/labels-spotcheck.jsonl; no person checked this case",
+  "origin": "T0-REVIEW-RESOLVE-LOST F4 (goal g-20261113013208-36be58)",
+  "note": "R3 decision 3, open: [spec] 14 scope fidelity (class: qualified-verdict-path-mismatch) @ src/cli/main.ts:969: [Compliance/Bugs] R8 requires fully qualified paths with -C to be used as given, but fileArg normalizes /lookup/link/../verdict.json to /lookup/verdict.json. On POSIX this can read another verdict and persist its reference and digest. Reverting the contract amendment did not resolve this contradiction. -> Reconcile R8 with the required helper on main, then implement and test the authorized behavior with distinct files behind the directory link.",
+  "expected": [
+    {
+      "file": "src/cli/main.ts",
+      "line": 969,
+      "window": 5,
+      "class": "qualified-verdict-path-mismatch"
+    }
+  ]
+}

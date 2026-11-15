@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-REVIEW-PRE-EXISTING.g-20261023072913-94f64f.F3",
+  "candidate": "52ff0671414dce06b7837da0f529459ae7534924",
+  "base": "0c76e5611a9a185a37586218fadeed3b0237d83b",
+  "card": {
+    "id": "T1-REVIEW-PRE-EXISTING",
+    "path": "specs/tasks/T1-REVIEW-PRE-EXISTING.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-REVIEW-PRE-EXISTING F3 (goal g-20261023072913-94f64f)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 data and persistence design (class: undecided-advisory-count) @ src/review/stats.ts:283: Bugs: all R3 invocations are counted, including no-verdict and quota-hold records. Failed reviewer output can retain advisory reasons, so statistics count notes from attempts that made no decision; reproduced with decisions=0 and preExistingAdvisory=1. -> Filter R3 invocations to pass/block before counting and test failed and held invocations.",
+  "expected": [
+    {
+      "file": "src/review/stats.ts",
+      "line": 283,
+      "window": 5,
+      "class": "undecided-advisory-count"
+    }
+  ]
+}

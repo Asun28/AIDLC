@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-PROBE-STOP-TEXT.g-20260927123329-a7efc6.F1",
+  "candidate": "3be191b7c9e654b2ab46103ff24f473d89d8b80d",
+  "base": "f765efcaf9858c6c1fa1df82f2b4b9865b2a7aee",
+  "card": {
+    "id": "T0-PROBE-STOP-TEXT",
+    "path": "specs/tasks/T0-PROBE-STOP-TEXT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-PROBE-STOP-TEXT F1 (goal g-20260927123329-a7efc6)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing @ tests/scenarios/t0-flow.test.ts:4801: Compliance: acceptance 2 requires proving that both probe stops retain the git error. This assertion checks only static prefixes; both cases pass even if the error text is discarded entirely. -> Assert the scripted stderr substring in stop.detail for both cases, alongside the existing prefix checks.",
+  "expected": [
+    {
+      "file": "tests/scenarios/t0-flow.test.ts",
+      "line": 4801,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

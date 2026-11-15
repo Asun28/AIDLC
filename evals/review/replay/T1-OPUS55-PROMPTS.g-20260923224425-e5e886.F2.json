@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OPUS55-PROMPTS.g-20260923224425-e5e886.F2",
+  "candidate": "6ecccdfb2fb2d78e8639d20b47d4040bb5531b7f",
+  "base": "76f5f560a7aa58e4587123ac3324bf02a007482c",
+  "card": {
+    "id": "T1-OPUS55-PROMPTS",
+    "path": "specs/tasks/T1-OPUS55-PROMPTS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-OPUS55-PROMPTS F2 (goal g-20260923224425-e5e886)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing or fake @ tests/surface/prose.test.ts:80: the acceptance-5 grep pattern /only\\s+report\\s+high(?:-|\\s+)severity/i misses the guide's own wording 'report only high-severity' (quoted by the card at acceptance 2); removedInstructions('Report only high-severity issues') returns [], so that instruction could be added to any agent, skill or prompt with the test green -> match both orders, e.g. /(?:only\\s+report|report\\s+only)\\s+high(?:-|\\s+)severity/i, and add that wording to the removedInstructions self-test",
+  "expected": [
+    {
+      "file": "tests/surface/prose.test.ts",
+      "line": 80,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

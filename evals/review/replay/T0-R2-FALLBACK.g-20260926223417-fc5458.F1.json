@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F1",
+  "candidate": "337fd798dc47e69183678a7cbee1d65d95cc2d7c",
+  "base": "c8596bd428adc1bf7ca0fd24fe7c4a09d6759534",
+  "card": {
+    "id": "T0-R2-FALLBACK",
+    "path": "specs/tasks/T0-R2-FALLBACK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-R2-FALLBACK F1 (goal g-20260926223417-fc5458)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries @ src/loop/card-runner.ts:2072: Bugs: reservation rechecks admission using the timestamp captured before diff collection. An in-memory reproduction reserved the fallback after the primary hold expired, violating forbid -> read the clock inside the reservation callback and refuse if reviewer selection changed; test expiry during diff collection.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2072,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-R2-FALLBACK.g-20260926223417-fc5458.F3",
+  "candidate": "337fd798dc47e69183678a7cbee1d65d95cc2d7c",
+  "base": "c8596bd428adc1bf7ca0fd24fe7c4a09d6759534",
+  "card": {
+    "id": "T0-R2-FALLBACK",
+    "path": "specs/tasks/T0-R2-FALLBACK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-R2-FALLBACK F3 (goal g-20260926223417-fc5458)",
+  "note": "R3 decision 1, open, resolved: [standards] 9 error handling @ src/loop/card-runner.ts:1091: Bugs: pending fallback reviews expire using the primary timeout. With primary timeout 1000 ms and fallback timeout 600000 ms, an in-memory reproduction dropped the pending fallback at 301001 ms and offered another review while the first could still run -> resolve expiration from the pending reviewer's timeout and test unequal timeouts.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 1091,
+      "window": 5,
+      "class": "dim-9"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-PREPARE-WORKTREE.g-20261110040130-9f38f7.F2",
+  "candidate": "2f50b2204e73d3b991ba1d155a602c4a35f45020",
+  "base": "38e97ec7fbcffe25ac8ad436f4533248a0d6c2b2",
+  "card": {
+    "id": "T0-PREPARE-WORKTREE",
+    "path": "specs/tasks/T0-PREPARE-WORKTREE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-PREPARE-WORKTREE F2 (goal g-20261110040130-9f38f7)",
+  "note": "R3 decision 3, open, resolved: [spec] 14 scope fidelity (class: missing-worktree-stops) @ src/loop/card-runner.ts:674: Compliance/Bugs: R2 fails when an attached worktree disappears but remains registered in Git. The new guard selects PREPARE, whose decideWorktree call finds the registration and probes commonDir in the missing directory; that fails and persists STOP/tool instead of returning prepare. Restoring the directory cannot clear that terminal stop. The tests only simulate paths with no Git registration. -> Handle this recovery case in CardRunner with a retryable prepare directive, preserving decideWorktree's contract and creating no directory; add a real-repository regression that removes an attached directory while retaining its Git registration.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 674,
+      "window": 5,
+      "class": "missing-worktree-stops"
+    }
+  ]
+}

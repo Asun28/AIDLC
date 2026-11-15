@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-CLOSE-CLEANUP.g-20261107011826-781c35.F1",
+  "candidate": "856363e5566c1e129b185bab619eb4ab7af93119",
+  "base": "92a0501e64d8c00918868fa1df849e468098a5fc",
+  "card": {
+    "id": "T0-CLOSE-CLEANUP",
+    "path": "specs/tasks/T0-CLOSE-CLEANUP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-CLOSE-CLEANUP F1 (goal g-20261107011826-781c35)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: status-key-parser-mismatch) @ src/artifacts/card.ts:191: [Bugs][Compliance] The existing card parser accepts `status : todo`, but this regex rejects it, so --metadata fails on a valid card instead of satisfying R5. -> Accept whitespace before the colon, preserve those bytes, and add a regression test.",
+  "expected": [
+    {
+      "file": "src/artifacts/card.ts",
+      "line": 191,
+      "window": 5,
+      "class": "status-key-parser-mismatch"
+    }
+  ]
+}

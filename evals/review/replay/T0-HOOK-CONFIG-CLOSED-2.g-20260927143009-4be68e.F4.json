@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F4",
+  "candidate": "f45e1faef644eda4e33bb7ae88bf57f0c9fd5eab",
+  "base": "60742302024288989a0749ddc621f54dbb3a2325",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED-2",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-CLOSED-2 F4 (goal g-20260927143009-4be68e)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing @ tests/surface/hooks.test.ts:612: [Compliance] The real newline-directory case omits the Edit denial and checks only the prompt's line count, although acceptance 3 requires all three outputs to contain the JSON-quoted path. -> Assert the exact Edit denial and prompt text for the real directory, alongside the existing Bash assertion.",
+  "expected": [
+    {
+      "file": "tests/surface/hooks.test.ts",
+      "line": 612,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-PARSE-GUARD.g-20260926084954-89a33c.F1",
+  "candidate": "cd5b12e4659b6e004f344e4ebf64a80f9bbd3ea3",
+  "base": "f5e5ab31b0331cbf5256bafd1174b8837b5e18f1",
+  "card": {
+    "id": "T1-PARSE-GUARD",
+    "path": "specs/tasks/T1-PARSE-GUARD.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-PARSE-GUARD F1 (goal g-20260926084954-89a33c)",
+  "note": "R3 decision 1, open, resolved: [spec] 6 tests missing or fake @ tests/core/parse-guard.test.ts:6: [Compliance] The recorded RED commit aac10dc imports src/core/parse-guard.ts before that module exists, aborting this entire suite before its structured-status, Unicode-boundary and NUL-list assertions execute. This is an import failure, not behavioral RED for the new guard. -> Run these regressions against an importable baseline-behavior seam, retain assertion-level failures, then demonstrate GREEN against the implementation.",
+  "expected": [
+    {
+      "file": "tests/core/parse-guard.test.ts",
+      "line": 6,
+      "window": 5,
+      "class": "dim-6"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-OUTCOME-GITHUB.g-20261110081857-67a4dc.F3",
+  "candidate": "ef3081ae8576a8e4ca52111344bbb64d0adf675c",
+  "base": "82cf80699c8240a153839ceb79d84d8e74780b94",
+  "card": {
+    "id": "T1-OUTCOME-GITHUB",
+    "path": "specs/tasks/T1-OUTCOME-GITHUB.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "two-model label agreement in bench/outcome/labels.jsonl under the owner's rule of 2026-11-14; no person checked this case",
+  "origin": "T1-OUTCOME-GITHUB F3 (goal g-20261110081857-67a4dc)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: revert-target-ancestry-truncated) @ bench/outcome/github.ts:146: Bugs/Compliance: R3 makes daysAfter null only when the target is not on the base. This map contains only first-parent commits, so reverting a commit incorporated through a merge's second parent incorrectly produces null despite the target being reachable from base. -> Keep first-parent filtering for revert discovery, but resolve target dates across all base ancestors; test a reachable second-parent target.",
+  "expected": [
+    {
+      "file": "bench/outcome/github.ts",
+      "line": 146,
+      "window": 5,
+      "class": "revert-target-ancestry-truncated"
+    }
+  ]
+}
