@@ -877,6 +877,8 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       ['##%5Bgroup%5DRun python -m pytest --collect-only -q', 'shell: /usr/bin/bash -e {0}', '##%5Bendgroup%5D', 'python -m pytest --collect-only -q', 'tests/test_workflow_e2e.py::test_e2e_ingest_then_query', '10 snapshots unused.', '3784 tests collected in 9.07s'],
       'job 132209813313: k = 1, the second run header of the second',
     );
+    const late = logged(f, job([{ ...NAMED, end: 7, later: ['##[group]Run npm test', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', 'sub-step output'] }]));
+    assert.deepEqual(late.lines, [...STEP_HEAD, 'npm run check', '##%5Bgroup%5DRun npm test', 'shell: /usr/bin/bash -e {0}', '##%5Bendgroup%5D', 'sub-step output'], 'a run header after the first second (a composite sub-step) is not counted');
     for (const [label, j] of [
       ['its own output prints a Run group with a shell line in its first second', job([{ ...NAMED, lines: ['npm run check', '##[group]Run npm test', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', 'sub-step output'] }])],
       ['an earlier step that started in that second printed a second run header', job([{ name: 'echo fast', title: 'Fast', at: 5, lines: ['##[group]Run inner', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', 'fast'] }, NAMED])],
