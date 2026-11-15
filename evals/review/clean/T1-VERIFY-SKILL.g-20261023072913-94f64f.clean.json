@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-VERIFY-SKILL.g-20261023072913-94f64f.clean",
+  "candidate": "4ddc792d216863ffdadf29854bf326f3444a6cf4",
+  "base": "794624a0d26cbb5ee8eec2a363b7a578590abef9",
+  "card": {
+    "id": "T1-VERIFY-SKILL",
+    "path": "specs/tasks/T1-VERIFY-SKILL.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-VERIFY-SKILL clean (goal g-20261023072913-94f64f)",
+  "note": "R3 decision 1 passed (codex)"
+}

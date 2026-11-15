@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-R2-OFF.g-20261106222641-3df166.clean",
+  "candidate": "82bb1f7c538a45b53e4d8e2bd9866cb96748eb6c",
+  "base": "885b82eca29795d957e77199751fe2123181a5f5",
+  "card": {
+    "id": "T0-R2-OFF",
+    "path": "specs/tasks/T0-R2-OFF.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-R2-OFF clean (goal g-20261106222641-3df166)",
+  "note": "R3 decision 1 passed (codex)"
+}

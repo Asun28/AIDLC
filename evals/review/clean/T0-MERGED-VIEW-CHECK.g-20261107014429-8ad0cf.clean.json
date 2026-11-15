@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-MERGED-VIEW-CHECK.g-20261107014429-8ad0cf.clean",
+  "candidate": "00114f6515606452ee635371aaa832cb1371c590",
+  "base": "5200e140d2822773895a351a2bae78f1a8381152",
+  "card": {
+    "id": "T0-MERGED-VIEW-CHECK",
+    "path": "specs/tasks/T0-MERGED-VIEW-CHECK.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-MERGED-VIEW-CHECK clean (goal g-20261107014429-8ad0cf)",
+  "note": "R3 decision 1 passed (codex)"
+}

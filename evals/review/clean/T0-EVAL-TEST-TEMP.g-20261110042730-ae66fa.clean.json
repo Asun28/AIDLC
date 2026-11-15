@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-EVAL-TEST-TEMP.g-20261110042730-ae66fa.clean",
+  "candidate": "4bcc183c69ca319f69a988ea98c98cc7e88fee13",
+  "base": "135bd972b58321c256293a13927e22eabf906233",
+  "card": {
+    "id": "T0-EVAL-TEST-TEMP",
+    "path": "specs/tasks/T0-EVAL-TEST-TEMP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-EVAL-TEST-TEMP clean (goal g-20261110042730-ae66fa)",
+  "note": "R3 decision 1 passed (codex)"
+}
