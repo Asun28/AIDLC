@@ -1,7 +1,7 @@
 ---
 id: T0-CI-STEP-NAMED
 title: The failed-step excerpt of a red Actions job places a step with a name of its own by the run-header count of its first second, so the failing test of a named workflow step reaches the CI classifier instead of stopping the card as step unknown (issue 316 item 1)
-status: todo
+status: merged
 branch: T0-CI-STEP-NAMED
 worktree: D:\wt\AIDLC\T0-CI-STEP-NAMED
 allow_paths:
