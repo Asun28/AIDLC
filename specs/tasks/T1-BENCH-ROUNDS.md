@@ -28,7 +28,7 @@ acceptance:
   - 4. Same file, "T1-BENCH-ROUNDS acceptance 4: --rounds outside 1 to 3, or above 1 with --stage pre, is refused before any review, and --rounds 1 prompts as main does". Fails on main for the refusals. [R1] [R3] [dod arm 1]
   - 5. tests/surface/review-bench.test.ts, pre-review.test.ts, lesson-match.test.ts, r2-pass-notes.test.ts, edge-scope.test.ts and prose.test.ts pass with no line changed. [R1] [R3] [dod arm 1]
   - 6. The OPERATIONS.md paragraph is as R6 states (reviewer-verified against the diff). [R6]
-depends_on: [T1-REVIEW-SEVERITY-2, T1-FINDING-IDENTITY]
+depends_on: [T1-REVIEW-SEVERITY-3, T1-FINDING-IDENTITY]
 budget: 230
 tdd: true
 sweep: "Main at 0f28b51e. bench.ts: `runReviewBench` :147-188 (stage config :153, groups :166-170, trials :173-179, quota hold :176 and :294), `reviewGroup` :199-215 (detached checkout), `reviewIn` :257-300 (prompt `common` with `priorFindings: []` and `round: 1` at :278; formal :287-292), `bindToCandidate` :318-325, `score` :327-338, `totalsOf` :340-356, `ReviewBenchReport` :69-85, `BenchCaseResult` :35-49. pre-review.ts: `buildReviewPrompt` :393-478 (Prior findings at :450), `renderPriorFindings` :264-290. CLI: `review bench run` src/cli/main.ts:1167-1187 (`--rules` checked :1179, `--trials` :1180)."
