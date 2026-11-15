@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -333,6 +333,29 @@ export class CardRunner {
   /** The checkout a review reads: the card worktree when it exists, else the main checkout. */
   private reviewCheckout(run: CardRun): string {
     return run.worktree && existsSync(run.worktree) ? run.worktree : this.repo.mainRoot;
+  }
+
+  /**
+   * The identity of each cited reason of a formal decision (card T1-FINDING-IDENTITY), with the cited lines read by
+   * `git show <candidateSha>:<file>` in the review checkout. A missing sha, or a read git refuses (a file the commit does
+   * not hold, a path that leaves the repository), gives the reason no identity and no error. Reads only; writes nothing.
+   */
+  private findingIdentities(checkout: string, candidateSha: string | undefined, reasons: string[]): Record<string, string> {
+    const identities: Record<string, string> = {};
+    if (!candidateSha) return identities;
+    const files = new Map<string, string[] | undefined>();
+    const readLines = (file: string, from: number, to: number): string[] | undefined => {
+      if (!files.has(file)) {
+        const shown = this.runner('git', ['show', `${candidateSha}:${file}`], { cwd: checkout, timeoutMs: 30_000 });
+        files.set(file, shown.exitCode === 0 && !shown.timedOut ? shown.stdout.split(/\r?\n/) : undefined);
+      }
+      return files.get(file)?.slice(from - 1, to);
+    };
+    for (const reason of reasons) {
+      const identity = findingIdentity(reason, readLines);
+      if (identity) identities[reason] = identity;
+    }
+    return identities;
   }
 
   /**
@@ -2433,6 +2456,8 @@ export class CardRunner {
     // locked at completion, so a decision another completion recorded meanwhile is counted, never overwritten.
     let decision: LedgerDecision | undefined;
     const pin = this.pinDecided(classified.outcome, this.reviewCheckout(persisted), candidateSha);
+    // The identities of the cited reasons, read before the lock (card T1-FINDING-IDENTITY); a pass cites nothing.
+    const identities = verdict && (classified.outcome === 'block-defect' || classified.outcome === 'block-advisory') ? this.findingIdentities(this.reviewCheckout(persisted), candidateSha, citedReasonsOf(verdict, r.changedPaths)) : {};
     const committed = this.commitReviewed(
       goal,
       card,
@@ -2449,7 +2474,7 @@ export class CardRunner {
           // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
           // A routed skip is not a decision on the findings: it records and resolves nothing.
           const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' ? 'pass' : 'no-verdict';
-          const findingsInput: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha, at: after, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && verdict ? citedReasonsOf(verdict, r.changedPaths) : [], advisory: classified.outcome === 'block-advisory', seen, deltaPaths: r.deltaPaths };
+          const findingsInput: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha, at: after, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && verdict ? citedReasonsOf(verdict, r.changedPaths) : [], advisory: classified.outcome === 'block-advisory', seen, deltaPaths: r.deltaPaths, identities };
           const withDecision = (x: CardRun): CardRun => ({ ...x, review: rec.ledger });
           return {
             findingsInput,
@@ -2862,6 +2887,7 @@ export class CardRunner {
       let recorded = false;
       let found: RecordFindingsResult = { findings: run.findings, raised: [], reraised: [], resolved: [] };
       const pin = this.pinDecided(classified.outcome, this.reviewCheckout(run), run.candidate?.sha);
+      const identities = shipVerdict && (classified.outcome === 'block-defect' || classified.outcome === 'block-advisory') ? this.findingIdentities(this.reviewCheckout(run), run.candidate?.sha, citedReasonsOf(shipVerdict)) : {};
       const locked = this.store.updateCardRun(goal.id, card.id, (persisted) => {
         const current = persisted ?? run;
         rec = undefined;
@@ -2874,7 +2900,7 @@ export class CardRunner {
         // Findings of a ship-path decision: every cited reason of a block (root or axis, advisory included), ids allocated on
         // the locked record (a dispute saved during the ship is kept).
         const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' ? 'pass' : 'no-verdict'; // a routed skip decides nothing about the findings
-        const input: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && shipVerdict ? citedReasonsOf(shipVerdict) : [], advisory: classified.outcome === 'block-advisory', seen: {}, deltaPaths: bindings.deltaPaths };
+        const input: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && shipVerdict ? citedReasonsOf(shipVerdict) : [], advisory: classified.outcome === 'block-advisory', seen: {}, deltaPaths: bindings.deltaPaths, identities };
         found = recordFindings(current.findings, input);
         return { ...current, review: rec.ledger, findings: found.findings };
       });

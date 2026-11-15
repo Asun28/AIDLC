@@ -70,3 +70,44 @@ test('T1-FINDING-IDENTITY acceptance 4: an R3 block records an identity read fro
     fx.cleanup();
   }
 });
+
+test('T1-FINDING-IDENTITY acceptance 4: a ship-path block records an identity read from the candidate commit, and an unreadable path records none', () => {
+  const fx: Fixture = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'identity', tier: 'S', reviewGate: 'codex {verdict:pass}', allowPaths: [FILE, GONE] });
+    mkdirSync(path.join(fx.tmp, 'src'), { recursive: true });
+    writeFileSync(path.join(fx.tmp, FILE), 'export const a = 1;\n');
+    writeFileSync(path.join(fx.tmp, GONE), 'export const gone = 1;\n');
+    writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\n.review/\nwt/\n');
+    git(fx.tmp, ['init', '-q', '-b', 'main']);
+    git(fx.tmp, ['add', '-A']);
+    git(fx.tmp, ['commit', '-q', '-m', 'base']);
+    git(fx.tmp, ['checkout', '-q', '-b', CARD]);
+    writeFileSync(path.join(fx.tmp, FILE), 'export const a = 1;\n    export const b   = a + 1;\n\texport const c = b;\n');
+    rmSync(path.join(fx.tmp, GONE));
+    git(fx.tmp, ['add', '-A']);
+    git(fx.tmp, ['commit', '-q', '-m', 'candidate']);
+    const candidate = git(fx.tmp, ['rev-parse', 'HEAD']);
+
+    const ship = new DryRunShipPath(['review-blocked'], { verdict: 'block', reasons: [HERE, MISSING], axes: { spec: { verdict: 'block', reasons: [HERE, MISSING] }, standards: { verdict: 'pass', reasons: [] } }, sha: candidate, run_status: 'success' });
+    const runner: SyncRunner = (command, args, options) => (command === 'git' ? runSync(command, args, options) : scriptedRunner({})(command, args, options));
+    const cards = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner });
+    const goal = fx.controller.createGoal({ text: `implement ${CARD}`, source: 'card', ref: CARD, affectedSurfaces: [] }, { cards: [CARD] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: [CARD] } });
+    const card = fx.card(CARD);
+    const first = cards.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
+    const built = cards.next(fx.goal(goal.id), card, first.run).run;
+    const recorded = cards.recordAttempt(fx.goal(goal.id), card, built, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidate });
+    const shipped = cards.next(fx.goal(goal.id), card, recorded);
+    assert.equal(shipped.directive.kind, 'review-fix', shipped.directive.narration);
+
+    const findings = fx.store.getCardRun(goal.id, CARD)!.findings;
+    assert.deepEqual(findings.map((f) => [f.id, f.reason]), [['F1', HERE], ['F2', MISSING]], 'the ship-path block recorded both cited reasons');
+    const expected = createHash('sha256').update(`${FILE}\n1\nexport const b = a + 1;\nexport const c = b;`).digest('hex').slice(0, 16);
+    assert.equal((findings[0] as { identity?: string }).identity, expected, 'the identity of the lines at the candidate commit');
+    assert.ok(!('identity' in findings[1]!), 'a file the candidate commit does not hold gives no identity');
+  } finally {
+    fx.cleanup();
+  }
+});

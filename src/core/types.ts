@@ -527,6 +527,8 @@ export const ReviewFinding = z.object({
   class: FindingClass.optional(),
   /** `findingSeverity` of the raising reason, kept on a re-raise; absent on records written before card T1-REVIEW-SEVERITY. */
   severity: FindingSeverity.optional(),
+  /** `findingIdentity` of the raising reason over the candidate commit, kept on a re-raise; formal findings only, absent when the cited lines could not be read and on records written before card T1-FINDING-IDENTITY. Never links findings. */
+  identity: z.string().regex(/^[0-9a-f]{16}$/).optional(),
   candidateSha: z.string().optional(),
   raisedAt: IsoTimestamp,
   disposition: FindingDisposition.default('open'),

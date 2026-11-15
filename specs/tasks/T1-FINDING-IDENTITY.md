@@ -63,3 +63,57 @@ npm run typecheck && node --test tests/core/finding-identity.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the fault-point check adds no pin.
+
+## Attempt evidence
+
+Attempt 1 (base main eaed61f0).
+
+RED: commit c5698834, `node --test tests/core/finding-identity.test.ts tests/scenarios/finding-identity.test.ts tests/surface/stats.test.ts`, 5 failing for the stated reasons:
+- `not ok 1 - T1-FINDING-IDENTITY acceptance 1: ...`: `TypeError: policy.findingIdentity is not a function` (no export).
+- `not ok 2 - T1-FINDING-IDENTITY acceptance 2: ...`: `TypeError: policy.findingIdentity is not a function` (no export).
+- `not ok 3 - T1-FINDING-IDENTITY acceptance 3: ...`: AssertionError, actual `undefined`, expected `'aaaaaaaaaaaaaaaa'`.
+- `not ok 1 - T1-FINDING-IDENTITY acceptance 4: an R3 block ...`: AssertionError, actual `undefined`, expected `'98b1379faaa9ac80'`.
+- `not ok 5 - ... (T1-FINDING-IDENTITY)` acceptance 5: AssertionError, `withIdentity: undefined, repeatByIdentity: undefined`, expected `4, 1`.
+
+Added after RED, at GREEN, each shown failing by a mutant below: a second acceptance 4 test for the ship-path decision (M11), the `ReviewFinding` schema assertions in acceptance 3 (M13), and the R2-round row in acceptance 5 (M15).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/core/finding-identity.test.ts, acceptance 1 | pass |
+| 2 | tests/core/finding-identity.test.ts, acceptance 2 | pass |
+| 3 | tests/core/finding-identity.test.ts, acceptance 3 | pass |
+| 4 | tests/scenarios/finding-identity.test.ts, acceptance 4 (R3 decision and ship-path decision, real git, scripted reviewer) | pass |
+| 5 | tests/surface/stats.test.ts, "T1-FINDING-IDENTITY acceptance 5" | pass |
+| 6 | tests/core/review-policy.test.ts, tests/scenarios/second-pass.test.ts, tests/scenarios/fault-points.test.ts unchanged (`git diff main --stat` lists none of them), in the DoD | pass |
+| 7 | docs/OPERATIONS.md, paragraph "Finding identity (card T1-FINDING-IDENTITY)" after Severity; docs/ARCHITECTURE.md, persisted-state row `cards/<goalId>/<cardId>.json`, clause "their identity (`ReviewFinding.identity` ...)" | reviewer-verified |
+
+Pinned literals updated (forbid exception, R4 adds the fields): tests/surface/stats.test.ts lines 131, 141, 177 and 549, each a `FindingStats` deepEqual that gains `withIdentity: 0, repeatByIdentity: 0` and nothing else.
+
+Store writes and journal appends: none added, removed or reordered. `CardRunner.findingIdentities` only runs `git show <candidateSha>:<file>` through the injected runner, before `commitReviewed` (R3) and before the ship-path `updateCardRun`, outside the lock; the identities ride in the existing `RecordFindingsInput`. Verify skill verify-card-run-writes: `git diff --name-only 402a07f3 -- <covered files>` lists `src/loop/card-runner.ts`; no line of the card diff touches `updateCardRun`, `saveCardRun`, `atomicWrite*` or `append(`; `node --test tests/scenarios/fault-points.test.ts` passes inside the DoD with no pin added. Outcome: in sync (the sync commit moves at CLOSE).
+
+Hand mutants (edit, run the named test file, restore; none committed):
+| Mutant | Test | Result |
+|---|---|---|
+| M1 no inner white-space collapse | finding-identity core | killed (acc 1) |
+| M2 blank lines kept | core | killed (acc 1, 2) |
+| M3 no trim | core | killed (acc 1, 2) |
+| M4 no 40-line cap | core | killed (acc 2) |
+| M5 dimension before class | core | killed (acc 1) |
+| M6 axis/severity tags not skipped | core | killed (acc 1) |
+| M7 empty text hashed | core | killed (acc 2) |
+| M8 a location with no line accepted | core | killed (acc 2) |
+| M9 `recordFindings` does not set identity | core | killed (acc 3) |
+| M10 R3 decision does not pass identities | scenario | killed (acc 4, R3) |
+| M11 ship-path decision does not pass identities | scenario | killed (acc 4, ship path) |
+| M12 lines read from another commit (`HEAD~1`) | scenario | killed (both acc 4) |
+| M13 schema accepts any identity string | core | killed (acc 3) |
+| M14 same decision counts as earlier (`<=`) | stats | killed (acc 5) |
+| M15 an R2 finding counts as earlier | stats | killed (acc 5) |
+| M16 `withIdentity` not counted | stats | killed (acc 5) |
+| M17, M18 family totals drop either field | stats | killed (acc 5) |
+| M19 exit code of `git show` ignored | scenario | survives: equivalent with real git, a failed `git show` writes nothing on stdout, so the text is empty and no identity results |
+| M20 missing `candidateSha` guard removed | scenario | survives: equivalent, `git show undefined:<file>` names no object and fails; the guard saves the call |
+
+DoD: `npm run typecheck && node --test tests/core/finding-identity.test.ts tests/scenarios/finding-identity.test.ts tests/surface/stats.test.ts tests/core/review-policy.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/second-pass.test.ts`: exit 0, tests 132, pass 132, fail 0 (final tree).
+
+Full suite (`npm run check`): exit 0, tests 3728, pass 3700, fail 0, skipped 28.

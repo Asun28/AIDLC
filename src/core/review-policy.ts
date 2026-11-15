@@ -14,6 +14,7 @@
  *   own counter is tracked separately and never rewritten.
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
+import { createHash } from 'node:crypto';
 import { detectQuotaHold, quotaOutput } from './parse-guard.ts';
 import { DisputeKind, FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type CardRun, type FindingDisposition, type FindingRuling, type FindingSeverity, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
@@ -283,6 +284,35 @@ export function findingClass(reason: string): string | undefined {
   return slug !== undefined && slug.length <= FINDING_CLASS_MAX && FINDING_CLASS_PATTERN.test(slug) ? slug : undefined;
 }
 
+/** The opening axis tag and severity tag a reason may carry, in the positions `findingSeverity` reads them, or an axis tag alone. */
+const LEADING_TAGS = /^\s*(?:(?:\[(?:spec|standards)\]\s+)?\[P[012]\]|\[(?:spec|standards)\])/i;
+/** The most lines of a cited range an identity reads, from its first line. */
+const IDENTITY_MAX_LINES = 40;
+
+/**
+ * The identity of a finding (card T1-FINDING-IDENTITY): the first 16 hex characters of sha256 over `<file>\n<category>\n<text>`.
+ * `file` is `findingLocation`; the range is the `:n` or `:n-m` of the same location, cut to 40 lines from `n`; `category` is
+ * `findingClass`, else the leading number of the text between the opening tags and the location (the dimension), else empty;
+ * `text` is the lines `readLines` returns, each trimmed with inner white space collapsed, blank lines dropped. Undefined
+ * without a file, a line, readable lines or text. Recorded and counted only: `re:F<n>` stays the only link between findings.
+ */
+export function findingIdentity(reason: string, readLines: (file: string, from: number, to: number) => string[] | undefined): string | undefined {
+  const file = findingLocation(reason);
+  const m = FINDING_LOCATION.exec(reason);
+  const range = m ? /:(\d+)(?:-(\d+))?$/.exec(m[0]) : null;
+  if (!file || !m || !range) return undefined;
+  const from = Number(range[1]);
+  const to = Math.min(range[2] === undefined ? from : Number(range[2]), from + IDENTITY_MAX_LINES - 1);
+  const lines = readLines(file, from, to);
+  if (!lines) return undefined;
+  const text = lines.map((l) => l.trim().replace(/\s+/g, ' ')).filter((l) => l.length > 0).join('\n');
+  if (!text) return undefined;
+  const head = reason.slice(0, m.index);
+  const dimension = /^\s*(\d+)/.exec(head.slice(LEADING_TAGS.exec(head)?.[0].length ?? 0))?.[1];
+  const category = findingClass(reason) ?? dimension ?? '';
+  return createHash('sha256').update(`${file}\n${category}\n${text}`).digest('hex').slice(0, 16);
+}
+
 /** The `file:line` a reason cites: the normalised file of `findingLocation` with the line range the reason gives. */
 function findingSite(reason: string): string | undefined {
   const file = findingLocation(reason);
@@ -348,6 +378,8 @@ export interface RecordFindingsInput {
   seen?: Record<string, FindingSnapshot>;
   /** The angle that wrote each reason, from the structured panel result; takes precedence over a trailing `(<angle>)` tag. */
   perspectiveByReason?: Record<string, string>;
+  /** The identity of each reason (`findingIdentity`, card T1-FINDING-IDENTITY), set on the finding the reason creates; a re-raise keeps the finding's own. */
+  identities?: Record<string, string>;
   /** Paths of the delta since the candidate the stage last reviewed (empty when the candidate is unchanged); absent on a first round. A new finding citing a file outside it is a first-round miss. */
   deltaPaths?: string[];
 }
@@ -432,6 +464,8 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
     const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), severity: findingSeverity(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [], revision: 0 };
     const cls = findingClass(reason);
     if (cls) finding.class = cls;
+    const identity = input.identities?.[reason];
+    if (identity) finding.identity = identity;
     if (input.advisory) finding.advisory = true;
     if (input.deltaPaths && (!finding.file || !input.deltaPaths.includes(finding.file))) finding.outsideDelta = true;
     next = [...next, finding];

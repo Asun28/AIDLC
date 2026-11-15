@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 // Namespace import: the function is new, so each test fails at its first call rather than at link time.
 import * as policy from '../../src/core/review-policy.ts';
+import { ReviewFinding } from '../../src/core/types.ts';
 
 type ReadLines = (file: string, from: number, to: number) => string[] | undefined;
 type Identity = (reason: string, readLines: ReadLines) => string | undefined;
@@ -65,4 +66,9 @@ test('T1-FINDING-IDENTITY acceptance 3: recordFindings stores the identity of ne
   const second = policy.recordFindings(first.findings, { stage: 'formal', round: 2, candidateSha: 'sha2', at: '2026-11-16T01:00:00.000Z', outcome: 'block', reasons: [again], identities: { [again]: 'bbbbbbbbbbbbbbbb' } } as policy.RecordFindingsInput);
   assert.deepEqual(second.reraised, ['F1']);
   assert.equal((second.findings.find((f) => f.id === 'F1') as { identity?: string }).identity, 'aaaaaaaaaaaaaaaa', 'a re-raise keeps the identity of the finding');
+  // The stored record: one written before the card parses without an identity, and an identity is 16 lowercase hex characters.
+  const stored = { id: 'F1', stage: 'formal', round: 1, reason: r1, raisedAt: '2026-11-16T00:00:00.000Z' };
+  assert.ok(!('identity' in ReviewFinding.parse(stored)), 'a record written before the card parses unchanged');
+  assert.equal(ReviewFinding.parse({ ...stored, identity: 'aaaaaaaaaaaaaaaa' }).identity, 'aaaaaaaaaaaaaaaa');
+  for (const bad of ['AAAAAAAAAAAAAAAA', 'aaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaa', 'gggggggggggggggg']) assert.equal(ReviewFinding.safeParse({ ...stored, identity: bad }).success, false, `${bad} is no identity`);
 });
