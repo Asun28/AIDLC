@@ -41,13 +41,13 @@ budget: 230
 tdd: true
 sweep: "Main at 0f28b51e. `close` src/loop/card-runner.ts:3197-3248 computes missing steps from `run.closure` at :3201 and names each step's flag in its narration; `markClosure` :3260 checks the goal generation, CLOSE state, merge verification and lease fence before any flag is written. `findingMarker` review-policy.ts:223-230 is a pure function the loop does not call (docs/REQUIREMENTS-TRACEABILITY.md:20, `partial`). `GhProbe.issuesWithLabel` and `createIssue` come from T1-GH-ISSUES. card-loop.md CLOSE says an unrelated finding becomes a deduplicated issue keyed by a card/PR/SHA marker. Formal invocations keep their advisory reasons in `advisory` (types.ts:309-349; set at card-runner.ts:2447 and :2871). A finding's `ruling` is `FindingRuling` (types.ts:508); `aidlc review rule --defer --issue <n>` stores an issue number on it."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - filing an issue before the merge is verified, or from any command other than card close
   - a GitHub search query to find the marker (the search index lags; R4 lists by label)
   - a shell string for a gh call
   - editing .aidlc state by hand
 non_goals: [making P2 findings non-blocking, a follow-up card file, filing issues for runs closed before this card, a change to CHANGELOG.md]
-hygiene: "Line numbers are from main at 0f28b51e and move with T1-REVIEW-SEVERITY and T1-FINDING-IDENTITY; read them again at PREPARE. This card adds a store write to a command the verify-card-run-writes coverage record names, so run that skill before SHIP and at CLOSE, and extend its record."
+hygiene: "Run `npm run check` (typecheck and the full suite, as CI runs it) in the worktree before recording the attempt and put its totals in the Attempt evidence (lesson of T1-REVIEW-SEVERITY-2, CI run 43757539597). Line numbers are from main at 0f28b51e and move with T1-REVIEW-SEVERITY and T1-FINDING-IDENTITY; read them again at PREPARE. This card adds a store write to a command the verify-card-run-writes coverage record names, so run that skill before SHIP and at CLOSE, and extend its record."
 doc_sync: docs/OPERATIONS.md (closure), docs/ARCHITECTURE.md (closure record), docs/REQUIREMENTS-TRACEABILITY.md (R25-R27), .claude/skills/aidlc-loop/card-loop.md (CLOSE)
 ---
 

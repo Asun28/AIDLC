@@ -33,11 +33,11 @@ budget: 230
 tdd: true
 sweep: "Main at 0f28b51e. bench.ts: `runReviewBench` :147-188 (stage config :153, groups :166-170, trials :173-179, quota hold :176 and :294), `reviewGroup` :199-215 (detached checkout), `reviewIn` :257-300 (prompt `common` with `priorFindings: []` and `round: 1` at :278; formal :287-292), `bindToCandidate` :318-325, `score` :327-338, `totalsOf` :340-356, `ReviewBenchReport` :69-85, `BenchCaseResult` :35-49. pre-review.ts: `buildReviewPrompt` :393-478 (Prior findings at :450), `renderPriorFindings` :264-290. CLI: `review bench run` src/cli/main.ts:1167-1187 (`--rules` checked :1179, `--trials` :1180)."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - a change to the prompt, schema or verdict handling of the card runner's R2 or R3
   - writing aidlc.config.json or any configuration file from the bench
 non_goals: [rounds in the card loop, the verdict field order and an R2 reviewer argv (T1-BENCH-ORDER-PRE), running the arms, a change to CHANGELOG.md]
-hygiene: "Line numbers are from main at 0f28b51e and move with T1-REVIEW-SEVERITY and T1-FINDING-IDENTITY; read them again at PREPARE."
+hygiene: "Run `npm run check` (typecheck and the full suite, as CI runs it) in the worktree before recording the attempt and put its totals in the Attempt evidence (lesson of T1-REVIEW-SEVERITY-2, CI run 43757539597). Line numbers are from main at 0f28b51e and move with T1-REVIEW-SEVERITY and T1-FINDING-IDENTITY; read them again at PREPARE."
 doc_sync: docs/OPERATIONS.md (Reviewer bench)
 ---
 

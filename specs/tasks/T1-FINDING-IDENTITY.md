@@ -38,13 +38,13 @@ budget: 240
 tdd: true
 sweep: "Main at 0f28b51e. `FINDING_LOCATION` src/core/review-policy.ts:240 and `findingLocation` :247-252 give the file; `findingSite` :274-279 shows how the range is cut from the match. `findingClass` :266-271. `RecordFindingsInput` :314-340, `recordFindings` :385-440 (new findings created at :417-425). Formal `round` is `rec.ledger.substantiveDecisions` at card-runner.ts:2452 (R3) and :2877 (ship path), so `round` is the decision number. `commitReviewed` :2512-2557 calls `recordFindings` at :2539 on the locked record with the `findingsInput` built in `decide`. `countFindings` stats.ts:287-305. card-runner.ts is named by the verify-card-run-writes coverage record; this card adds no store write or journal append."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - linking, resolving, reopening or blocking a finding by its identity
   - a model call or a network call to compute an identity
   - a new store write or journal append
   - editing .aidlc state by hand
 non_goals: [identity on R2 findings, identity in the bench (T1-BENCH-ROUNDS uses the function), a change to the verdict schema, a change to CHANGELOG.md]
-hygiene: "Line numbers are from main at 0f28b51e and move with T1-REVIEW-SEVERITY; read them again at PREPARE. This card changes a file the verify-card-run-writes coverage record names, so run that skill before SHIP and at CLOSE."
+hygiene: "Run `npm run check` (typecheck and the full suite, as CI runs it) in the worktree before recording the attempt and put its totals in the Attempt evidence (lesson of T1-REVIEW-SEVERITY-2, CI run 43757539597). Line numbers are from main at 0f28b51e and move with T1-REVIEW-SEVERITY; read them again at PREPARE. This card changes a file the verify-card-run-writes coverage record names, so run that skill before SHIP and at CLOSE."
 doc_sync: docs/OPERATIONS.md (R3 findings), docs/ARCHITECTURE.md (findings record)
 ---
 

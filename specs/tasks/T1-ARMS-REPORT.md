@@ -37,13 +37,13 @@ budget: 300
 tdd: true
 sweep: "Main at 0f28b51e. bench/outcome/replay.ts: `reduce` and `KEEP` (:24-29) cut case results to `id`, `kind`, `confirmed`, `outcome`, `runStatus`, `detail`, `durationMs`; `assembleReplay` (:79-104) is the pattern for refusing inputs and hashing reports. replay-main.json `/run/cases` holds 124 results, 35 `miss`; evals/review/replay/ holds 124 bug cases on 57 triples, 25 of them with a miss (15 with only misses). The reports of T1-BENCH-ROUNDS and T1-BENCH-ORDER-PRE carry `options`, per-case `rounds` and `roundTotals`. tests/surface/outcome-baseline.test.ts checks baseline.md the same way R5 checks arms.md, with its own expression grammar; this card uses JSON pointers only. CHANGELOG.md `## Unreleased` is followed by entries and then `## 0.2.0 - 2026-11-14`."
 forbid:
-  - weakening, skipping or deleting a test to go green, or changing a line of an existing test
+  - weakening, skipping or deleting a test to go green, or changing a line of an existing test, other than an expected literal that pins the exact text of a document line this card's requirements change, updated to the new text and nothing else, each such line named in the Attempt evidence with the requirement that changes it (a test file outside allow_paths needs a recorded amendment first)
   - a new bench run, or a rerun of an arm, inside this card
   - editing a report under _local/arms/, evals/review/, bench/outcome/replay-main.json or bench/outcome/summary.json
   - a number in arms.md that is not in a table row with its source, other than dates, the commit, card and goal ids and file names
   - a keep verdict that differs from the rule of R4
 non_goals: [switching any arm on in the loop (the second goal), a change under src/]
-hygiene: "Line numbers are from main at 0f28b51e; read them again at PREPARE. The arm reports are produced by the coordinator before this card starts (plans/review-recall.md, Order of work 5); if they are missing, STOP/capability."
+hygiene: "Run `npm run check` (typecheck and the full suite, as CI runs it) in the worktree before recording the attempt and put its totals in the Attempt evidence (lesson of T1-REVIEW-SEVERITY-2, CI run 43757539597). Line numbers are from main at 0f28b51e; read them again at PREPARE. The arm reports are produced by the coordinator before this card starts (plans/review-recall.md, Order of work 5); if they are missing, STOP/capability."
 ---
 
 # T1-ARMS-REPORT
