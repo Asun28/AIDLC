@@ -87,12 +87,12 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     assert.equal(r.directive.kind, 'close');
     assert.equal(r.run.state, 'CLOSE');
     assert.equal(r.run.mergeVerified, true);
-    if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
+    if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons', 'followups']);
 
     setActorForTests(actorB);
     assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true }), (e: unknown) => e instanceof FencedError, 'a foreign session cannot assert closure');
     setActorForTests(actorA);
-    const run2 = runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
+    const run2 = runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, followups: true });
     r = runner.next(fx.goal(goal.id), card, run2);
     assert.equal(r.directive.kind, 'close', 'the five mechanical steps leave the lesson step open');
     if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['lessons']);
@@ -246,7 +246,7 @@ test('WAIT resumes: a goal polled while its only card was running parks in WAIT 
     const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: candidateShaFor('T1-PARK') });
     r = runner.next(fx.goal(goal.id), card, run1);
     assert.equal(r.directive.kind, 'close');
-    r = runner.next(fx.goal(goal.id), card, runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'parked scenario: no rule learned' }));
+    r = runner.next(fx.goal(goal.id), card, runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'parked scenario: no rule learned' }));
     assert.equal(r.directive.kind, 'done');
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)?.data['lessonSkipped'], 'parked scenario: no rule learned', 'the skip reason is journaled and no file is written');
     assert.equal(existsSync(path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md')), false);
@@ -2140,7 +2140,7 @@ test('R6: closure.lessons is never set by a raw card patch, a stale goal snapsho
     const after = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.closure.lessons, true, 'the stale snapshot of card next does not undo the recorded disposition');
     assert.equal(after.directive.kind, 'close');
-    if (after.directive.kind === 'close') assert.deepEqual(after.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup']);
+    if (after.directive.kind === 'close') assert.deepEqual(after.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'followups']);
     const stale = fx.goal(goal.id);
     assert.throws(() => runner.markClosure({ ...stale, generation: stale.generation + 1 }, card, recorded, { metadata: true }), /generation/);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: { detail: 'cancelled under the closer' } });
@@ -2174,7 +2174,7 @@ test('R6: a replacement session reclaims the card lease in CLOSE once the old le
     assert.equal(taken.directive.kind, 'close', `the ownership stop is reconciled once the blocking lease expired: ${taken.directive.narration}`);
     assert.equal(taken.run.stop, undefined);
     assert.ok(taken.run.ownerGeneration !== undefined && before !== undefined && taken.run.ownerGeneration > before, 'the expired lease is taken over with a new generation');
-    const closed = runner.markClosure(fx.goal(goal.id), card, taken.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'the replacement session found no rule to record' });
+    const closed = runner.markClosure(fx.goal(goal.id), card, taken.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'the replacement session found no rule to record' });
     const done = runner.next(fx.goal(goal.id), card, closed);
     assert.equal(done.directive.kind, 'done');
     // A record persisted as DONE before the lessons predicate existed stays DONE: the predicate defaults to false, the state evidence keeps the closure complete.
