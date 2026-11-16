@@ -1,7 +1,7 @@
 ---
 id: T1-DOD-GATE-FIXTURES
 title: The three scenario fixtures that record a success in a worktree directory through a scripted runner answer the card's dod_command with exit 0, so their successes carry a loop-run DoD that met dod_exit before T1-DOD-GATE reads it
-status: todo
+status: merged
 branch: T1-DOD-GATE-FIXTURES
 worktree: D:\wt\AIDLC\T1-DOD-GATE-FIXTURES
 plan_ref: plans/execution-gate.md#7-task-split-dependencies-and-parallel-windows
