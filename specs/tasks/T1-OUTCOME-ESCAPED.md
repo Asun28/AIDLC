@@ -112,3 +112,40 @@ It exits 0 and prints the line `{"view":"summary_escaped","rows":[...]}` on stdo
 Layout: line 1 `{`; line 2 `  "commit": "<40 hex>",`; line 3 `  "ranAt": "<ISO 8601 UTC with milliseconds>",`; line 4 `  "rows": [`; then one row per line, each `    {"week":"YYYY-MM-DD","merged_cards":n,"bugfix_cards":n,"reverts":n,"mentions_a_merged_card":n}` with a comma after every row but the last; then `  ]` and `}` and one line feed at the end.
 
 The test of acceptance 4 parses the file and checks: the keys are `commit`, `ranAt`, `rows` in that order; `commit` is 40 lower-case hex; `ranAt` equals `new Date(ranAt).toISOString()`; `rows` has at least one row; every row has exactly the keys `week`, `merged_cards`, `bugfix_cards`, `reverts`, `mentions_a_merged_card` in that order; `week` matches `YYYY-MM-DD` and `new Date(week + 'T00:00:00Z').getUTCDay()` is 1; the weeks are strictly ascending; the four counts are integers of 0 or more; `bugfix_cards` is at most `merged_cards`; `mentions_a_merged_card` is at most `bugfix_cards` plus `reverts`; no row has `merged_cards` 0 and `reverts` 0; and every line between line 4 and the closing `  ]` holds one row.
+
+## Attempt evidence
+
+Attempt 1, implementer. RED at becb2458 (tests only, on base 332956a2): `node --test tests/surface/outcome-ingest.test.ts tests/surface/outcome-github.test.ts` exit 1, pass 19 fail 5: INGEST acceptance 1 and 3 by assertion (no `diagnosis`/`mentions` keys), GITHUB-2 acceptance 12 by assertion (no `summary_escaped` among the printed views), ESCAPED acceptance 2 (`Catalog Error: Table with name summary_escaped does not exist!`), ESCAPED acceptance 4 (ENOENT on bench/outcome/escaped.json).
+
+Revert table (scratch, restored): week from the TIMESTAMPTZ in the Tokyo session, earlier-merge condition dropped, `bugfix_cards` without the diagnosis filter: each turns ESCAPED acceptance 2 red.
+
+Run of R4, from this worktree at 1cd55ef2 (view text final):
+
+```
+node bench/outcome/run.ts --no-usage --summary <scratch>4\summary.json --out <scratch>4\out
+```
+
+Exit code: 0. `commit` in the summary file is 332956a2, the HEAD of the main checkout that run.ts reads (`mainRoot()`, run.ts:65-67); the views are read from this worktree (run.ts:24).
+
+stderr:
+
+```
+outcome: cards 366, card_runs 357, review_decisions 1273, findings 931, state_spans 1344, attempts 822, ingest_errors 0, prs 279, checks 2611, reverts 1, branch_commits 1607, github_errors 53, required_checks 4; written to <scratch>4out
+```
+
+stdout line of `summary_escaped`:
+
+```
+{"view":"summary_escaped","rows":[{"week":"2026-09-07","merged_cards":5,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":2},{"week":"2026-09-14","merged_cards":20,"bugfix_cards":6,"reverts":1,"mentions_a_merged_card":1},{"week":"2026-09-21","merged_cards":56,"bugfix_cards":30,"reverts":0,"mentions_a_merged_card":17},{"week":"2026-09-28","merged_cards":5,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":0},{"week":"2026-10-05","merged_cards":6,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":0},{"week":"2026-10-12","merged_cards":7,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":0},{"week":"2026-10-19","merged_cards":21,"bugfix_cards":8,"reverts":0,"mentions_a_merged_card":3},{"week":"2026-11-02","merged_cards":43,"bugfix_cards":14,"reverts":0,"mentions_a_merged_card":3},{"week":"2026-11-09","merged_cards":75,"bugfix_cards":51,"reverts":0,"mentions_a_merged_card":18},{"week":"2026-11-16","merged_cards":4,"bugfix_cards":1,"reverts":0,"mentions_a_merged_card":1}]}
+```
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | outcome-ingest.test.ts INGEST acceptance 1, 3, 11 | pass |
+| 2 | outcome-github.test.ts "T1-OUTCOME-ESCAPED acceptance 2" (DuckDB v1.5.6 present) | pass |
+| 3 | outcome-github.test.ts "T1-OUTCOME-GITHUB-2 acceptance 12" | pass |
+| 4 | outcome-github.test.ts "T1-OUTCOME-ESCAPED acceptance 4" | pass |
+| 5 | outcome-summary.test.ts, outcome-baseline.test.ts unchanged; `git diff --stat 332956a2` lists neither summary.json nor baseline.md | pass |
+| 6 | outcome-first-decision, outcome-usage, outcome-labels, prose tests unchanged | pass |
+| 7 | bench/outcome/README.md: Tables `cards` row, Views bullet `summary_escaped`, escaped.json paragraph, Tests paragraph | reviewer |
+| 8 | this section: command, exit code, stderr line, stdout line | reviewer |
