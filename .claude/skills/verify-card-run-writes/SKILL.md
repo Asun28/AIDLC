@@ -20,13 +20,13 @@ Harm: a card that the journal reports in one state while the run record holds an
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
 - `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`, `CardRunner.markClosure`, `CardRunner.followupIssue`
 - `src/state/goal-store.ts`: `GoalStore.saveCardRun`, `GoalStore.updateCardRun`
-- `src/state/store.ts`: `atomicWriteJson`, `atomicWriteText`
+- `src/state/store.ts`: `atomicWriteJson`, `atomicWriteText`, `updateJson`
 - `src/state/journal.ts`: `Journal.append`
 
 The commands driven are `card attempt` (a BUILD success), `review pre`
 (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3
 pass (to CLOSE) or past the deadline (STOP/time), and `card close
---followups` (and its op writes; a rerun recovers). Invariants I1 to I6 and the liveness comparison are in the
+--followups` (+ op writes; rerun recovers). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
 Sync commit: `402a07f3d10eb0e90396a3cc3d9293eb045b4f0a`
@@ -35,7 +35,7 @@ Sync commit: `402a07f3d10eb0e90396a3cc3d9293eb045b4f0a`
 ```
 node --test tests/scenarios/fault-points.test.ts
 ```
-About 11 s on Windows at the sync commit (28 tests); CI runs it
+About 11 s on Windows at sync (28 tests); CI runs it
 in `npm test`.
 
 ## Bounds and assumptions

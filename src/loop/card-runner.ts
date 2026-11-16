@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, findingMarker, followupFindings, followupIssueBody, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -26,7 +26,7 @@ import { ReviewQueue } from '../coordination/review-queue.ts';
 import { EvidenceStore } from '../audit/manifest.ts';
 import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
-import { GhProbe } from '../probes/gh.ts';
+import { GhProbe, GhProbeError } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
@@ -37,7 +37,7 @@ import { REPRO_REQUEST } from '../review/repro.ts';
 import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { StoreError, atomicWriteJson, atomicWriteText } from '../state/store.ts';
+import { StoreError, atomicWriteJson, atomicWriteText, updateJson } from '../state/store.ts';
 import { withCardStatus } from '../artifacts/card.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
@@ -3251,8 +3251,7 @@ export class CardRunner {
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
       }
       if (claim.status === 'expired') {
-        // A follow-up issue reservation blocks the takeover from its intent on: its closer may be filing the issue.
-        const unresolved = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status) || (o.status === 'intended' && o.effects.includes(FOLLOWUP_EFFECT))).map((o) => o.id);
+        const unresolved = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
         try {
           const taken = this.leases.takeover(key, () => ({ reconciled: unresolved.length === 0, unresolvedOperations: unresolved }), { operation: `card:${card.id}:close`, now });
           ownerGeneration = taken.lease.generation;
@@ -3312,7 +3311,7 @@ export class CardRunner {
     if (current.ownerGeneration === undefined) throw new Error(`card ${card.id} holds no card lease; run aidlc card next ${card.id} to hold it before closing`);
     this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
     // Before any card-run write: a failed gh call throws with the run unchanged (its reservation resolved as failed), and the retry finds what it filed.
-    const followup = flags.followups ? this.followupIssue(goal, card, current) : undefined;
+    const followup = flags.followups ? this.followupIssue(goal, card, current, assertLiveGoal) : undefined;
     const file = this.lessonsFile();
     const data: Record<string, unknown> = { ...followup };
     if (flags.lessons) {
@@ -3375,12 +3374,15 @@ export class CardRunner {
   /**
    * The followups step (card T1-REVIEW-FOLLOWUP-ISSUE): the `review-followup` issue of the run's advisory and deferred
    * findings, found by its marker among the issues of that label (a list, never a search) or filed, or null with the
-   * reason none is filed. The lookup and the create run under a durable reservation (an operation whose unresolved
-   * intent blocks a takeover of the card lease); a retry reuses an unresolved one and looks up by marker again before it
-   * creates, and the lease is fenced again before the create and before the result. A failed gh call or fence resolves the
-   * reservation as failed and throws naming the call; the card run is not written here.
+   * reason none is filed. The lookup and the create run under an operation claimed for the marker: the n-th attempt is the
+   * record `op-followup-<marker hash>-<n>`, created as `running` under the store's record lock (`updateJson`), so of two
+   * commands that count the same n one claims it and the other is refused, and while any attempt of the marker is
+   * `running` or `UNKNOWN` (in flight, interrupted, or a create that may have reached GitHub) the step refuses and names
+   * `aidlc ops reconcile`. The card lease and the persisted goal (live, same generation) are checked again before the
+   * create and before the result. The attempt ends `succeeded` once the issue number is known, `UNKNOWN` when the create
+   * call failed after it may have been sent, else `failed`; the card run is not written here.
    */
-  private followupIssue(goal: Goal, card: Card, run: CardRun): { followupIssue: number | null; followupNote?: string } {
+  private followupIssue(goal: Goal, card: Card, run: CardRun, assertLiveGoal: () => void): { followupIssue: number | null; followupNote?: string } {
     const findings = followupFindings(run);
     const repo = this.config.repository;
     if (this.config.shipPath !== 'github') return { followupIssue: null, followupNote: `the ship path is ${this.config.shipPath}, not github; no issue filed` };
@@ -3389,26 +3391,44 @@ export class CardRunner {
     const sha = run.candidate?.sha ?? run.pr?.headRefOid ?? '';
     const marker = findingMarker(card.id, run.pr?.number, sha, 'review followups');
     const generation = run.ownerGeneration!;
-    const fence = () => this.leases.fence(resourceKeys.card(this.repo.key, card.id), generation, currentActor(), this.clock());
-    const op = this.ops.unresolved(goal.id, card.id).find((o) => o.effects.includes(FOLLOWUP_EFFECT) && o.target === marker) ?? this.ops.recordIntent({ kind: 'other', goalId: goal.id, cardId: card.id, target: marker, idempotencyKey: marker, ownerGeneration: generation, timeoutMs: 10 * 60_000, effects: [FOLLOWUP_EFFECT] }, this.clock());
-    if (!this.journal(goal.id).filter((e) => e.type === 'OPERATION_INTENT' && e.data['operationId'] === op.id).length) {
-      this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, kind: 'other', target: marker, effects: [FOLLOWUP_EFFECT] } });
-    }
+    const recheck = () => {
+      this.leases.fence(resourceKeys.card(this.repo.key, card.id), generation, currentActor(), this.clock());
+      assertLiveGoal();
+    };
+    const reconcileHint = (id: string, status: string) => `followups: operation ${id} for ${marker} is ${status}: another card close may be filing the issue, or one was interrupted or may have reached GitHub; look for the marker among the issues labelled review-followup, then run aidlc ops reconcile ${id} --status succeeded --provider-id <issue number> (or --status failed) and close again`;
+    const attempts = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => o.effects.includes(FOLLOWUP_EFFECT) && o.target === marker);
+    const open = attempts.find((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status));
+    if (open) throw new Error(reconcileHint(open.id, open.status));
+    const id = `op-followup-${createHash('sha256').update(marker).digest('hex').slice(0, 12)}-${attempts.length}`;
+    const now = this.clock();
+    this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: id, kind: 'other', target: marker, effects: [FOLLOWUP_EFFECT] } });
+    updateJson(path.join(this.ops.dir, `${id}.json`), OperationRecord, (existing) => {
+      if (existing) throw new Error(reconcileHint(id, existing.status));
+      return OperationRecord.parse({ id, kind: 'other', goalId: goal.id, cardId: card.id, target: marker, idempotencyKey: marker, ownerGeneration: generation, intentRecordedAt: now, issuedAt: now, status: 'running', timeoutMs: 10 * 60_000, effects: [FOLLOWUP_EFFECT] });
+    });
+    let number: number | undefined;
+    let sent = false;
     try {
-      let number = this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker))?.number;
+      number = this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker))?.number;
       if (number === undefined) {
-        fence();
+        recheck();
+        sent = true;
         number = this.gh.createIssue(repo, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, findings, marker), 'review-followup', this.repo.mainRoot);
       }
-      fence();
-      this.ops.markResult(op.id, 'succeeded', { evidenceRef: `issue #${number}` }, this.clock());
+      recheck();
+      this.ops.markResult(id, 'succeeded', { evidenceRef: `issue #${number}` }, this.clock());
       // A note an earlier skip recorded no longer holds once an issue is recorded.
       return { followupIssue: number, followupNote: undefined };
     } catch (err) {
-      this.ops.markResult(op.id, 'failed', { error: (err as Error).message }, this.clock());
-      throw new Error(`followups: ${(err as Error).message}`);
+      const message = (err as Error).message;
+      // Known number: the issue exists. A failed label call precedes the issue request; any other failure of the create may have reached GitHub.
+      const labelFailed = err instanceof GhProbeError && err.receipt.args[0] === 'label';
+      const status = number !== undefined ? 'succeeded' : sent && !labelFailed ? 'UNKNOWN' : 'failed';
+      this.ops.markResult(id, status, { evidenceRef: number !== undefined ? `issue #${number}` : undefined, error: message }, this.clock());
+      throw new Error(status === 'UNKNOWN' ? `${reconcileHint(id, 'UNKNOWN')} (${message})` : `followups: ${message}`);
     }
   }
+
 
   /**
    * The evidence step of a closing card: the goal manifest holds an intact file retained for the card. The manifest and

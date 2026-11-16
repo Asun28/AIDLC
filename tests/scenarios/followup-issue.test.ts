@@ -69,7 +69,7 @@ interface Tracker {
 }
 
 /** gh at its boundary: the issues API prints the tracker by pages of 100, label create succeeds, issue create adds an issue and prints its URL. */
-function gh(tracker: Tracker, fail: { list?: boolean; create?: 'refused' | 'lost' } = {}, onList?: () => void, onCreate?: () => void): SyncRunner {
+function gh(tracker: Tracker, fail: { list?: boolean; create?: 'refused' | 'lost' | 'timeout' | 'label' } = {}, onList?: () => void, onCreate?: () => void): SyncRunner {
   let body = '';
   const scripted = scriptedRunner({
     'gh api repos/': (args) => {
@@ -77,9 +77,10 @@ function gh(tracker: Tracker, fail: { list?: boolean; create?: 'refused' | 'lost
       const page = Number(/[?&]page=(\d+)$/.exec(args[1]!)![1]);
       return { stdout: JSON.stringify(tracker.issues.slice((page - 1) * 100, page * 100)) };
     },
-    'gh label create': {},
+    'gh label create': () => (fail.create === 'label' ? { exitCode: 1, stderr: 'HTTP 403' } : {}),
     'gh issue create': (args) => {
       if (fail.create === 'refused') return { exitCode: 1, stderr: 'HTTP 502' };
+      if (fail.create === 'timeout') return { exitCode: 1, timedOut: true, stderr: 'timed out' };
       const number = 100 + tracker.issues.length + 1;
       tracker.issues.push({ number, body });
       tracker.created.push({ title: args[args.indexOf('--title') + 1]!, label: args[args.indexOf('--label') + 1]!, body });
@@ -157,6 +158,15 @@ test('T1-REVIEW-FOLLOWUP-ISSUE acceptance 2: an issue already holding the marker
       const t = tracker();
       assert.throws(() => followups(fx, goalId, closing(fx, gh(t, failure))), 'list' in failure ? /gh api repos\// : /gh issue create/);
       assert.deepEqual(fx.store.getCardRun(goalId, CARD), before, `${JSON.stringify(failure)}: the run is unchanged`);
+      const [op] = fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
+      if ('create' in failure) {
+        // The create may have reached GitHub: the attempt is UNKNOWN and the next close refuses, with no gh call, until it is reconciled.
+        assert.equal(op!.status, 'UNKNOWN');
+        const calls = t.calls.length;
+        assert.throws(() => followups(fx, goalId, closing(fx, gh(t))), /aidlc ops reconcile op-followup-/);
+        assert.equal(t.calls.length, calls, 'no lookup or create while the attempt is UNKNOWN');
+        fx.ops.reconcile(op!.id, () => (t.issues.length ? { status: 'succeeded', providerOperationId: String(t.issues[0]!.number) } : { status: 'failed' }));
+      } else assert.equal(op!.status, 'failed');
       const retried = followups(fx, goalId, closing(fx, gh(t)));
       assert.equal(t.created.length, 1, `${JSON.stringify(failure)}: one issue in all`);
       assert.equal(retried.followupIssue, t.issues[0]!.number);
@@ -273,7 +283,7 @@ test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 1 F3: a lease that expires during the
     };
     const runner = gh(t, {}, expireAndTakeOver);
     assert.throws(() => followups(fx, goalId, closing(fx, runner)), /followups: .*lease expired/);
-    assert.match(takeover, /takeover refused/, 'the open reservation blocks the takeover');
+    assert.match(takeover, /attached to running operation op-followup-/, 'the running attempt keeps the other session waiting: no takeover');
     assert.equal(fx.leases.read(resourceKeys.card(fx.repo.key, CARD))!.generation, run.ownerGeneration, 'the lease keeps its generation');
     assert.equal(t.created.length, 0, 'no issue filed after the lease expired');
     assert.equal(fx.store.getCardRun(goalId, CARD)!.closure.followups, false);
@@ -290,6 +300,7 @@ test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 1 F3: a lease that expires during the
     assert.throws(() => followups(during, goalId, closing(during, gh(t, {}, undefined, expire))), /followups: .*lease expired/, 'a lease that expires during the create records nothing');
     assert.equal(t.created.length, 1);
     assert.equal(during.store.getCardRun(goalId, CARD)!.closure.followups, false);
+    assert.deepEqual(during.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => [o.status, o.evidenceRef]), [['succeeded', 'issue #101']], 'the issue number is known, so the attempt is succeeded');
   } finally {
     during.cleanup();
   }
@@ -305,6 +316,105 @@ test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 1 F4: a step first recorded without a
     const filed = followups(fx, goalId, closing(fx, gh(t)));
     assert.equal(filed.followupIssue, 101);
     assert.equal(fx.store.getCardRun(goalId, CARD)!.followupNote, undefined, 'the note of the skip is gone');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F6: a second close while the first is filing is refused before any gh call and names the operation, and one issue is filed', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = atClose(fx);
+    withFindings(fx, goalId);
+    const t = tracker();
+    let second = '';
+    let inner = 0;
+    const overlap = () => {
+      if (inner++ > 0) return;
+      const calls = t.calls.length;
+      try {
+        followups(fx, goalId, closing(fx, gh(t)));
+      } catch (err) {
+        second = (err as Error).message;
+      }
+      assert.equal(t.calls.length, calls, 'the second close makes no gh call');
+    };
+    const first = followups(fx, goalId, closing(fx, gh(t, {}, overlap)));
+    assert.match(second, /operation op-followup-\w+-0 .* is running: .*aidlc ops reconcile op-followup-\w+-0/);
+    assert.equal(t.created.length, 1, 'one issue');
+    assert.equal(first.followupIssue, 101);
+  } finally {
+    fx.cleanup();
+  }
+  // Two commands that count the same attempt: the one that finds the record already written by the store is refused.
+  const race = makeFixture();
+  try {
+    const { goalId } = atClose(race);
+    withFindings(race, goalId);
+    followups(race, goalId, closing(race, gh(tracker())));
+    const [claimed] = race.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
+    // The other command's record of the next attempt, written between this command's count and its claim.
+    const next = claimed!.id.replace(/-0$/, '-1');
+    writeFileSync(path.join(race.paths.operations, `${next}.json`), JSON.stringify({ ...claimed, id: next, goalId: 'g-20260101000000-ffffff', status: 'running' }));
+    const t = tracker();
+    assert.throws(() => followups(race, goalId, closing(race, gh(t))), new RegExp(`operation ${next} .* is running`));
+    assert.deepEqual(t.calls, [], 'no gh call');
+  } finally {
+    race.cleanup();
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F7: a goal cancelled or moved to another generation during the lookup gets no issue', () => {
+  for (const [name, change, expected] of [
+    ['cancelled', (fx: Fixture, goalId: string) => fx.controller.report({ goalId, generation: fx.goal(goalId).generation, result: 'cancel', data: { detail: 'cancelled during the lookup' } }), /terminal/],
+    ['next generation', (fx: Fixture, goalId: string) => fx.store.saveGoal({ ...fx.goal(goalId), generation: fx.goal(goalId).generation + 1 }), /generation/],
+  ] as const) {
+    const fx = makeFixture();
+    try {
+      const { goalId } = atClose(fx);
+      withFindings(fx, goalId);
+      const t = tracker();
+      assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, () => void change(fx, goalId)))), expected, name);
+      assert.equal(t.created.length, 0, `${name}: no issue`);
+      assert.deepEqual(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => o.status), ['failed'], name);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F8: a create that timed out and completes on GitHub later leaves one issue: the retry is refused until the attempt is reconciled, then records it', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = atClose(fx);
+    withFindings(fx, goalId);
+    const t = tracker();
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { create: 'timeout' }))), /UNKNOWN.*timed out/);
+    const sent = t.calls.find((c) => c.args[1] === 'issue' && c.args[2] === 'create')!.input!;
+    // GitHub completes the timed-out request after the retry's lookup would have run.
+    const complete = () => t.issues.push({ number: 777, body: sent });
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, undefined, complete))), /is UNKNOWN/);
+    complete();
+    assert.equal(t.created.length, 0, 'no create beyond the timed-out one');
+    const [op] = fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
+    fx.ops.reconcile(op!.id, () => ({ status: 'succeeded', providerOperationId: '777' }));
+    assert.equal(followups(fx, goalId, closing(fx, gh(t))).followupIssue, 777);
+    assert.equal(t.issues.length, 1, 'one issue on GitHub');
+    assert.equal(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).length, 2, 'the reconciled attempt and the one that recorded the issue');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F8: a failed label call precedes the issue request, so the attempt is failed and the next close retries', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = atClose(fx);
+    withFindings(fx, goalId);
+    const t = tracker();
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { create: 'label' }))), /gh label create/);
+    assert.deepEqual(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => o.status), ['failed']);
+    assert.equal(followups(fx, goalId, closing(fx, gh(t))).followupIssue, 101);
   } finally {
     fx.cleanup();
   }
