@@ -6,7 +6,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { branchCommits, checkRuns, githubTables, pullRequests, reverts } from '../../bench/outcome/github.ts';
-import type { Row } from '../../bench/outcome/ingest.ts';
+import { COLUMNS, GITHUB_COLUMNS, USAGE_COLUMNS, writeTables, type Row, type Tables } from '../../bench/outcome/ingest.ts';
 import { runSync, scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 import { tmpDir } from '../infra/helpers.ts';
 
@@ -529,7 +529,7 @@ test('T1-OUTCOME-GITHUB-2 acceptance 14: on a merge commit a required check canc
 
 const USAGE_FILES = ['usage.jsonl', 'usage_errors.jsonl'];
 const CARD_VIEWS = ['summary_lead_time', 'summary_review_convergence', 'summary_stop_reasons', 'summary_successor_rate'];
-const GITHUB_VIEWS = ['summary_ci', 'summary_lead_time_pr', 'summary_pr_success', 'summary_reconcile'];
+const GITHUB_VIEWS = ['summary_ci', 'summary_escaped', 'summary_lead_time_pr', 'summary_pr_success', 'summary_reconcile'];
 const COST_VIEWS = ['summary_cache_share', 'summary_cost_by_stage', 'summary_cost_per_card', 'summary_superseded_spend', 'summary_unattributed'];
 
 test('T1-OUTCOME-GITHUB-2 acceptance 12: with --no-usage alone run.ts writes the six GitHub files and no usage table, and with --no-usage --no-github it writes neither set, and with neither flag over fixture session directories it writes both sets, each exit 0 [R6]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
@@ -554,4 +554,57 @@ test('T1-OUTCOME-GITHUB-2 acceptance 12: with --no-usage alone run.ts writes the
   assert.deepEqual([...GITHUB_FILES, ...USAGE_FILES].filter((name) => existsSync(path.join(all.out, name))), [...GITHUB_FILES, ...USAGE_FILES]);
   assert.deepEqual([...views(all.stdout).keys()], [...CARD_VIEWS, ...GITHUB_VIEWS, ...COST_VIEWS].sort(), 'the views of the three files');
   assert.deepEqual(all.ghCalls.length, alone.ghCalls.length);
+});
+
+test('T1-OUTCOME-ESCAPED acceptance 2 - summary_escaped counts per UTC week the merged cards, the cards among them with a diagnosis, the reverts, and the bugfix cards and reverts that mention a merged card', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+  const out = tempDir();
+  const empty = Object.fromEntries(Object.keys({ ...COLUMNS, ...USAGE_COLUMNS, ...GITHUB_COLUMNS }).map((name) => [name, []])) as unknown as Tables;
+  const card = (id: string, diagnosis: boolean, mentions: string[]): Row => ({ id, status: 'merged', superseded_by: null, depends_on: [], tdd: true, budget: null, diagnosis, mentions });
+  const ids = ['T1-A', 'T0-B', 'T0-C', 'T1-D', 'T1-E'];
+  const mergedAt = ['2026-01-04T23:59:59Z', '2026-01-05T00:00:00Z', '2026-01-07T12:00:00Z', null, '2026-01-11T23:59:59Z'];
+  writeTables({
+    ...empty,
+    cards: [card('T1-A', false, []), card('T0-B', true, ['T1-A']), card('T0-C', true, ['T1-D', 'T1-E']), card('T1-D', false, [])],
+    card_runs: ids.map((cardId, i) => ({ goalId: 'g', cardId, startedAt: '2026-01-01T00:00:00Z', state: 'DONE', mergeVerified: mergedAt[i] !== null, prNumber: i + 1 })),
+    prs: ids.map((headRef, i) => prRow(i + 1, headRef, 'h'.repeat(40), mergedAt[i] ?? null, String(i + 1).repeat(40))),
+    reverts: [{ sha: 'a'.repeat(40), date: '2026-01-06T00:00:00.000Z', revertedSha: '1'.repeat(40), daysAfter: 1 }, { sha: 'b'.repeat(40), date: '2026-01-20T10:00:00.000Z', revertedSha: 'f'.repeat(40), daysAfter: null }],
+  }, out);
+  const sql = ['10-cards.sql', '30-github.sql'].map((name) => readFileSync(path.join(root, 'bench', 'outcome', 'views', name), 'utf8')).join('\n');
+  // A session zone east of UTC: a Sunday-evening merge in UTC is a Monday there, and must stay in the earlier week.
+  const r = spawnSync(duckdb!, ['-json', '-bail'], { cwd: out, input: `SET TimeZone = 'Asia/Tokyo';\n${sql}\nSELECT * FROM summary_escaped;\n`, encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), [
+    { week: '2025-12-29', merged_cards: 1, bugfix_cards: 0, reverts: 0, mentions_a_merged_card: 0 },
+    { week: '2026-01-05', merged_cards: 3, bugfix_cards: 2, reverts: 1, mentions_a_merged_card: 2 },
+    { week: '2026-01-19', merged_cards: 0, bugfix_cards: 0, reverts: 1, mentions_a_merged_card: 0 },
+  ]);
+});
+
+test('T1-OUTCOME-ESCAPED acceptance 4 - bench/outcome/escaped.json has the commit, the run time and the rows of summary_escaped in the stated layout', () => {
+  const text = readFileSync(path.join(root, 'bench', 'outcome', 'escaped.json'), 'utf8');
+  const file = JSON.parse(text) as { commit: string; ranAt: string; rows: Row[] };
+  assert.deepEqual(Object.keys(file), ['commit', 'ranAt', 'rows']);
+  assert.match(file.commit, /^[0-9a-f]{40}$/);
+  assert.equal(new Date(file.ranAt).toISOString(), file.ranAt);
+  assert.ok(file.rows.length >= 1);
+  const counts = ['merged_cards', 'bugfix_cards', 'reverts', 'mentions_a_merged_card'];
+  file.rows.forEach((row, i) => {
+    assert.deepEqual(Object.keys(row), ['week', ...counts]);
+    const week = String(row['week']);
+    assert.match(week, /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(new Date(`${week}T00:00:00Z`).getUTCDay(), 1, week);
+    if (i > 0) assert.ok(week > String(file.rows[i - 1]!['week']), week);
+    for (const key of counts) assert.ok(Number.isInteger(row[key]) && (row[key] as number) >= 0, `${week} ${key}`);
+    const [merged, bugfix, reverts, mentions] = counts.map((key) => row[key] as number);
+    assert.ok(bugfix! <= merged!, week);
+    assert.ok(mentions! <= bugfix! + reverts!, week);
+    assert.ok(merged! > 0 || reverts! > 0, week);
+  });
+  const lines = text.split('\n');
+  assert.deepEqual([lines[0], lines[3], ...lines.slice(-3)], ['{', '  "rows": [', '  ]', '}', '']);
+  assert.match(lines[1]!, /^ {2}"commit": "[0-9a-f]{40}",$/);
+  assert.match(lines[2]!, /^ {2}"ranAt": "[^"]+",$/);
+  const rowLines = lines.slice(4, -3);
+  assert.equal(rowLines.length, file.rows.length);
+  rowLines.forEach((line, i) => assert.equal(line, `    ${JSON.stringify(file.rows[i])}${i < rowLines.length - 1 ? ',' : ''}`));
 });

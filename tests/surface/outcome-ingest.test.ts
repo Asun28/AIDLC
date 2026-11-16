@@ -36,7 +36,7 @@ function fixture(): { stateDir: string; cardsDir: string } {
   const stateDir = path.join(dir, 'state');
   const cardsDir = path.join(dir, 'tasks');
   put(path.join(cardsDir, 'T1-MERGED.md'), cardText('T1-MERGED', 'merged'));
-  put(path.join(cardsDir, 'T1-STOPPED.md'), cardText('T1-STOPPED', 'todo', 'superseded_by: T1-MERGED\ndepends_on: [T1-MERGED]\ntdd: false\nbudget: 120\n'));
+  put(path.join(cardsDir, 'T1-STOPPED.md'), cardText('T1-STOPPED', 'todo', 'superseded_by: T1-MERGED\ndepends_on: [T1-MERGED]\ntdd: false\nbudget: 120\ndiagnosis:\n  root_cause: T1-OLD dropped the check that T1-STOPPED adds back\n'));
   put(path.join(cardsDir, '_TEMPLATE.md'), 'not a card');
   const round = { round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd0', candidateSha: 'sha0', requestedAt: '2026-01-01T01:00:00Z', outcome: 'block', perspectives: [{ name: 'bugs', outcome: 'pass' }, { name: 'security', outcome: 'block' }, { name: 'compliance', outcome: 'pass' }] };
   put(path.join(stateDir, 'cards', 'g-a', 'T1-MERGED.json'), JSON.stringify(run('g-a', 'T1-MERGED', 'BUILD', '2026-01-01T00:00:00Z', { preReview: { rounds: [round] } })));
@@ -62,8 +62,8 @@ const span = (goalId: string, cardId: string, state: string, startTs: string, en
 test('T1-OUTCOME-INGEST acceptance 1: ingestState returns the card, card-run, review, finding, state-span and attempt rows of the state directory and the registry [R1] [R2] [R3] [R4] [R5] [R6]', () => {
   const t = ingestState(fixture());
   assert.deepEqual(t.cards, [
-    { id: 'T1-MERGED', status: 'merged', superseded_by: null, depends_on: [], tdd: true, budget: null },
-    { id: 'T1-STOPPED', status: 'todo', superseded_by: 'T1-MERGED', depends_on: ['T1-MERGED'], tdd: false, budget: 120 },
+    { id: 'T1-MERGED', status: 'merged', superseded_by: null, depends_on: [], tdd: true, budget: null, diagnosis: false, mentions: [] },
+    { id: 'T1-STOPPED', status: 'todo', superseded_by: 'T1-MERGED', depends_on: ['T1-MERGED'], tdd: false, budget: 120, diagnosis: true, mentions: ['T1-OLD'] },
   ]);
   const cardRun = (goalId: string, cardId: string, state: string, startedAt: string, rest: Row): Row => ({ goalId, cardId, startedAt, state, mergeVerified: false, prNumber: null, stopReason: null, stopDetail: null, substantiveDecisions: 0, substantiveBlocks: 0, updatedAt: '2026-01-04T00:00:00Z', ...rest });
   assert.deepEqual(t.card_runs, [
@@ -129,7 +129,7 @@ test('T1-OUTCOME-INGEST acceptance 3: writeTables writes the same bytes for the 
   writeTables(tables, first);
   writeTables(reversed, second);
   for (const name of Object.keys(tables)) assert.equal(readFileSync(path.join(second, `${name}.jsonl`), 'utf8'), readFileSync(path.join(first, `${name}.jsonl`), 'utf8'), name);
-  assert.equal(readFileSync(path.join(second, 'cards.jsonl'), 'utf8'), '{"id":"T1-MERGED","status":"merged","superseded_by":null,"depends_on":[],"tdd":true,"budget":null}\n{"id":"T1-STOPPED","status":"todo","superseded_by":"T1-MERGED","depends_on":["T1-MERGED"],"tdd":false,"budget":120}\n');
+  assert.equal(readFileSync(path.join(second, 'cards.jsonl'), 'utf8'), '{"id":"T1-MERGED","status":"merged","superseded_by":null,"depends_on":[],"tdd":true,"budget":null,"diagnosis":false,"mentions":[]}\n{"id":"T1-STOPPED","status":"todo","superseded_by":"T1-MERGED","depends_on":["T1-MERGED"],"tdd":false,"budget":120,"diagnosis":true,"mentions":["T1-OLD"]}\n');
   assert.equal(readFileSync(path.join(second, 'attempts.jsonl'), 'utf8').split('\n')[1], '{"goalId":"g-c","cardId":"T1-STOPPED","outcome":"fail","endTs":"2026-01-03T00:50:00Z","startTs":null}');
   assert.equal(statSync(path.join(first, 'ingest_errors.jsonl')).size, 0);
 });
@@ -250,7 +250,7 @@ test('T1-OUTCOME-INGEST acceptance 10: run.ts starts a relative --duckdb path fr
 
 test('T1-OUTCOME-INGEST acceptance 11: card_family reaches the end of a chain of 60 cards, stops a cycle on the repeated id, and ends on a name the registry does not hold [R10]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
   const out = tempDir();
-  const cardRow = (id: string, superseded_by: string | null): Row => ({ id, status: 'todo', superseded_by, depends_on: [], tdd: true, budget: null });
+  const cardRow = (id: string, superseded_by: string | null): Row => ({ id, status: 'todo', superseded_by, depends_on: [], tdd: true, budget: null, diagnosis: false, mentions: [] });
   const chain = Array.from({ length: 60 }, (_, i) => cardRow(`T1-C${i}`, i < 59 ? `T1-C${i + 1}` : null));
   writeTables({ ...emptyTables(), cards: [...chain, cardRow('T1-X', 'T1-Y'), cardRow('T1-Y', 'T1-X'), cardRow('T1-SELF', 'T1-SELF'), cardRow('T1-E', 'T1-GONE')] }, out);
   const sql = readFileSync(path.join(root, 'bench', 'outcome', 'views', '10-cards.sql'), 'utf8');
