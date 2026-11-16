@@ -143,3 +143,7 @@ Attempt 1, after the R8 amendment (74dba070), candidate e40388f6:
 - card-loop.md: both copies are back to main (6494 bytes, identical, ASCII), and the unrelated-finding sentence stays. The new CLOSE line is not there: the cap leaves 6 bytes free, and the shortest wording is 72 bytes, so R7 for card-loop.md is open.
 - DoD: exit 0, 129 tests, 127 pass, 0 fail, 2 skipped.
 - `npm run check` at e40388f6: exit 0, 3745 tests, 3717 pass, 0 fail, 28 skipped. The verify-card-run-writes check passes, including the followups case.
+
+Attempt 1, after the R7 amendment (64ce6f58), merged at 60d0c586:
+- R7: card-loop.md and its template are unchanged under the amendment. `git diff main -- .claude/skills/aidlc-loop/card-loop.md templates/claude/skills/aidlc-loop/card-loop.md` is empty. The CLOSE directive names `--followups` (R6), and docs/OPERATIONS.md states the step.
+- DoD: exit 0, 129 tests, 127 pass, 0 fail, 2 skipped. The full suite passed at e40388f6 (3745 tests, 3717 pass, 0 fail, 28 skipped). The merge since then brings only card text.
