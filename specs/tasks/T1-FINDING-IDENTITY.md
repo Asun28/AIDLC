@@ -63,3 +63,136 @@ npm run typecheck && node --test tests/core/finding-identity.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the fault-point check adds no pin.
+
+## Attempt evidence
+
+Attempt 1 (base main eaed61f0).
+
+RED: commit c5698834, `node --test tests/core/finding-identity.test.ts tests/scenarios/finding-identity.test.ts tests/surface/stats.test.ts`, 5 failing for the stated reasons:
+- `not ok 1 - T1-FINDING-IDENTITY acceptance 1: ...`: `TypeError: policy.findingIdentity is not a function` (no export).
+- `not ok 2 - T1-FINDING-IDENTITY acceptance 2: ...`: `TypeError: policy.findingIdentity is not a function` (no export).
+- `not ok 3 - T1-FINDING-IDENTITY acceptance 3: ...`: AssertionError, actual `undefined`, expected `'aaaaaaaaaaaaaaaa'`.
+- `not ok 1 - T1-FINDING-IDENTITY acceptance 4: an R3 block ...`: AssertionError, actual `undefined`, expected `'98b1379faaa9ac80'`.
+- `not ok 5 - ... (T1-FINDING-IDENTITY)` acceptance 5: AssertionError, `withIdentity: undefined, repeatByIdentity: undefined`, expected `4, 1`.
+
+Added after RED, at GREEN, each shown failing by a mutant below: a second acceptance 4 test for the ship-path decision (M11), the `ReviewFinding` schema assertions in acceptance 3 (M13), and the R2-round row in acceptance 5 (M15).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/core/finding-identity.test.ts, acceptance 1 | pass |
+| 2 | tests/core/finding-identity.test.ts, acceptance 2 | pass |
+| 3 | tests/core/finding-identity.test.ts, acceptance 3 | pass |
+| 4 | tests/scenarios/finding-identity.test.ts, acceptance 4 (R3 decision and ship-path decision, real git, scripted reviewer) | pass |
+| 5 | tests/surface/stats.test.ts, "T1-FINDING-IDENTITY acceptance 5" | pass |
+| 6 | tests/core/review-policy.test.ts, tests/scenarios/second-pass.test.ts, tests/scenarios/fault-points.test.ts unchanged (`git diff main --stat` lists none of them), in the DoD | pass |
+| 7 | docs/OPERATIONS.md, paragraph "Finding identity (card T1-FINDING-IDENTITY)" after Severity; docs/ARCHITECTURE.md, persisted-state row `cards/<goalId>/<cardId>.json`, clause "their identity (`ReviewFinding.identity` ...)" | reviewer-verified |
+
+Pinned literals updated (forbid exception, R4 adds the fields): tests/surface/stats.test.ts lines 131, 141, 177 and 549, each a `FindingStats` deepEqual that gains `withIdentity: 0, repeatByIdentity: 0` and nothing else.
+
+Store writes and journal appends: none added, removed or reordered. `CardRunner.findingIdentities` only runs `git show <candidateSha>:<file>` through the injected runner, before `commitReviewed` (R3) and before the ship-path `updateCardRun`, outside the lock; the identities ride in the existing `RecordFindingsInput`. Verify skill verify-card-run-writes: `git diff --name-only 402a07f3 -- <covered files>` lists `src/loop/card-runner.ts`; no line of the card diff touches `updateCardRun`, `saveCardRun`, `atomicWrite*` or `append(`; `node --test tests/scenarios/fault-points.test.ts` passes inside the DoD with no pin added. Outcome: in sync (the sync commit moves at CLOSE).
+
+Hand mutants (edit, run the named test file, restore; none committed):
+| Mutant | Test | Result |
+|---|---|---|
+| M1 no inner white-space collapse | finding-identity core | killed (acc 1) |
+| M2 blank lines kept | core | killed (acc 1, 2) |
+| M3 no trim | core | killed (acc 1, 2) |
+| M4 no 40-line cap | core | killed (acc 2) |
+| M5 dimension before class | core | killed (acc 1) |
+| M6 axis/severity tags not skipped | core | killed (acc 1) |
+| M7 empty text hashed | core | killed (acc 2) |
+| M8 a location with no line accepted | core | killed (acc 2) |
+| M9 `recordFindings` does not set identity | core | killed (acc 3) |
+| M10 R3 decision does not pass identities | scenario | killed (acc 4, R3) |
+| M11 ship-path decision does not pass identities | scenario | killed (acc 4, ship path) |
+| M12 lines read from another commit (`HEAD~1`) | scenario | killed (both acc 4) |
+| M13 schema accepts any identity string | core | killed (acc 3) |
+| M14 same decision counts as earlier (`<=`) | stats | killed (acc 5) |
+| M15 an R2 finding counts as earlier | stats | killed (acc 5) |
+| M16 `withIdentity` not counted | stats | killed (acc 5) |
+| M17, M18 family totals drop either field | stats | killed (acc 5) |
+| M19 exit code of `git show` ignored | scenario | survives: equivalent with real git, a failed `git show` writes nothing on stdout, so the text is empty and no identity results |
+| M20 missing `candidateSha` guard removed | scenario | survives: equivalent, `git show undefined:<file>` names no object and fails; the guard saves the call |
+
+DoD: `npm run typecheck && node --test tests/core/finding-identity.test.ts tests/scenarios/finding-identity.test.ts tests/surface/stats.test.ts tests/core/review-policy.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/second-pass.test.ts`: exit 0, tests 132, pass 132, fail 0 (final tree).
+
+Full suite (`npm run check`): exit 0, tests 3728, pass 3700, fail 0, skipped 28.
+
+### Repair of R3 decision 1 (finding F1, identity-read-throws)
+
+Cause: `CardRunner.findingIdentities` called the runner without a catch; a ship-path reason citing a path with a NUL byte made `runSync` throw `ERR_INVALID_ARG_VALUE` out of `applyShipResult` before its decision was saved. Fix (src/loop/card-runner.ts, `findingIdentities`): each file's read runs inside `try`; a throw, a non-zero exit or a timeout caches `undefined` for that file, so the reason gets no identity and the decision is recorded as without it. No store write or journal append added, removed or reordered.
+
+Regression tests (tests/scenarios/finding-identity.test.ts), each failing on 79d9af32's card-runner.ts (catch removed) and passing with the fix:
+- `repair F1: a ship-path block citing every reviewer path form ...`: on 79d9af32, `The argument 'args[1]' must be a string without null bytes`.
+- `repair F1: a runner that throws on the read ... ship-path decision ...`: on 79d9af32, `injected runner failure`.
+- `repair F1: a runner that throws on the read ... R3 decision ...`: on 79d9af32, `injected runner failure`.
+
+Class sweep: every way the reader can be reached with input from a reviewer. The R3 path reads only reasons whose file is a changed path of the candidate (`citedReasonsOf(verdict, changedPaths)`); the ship path checks no changed path, so every form below reaches the reader there.
+| Input form | Behaviour | Test |
+|---|---|---|
+| NUL byte in the path (the runner refuses the argument and throws) | no identity, decision recorded | repair F1 path-form test (ship); on R3 the NUL path is no changed path, so it is never read (repair F1 R3 test asserts it is not recorded) |
+| a runner that throws for any other reason | no identity, decision recorded | repair F1 throwing-runner tests, ship and R3 |
+| path that leaves the repository (`../outside.ts`) | git exits 128: no identity | repair F1 path-form test |
+| `..` segment that leaves the repository (`src/../../outside.ts`) | git exits 128: no identity | repair F1 path-form test |
+| absolute path (`/etc/hosts`) | git exits 128: no identity | repair F1 path-form test |
+| file the candidate commit does not hold | git exits 128: no identity | acceptance 4, both tests |
+| empty path (`@ :1`) or a path with no letter or digit | no file (`FINDING_LOCATION`, `findingLocation`): the reader is never called, no identity | acceptance 2 ("no file") |
+| no line (`@ file:` without a number) | no identity, reader never called | acceptance 2 ("no line") |
+| very long range (`:2-100000`) | cut to 40 lines from 2; the identity of the lines the file holds | repair F1 path-form test, acceptance 2 |
+| line past the end (`:99999999999999999999`) | empty text: no identity | repair F1 path-form test |
+| timed-out read | treated as failed: no identity | code path shared with the non-zero exit; no separate test |
+| `..` segment that stays inside the repository (`src/../src/a.ts`) | git resolves it and returns the file: an identity over the path text as cited | no test; recorded and reported only |
+| a directory path (ship path only) | `git show <sha>:<dir>` exits 0 with git's tree listing: an identity over the listing, no error | no test; follow-up candidate (`git cat-file blob` would refuse a tree, but R3 names `git show`) |
+
+Mutant: catch removed (card-runner.ts as at 79d9af32): the three repair tests fail as listed above; restored, all five tests of the file pass.
+Repair hunks reread: the `try` wraps only the runner call and the split of its stdout; the cache, the identity computation and both call sites are unchanged, and nothing the catch swallows reaches a store write.
+
+Verify skill verify-card-run-writes after the repair: covered file `src/loop/card-runner.ts` changed, no write or append line in the repair diff, fault-point test passes in the DoD with no pin added: in sync.
+DoD (repair): exit 0, tests 135, pass 135, fail 0.
+Full suite (repair, `npm run check`): exit 0, tests 3731, pass 3703, fail 0, skipped 28.
+
+### Repair of R3 decision 2 (findings F2 identity-lazy-fetch, F3 identity-from-tree-listing)
+
+Fix (src/loop/card-runner.ts, `findingIdentities`, the only git call this card adds; `git diff eaed61f0 -- src` shows no other): each read is `git --no-lazy-fetch cat-file blob <candidateSha>:<file>`.
+- F2: `--no-lazy-fetch` (the option src/probes/base-sync.ts puts before every git command) makes an object a partial clone lacks an error instead of a fetch from the promisor remote. Chosen alone, without `GIT_NO_LAZY_FETCH=1` in the environment: the option is git's switch for exactly this (git sets that variable for its own subprocesses), and resolving `<sha>:<path>` uses no other transport. A git older than the option (2.44) refuses it, which is a failed read: no identity, no error.
+- F3: `cat-file blob` prints only a blob and refuses a tree, a gitlink or any other object type.
+- Deviation from R3's wording: R3 names `git show <candidateSha>:<file>`. For a file, `cat-file blob` prints the same bytes `git show` prints; it is a narrower read of the same object that refuses what has no cited lines (a tree listing, a commit), which keeps R3's intent (no identity for unreadable lines). Acceptance 4 still gives the expected identity.
+
+Regression tests (tests/scenarios/finding-identity.test.ts):
+- `repair F2: in a partial clone, ...`: the fixture repository is made a partial clone (promisor remote `origin`, a bare copy with `uploadpack.allowFilter` and `uploadpack.allowAnySHA1InWant`) and the candidate blob of the cited file is deleted; the ship-path decision is recorded, the finding has no identity, and `git --no-lazy-fetch cat-file -e <blob>` still fails afterwards. The test then reads the blob without the option and asserts it is fetched, so the fixture is a working partial clone.
+- `repair F3: on the R3 path a cited gitlink ...`: the candidate adds the gitlink `sub` (to the base commit, an object the repository holds); its citation gets no identity; a directory citation is no changed path on the R3 path, so it is not recorded.
+- The ship-path path-form test gains a directory (`@ src:1`) and the gitlink (`@ sub:1`), both without identity.
+
+Mutants (edit card-runner.ts, run tests/scenarios/finding-identity.test.ts, restore; none committed):
+| Mutant | Result |
+|---|---|
+| N1 `--no-lazy-fetch` removed | killed: repair F2 |
+| N2 `git --no-lazy-fetch show` instead of `cat-file blob` | killed: repair F1 path forms (directory, gitlink), repair F3 |
+| N3 `git show` as at f2937173 | killed: repair F1 path forms, F2, F3 |
+| N4 catch removed | killed: repair F1 path forms and both throwing-runner tests |
+
+Input forms, complete (replaces the table of the decision 1 repair; the ship path reaches the reader with any path, R3 only with a changed path of the candidate):
+| Input form | Behaviour | Test |
+|---|---|---|
+| NUL byte in the path | runner throws, caught: no identity | F1 path-form test (ship); not a changed path on R3 |
+| runner throws for any other reason | no identity, decision recorded | F1 throwing-runner tests, ship and R3 |
+| path that leaves the repository (`../outside.ts`) | git exits 128: no identity | F1 path-form test |
+| `..` segment that leaves the repository | git exits 128: no identity | F1 path-form test |
+| absolute path (`/etc/hosts`) | git exits 128: no identity | F1 path-form test |
+| file the candidate commit does not hold | git exits 128: no identity | acceptance 4, both tests |
+| directory (tree) | `cat-file blob` refuses: no identity; not a changed path on R3 | F1 path-form test (ship), F3 test (R3) |
+| gitlink (submodule entry) | `cat-file blob` refuses the commit type: no identity | F1 path-form test (ship), F3 test (R3, a changed path) |
+| blob a partial clone lacks | no fetch, read fails: no identity | F2 test |
+| empty path, or a path with no letter or digit | no file: reader never called | acceptance 2 |
+| no line number | reader never called | acceptance 2 |
+| very long range (`:2-100000`) | cut to 40 lines from 2 | F1 path-form test, acceptance 2 |
+| line past the end | no text: no identity | F1 path-form test |
+| timed-out read | failed read: no identity | same branch as a non-zero exit; no separate test |
+| symlink | the blob is the link target text: an identity over that text, as `git show` would print it | no test; recorded and reported only |
+| `..` that stays inside the repository | git resolves it to the blob: an identity over the path text as cited | no test; recorded and reported only |
+
+Repair hunks reread: the read now needs git 2.44 or later for any identity (older git: no identities, no error; base-sync already relies on the option); for a file the bytes are those `git show` printed, so acceptance 4's expected identity is unchanged; the fault-point check's scripted runner answers `git --no-lazy-fetch cat-file` with no entry (exit 127), so its runs get no identity and the same writes. No store write or journal append added, removed or reordered.
+
+Verify skill verify-card-run-writes after the second repair: covered file `src/loop/card-runner.ts` changed, no write or append line in the repair diff, fault-point test passes in the DoD with no pin added: in sync.
+DoD (second repair): exit 0, tests 137, pass 137, fail 0.
+Full suite (second repair, `npm run check`): exit 1, tests 3733, pass 3704, fail 1, skipped 28. The one failure is tests/infra/exec.test.ts, "T0-EXEC-TREE-KILL ... acceptance 3", a timing fixture: "fixture not ready before the timeout at scale 2: the machine got slower after calibration (the sleeper's pid file was written 3722 ms after the call, the timeout was 3000 ms)". This card changes nothing under src/probes/ or tests/infra/; `node --test tests/infra/exec.test.ts` alone: tests 70, pass 70, fail 0.

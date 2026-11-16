@@ -52,6 +52,10 @@ export interface FindingStats {
   preExistingAdvisory: number;
   /** The formal findings by stored severity, `none` for a finding recorded without one (card T1-REVIEW-SEVERITY). */
   bySeverity: { P0: number; P1: number; P2: number; none: number };
+  /** Formal findings that carry an identity (card T1-FINDING-IDENTITY). */
+  withIdentity: number;
+  /** Of those, the ones raised at decision 2 or later whose identity a formal finding of an earlier decision of the same card run carries: a repeat not marked with `re:F<n>`. */
+  repeatByIdentity: number;
 }
 
 /**
@@ -167,7 +171,7 @@ function emptyCoverage(): CoverageStats {
 }
 
 function emptyFindings(): FindingStats {
-  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0, bySeverity: { P0: 0, P1: 0, P2: 0, none: 0 } };
+  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0, bySeverity: { P0: 0, P1: 0, P2: 0, none: 0 }, withIdentity: 0, repeatByIdentity: 0 };
 }
 
 /**
@@ -294,6 +298,11 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
     else {
       into.formal += 1;
       into.bySeverity[f.severity ?? 'none'] += 1;
+      if (f.identity) {
+        into.withIdentity += 1;
+        const identity = f.identity;
+        if (findings.some((e) => e.stage === 'formal' && e.identity === identity && e.round < f.round)) into.repeatByIdentity += 1;
+      }
     }
     if (f.resolvedAt) into.resolved += 1;
     else if (f.disposition === 'disputed') into.disputed += 1;
@@ -447,6 +456,8 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     for (const key of RESPONSE_KEYS) findings.responses[key] += s.findings.responses[key];
     findings.preExistingAdvisory += s.findings.preExistingAdvisory;
     for (const key of SEVERITY_KEYS) findings.bySeverity[key] += s.findings.bySeverity[key];
+    findings.withIdentity += s.findings.withIdentity;
+    findings.repeatByIdentity += s.findings.repeatByIdentity;
     coverage.roundsRequested += s.coverage.roundsRequested;
     coverage.roundsComplete += s.coverage.roundsComplete;
     coverage.unaccounted += s.coverage.unaccounted;
