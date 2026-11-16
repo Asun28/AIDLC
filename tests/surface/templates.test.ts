@@ -193,7 +193,7 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 
-  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@6 since T0-REVIEW-IMPACT-BAR), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@7 since T1-REVIEW-SEVERITY-3), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8');
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
@@ -546,7 +546,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
   const ARCHITECTURE = 'findings (ids, dispositions, re-raises, revisions), their defect class (`ReviewFinding.class`) and their first-round misses (`outsideDelta`)';
   const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
-  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@5 [R12]', () => {
+  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@7 [R12]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
       const contract = review.slice(review.indexOf('## Output contract'));
@@ -564,7 +564,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
     }
   });
 
-  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@6, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
+  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@7, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
@@ -663,7 +663,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
   };
   const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
-  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@6 [R12] [R13]', () => {
+  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@7 [R12] [R13]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const contract = lf(readFileSync(file, 'utf8')).split('\n## Output contract\n')[1]?.split('\n## ')[0] ?? '';
       const lines = contract.split('\n');
@@ -735,7 +735,7 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     }
   });
 
-  test('acceptance 3: OPERATIONS.md names REVIEW.md@6 as the current version with every move before it, and names @5 as current nowhere; removing a move fails [R2]', () => {
+  test('acceptance 3: OPERATIONS.md names REVIEW.md@7 as the current version with every move before it, and names no earlier version as current; removing a move fails [R2]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const HISTORY = [
       '(card T1-REVIEW-SEVERITY added the severity section;', ' T0-REVIEW-IMPACT-BAR moved it to `REVIEW.md@6` with the impact bar;',
@@ -749,7 +749,7 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');
     const current = Number(/^REVIEW\.md@(\d+)$/.exec((JSON.parse(readFileSync(path.join(root, 'aidlc.config.json'), 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion)?.[1]);
     const sentence = (n: number) => `\`reviewPolicyVersion\` is \`REVIEW.md@${n}\``;
-    const noEarlier = (text: string) => !text.includes(sentence(5));
+    const noEarlier = (text: string) => [...text.matchAll(/`reviewPolicyVersion` is `REVIEW\.md@(\d+)`/g)].every((match) => Number(match[1]) >= current);
     assert.ok(current > 1 && operations.includes(sentence(current)), `OPERATIONS.md names REVIEW.md@${current} as current`);
     assert.ok(noEarlier(operations), 'no version before the current one is named as current');
     for (let n = 1; n < current; n++) assert.equal(noEarlier(operations.replace(sentence(current), sentence(n))), false, `naming REVIEW.md@${n} as current still passes`);
