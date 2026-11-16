@@ -90,3 +90,27 @@ M1 severity filter dropped (acc 2); M2 P0 only (acc 1-3); M3 P1 only (acc 2-3); 
 DoD: exit 0, 151 tests, 150 pass, 0 fail, 1 skipped (T1-LESSON-MATCH acceptance 4, NTFS refuses a tab or a quote in a name).
 Full suite (`npm run check` on 99ac1143): exit 0, 3737 tests, 3709 pass, 0 fail, 28 skipped.
 Diff against main: src 94 added, 23 removed (bench.ts +83/-21, pre-review.ts +5, main.ts +4/-2); docs +2; tests +253/-1 (new file 251).
+
+Repair of R3 decision 1, F1 (`[P2] 14 scope fidelity (class: missing-case-rounds) @ src/review/bench.ts:327`), base main 7001e968.
+
+RED: commit 8664e6b7, `node --test tests/surface/review-bench-rounds.test.ts`, acceptance 3 failing: AssertionError, `rounds` actual `undefined` for b-unscorable, c-card-absent, d-bad-checkout, e-wrong-card and g-skipped (expected `['error', 'error']` and `[]`). Added assertions only; no existing line of the file changed.
+Fix: commit 173f58a4.
+
+Class sweep: every path in src/review/bench.ts that builds a case result, with `--rounds` above 1, and the acceptance 3 case that shows its `rounds`:
+| Path | `rounds` | Case |
+|---|---|---|
+| `score`, scored (hit, miss, pass, false-block) | one entry per round run | a-scored `['miss', 'miss']`; a-hit, b-miss, c-clean, d-clean above |
+| `score`, no verdict or quota hold in the round | one entry per round run | f-quota `['no-verdict']` |
+| `errorOf` from `unscorable(c)` in a reviewed group (expected file not changed) | an `error` entry per round run, `cited` per round | b-unscorable `['error', 'error']`, cited `[1, 0]` |
+| `errorOf` before any round: card file absent | `[]` | c-card-absent |
+| `errorOf` before any round: card file outside the checkout, card does not parse, no committed diff | `[]` (same fill in `runReviewBench`) | the c-card-absent fill (F1-M2 shows the fill is per result) |
+| `errorOf` from `reviewGroup`: `git worktree add` fails, or a throw | `[]` | d-bad-checkout |
+| `errorOf` when every case is unscorable (card id mismatch) | `[]` | e-wrong-card |
+| `stopped` (quota hold stopped the run) | `[]` | g-skipped |
+`roundTotals`: a case with `rounds: []` keeps its own outcome for every r (the docs paragraph says so); acceptance 3 asserts `errors: 4, noVerdict: 2` in both entries.
+
+F1 mutants (each alone, `node --test tests/surface/review-bench-rounds.test.ts`), all killed: F1-M1 empty list dropped on every no-round path (acc 3); F1-M2 dropped for a card file absent (acc 3); F1-M3 dropped for a failed checkout (acc 3); F1-M4 dropped for an all-unscorable group (acc 3); F1-M5 dropped for a quota stop (acc 3); F1-M6 empty list on `--rounds 1` too (acc 4); F1-M7 no error entries for an unscorable case in a reviewed group (acc 3); F1-M8 `roundTotals` without the empty-list check (acc 2, 3); F1-M9 a no-round case counted as no outcome in `roundTotals` (acc 3).
+Pinned literal: tests/surface/review-bench.test.ts line 440 (the R6 paragraph this card added) updated to the new docs text, two clauses added; nothing else.
+
+DoD on 173f58a4: exit 0, 151 tests, 150 pass, 0 fail, 1 skipped (T1-LESSON-MATCH acceptance 4, NTFS).
+Full suite (`npm run check` on 173f58a4): exit 0, 3737 tests, 3709 pass, 0 fail, 28 skipped.
