@@ -184,3 +184,54 @@ Attempt 2, the repair of R3 decision 1 (F1-F4), at 5498a0de:
   - N14: success not marked
 - DoD: exit 0, 134 tests, 132 pass, 0 fail, 2 skipped.
 - `npm run check`: exit 0, 3750 tests, 3722 pass, 0 fail, 28 skipped.
+
+Attempt 3, the repair of R3 decision 2 (F5-F8), at 4c2bdda3:
+- F5: answered by amendment c04e294c. The gh.test.ts edits are only the T1-GH-ISSUES acceptance 1 and 3 argv and scripted-key changes to the paginated lookup.
+- F6: each attempt for a marker is the operation `op-followup-<sha256(marker)[0..12]>-<n>` (kind `other`, effect `review-followup issue`).
+  - The step journals `OPERATION_INTENT`, then creates the record as `running` through `updateJson` from src/state/store.ts. That is the same `<file>.lock` serialisation as card runs and leases; OperationLedger offers no compare-and-set, and src/coordination/reconcile.ts is outside allow_paths. No new lock is added.
+  - A command that finds the record already written is refused. So is a command that finds an attempt of the marker `running`, `UNKNOWN`, `intended` or `issued`. Both refusals come before any gh call and name the operation and `aidlc ops reconcile <id> --status succeeded --provider-id <n>` (or `--status failed`).
+  - A running operation also holds `card next` in WAIT (precedence rule 4). A crash leaves the attempt `running`, which takes the existing reconcile path.
+  - The takeover filter in `close()` is back to main.
+- F7: the lease fence and the persisted goal (not terminal, same generation, the `assertLiveGoal` of `markClosure`) are both checked before the create and before the result.
+- F8: the attempt ends:
+  - `succeeded` once the number is known, including when a later check fails;
+  - `UNKNOWN` when the issue create call failed after it may have been sent (timeout, lost response, non-zero exit, no URL);
+  - `failed` otherwise (the lookup, a check before the create, the label call).
+
+  An `UNKNOWN` attempt blocks every later close until it is reconciled, and the next close looks up by marker again. In acceptance 2, the create failures now go through that reconcile before the retry.
+- Sweep 1, each external call and the status its failure leaves:
+  - `issuesWithLabel`: failed (acceptance 2 list case)
+  - check before the create: failed (F3 lookup-expiry test, F7)
+  - `label create`: failed (F8 label test)
+  - `issue create`: UNKNOWN (acceptance 2 refused and lost cases; F8 timeout test)
+  - check after the create: succeeded (F3 create-expiry test)
+  - result write failing: the attempt is resolved by the catch, or left running and reconciled (fault case for the operation writes)
+- Sweep 2, checks repeated after a network call:
+  - lease fence: F3 (both cases)
+  - goal terminal state and generation: F7
+  - operation status: the claim (F6)
+  - card-run revision: compare-and-set at save
+- Sweep 3, interleavings:
+  - same-session overlap: F6, plus a record written between the count and the claim
+  - another session's `card next` during the lookup: F3, it waits and does not take over
+  - goal cancel or generation change during the lookup: F7
+  - lease expiry during the create: F3
+  - a create that completes on GitHub after a timeout: F8
+- Mutants, all 14 killed:
+  - P1: no open-attempt check
+  - P2: no claim compare-and-set
+  - P3: UNKNOWN recorded as failed
+  - P4: label failure recorded as UNKNOWN
+  - P5: no goal recheck
+  - P6: known number recorded as failed
+  - P7: no recheck before the result
+  - P8: no recheck before the create
+  - P9: `sent` set after the create
+  - P10: claim not `running`
+  - P11: intent not journaled
+  - P12: the same id for every attempt
+  - P13: note kept
+  - P14: no lookup
+- Fault points: the followups cases pass unchanged. The writes are still the `OPERATION_INTENT` and `EVIDENCE_RETAINED` appends, the record write, and the claim and result writes of the operation. The verify record says the operation writes are covered. It does not name `updateJson`, because its check needs `name(` and the definition is `updateJson<T>(`.
+- DoD: exit 0, 138 tests, 136 pass, 0 fail, 2 skipped.
+- `npm run check` at 4c2bdda3: exit 0, 3754 tests, 3726 pass, 0 fail, 28 skipped.
