@@ -53,3 +53,34 @@ npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: dod arm 1 is `npm run typecheck`, dod arm 2 is the `node --test` command; every test of the three files passes, the new assertions included.
+
+## Attempt evidence
+
+Hygiene probe at PREPARE (base 332956a2): an uncommitted line after card-runner.ts:1268 appended every success whose `loopDod` had `ran` true and `timedOut` true or `exitCode` other than `expectedExit` to a log; the 54 files of `git grep -l -e 'recordAttempt(' -e "'attempt'" -- tests` were run with it (run exit 0), then the line was restored. Logged successes, by file:
+
+| File | Count | Command | Exit code |
+|---|---|---|---|
+| tests/scenarios/dirty-success.test.ts | 24 | `node --test tests/t0-ds.test.ts` | 127 |
+| tests/scenarios/dod-receipt-required.test.ts | 2 | `node --test tests/t0-drg.test.ts` | 127 |
+| tests/scenarios/review-rule-ship.test.ts | 2 | `node --test tests/t1-rs.test.ts` | 127 |
+| tests/scenarios/dod-record.test.ts | 1 | `node dod.mjs 3` | 3 |
+| tests/scenarios/dod-record.test.ts | 1 | `node "<worktree>\tests\infra\exec-tree.child.ts" stay tree.pid` | null (timed out) |
+
+No file outside the four of the sweep logged one. review-rule-ship.test.ts logged both of its successes (the sweep had one).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | dirty-success.test.ts "T1-DOD-GATE-FIXTURES acceptance 1 - ..." | RED at 27d77737 (exitCode 127), passes with the entry |
+| 2 | dod-receipt-required.test.ts "T1-DOD-GATE-FIXTURES acceptance 2 - ..." | RED at 27d77737 (exitCode 127), passes with the entry |
+| 3 | review-rule-ship.test.ts "acceptance 7, git-backed (R3 decision 2, re:F1)", assertion after each success | RED at 27d77737 (127), passes with the entry |
+| 4 | DoD: 70 tests, 69 pass, 0 fail, 1 skipped (existing Windows skip, EACCES); `git diff --numstat 332956a2 -- tests`: `12 0 dirty-success.test.ts`, `9 0 dod-receipt-required.test.ts`, `5 0 review-rule-ship.test.ts` | added lines only in all three files (attempt 2, R3 F1: the DoD entry of review-rule-ship.test.ts is added by a block-scoped wrapper that shadows `scriptedRunner` inside that test, so line 377 is as on main); no assertion changed |
+| 5 | the probe table above | 4 files, as listed |
+
+Platform runs of the three changed test files:
+
+| Platform | Command | Node | Tested SHA | Tests / pass / fail / skipped | Exit |
+|---|---|---|---|---|---|
+| Windows 11 | `npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/scenarios/dod-receipt-required.test.ts tests/scenarios/review-rule-ship.test.ts` (in the card worktree) | v22.23.1 | baf1e5097917cf148391ae3cc3709980905a038a | 70 / 69 / 0 / 1 (EACCES test, skipped on Windows) | 0 |
+| Linux (WSL Ubuntu, git 2.43.0) | fresh `git clone --no-checkout` of the main checkout into a `mktemp -d` directory, `git checkout <sha>`, `npm ci`, then `node --test --test-reporter=tap tests/scenarios/dirty-success.test.ts tests/scenarios/dod-receipt-required.test.ts tests/scenarios/review-rule-ship.test.ts` | v24.3.0 (the WSL host has no node 22 at or above 22.18) | baf1e5097917cf148391ae3cc3709980905a038a | 70 / 70 / 0 / 0 | 0 |
+
+The Linux run was on baf1e509; the candidate that carries this table differs from it only in specs/tasks/T1-DOD-GATE-FIXTURES.md : `git diff --stat baf1e509 <candidate>` gives `specs/tasks/T1-DOD-GATE-FIXTURES.md | 1 file changed, insertions only`; the exact count is in the attempt receipt.

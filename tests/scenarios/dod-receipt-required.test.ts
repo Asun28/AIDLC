@@ -116,6 +116,7 @@ function atBuildGit(t: TestContext, ship: 'github' | 'scaffold'): Ctx {
     'git diff --numstat': { stdout: '0\t0\tsrc/t0-drg.ts\n' },
     'git diff --name-only': { stdout: 'src/t0-drg.ts\u0000' },
     'git diff': { stdout: 'diff --git a/src/t0-drg.ts b/src/t0-drg.ts\n+export const drg = 1;\n' },
+    'node --test tests/t0-drg.test.ts': { exitCode: 0, stdout: '', stderr: '' },
   });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: ship, ...(ship === 'github' ? { repository: 'o/r' } : {}) }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
   return ctxOf(fx, runner, goalId, 'T0-DRG', r.directive.narration, worktree, git);
@@ -459,5 +460,13 @@ describe('T0-DOD-RECEIPT-REQUIRED: the documents and both card-loop copies [R7] 
     assert.match(flat, /(missing|malformed|stale)[^.]*verdict[^.]*never\s+pass/i);
     assert.match(flat, /one retry/i);
     assert.ok(flat.indexOf('card close --all') > flat.indexOf('aidlc evidence retain --card'));
+  });
+});
+
+describe('T1-DOD-GATE-FIXTURES: the loop-run DoD of the git fixture [R2]', () => {
+  it('T1-DOD-GATE-FIXTURES acceptance 2 - a clean success of the git fixture carries a loop-run DoD that ran and exited 0', (t) => {
+    const c = atBuildGit(t, 'github');
+    const dod = c.attempt({ outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1' }).effort?.attempts.at(-1)?.loopDod;
+    assert.deepEqual(dod?.ran === true ? [dod.ran, dod.exitCode, dod.expectedExit, dod.timedOut] : dod, [true, 0, 0, false]);
   });
 });
