@@ -149,3 +149,16 @@ stdout line of `summary_escaped`:
 | 6 | outcome-first-decision, outcome-usage, outcome-labels, prose tests unchanged | pass |
 | 7 | bench/outcome/README.md: Tables `cards` row, Views bullet `summary_escaped`, escaped.json paragraph, Tests paragraph | reviewer |
 | 8 | this section: command, exit code, stderr line, stdout line | reviewer |
+
+### Platforms
+
+Command on both: `npm run typecheck && node --test` over the eight DoD files (outcome-ingest, outcome-github, outcome-summary, outcome-baseline, outcome-first-decision, outcome-usage, outcome-labels, prose).
+
+| Platform | Node | Tested SHA | Tests | Pass | Fail | Skipped | Exit |
+|---|---|---|---|---|---|---|---|
+| Windows 11, this worktree, DuckDB v1.5.6 on PATH | v22.23.1 | a4cfd67b | 69 | 69 | 0 | 0 | 0 |
+| Linux, WSL Ubuntu, git 2.43.0, fresh clone in a mktemp directory, `npm ci` | v24.3.0 | a4cfd67b | 69 | 57 | 0 | 12 | 0 |
+
+On Linux no DuckDB binary is found (`DUCKDB_BIN` unset, no `duckdb` on PATH), so the 12 view tests are skipped with `no duckdb binary`. Among them are "T1-OUTCOME-ESCAPED acceptance 2" and "T1-OUTCOME-GITHUB-2 acceptance 12", so on Linux this card's view SQL is not covered; it is covered only by the Windows row. On Linux the typecheck, the ingest tests (acceptance 1 and 3 included) and "T1-OUTCOME-ESCAPED acceptance 4" ran and passed.
+
+`git diff --stat a4cfd67b <new sha>`: this section only (specs/tasks/T1-OUTCOME-ESCAPED.md).
