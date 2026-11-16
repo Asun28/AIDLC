@@ -219,9 +219,23 @@ export class GhProbe {
    * URL gh prints last. Throws, naming the call, on a failed call or stdout whose last line is not an issue URL of `repo`.
    */
   createIssue(repo: string, title: string, body: string, label: string, cwd?: string): number {
+    this.ensureLabel(repo, label, cwd);
+    return this.submitIssue(repo, title, body, label, cwd);
+  }
+
+  /** Creates or updates `label` (`gh label create --force`); throws GhProbeError naming the call when it fails (card T1-REVIEW-FOLLOWUP-ISSUE). */
+  ensureLabel(repo: string, label: string, cwd?: string): void {
     const labelArgs = ['label', 'create', label, '--repo', repo, '--force', '--description', 'aidlc review follow-ups'];
     const l = this.gh(labelArgs, cwd);
     if (l.exitCode !== 0 || l.timedOut) throw new GhProbeError(labelArgs, l);
+  }
+
+  /**
+   * Submits one issue with `label` and `body` on stdin and makes no other call (card T1-REVIEW-FOLLOWUP-ISSUE); returns the
+   * number from the URL gh prints last. Throws GhProbeError naming the call on a failed call or stdout whose last line is
+   * not an issue URL of `repo`.
+   */
+  submitIssue(repo: string, title: string, body: string, label: string, cwd?: string): number {
     const issueArgs = ['issue', 'create', '--repo', repo, '--title', title, '--label', label, '--body-file', '-'];
     const r = this.runner('gh', issueArgs, { cwd, timeoutMs: 120_000, input: body });
     if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(issueArgs, r);

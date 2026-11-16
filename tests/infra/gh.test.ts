@@ -246,6 +246,24 @@ describe('probes/gh (review follow-up issues)', () => {
     assert.throws(() => listFails.probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, 'a failed list call is an error, not an empty list');
   });
 
+  it('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 3 F10: ensureLabel makes the label call alone and throws GhProbeError naming it when it fails', () => {
+    const { probe, calls } = recording({ 'gh label create': { stdout: '' } });
+    probe.ensureLabel(REPO, 'review-followup');
+    assert.deepEqual(calls, [{ args: LABEL_ARGS, input: undefined }]);
+    const fails = recording({ 'gh label create': { exitCode: 1, stderr: 'HTTP 403' } });
+    assert.throws(() => fails.probe.ensureLabel(REPO, 'review-followup'), (e: unknown) => e instanceof GhProbeError && /label create/.test(e.message));
+  });
+
+  it('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 3 F10: submitIssue makes the issue call alone with the body on stdin, returns the number, and throws GhProbeError on a failed call or no issue URL of the repo', () => {
+    const { probe, calls } = recording({ 'gh issue create': { stdout: `https://github.com/${REPO}/issues/43\n` } });
+    assert.equal(probe.submitIssue(REPO, 'Review follow-ups', 'line one\n--title not a flag', 'review-followup'), 43);
+    assert.deepEqual(calls, [{ args: ISSUE_ARGS, input: 'line one\n--title not a flag' }], 'no label call');
+    for (const receipt of [{ exitCode: 1, stderr: 'HTTP 422' }, { stdout: 'https://github.com/other/repo/issues/43\n' }, { stdout: `https://github.com/${REPO}/pull/43\n` }]) {
+      const { probe: p } = recording({ 'gh issue create': receipt });
+      assert.throws(() => p.submitIssue(REPO, 'Review follow-ups', 'b', 'review-followup'), (e: unknown) => e instanceof GhProbeError && /issue create/.test(e.message), JSON.stringify(receipt));
+    }
+  });
+
   it('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 1 F2: issuesWithLabel reads every page until a short one, leaves pull requests out and reads a null body as empty; a failed later page is an error', () => {
     const full = Array.from({ length: 100 }, (_, n) => ({ number: n + 1, body: `issue ${n + 1}` }));
     const pages = (second: { stdout?: string; exitCode?: number; stderr?: string }) => ({ [`gh api repos/${REPO}/issues?labels=review-followup&state=all&per_page=100&page=1`]: { stdout: JSON.stringify(full) }, [`gh api repos/${REPO}/issues?labels=review-followup&state=all&per_page=100&page=2`]: second });

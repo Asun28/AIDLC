@@ -894,7 +894,7 @@ describe('fault-point check: each card-run write and journal append of five comm
 
 describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP-ISSUE)', { timeout: 30_000 }, () => {
   /** The card at CLOSE with one advisory reason, and a closing runner on the github path whose scripted gh keeps its issues. */
-  const atClose = async () => {
+  const atClose = async (lostFirst = false) => {
     const c = await startAt('D');
     assert.equal(next(c).directive.kind, 'close');
     const run = c.run();
@@ -906,6 +906,8 @@ describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP
       'gh label create': {},
       'gh issue create': () => {
         issues.push({ number: 200 + issues.length, body });
+        // The first submit of a lost-response run files the issue and loses the reply: the attempt is UNKNOWN.
+        if (lostFirst && issues.length === 1) return { exitCode: 1, stderr: 'timeout reading the response' };
         return { stdout: `https://github.com/acme/fp/issues/${issues.at(-1)!.number}\n` };
       },
     });
@@ -957,7 +959,7 @@ describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP
     }
   });
 
-  it('each write of the operation reservation fails in turn, and the retry files no second issue [R5]', async () => {
+  it('each write of the operation attempt fails in turn, for a new attempt and for the resume of an UNKNOWN one, and the retry files no second issue [R5]', async () => {
     const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
     const real = target['renameSync']!;
     const run = async (failAt: number, body: () => unknown): Promise<{ count: number; error?: Error }> => {
@@ -981,29 +983,38 @@ describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP
       }
     };
     let paths = '';
-    const clean = await atClose();
-    let writes: number;
-    try {
-      paths = clean.c.fx.paths.operations;
-      const res = await run(0, clean.close);
-      assert.equal(res.error, undefined);
-      writes = res.count;
-      assert.equal(writes, 2, 'the reservation and its result');
-    } finally {
-      clean.c.fx.cleanup();
-    }
-    for (let k = 1; k <= writes; k += 1) {
-      const f = await atClose();
+    // A resume starts from the UNKNOWN attempt a lost reply left.
+    const start = async (resume: boolean) => {
+      const f = await atClose(resume);
+      if (resume) assert.throws(f.close, /is UNKNOWN/);
+      return f;
+    };
+    for (const resume of [false, true]) {
+      const label = resume ? 'resume' : 'new attempt';
+      const clean = await start(resume);
+      let writes: number;
       try {
-        paths = f.c.fx.paths.operations;
-        const base = { ...f.c.spawned, ship: f.c.ship.requests.length };
-        const res = await run(k, f.close);
-        assert.ok(res.error, `operation write ${k}: the command throws`);
-        assert.equal(f.c.run().closure.followups, false, `operation write ${k}: the step stays unset`);
-        assert.equal(f.close().closure.followups, true, `operation write ${k}: the retry records the step`);
-        settled(f, base, `operation write ${k}`);
+        paths = clean.c.fx.paths.operations;
+        const res = await run(0, clean.close);
+        assert.equal(res.error, undefined, label);
+        writes = res.count;
+        assert.equal(writes, 2, `${label}: the claim and the result`);
       } finally {
-        f.c.fx.cleanup();
+        clean.c.fx.cleanup();
+      }
+      for (let k = 1; k <= writes; k += 1) {
+        const f = await start(resume);
+        try {
+          paths = f.c.fx.paths.operations;
+          const base = { ...f.c.spawned, ship: f.c.ship.requests.length };
+          const res = await run(k, f.close);
+          assert.ok(res.error, `${label} operation write ${k}: the command throws`);
+          assert.equal(f.c.run().closure.followups, false, `${label} operation write ${k}: the step stays unset`);
+          assert.equal(f.close().closure.followups, true, `${label} operation write ${k}: the retry records the step`);
+          settled(f, base, `${label} operation write ${k}`);
+        } finally {
+          f.c.fx.cleanup();
+        }
       }
     }
   });

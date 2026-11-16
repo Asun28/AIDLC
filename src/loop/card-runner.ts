@@ -26,7 +26,7 @@ import { ReviewQueue } from '../coordination/review-queue.ts';
 import { EvidenceStore } from '../audit/manifest.ts';
 import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
-import { GhProbe, GhProbeError } from '../probes/gh.ts';
+import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
@@ -3374,13 +3374,14 @@ export class CardRunner {
   /**
    * The followups step (card T1-REVIEW-FOLLOWUP-ISSUE): the `review-followup` issue of the run's advisory and deferred
    * findings, found by its marker among the issues of that label (a list, never a search) or filed, or null with the
-   * reason none is filed. The lookup and the create run under an operation claimed for the marker: the n-th attempt is the
-   * record `op-followup-<marker hash>-<n>`, created as `running` under the store's record lock (`updateJson`), so of two
-   * commands that count the same n one claims it and the other is refused, and while any attempt of the marker is
-   * `running` or `UNKNOWN` (in flight, interrupted, or a create that may have reached GitHub) the step refuses and names
-   * `aidlc ops reconcile`. The card lease and the persisted goal (live, same generation) are checked again before the
-   * create and before the result. The attempt ends `succeeded` once the issue number is known, `UNKNOWN` when the create
-   * call failed after it may have been sent, else `failed`; the card run is not written here.
+   * reason none is filed. Each attempt is an operation claimed for the marker under the store's record lock
+   * (`updateJson`): a new attempt `op-followup-<marker hash>-<n>` is created as `running`, and an `UNKNOWN` attempt (a
+   * create that may have reached GitHub) is resumed by moving it to `running`; a claim that finds another state is
+   * refused. A resumed attempt only looks up: a marked issue is recorded, else it returns to `UNKNOWN` and the step
+   * refuses, naming `aidlc ops reconcile`. A new attempt looks up, ensures the label, checks the card lease, the persisted
+   * goal (live, same generation) and its own claim again, submits the issue, and checks lease and goal before the result.
+   * The attempt ends `succeeded` once the issue number is known, `UNKNOWN` when the submit failed after it may have been
+   * sent, else `failed`; the card run is not written here.
    */
   private followupIssue(goal: Goal, card: Card, run: CardRun, assertLiveGoal: () => void): { followupIssue: number | null; followupNote?: string } {
     const findings = followupFindings(run);
@@ -3395,25 +3396,59 @@ export class CardRunner {
       this.leases.fence(resourceKeys.card(this.repo.key, card.id), generation, currentActor(), this.clock());
       assertLiveGoal();
     };
-    const reconcileHint = (id: string, status: string) => `followups: operation ${id} for ${marker} is ${status}: another card close may be filing the issue, or one was interrupted or may have reached GitHub; look for the marker among the issues labelled review-followup, then run aidlc ops reconcile ${id} --status succeeded --provider-id <issue number> (or --status failed) and close again`;
+    const reconcileHint = (id: string, status: string) => `followups: operation ${id} for ${marker} is ${status}: another card close may be filing the issue, or one was interrupted or may have reached GitHub without the issue being visible; look for the marker among the issues labelled review-followup, then run aidlc ops reconcile ${id} --status succeeded --provider-id <issue number> (or --status failed) and close again`;
+    const file = (id: string) => path.join(this.ops.dir, `${id}.json`);
+    const lookup = () => this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker))?.number;
     const attempts = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => o.effects.includes(FOLLOWUP_EFFECT) && o.target === marker);
-    const open = attempts.find((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status));
-    if (open) throw new Error(reconcileHint(open.id, open.status));
+    const active = attempts.find((o) => ['intended', 'issued', 'running'].includes(o.status));
+    if (active) throw new Error(reconcileHint(active.id, active.status));
+    const ambiguous = attempts.find((o) => o.status === 'UNKNOWN');
+    if (ambiguous) {
+      // Resume: the earlier submit may have filed the issue; only a lookup decides, never a second submit.
+      const id = ambiguous.id;
+      updateJson(file(id), OperationRecord, (existing) => {
+        if (existing?.status !== 'UNKNOWN') throw new Error(reconcileHint(id, existing?.status ?? 'gone'));
+        return { ...existing, status: 'running' as const };
+      });
+      let number: number | undefined;
+      try {
+        number = lookup();
+        if (number !== undefined) {
+          recheck();
+          this.ops.markResult(id, 'succeeded', { evidenceRef: `issue #${number}` }, this.clock());
+          return { followupIssue: number, followupNote: undefined };
+        }
+      } catch (err) {
+        if (number !== undefined) this.ops.markResult(id, 'succeeded', { evidenceRef: `issue #${number}` }, this.clock());
+        else updateJson(file(id), OperationRecord, (existing) => (existing?.status === 'running' ? { ...existing, status: 'UNKNOWN' as const } : existing));
+        throw new Error(`followups: ${(err as Error).message}`);
+      }
+      updateJson(file(id), OperationRecord, (existing) => (existing?.status === 'running' ? { ...existing, status: 'UNKNOWN' as const } : existing));
+      throw new Error(reconcileHint(id, 'UNKNOWN'));
+    }
     const id = `op-followup-${createHash('sha256').update(marker).digest('hex').slice(0, 12)}-${attempts.length}`;
     const now = this.clock();
     this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: id, kind: 'other', target: marker, effects: [FOLLOWUP_EFFECT] } });
-    updateJson(path.join(this.ops.dir, `${id}.json`), OperationRecord, (existing) => {
+    updateJson(file(id), OperationRecord, (existing) => {
       if (existing) throw new Error(reconcileHint(id, existing.status));
       return OperationRecord.parse({ id, kind: 'other', goalId: goal.id, cardId: card.id, target: marker, idempotencyKey: marker, ownerGeneration: generation, intentRecordedAt: now, issuedAt: now, status: 'running', timeoutMs: 10 * 60_000, effects: [FOLLOWUP_EFFECT] });
     });
     let number: number | undefined;
     let sent = false;
+    let released = false;
     try {
-      number = this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker))?.number;
+      number = lookup();
       if (number === undefined) {
+        this.gh.ensureLabel(repo, 'review-followup', this.repo.mainRoot);
+        // Nothing external runs between these checks and the submit.
         recheck();
+        const mine = this.ops.get(id);
+        if (mine?.status !== 'running') {
+          released = true;
+          throw new Error(`operation ${id} is ${mine?.status ?? 'gone'}, no longer this command's claim; no issue submitted`);
+        }
         sent = true;
-        number = this.gh.createIssue(repo, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, findings, marker), 'review-followup', this.repo.mainRoot);
+        number = this.gh.submitIssue(repo, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, findings, marker), 'review-followup', this.repo.mainRoot);
       }
       recheck();
       this.ops.markResult(id, 'succeeded', { evidenceRef: `issue #${number}` }, this.clock());
@@ -3421,13 +3456,13 @@ export class CardRunner {
       return { followupIssue: number, followupNote: undefined };
     } catch (err) {
       const message = (err as Error).message;
-      // Known number: the issue exists. A failed label call precedes the issue request; any other failure of the create may have reached GitHub.
-      const labelFailed = err instanceof GhProbeError && err.receipt.args[0] === 'label';
-      const status = number !== undefined ? 'succeeded' : sent && !labelFailed ? 'UNKNOWN' : 'failed';
-      this.ops.markResult(id, status, { evidenceRef: number !== undefined ? `issue #${number}` : undefined, error: message }, this.clock());
+      // A known number means the issue exists; a failed submit may have reached GitHub; anything else ran before the submit.
+      const status = number !== undefined ? 'succeeded' : sent ? 'UNKNOWN' : 'failed';
+      if (!released) this.ops.markResult(id, status, { evidenceRef: number !== undefined ? `issue #${number}` : undefined, error: message }, this.clock());
       throw new Error(status === 'UNKNOWN' ? `${reconcileHint(id, 'UNKNOWN')} (${message})` : `followups: ${message}`);
     }
   }
+
 
 
   /**

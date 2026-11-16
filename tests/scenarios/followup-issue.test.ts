@@ -69,7 +69,7 @@ interface Tracker {
 }
 
 /** gh at its boundary: the issues API prints the tracker by pages of 100, label create succeeds, issue create adds an issue and prints its URL. */
-function gh(tracker: Tracker, fail: { list?: boolean; create?: 'refused' | 'lost' | 'timeout' | 'label' } = {}, onList?: () => void, onCreate?: () => void): SyncRunner {
+function gh(tracker: Tracker, fail: { list?: boolean; create?: 'refused' | 'lost' | 'timeout' | 'label' } = {}, onList?: () => void, onCreate?: () => void, onLabel?: () => void): SyncRunner {
   let body = '';
   const scripted = scriptedRunner({
     'gh api repos/': (args) => {
@@ -91,6 +91,7 @@ function gh(tracker: Tracker, fail: { list?: boolean; create?: 'refused' | 'lost
     tracker.calls.push({ args: [command, ...args], input: options?.input });
     if (args[0] === 'api') onList?.();
     if (args[0] === 'issue' && args[1] === 'create') onCreate?.();
+    if (args[0] === 'label') onLabel?.();
     body = options?.input ?? '';
     return scripted(command, args, options);
   };
@@ -124,6 +125,7 @@ test('T1-REVIEW-FOLLOWUP-ISSUE acceptance 1: a merged run with advisory and defe
     const list = t.calls.find((c) => c.args[1] === 'api');
     assert.ok(list && list.args[2]!.startsWith(`repos/${REPO}/issues?labels=review-followup&state=all`), 'the lookup lists by label');
     assert.ok(!t.calls.some((c) => c.args.includes('search') || c.args.includes('--search')), 'no search query');
+    assert.deepEqual(t.calls.map((c) => c.args.slice(1, 3).join(' ').replace(/\?.*/, '')), [`api repos/${REPO}/issues`, 'label create', 'issue create'], 'the lookup, the label call, then the submit alone');
     assert.equal(marked.closure.followups, true);
     assert.equal(marked.followupIssue, 102);
     const stored = fx.store.getCardRun(goalId, CARD)!;
@@ -159,14 +161,15 @@ test('T1-REVIEW-FOLLOWUP-ISSUE acceptance 2: an issue already holding the marker
       assert.throws(() => followups(fx, goalId, closing(fx, gh(t, failure))), 'list' in failure ? /gh api repos\// : /gh issue create/);
       assert.deepEqual(fx.store.getCardRun(goalId, CARD), before, `${JSON.stringify(failure)}: the run is unchanged`);
       const [op] = fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
-      if ('create' in failure) {
-        // The create may have reached GitHub: the attempt is UNKNOWN and the next close refuses, with no gh call, until it is reconciled.
-        assert.equal(op!.status, 'UNKNOWN');
-        const calls = t.calls.length;
-        assert.throws(() => followups(fx, goalId, closing(fx, gh(t))), /aidlc ops reconcile op-followup-/);
-        assert.equal(t.calls.length, calls, 'no lookup or create while the attempt is UNKNOWN');
-        fx.ops.reconcile(op!.id, () => (t.issues.length ? { status: 'succeeded', providerOperationId: String(t.issues[0]!.number) } : { status: 'failed' }));
-      } else assert.equal(op!.status, 'failed');
+      assert.equal(op!.status, 'create' in failure ? 'UNKNOWN' : 'failed', 'a submit that failed may have reached GitHub');
+      if (failure.create === 'refused') {
+        // No marked issue is visible, so the outcome stays ambiguous: the retry looks up, submits nothing and keeps the attempt UNKNOWN.
+        assert.throws(() => followups(fx, goalId, closing(fx, gh(t))), /is UNKNOWN: .*aidlc ops reconcile op-followup-/);
+        assert.equal(fx.ops.get(op!.id)!.status, 'UNKNOWN');
+        assert.equal(t.created.length, 0);
+        // A person who finds no marked issue on GitHub resolves the attempt as failed.
+        fx.ops.reconcile(op!.id, () => ({ status: 'failed' }));
+      }
       const retried = followups(fx, goalId, closing(fx, gh(t)));
       assert.equal(t.created.length, 1, `${JSON.stringify(failure)}: one issue in all`);
       assert.equal(retried.followupIssue, t.issues[0]!.number);
@@ -383,7 +386,7 @@ test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F7: a goal cancelled or moved to an
   }
 });
 
-test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F8: a create that timed out and completes on GitHub later leaves one issue: the retry is refused until the attempt is reconciled, then records it', () => {
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F8: a create that timed out and completes on GitHub later leaves one issue: a retry before it is visible submits nothing and refuses, a retry after records it', () => {
   const fx = makeFixture();
   try {
     const { goalId } = atClose(fx);
@@ -391,16 +394,20 @@ test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F8: a create that timed out and com
     const t = tracker();
     assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { create: 'timeout' }))), /UNKNOWN.*timed out/);
     const sent = t.calls.find((c) => c.args[1] === 'issue' && c.args[2] === 'create')!.input!;
-    // GitHub completes the timed-out request after the retry's lookup would have run.
-    const complete = () => t.issues.push({ number: 777, body: sent });
-    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, undefined, complete))), /is UNKNOWN/);
+    // GitHub completes the timed-out request after the retry's lookup: the retry must not submit again.
+    let completed = false;
+    const complete = () => {
+      if (!completed) t.issues.push({ number: 777, body: sent });
+      completed = true;
+    };
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, undefined, complete, complete))), /is UNKNOWN: /);
     complete();
-    assert.equal(t.created.length, 0, 'no create beyond the timed-out one');
+    assert.equal(t.created.length, 0, 'no submit beyond the timed-out one');
     const [op] = fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
-    fx.ops.reconcile(op!.id, () => ({ status: 'succeeded', providerOperationId: '777' }));
-    assert.equal(followups(fx, goalId, closing(fx, gh(t))).followupIssue, 777);
+    assert.equal(op!.status, 'UNKNOWN', 'the outcome stays ambiguous until the issue is seen');
+    assert.equal(followups(fx, goalId, closing(fx, gh(t))).followupIssue, 777, 'the next close finds the marked issue and records it');
     assert.equal(t.issues.length, 1, 'one issue on GitHub');
-    assert.equal(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).length, 2, 'the reconciled attempt and the one that recorded the issue');
+    assert.deepEqual(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => [o.status, o.evidenceRef]), [['succeeded', 'issue #777']], 'the one attempt, resumed and resolved');
   } finally {
     fx.cleanup();
   }
@@ -415,6 +422,90 @@ test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 2 F8: a failed label call precedes th
     assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { create: 'label' }))), /gh label create/);
     assert.deepEqual(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => o.status), ['failed']);
     assert.equal(followups(fx, goalId, closing(fx, gh(t))).followupIssue, 101);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 3 F10: a goal cancelled or moved to another generation during the label call gets no issue submitted', () => {
+  for (const [name, change, expected] of [
+    ['cancelled', (fx: Fixture, goalId: string) => fx.controller.report({ goalId, generation: fx.goal(goalId).generation, result: 'cancel', data: { detail: 'cancelled during the label call' } }), /terminal/],
+    ['next generation', (fx: Fixture, goalId: string) => fx.store.saveGoal({ ...fx.goal(goalId), generation: fx.goal(goalId).generation + 1 }), /generation/],
+  ] as const) {
+    const fx = makeFixture();
+    try {
+      const { goalId } = atClose(fx);
+      withFindings(fx, goalId);
+      const t = tracker();
+      assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, undefined, undefined, () => void change(fx, goalId)))), expected, name);
+      assert.ok(t.calls.some((c) => c.args[1] === 'label'), `${name}: the label call ran`);
+      assert.ok(!t.calls.some((c) => c.args[1] === 'issue' && c.args[2] === 'create'), `${name}: no issue submitted`);
+      assert.deepEqual(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => o.status), ['failed'], name);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 3 F10: an attempt reconciled by someone else during the label call is not this command\'s claim: no issue submitted and its status kept', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = atClose(fx);
+    withFindings(fx, goalId);
+    const t = tracker();
+    const reconcile = () => {
+      const [op] = fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
+      fx.ops.reconcile(op!.id, () => ({ status: 'cancelled' }));
+    };
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, undefined, undefined, reconcile))), /no longer this command's claim/);
+    assert.ok(!t.calls.some((c) => c.args[1] === 'issue' && c.args[2] === 'create'), 'no issue submitted');
+    assert.deepEqual(fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER).map((o) => o.status), ['cancelled']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 3 F9: the resume of an UNKNOWN attempt keeps it UNKNOWN when the lookup fails, records nothing for a goal cancelled during its lookup, and is refused when another close resumed it first', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = atClose(fx);
+    withFindings(fx, goalId);
+    const t = tracker();
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { create: 'lost' }))), /is UNKNOWN/);
+    const [op] = fx.ops.list({ goalId, cardId: CARD }).filter((o) => o.target === MARKER);
+    // A failed lookup decides nothing: the outcome stays ambiguous.
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { list: true }))), /gh api repos\//);
+    assert.equal(fx.ops.get(op!.id)!.status, 'UNKNOWN');
+    // Another close resumed the attempt after this one listed it: the claim finds it running and is refused before any gh call.
+    fx.ops.markRunning(op!.id);
+    const list = fx.ops.list.bind(fx.ops);
+    const stale = Object.assign(Object.create(Object.getPrototypeOf(fx.ops)), fx.ops, { list: (filter?: Parameters<typeof list>[0]) => list(filter).map((o) => (o.id === op!.id ? { ...o, status: 'UNKNOWN' as const } : o)) });
+    const calls = t.calls.length;
+    const racer = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: REPO }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: stale, shipPath: new DryRunShipPath(['merged']), runner: gh(t), now: fx.now });
+    assert.throws(() => followups(fx, goalId, racer), new RegExp(`operation ${op!.id} .* is running`));
+    assert.equal(t.calls.length, calls, 'no gh call');
+    fx.ops.reconcile(op!.id, () => ({ status: 'UNKNOWN', detail: 'back to ambiguous for the next case' }));
+    // A goal cancelled during the resumed lookup: the issue is known, the attempt is succeeded, the step is not recorded.
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, () => void fx.controller.report({ goalId, generation: fx.goal(goalId).generation, result: 'cancel', data: { detail: 'cancelled during the resumed lookup' } })))), /terminal/);
+    assert.deepEqual([fx.ops.get(op!.id)!.status, fx.ops.get(op!.id)!.evidenceRef], ['succeeded', 'issue #101']);
+    assert.equal(fx.store.getCardRun(goalId, CARD)!.closure.followups, false);
+    assert.equal(t.created.length, 1, 'one issue');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 3 F9: a lease that expires during the resumed lookup records no step', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = atClose(fx);
+    withFindings(fx, goalId);
+    const t = tracker();
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, { create: 'lost' }))), /is UNKNOWN/);
+    const expire = () => void fx.advance(Date.parse(fx.leases.read(resourceKeys.card(fx.repo.key, CARD))!.expiresAt) - Date.parse(fx.now()) + 60_000);
+    assert.throws(() => followups(fx, goalId, closing(fx, gh(t, {}, expire))), /lease expired/);
+    assert.equal(fx.store.getCardRun(goalId, CARD)!.closure.followups, false);
+    assert.equal(t.created.length, 1, 'one issue');
   } finally {
     fx.cleanup();
   }
