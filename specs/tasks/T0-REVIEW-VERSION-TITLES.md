@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-VERSION-TITLES
 title: The test titles of tests/surface/templates.test.ts name REVIEW.md@7, the policy version their assertions check, and the OPERATIONS.md stale-version check rejects every version below the current one, not only @5 (issue 340)
-status: todo
+status: merged
 branch: T0-REVIEW-VERSION-TITLES
 worktree: D:\wt\AIDLC\T0-REVIEW-VERSION-TITLES
 allow_paths:
