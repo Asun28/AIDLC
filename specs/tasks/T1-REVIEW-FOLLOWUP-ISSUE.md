@@ -67,3 +67,48 @@ npm run typecheck && node --test tests/scenarios/followup-issue.test.ts tests/in
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; no existing test line changes.
+
+## Attempt evidence
+
+Attempt 1: BLOCKED, no attempt recorded. R1 ("a run created after this card starts with it false") with R6 means every existing test that drives a new run to DONE by marking the six old steps now stops at CLOSE. Those tests sit outside allow_paths, so they need a recorded amendment.
+
+- RED 97437417 `tests/scenarios/followup-issue.test.ts`: acceptance 1-4 fail by assertion on main (`0 !== 1` one issue filed; `undefined !== 55`; dry-run case: followups not recorded; a new run does not start with the step false).
+- GREEN 68eb174b, then 5f8f79d5 (docs). Followup acceptance 1-4 pass. The added fault-point case passes, with a scratch break shown (`{ ...followup }` dropped from the journal data: `k=1 ... undefined !== 200`).
+- DoD (`npm run typecheck && node --test <6 files>`): exit 1, 129 tests, 126 pass, 1 fail, 2 skipped. The failure is `goal-close-stages.test.ts:8` (`T1-HELLO: expected done, got close`) through `driveCardToDone` in `tests/scenarios/_harness.ts:154`, outside allow_paths.
+- `npm run check` at 5f8f79d5: exit 1, 3745 tests, 3633 pass, 84 fail, 28 skipped. All 84 failures are this one cause.
+- Scratch run, not committed: adding `followups: true` (or `'followups'`) to these literals leaves 2 failures, `lesson-dup.test.ts:57` and the exact narration at `:90`:
+  - `_harness.ts:154`
+  - `audit.test.ts:164`
+  - `review-rule-goal.test.ts:291`
+  - `run-driver.test.ts:432`
+  - `t0-flow.test.ts:90, 98, 249, 2143, 2177`
+  - `lesson-dup.test.ts:89` and the markClosure before `:50`
+  - `worktree-reclaim.test.ts:658`
+  - `lessons.test.ts:187`
+- R7 row R25-R27 is not changed. `tests/surface/removed-surface.test.ts:103` pins it, and a loop assertion there requires "`findingMarker` exists as a pure function the loop does not call", so changing the row needs a ruling.
+- Pinned line changed: `tests/scenarios/card-close-cleanup.test.ts:323` adds `followups: true` to the closure flags (R1).
+- card-loop.md: 6499 bytes (cap 6500), both copies identical and ASCII. CLOSE adds one line. The Review sentence "Unrelated finding: deduplicated issue keyed by card/PR/SHA marker." is removed to make room; the follow-up issue is that issue.
+- Reviewer text in the issue body: each finding is one list item, whitespace is collapsed, and `@name` gets a zero-width space.
+- Mutants, all 26 killed by followup-issue.test.ts (M20 by the fault-point case):
+  - M1-M2: default true/false split
+  - M3-M5: each R3 skip case
+  - M6-M7: marker never matches / always matches
+  - M8: failure swallowed
+  - M9: `--all` leaves the step out
+  - M10: `--followups` not wired
+  - M11: pending invocations included
+  - M12: no dedupe
+  - M13: no trim
+  - M14: pre-stage advisory included
+  - M15: deferred with an issue number included
+  - M16: rejected findings included
+  - M17: invocation advisory dropped
+  - M18: narration does not name `--followups`
+  - M19: issue number not recorded
+  - M20: journal does not name the issue
+  - M21: wrong marker reason
+  - M22: wrong title
+  - M23: marker not on the last line
+  - M24: finding ids dropped
+  - M25: wrong label
+  - M26: order swapped
