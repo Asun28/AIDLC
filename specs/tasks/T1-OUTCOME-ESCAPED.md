@@ -122,7 +122,7 @@ Revert table (scratch, restored): week from the TIMESTAMPTZ in the Tokyo session
 Run of R4, from this worktree at 1cd55ef2 (view text final):
 
 ```
-node bench/outcome/run.ts --no-usage --summary <scratch>4\summary.json --out <scratch>4\out
+node bench/outcome/run.ts --no-usage --summary <scratch>\r4\summary.json --out <scratch>\r4\out
 ```
 
 Exit code: 0. `commit` in the summary file is 332956a2, the HEAD of the main checkout that run.ts reads (`mainRoot()`, run.ts:65-67); the views are read from this worktree (run.ts:24).
@@ -130,7 +130,7 @@ Exit code: 0. `commit` in the summary file is 332956a2, the HEAD of the main che
 stderr:
 
 ```
-outcome: cards 366, card_runs 357, review_decisions 1273, findings 931, state_spans 1344, attempts 822, ingest_errors 0, prs 279, checks 2611, reverts 1, branch_commits 1607, github_errors 53, required_checks 4; written to <scratch>4out
+outcome: cards 366, card_runs 357, review_decisions 1273, findings 931, state_spans 1344, attempts 822, ingest_errors 0, prs 279, checks 2611, reverts 1, branch_commits 1607, github_errors 53, required_checks 4; written to <scratch>\r4\out
 ```
 
 stdout line of `summary_escaped`:
