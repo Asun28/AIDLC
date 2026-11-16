@@ -122,3 +122,24 @@ Attempt 1: BLOCKED, no attempt recorded. R1 ("a run created after this card star
   - M24: finding ids dropped
   - M25: wrong label
   - M26: order swapped
+
+Attempt 1, after the R8 amendment (74dba070), candidate e40388f6:
+- R8 changed lines, each by the addition only:
+  - `tests/scenarios/_harness.ts:154`: `followups: true`
+  - `audit.test.ts:164`: `followups: true`
+  - `review-rule-goal.test.ts:291`: `followups: true`
+  - `run-driver.test.ts:432`: `followups: true`
+  - `t0-flow.test.ts:90`: `'followups'`
+  - `t0-flow.test.ts:95`: `followups: true` on the five-step mark, so `:98` stays `['lessons']`
+  - `t0-flow.test.ts:249, 2177`: `followups: true`
+  - `t0-flow.test.ts:2143`: `'followups'`
+  - `lesson-dup.test.ts:17` (`FIVE`): `followups: true`
+  - `lesson-dup.test.ts:89`: `'followups'`
+  - `lesson-dup.test.ts:92`: the expected narration adds `, followups` to the step list and the `--followups` sentence
+  - `worktree-reclaim.test.ts:658`: `followups: true`
+  - `tests/surface/lessons.test.ts:187`: `'followups'`
+  - `card-close-cleanup.test.ts:323`: `followups: true`, from before the amendment
+- R25-R27: the row status now says the loop calls `findingMarker` in the `followups` closure step. In `removed-surface.test.ts`, the R25-R27 tuple leaves the uncalled-function `rows` loop, because the loop requires the old phrase for every row. One `assert.equal` after the loop pins the new row. No other row or line changed.
+- card-loop.md: both copies are back to main (6494 bytes, identical, ASCII), and the unrelated-finding sentence stays. The new CLOSE line is not there: the cap leaves 6 bytes free, and the shortest wording is 72 bytes, so R7 for card-loop.md is open.
+- DoD: exit 0, 129 tests, 127 pass, 0 fail, 2 skipped.
+- `npm run check` at e40388f6: exit 0, 3745 tests, 3717 pass, 0 fail, 28 skipped. The verify-card-run-writes check passes, including the followups case.
