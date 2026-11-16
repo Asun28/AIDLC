@@ -63,9 +63,14 @@ export type Mergeable = (typeof MERGEABLE)[number];
 export const MERGE_STATE_STATUS = ['BEHIND', 'BLOCKED', 'CLEAN', 'DIRTY', 'DRAFT', 'HAS_HOOKS', 'UNKNOWN', 'UNSTABLE'] as const;
 export type MergeStateStatus = (typeof MERGE_STATE_STATUS)[number];
 
-/** One issue as `gh issue list --json number,body` prints it (T1-GH-ISSUES). */
-const IssueListSchema = z.array(z.object({ number: z.number().int(), body: z.string() }));
-export type IssueEntry = z.infer<typeof IssueListSchema>[number];
+/** One page of `GET /repos/<repo>/issues` (T1-GH-ISSUES, T1-REVIEW-FOLLOWUP-ISSUE): pull requests carry `pull_request`; an empty body is null. */
+const IssuePageSchema = z.array(z.object({ number: z.number().int(), body: z.string().nullable(), pull_request: z.unknown().optional() }));
+export interface IssueEntry {
+  number: number;
+  body: string;
+}
+/** Pages of 100 read before `issuesWithLabel` gives up rather than return a partial list. */
+const ISSUE_PAGES_MAX = 1000;
 
 export class GhProbe {
   readonly runner: SyncRunner;
@@ -184,20 +189,29 @@ export class GhProbe {
     return r.exitCode === 0 && !r.timedOut ? r.stdout : undefined;
   }
 
-  /** Every issue that carries `label`, open or closed (listed by label, not by search, so a new issue is seen at once). Throws on a failed call or output that does not parse. */
+  /**
+   * Every issue that carries `label`, open or closed, read page by page until a short page (listed by label, not by
+   * search, so a new issue is seen at once); pull requests are left out. Throws on a failed call, output that does not
+   * parse, or more than ISSUE_PAGES_MAX full pages, never returning a partial list.
+   */
   issuesWithLabel(repo: string, label: string, cwd?: string): IssueEntry[] {
-    const args = ['issue', 'list', '--repo', repo, '--label', label, '--state', 'all', '--limit', '100', '--json', 'number,body'];
-    const r = this.gh(args, cwd);
-    if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(args, r);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(r.stdout);
-    } catch (err) {
-      throw new GhProbeError(args, r, `malformed JSON: ${(err as Error).message}`);
+    const out: IssueEntry[] = [];
+    for (let page = 1; page <= ISSUE_PAGES_MAX; page += 1) {
+      const args = ['api', `repos/${repo}/issues?labels=${encodeURIComponent(label)}&state=all&per_page=100&page=${page}`];
+      const r = this.gh(args, cwd);
+      if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(args, r);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(r.stdout);
+      } catch (err) {
+        throw new GhProbeError(args, r, `malformed JSON: ${(err as Error).message}`);
+      }
+      const parsed = IssuePageSchema.safeParse(raw);
+      if (!parsed.success) throw new GhProbeError(args, r, `unexpected issue list: ${parsed.error.message}`);
+      for (const i of parsed.data) if (i.pull_request === undefined) out.push({ number: i.number, body: i.body ?? '' });
+      if (parsed.data.length < 100) return out;
     }
-    const parsed = IssueListSchema.safeParse(raw);
-    if (!parsed.success) throw new GhProbeError(args, r, `unexpected issue list: ${parsed.error.message}`);
-    return parsed.data;
+    throw new Error(`gh api repos/${repo}/issues: more than ${ISSUE_PAGES_MAX} pages of issues labelled ${label}; the list would be partial`);
   }
 
   /**

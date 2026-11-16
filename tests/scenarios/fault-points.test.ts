@@ -887,8 +887,9 @@ describe('fault-point check: each card-run write and journal append of five comm
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// card close --followups (card T1-REVIEW-FOLLOWUP-ISSUE): its journal append and its card-run record write fail in turn;
-// the next step is the same command again, which must find the issue the failed call filed and file none.
+// card close --followups (card T1-REVIEW-FOLLOWUP-ISSUE): its journal appends, its card-run record write and the writes of
+// its operation reservation fail in turn; the next step is the same command again, which must find the issue the failed
+// call filed and file none.
 // ---------------------------------------------------------------------------------------------------------------------
 
 describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP-ISSUE)', { timeout: 30_000 }, () => {
@@ -901,7 +902,7 @@ describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP
     const issues: Array<{ number: number; body: string }> = [];
     let body = '';
     const scripted = scriptedRunner({
-      'gh issue list': () => ({ stdout: JSON.stringify(issues) }),
+      'gh api repos/acme/fp/issues': () => ({ stdout: JSON.stringify(issues) }),
       'gh label create': {},
       'gh issue create': () => {
         issues.push({ number: 200 + issues.length, body });
@@ -916,14 +917,27 @@ describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP
     return { c, issues, close: () => closer.markClosure(c.g(), c.card, c.run(), { followups: true }) };
   };
 
-  it('every fault point of the command and its retry end with the step recorded, one issue filed, and the run and the journal naming the same issue under I1 to I6 [R3] [R5]', async () => {
+  /** After a fault and the retry: I1 to I6, one issue, the step and the issue on the run and in the last EVIDENCE_RETAINED, every reservation resolved and journaled. */
+  const settled = (f: Awaited<ReturnType<typeof atClose>>, base: { r2: number; r3: number; ship: number }, label: string) => {
+    const obs = observe(f.c, base, { steps: [], deadline: false });
+    assert.deepEqual(check(obs), [], label);
+    assert.equal(f.issues.length, 1, `${label}: one issue in all`);
+    assert.equal(obs.run?.closure.followups, true, label);
+    assert.equal(obs.run?.followupIssue, 200, label);
+    assert.equal(obs.events.filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)?.data['followupIssue'], 200, `${label}: the journal names the issue the run holds`);
+    const ops = f.c.fx.ops.list({ goalId: f.c.goalId, cardId: CARD }).filter((o) => o.effects.includes('review-followup issue'));
+    assert.ok(ops.length > 0 && ops.every((o) => ['succeeded', 'failed'].includes(o.status)), `${label}: every reservation is resolved: ${ops.map((o) => o.status).join(', ')}`);
+    for (const o of ops) assert.ok(obs.events.some((e) => e.type === 'OPERATION_INTENT' && e.data['operationId'] === o.id), `${label}: ${o.id} has its OPERATION_INTENT`);
+  };
+
+  it('every card-run and journal fault point of the command and its retry end with the step recorded, one issue filed, and the run and the journal naming the same issue under I1 to I6 [R3] [R5]', async () => {
     const clean = await atClose();
     let points: FaultPoint[];
     try {
       const res = await underFaults(clean.c.fx.paths, 0, clean.close);
       assert.equal(res.error, undefined);
       points = res.points;
-      assert.deepEqual(points.map((p) => p.call), ['appendFileSync', 'renameSync'], points.map(describePoint).join('; '));
+      assert.deepEqual(points.map((p) => `${p.call} ${p.event ?? ''}`.trim()), ['appendFileSync OPERATION_INTENT', 'appendFileSync EVIDENCE_RETAINED', 'renameSync'], points.map(describePoint).join('; '));
       assert.equal(clean.c.run().followupIssue, 200);
     } finally {
       clean.c.fx.cleanup();
@@ -935,14 +949,59 @@ describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP
         const res = await underFaults(f.c.fx.paths, k, f.close);
         assert.ok(res.error, `k=${k}: the command throws`);
         assert.equal(f.c.run().closure.followups, false, `k=${k}: the step stays unset`);
-        const retried = f.close();
-        const obs = observe(f.c, base, { steps: [], deadline: false });
-        assert.deepEqual(check(obs), [], `k=${k}`);
-        assert.equal(f.issues.length, 1, `k=${k}: one issue in all`);
-        assert.equal(retried.closure.followups, true, `k=${k}`);
-        assert.equal(obs.run?.followupIssue, 200, `k=${k}`);
-        const last = obs.events.filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1);
-        assert.equal(last?.data['followupIssue'], 200, `k=${k}: the journal names the issue the run holds`);
+        assert.equal(f.close().closure.followups, true, `k=${k}: the retry records the step`);
+        settled(f, base, `k=${k}`);
+      } finally {
+        f.c.fx.cleanup();
+      }
+    }
+  });
+
+  it('each write of the operation reservation fails in turn, and the retry files no second issue [R5]', async () => {
+    const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const real = target['renameSync']!;
+    const run = async (failAt: number, body: () => unknown): Promise<{ count: number; error?: Error }> => {
+      let count = 0;
+      target['renameSync'] = (...args: unknown[]) => {
+        if (within(paths, String(args[1]))) {
+          count += 1;
+          if (count === failAt) throw Object.assign(new Error(`EIO: injected fault ${failAt}, renameSync ${String(args[1])}`), { code: 'EIO' });
+        }
+        return real(...args);
+      };
+      syncBuiltinESMExports();
+      try {
+        body();
+        return { count };
+      } catch (error) {
+        return { count, error: error as Error };
+      } finally {
+        target['renameSync'] = real;
+        syncBuiltinESMExports();
+      }
+    };
+    let paths = '';
+    const clean = await atClose();
+    let writes: number;
+    try {
+      paths = clean.c.fx.paths.operations;
+      const res = await run(0, clean.close);
+      assert.equal(res.error, undefined);
+      writes = res.count;
+      assert.equal(writes, 2, 'the reservation and its result');
+    } finally {
+      clean.c.fx.cleanup();
+    }
+    for (let k = 1; k <= writes; k += 1) {
+      const f = await atClose();
+      try {
+        paths = f.c.fx.paths.operations;
+        const base = { ...f.c.spawned, ship: f.c.ship.requests.length };
+        const res = await run(k, f.close);
+        assert.ok(res.error, `operation write ${k}: the command throws`);
+        assert.equal(f.c.run().closure.followups, false, `operation write ${k}: the step stays unset`);
+        assert.equal(f.close().closure.followups, true, `operation write ${k}: the retry records the step`);
+        settled(f, base, `operation write ${k}`);
       } finally {
         f.c.fx.cleanup();
       }

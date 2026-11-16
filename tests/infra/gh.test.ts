@@ -205,12 +205,12 @@ describe('probes/gh (review follow-up issues)', () => {
   const ISSUE_ARGS = ['issue', 'create', '--repo', REPO, '--title', 'Review follow-ups', '--label', 'review-followup', '--body-file', '-'];
 
   it('T1-GH-ISSUES acceptance 1: issuesWithLabel passes the argv of R1 and parses number and body', () => {
-    const { probe, calls } = recording({ 'gh issue list': { stdout: JSON.stringify([{ number: 12, body: 'first' }, { number: 3, body: '' }]) } });
+    const { probe, calls } = recording({ 'gh api repos/': { stdout: JSON.stringify([{ number: 12, body: 'first' }, { number: 3, body: '' }]) } });
     assert.deepEqual(probe.issuesWithLabel(REPO, 'review-followup'), [
       { number: 12, body: 'first' },
       { number: 3, body: '' },
     ]);
-    assert.deepEqual(calls, [{ args: ['issue', 'list', '--repo', REPO, '--label', 'review-followup', '--state', 'all', '--limit', '100', '--json', 'number,body'], input: undefined }]);
+    assert.deepEqual(calls, [{ args: ['api', `repos/${REPO}/issues?labels=review-followup&state=all&per_page=100&page=1`], input: undefined }]);
   });
 
   it('T1-GH-ISSUES acceptance 2: createIssue creates the label, then the issue with the body on stdin, and returns the number from the URL', () => {
@@ -239,10 +239,22 @@ describe('probes/gh (review follow-up issues)', () => {
     }
 
     for (const stdout of ['not json', JSON.stringify({ number: 1, body: 'x' }), JSON.stringify([{ number: '1', body: 'x' }]), JSON.stringify([{ number: 1 }])]) {
-      const { probe } = recording({ 'gh issue list': { stdout } });
+      const { probe } = recording({ 'gh api repos/': { stdout } });
       assert.throws(() => probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, `unparsable list output: ${stdout}`);
     }
-    const listFails = recording({ 'gh issue list': { exitCode: 1, stderr: 'HTTP 404', stdout: '[]' } });
+    const listFails = recording({ 'gh api repos/': { exitCode: 1, stderr: 'HTTP 404', stdout: '[]' } });
     assert.throws(() => listFails.probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, 'a failed list call is an error, not an empty list');
+  });
+
+  it('T1-REVIEW-FOLLOWUP-ISSUE R3 decision 1 F2: issuesWithLabel reads every page until a short one, leaves pull requests out and reads a null body as empty; a failed later page is an error', () => {
+    const full = Array.from({ length: 100 }, (_, n) => ({ number: n + 1, body: `issue ${n + 1}` }));
+    const pages = (second: { stdout?: string; exitCode?: number; stderr?: string }) => ({ [`gh api repos/${REPO}/issues?labels=review-followup&state=all&per_page=100&page=1`]: { stdout: JSON.stringify(full) }, [`gh api repos/${REPO}/issues?labels=review-followup&state=all&per_page=100&page=2`]: second });
+    const { probe, calls } = recording(pages({ stdout: JSON.stringify([{ number: 150, body: 'marker' }, { number: 151, body: null }, { number: 152, body: 'pr', pull_request: {} }]) }));
+    const issues = probe.issuesWithLabel(REPO, 'review-followup');
+    assert.equal(issues.length, 102);
+    assert.deepEqual(issues.slice(100), [{ number: 150, body: 'marker' }, { number: 151, body: '' }]);
+    assert.equal(calls.length, 2, 'two pages read');
+    const failed = recording(pages({ exitCode: 1, stderr: 'HTTP 502' }));
+    assert.throws(() => failed.probe.issuesWithLabel(REPO, 'review-followup'), (e: unknown) => e instanceof GhProbeError && /page=2/.test(e.message), 'a failed second page is an error, not the first page alone');
   });
 });

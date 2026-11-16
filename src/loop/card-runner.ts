@@ -255,6 +255,9 @@ function pathKind(p: string): 'directory' | 'other' | 'absent' | 'unknown' {
   }
 }
 
+/** The effect that marks the operation reserving a card's `review-followup` issue (card T1-REVIEW-FOLLOWUP-ISSUE). */
+const FOLLOWUP_EFFECT = 'review-followup issue';
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -3248,7 +3251,8 @@ export class CardRunner {
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
       }
       if (claim.status === 'expired') {
-        const unresolved = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+        // A follow-up issue reservation blocks the takeover from its intent on: its closer may be filing the issue.
+        const unresolved = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status) || (o.status === 'intended' && o.effects.includes(FOLLOWUP_EFFECT))).map((o) => o.id);
         try {
           const taken = this.leases.takeover(key, () => ({ reconciled: unresolved.length === 0, unresolvedOperations: unresolved }), { operation: `card:${card.id}:close`, now });
           ownerGeneration = taken.lease.generation;
@@ -3307,8 +3311,8 @@ export class CardRunner {
     if (current.state !== 'CLOSE' || !current.mergeVerified) throw new Error(`card ${card.id} is ${current.state}${current.mergeVerified ? '' : ' without a verified merge'}; closure flags apply to a CLOSE run with its merge verified`);
     if (current.ownerGeneration === undefined) throw new Error(`card ${card.id} holds no card lease; run aidlc card next ${card.id} to hold it before closing`);
     this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
-    // Before any write: a failed gh call throws with the run and the journal unchanged, and the retry finds what it filed.
-    const followup = flags.followups ? this.followupIssue(card, current) : undefined;
+    // Before any card-run write: a failed gh call throws with the run unchanged (its reservation resolved as failed), and the retry finds what it filed.
+    const followup = flags.followups ? this.followupIssue(goal, card, current) : undefined;
     const file = this.lessonsFile();
     const data: Record<string, unknown> = { ...followup };
     if (flags.lessons) {
@@ -3371,9 +3375,12 @@ export class CardRunner {
   /**
    * The followups step (card T1-REVIEW-FOLLOWUP-ISSUE): the `review-followup` issue of the run's advisory and deferred
    * findings, found by its marker among the issues of that label (a list, never a search) or filed, or null with the
-   * reason none is filed. A failed gh call throws naming the call; nothing is written here.
+   * reason none is filed. The lookup and the create run under a durable reservation (an operation whose unresolved
+   * intent blocks a takeover of the card lease); a retry reuses an unresolved one and looks up by marker again before it
+   * creates, and the lease is fenced again before the create and before the result. A failed gh call or fence resolves the
+   * reservation as failed and throws naming the call; the card run is not written here.
    */
-  private followupIssue(card: Card, run: CardRun): { followupIssue: number | null; followupNote?: string } {
+  private followupIssue(goal: Goal, card: Card, run: CardRun): { followupIssue: number | null; followupNote?: string } {
     const findings = followupFindings(run);
     const repo = this.config.repository;
     if (this.config.shipPath !== 'github') return { followupIssue: null, followupNote: `the ship path is ${this.config.shipPath}, not github; no issue filed` };
@@ -3381,11 +3388,24 @@ export class CardRunner {
     if (!findings.length) return { followupIssue: null, followupNote: 'the run has no advisory or deferred finding; no issue filed' };
     const sha = run.candidate?.sha ?? run.pr?.headRefOid ?? '';
     const marker = findingMarker(card.id, run.pr?.number, sha, 'review followups');
+    const generation = run.ownerGeneration!;
+    const fence = () => this.leases.fence(resourceKeys.card(this.repo.key, card.id), generation, currentActor(), this.clock());
+    const op = this.ops.unresolved(goal.id, card.id).find((o) => o.effects.includes(FOLLOWUP_EFFECT) && o.target === marker) ?? this.ops.recordIntent({ kind: 'other', goalId: goal.id, cardId: card.id, target: marker, idempotencyKey: marker, ownerGeneration: generation, timeoutMs: 10 * 60_000, effects: [FOLLOWUP_EFFECT] }, this.clock());
+    if (!this.journal(goal.id).filter((e) => e.type === 'OPERATION_INTENT' && e.data['operationId'] === op.id).length) {
+      this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, kind: 'other', target: marker, effects: [FOLLOWUP_EFFECT] } });
+    }
     try {
-      const found = this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker));
-      if (found) return { followupIssue: found.number };
-      return { followupIssue: this.gh.createIssue(repo, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, findings, marker), 'review-followup', this.repo.mainRoot) };
+      let number = this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker))?.number;
+      if (number === undefined) {
+        fence();
+        number = this.gh.createIssue(repo, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, findings, marker), 'review-followup', this.repo.mainRoot);
+      }
+      fence();
+      this.ops.markResult(op.id, 'succeeded', { evidenceRef: `issue #${number}` }, this.clock());
+      // A note an earlier skip recorded no longer holds once an issue is recorded.
+      return { followupIssue: number, followupNote: undefined };
     } catch (err) {
+      this.ops.markResult(op.id, 'failed', { error: (err as Error).message }, this.clock());
       throw new Error(`followups: ${(err as Error).message}`);
     }
   }

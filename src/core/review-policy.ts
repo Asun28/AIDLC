@@ -239,7 +239,11 @@ export function followupFindings(run: Pick<CardRun, 'review' | 'findings'>): Arr
   const out: Array<{ id?: string; text: string }> = [];
   const add = (text: string, id?: string) => {
     const t = text.trim();
-    if (t && !out.some((f) => f.text === t)) out.push(id ? { id, text: t } : { text: t });
+    const seen = out.find((f) => f.text === t);
+    // A duplicate keeps the first position and gives it the finding id it lacked.
+    if (seen) {
+      if (id && !seen.id) seen.id = id;
+    } else if (t) out.push(id ? { id, text: t } : { text: t });
   };
   for (const i of run.review.invocations) if (i.outcome === 'pass' || i.outcome === 'block') for (const r of i.advisory ?? []) add(r);
   for (const f of run.findings) if (f.stage === 'formal' && f.advisory) add(f.reason, f.id);
