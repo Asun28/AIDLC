@@ -235,3 +235,61 @@ Attempt 3, the repair of R3 decision 2 (F5-F8), at 4c2bdda3:
 - Fault points: the followups cases pass unchanged. The writes are still the `OPERATION_INTENT` and `EVIDENCE_RETAINED` appends, the record write, and the claim and result writes of the operation. The verify record says the operation writes are covered. It does not name `updateJson`, because its check needs `name(` and the definition is `updateJson<T>(`.
 - DoD: exit 0, 138 tests, 136 pass, 0 fail, 2 skipped.
 - `npm run check` at 4c2bdda3: exit 0, 3754 tests, 3726 pass, 0 fail, 28 skipped.
+
+Attempt 4, the repair of R3 decision 3 (F9, F10), at 716ac1ab:
+- F9: a close that finds an `UNKNOWN` attempt of the marker resumes it.
+  - It claims the attempt (`UNKNOWN` to `running` through `updateJson`; any other state is refused) and only looks up.
+  - A marked issue is checked with lease and goal, then recorded, and the attempt becomes `succeeded`.
+  - With no marked issue, or a failed lookup, the attempt goes back to `UNKNOWN` and the step refuses with the reconcile command. Nothing is submitted.
+  - A `running` attempt still refuses before any gh call.
+  - Acceptance 2's lost-response retry is direct again: the retry records the visible issue and files nothing. In the `refused` case (HTTP 502, no issue on GitHub) the outcome stays ambiguous. The retry looks up, submits nothing and keeps `UNKNOWN`, and only a reconcile to `failed` (a person finding no marked issue) lets the next close file once. That reconcile is the requirement's path for an invisible outcome, not a bypass.
+- F10: GhProbe gains `ensureLabel` (the label call alone) and `submitIssue` (the issue call alone, body on stdin, number from the URL, same error rules). `createIssue` keeps its contract by calling the two. Each has an added test in gh.test.ts; no existing gh.test.ts line changed this round.
+- Order of calls and checks for a new attempt, with nothing external between steps 6 and 7:
+  1. list the marker's attempts; refuse on `running`, `intended` or `issued`; resume on `UNKNOWN`
+  2. journal `OPERATION_INTENT`
+  3. claim `op-followup-<hash>-<n>` as `running` (record lock)
+  4. `gh api` issues lookup, every page
+  5. found: go to step 8; not found: `gh label create`
+  6. check the card lease fence, the persisted goal (not terminal, same generation), and that the operation is still `running`
+  7. `gh issue create`
+  8. check lease fence and goal again
+  9. operation `succeeded`
+  10. back in `markClosure`: `assertLiveGoal`, `EVIDENCE_RETAINED`, card-run save (compare-and-set)
+- Order for a resume:
+  1. claim `UNKNOWN` to `running`
+  2. lookup
+  3. found: check lease and goal, then `succeeded`; not found: back to `UNKNOWN` and refuse
+- Status each failure leaves:
+  - lookup: `failed` (resume: back to `UNKNOWN`)
+  - label call: `failed`
+  - step-6 check: `failed`, or untouched when the claim is no longer this command's
+  - submit: `UNKNOWN`
+  - any later check: `succeeded` with the number
+- Sweep of tests that reconcile by hand or step around a requirement:
+  - acceptance 2 `refused`: the ambiguous path, as above
+  - F10 claim test: someone else reconciling mid-call is the scenario under test
+  - F9 resume test: one reconcile back to `UNKNOWN` to set up the next case
+  - F6 race case: a hand-written record stands in for the other command
+  - the stale-list racer: an injected ledger view stands in for an interleaving
+  - none skips a step the code takes
+- Mutants, 14 killed:
+  - Q1: UNKNOWN refused at once
+  - Q2: resume falls through to a submit
+  - Q3: resume not back to UNKNOWN
+  - Q4: resume claim unchecked
+  - Q5: running not refused
+  - Q6: no recheck after the label call
+  - Q7: no claim check before the submit
+  - Q8: someone else's status overwritten
+  - Q9: label call skipped
+  - Q10: `createIssue` in the flow (a second label call)
+  - Q11: `submitIssue` makes a label call
+  - Q12: `ensureLabel` ignores failure
+  - Q13: resume records without a recheck
+  - Q14: resume lookup error recorded as failed
+
+  Q4, Q10, Q13 and Q14 first survived and were killed by added tests: a resume claim racer, the call-order assertion, lease expiry during the resumed lookup, and a failed resumed lookup.
+- Fault points: the operation-write case now runs for a new attempt and for the resume of an `UNKNOWN` attempt (claim and result each fail in turn); the retry records the one issue. Not covered: a failed write of the return to `UNKNOWN` leaves the attempt `running`, which is the crash path and needs `aidlc ops reconcile`.
+- No real gh request was sent. One mistyped shell edit once ran the local `gh label create` with stray arguments; gh rejected them at flag parsing ("unknown flag: --force\"), printed usage and made no API request. The edit was reverted.
+- DoD: exit 0, 144 tests, 142 pass, 0 fail, 2 skipped.
+- `npm run check`: exit 0, 3760 tests, 3732 pass, 0 fail, 28 skipped.
