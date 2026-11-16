@@ -320,7 +320,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 13: a card whose step removed the worktree r
     const dir = worktree(fx);
     retained(fx, goalId, { cardId: CARD });
     const runner = closingRunner(fx, []);
-    const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
+    const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, followups: true });
     assert.equal(existsSync(dir), false);
     const recorded = runner.markClosure(fx.goal(goalId), card, marked, { lessons: true }, { skipped: 'nothing to record' });
     assert.equal(runner.next(fx.goal(goalId), card, recorded).directive.kind, 'done');

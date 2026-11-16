@@ -88,8 +88,7 @@ retry counts); one retry owner. Verified quota or admission
 hold => WAIT within the deadline through the shared queue (`aidlc review
 status`); unknown output alone is not quota. Dedupe by invocation id, not
 file count; script counters stay separate. Introduced defect: fix in scope
-or revert, never a deferred nit. Unrelated finding: deduplicated issue
-keyed by card/PR/SHA marker. No self-approval, fan-out, account or effort/family
+or revert, never a deferred nit. No self-approval, fan-out, account or effort/family
 switch on quota; only formalReview.fallback may.
 
 ## CI
@@ -108,6 +107,7 @@ removes the worktree. A reminder or exit 0 is not closure. Persistence
 failure after merge => merge_verified + STOP/audit; never merge again.
 Lessons only under repository policy; no unrelated staging, sweeps or
 base pushes.
+`--followups` (in --all): one marked issue, advisory/deferred findings.
 
 ## DONE / STOP
 DONE is a child result; the parent verifies and delivers the goal. STOP

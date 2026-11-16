@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, findingMarker, followupFindings, followupIssueBody, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -3280,8 +3280,9 @@ export class CardRunner {
     const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.' : '';
     const checked = flagged.includes('evidence') ? ` \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${card.id}\`; \`aidlc audit seal\` also needs \`--candidate <digest>\` on each retained \`dod-receipt\`, \`review-verdict\`, \`ci-run\`, \`test-output\` or \`health\` file.` : '';
     const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}${checked}` : '';
+    const followupHint = missing.includes('followups') ? ` \`--followups\` (also in \`--all\`) files one GitHub issue labelled review-followup that lists the advisory and deferred findings of the formal review, or finds the one its card, PR and candidate marker names, and records its number; off the github ship path, without \`repository\` or with no such finding it records why none was filed.` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
-    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
+    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${followupHint}${lessonHint}` } };
   }
 
   /**
@@ -3306,8 +3307,10 @@ export class CardRunner {
     if (current.state !== 'CLOSE' || !current.mergeVerified) throw new Error(`card ${card.id} is ${current.state}${current.mergeVerified ? '' : ' without a verified merge'}; closure flags apply to a CLOSE run with its merge verified`);
     if (current.ownerGeneration === undefined) throw new Error(`card ${card.id} holds no card lease; run aidlc card next ${card.id} to hold it before closing`);
     this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
+    // Before any write: a failed gh call throws with the run and the journal unchanged, and the retry finds what it filed.
+    const followup = flags.followups ? this.followupIssue(card, current) : undefined;
     const file = this.lessonsFile();
-    const data: Record<string, unknown> = {};
+    const data: Record<string, unknown> = { ...followup };
     if (flags.lessons) {
       if (disposition.lessonText && disposition.skipped) throw new Error('record either a lesson or a reason to skip, not both');
       if (disposition.lessonText) {
@@ -3360,9 +3363,31 @@ export class CardRunner {
       if (!failures.length) throw err;
       throw new Error(`${failures.join('; ')}; journal: ${(err as Error).message}`);
     }
-    const saved = this.save({ ...base, closure });
+    const saved = this.save({ ...base, closure, ...followup });
     if (failures.length) throw new Error(failures.join('; '));
     return saved;
+  }
+
+  /**
+   * The followups step (card T1-REVIEW-FOLLOWUP-ISSUE): the `review-followup` issue of the run's advisory and deferred
+   * findings, found by its marker among the issues of that label (a list, never a search) or filed, or null with the
+   * reason none is filed. A failed gh call throws naming the call; nothing is written here.
+   */
+  private followupIssue(card: Card, run: CardRun): { followupIssue: number | null; followupNote?: string } {
+    const findings = followupFindings(run);
+    const repo = this.config.repository;
+    if (this.config.shipPath !== 'github') return { followupIssue: null, followupNote: `the ship path is ${this.config.shipPath}, not github; no issue filed` };
+    if (!repo) return { followupIssue: null, followupNote: 'no repository is configured; no issue filed' };
+    if (!findings.length) return { followupIssue: null, followupNote: 'the run has no advisory or deferred finding; no issue filed' };
+    const sha = run.candidate?.sha ?? run.pr?.headRefOid ?? '';
+    const marker = findingMarker(card.id, run.pr?.number, sha, 'review followups');
+    try {
+      const found = this.gh.issuesWithLabel(repo, 'review-followup', this.repo.mainRoot).find((i) => i.body.includes(marker));
+      if (found) return { followupIssue: found.number };
+      return { followupIssue: this.gh.createIssue(repo, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, findings, marker), 'review-followup', this.repo.mainRoot) };
+    } catch (err) {
+      throw new Error(`followups: ${(err as Error).message}`);
+    }
   }
 
   /**

@@ -885,3 +885,67 @@ describe('fault-point check: each card-run write and journal append of five comm
     assert.ok(unreleased.split('\n').includes(LIVENESS_CHANGELOG_ENTRY), LIVENESS_CHANGELOG_ENTRY);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// card close --followups (card T1-REVIEW-FOLLOWUP-ISSUE): its journal append and its card-run record write fail in turn;
+// the next step is the same command again, which must find the issue the failed call filed and file none.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('fault-point check: card close --followups at CLOSE (T1-REVIEW-FOLLOWUP-ISSUE)', { timeout: 30_000 }, () => {
+  /** The card at CLOSE with one advisory reason, and a closing runner on the github path whose scripted gh keeps its issues. */
+  const atClose = async () => {
+    const c = await startAt('D');
+    assert.equal(next(c).directive.kind, 'close');
+    const run = c.run();
+    c.fx.store.saveCardRun(CardRun.parse({ ...run, review: { ...run.review, invocations: run.review.invocations.map((i) => ({ ...i, advisory: ['Name the unit.'] })) } }));
+    const issues: Array<{ number: number; body: string }> = [];
+    let body = '';
+    const scripted = scriptedRunner({
+      'gh issue list': () => ({ stdout: JSON.stringify(issues) }),
+      'gh label create': {},
+      'gh issue create': () => {
+        issues.push({ number: 200 + issues.length, body });
+        return { stdout: `https://github.com/acme/fp/issues/${issues.at(-1)!.number}\n` };
+      },
+    });
+    const gh: typeof scripted = (command, args, options) => {
+      body = options?.input ?? '';
+      return scripted(command, args, options);
+    };
+    const closer = new CardRunner({ paths: c.fx.paths, repo: c.fx.repo, config: { ...c.fx.config, shipPath: 'github', repository: 'acme/fp' }, store: c.fx.store, leases: c.fx.leases, queue: c.fx.queue, ops: c.fx.ops, shipPath: c.ship, now: c.fx.now, runner: gh });
+    return { c, issues, close: () => closer.markClosure(c.g(), c.card, c.run(), { followups: true }) };
+  };
+
+  it('every fault point of the command and its retry end with the step recorded, one issue filed, and the run and the journal naming the same issue under I1 to I6 [R3] [R5]', async () => {
+    const clean = await atClose();
+    let points: FaultPoint[];
+    try {
+      const res = await underFaults(clean.c.fx.paths, 0, clean.close);
+      assert.equal(res.error, undefined);
+      points = res.points;
+      assert.deepEqual(points.map((p) => p.call), ['appendFileSync', 'renameSync'], points.map(describePoint).join('; '));
+      assert.equal(clean.c.run().followupIssue, 200);
+    } finally {
+      clean.c.fx.cleanup();
+    }
+    for (let k = 1; k <= points.length; k += 1) {
+      const f = await atClose();
+      try {
+        const base = { ...f.c.spawned, ship: f.c.ship.requests.length };
+        const res = await underFaults(f.c.fx.paths, k, f.close);
+        assert.ok(res.error, `k=${k}: the command throws`);
+        assert.equal(f.c.run().closure.followups, false, `k=${k}: the step stays unset`);
+        const retried = f.close();
+        const obs = observe(f.c, base, { steps: [], deadline: false });
+        assert.deepEqual(check(obs), [], `k=${k}`);
+        assert.equal(f.issues.length, 1, `k=${k}: one issue in all`);
+        assert.equal(retried.closure.followups, true, `k=${k}`);
+        assert.equal(obs.run?.followupIssue, 200, `k=${k}`);
+        const last = obs.events.filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1);
+        assert.equal(last?.data['followupIssue'], 200, `k=${k}: the journal names the issue the run holds`);
+      } finally {
+        f.c.fx.cleanup();
+      }
+    }
+  });
+});

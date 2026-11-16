@@ -18,15 +18,15 @@ Harm: a card that the journal reports in one state while the run record holds an
 
 ## Coverage
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
-- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`
+- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`, `CardRunner.markClosure`, `CardRunner.followupIssue`
 - `src/state/goal-store.ts`: `GoalStore.saveCardRun`, `GoalStore.updateCardRun`
 - `src/state/store.ts`: `atomicWriteJson`, `atomicWriteText`
 - `src/state/journal.ts`: `Journal.append`
 
-The commands driven are `card attempt` (a success at BUILD), `review pre`
+The commands driven are `card attempt` (a BUILD success), `review pre`
 (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3
-pass (ship to CLOSE) and `card next` at SHIP past the card deadline
-(STOP/time). Invariants I1 to I6 and the liveness comparison are in the
+pass (to CLOSE) or past the deadline (STOP/time), and `card close
+--followups` (recovered by a rerun). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
 Sync commit: `402a07f3d10eb0e90396a3cc3d9293eb045b4f0a`
@@ -35,8 +35,8 @@ Sync commit: `402a07f3d10eb0e90396a3cc3d9293eb045b4f0a`
 ```
 node --test tests/scenarios/fault-points.test.ts
 ```
-About 11 seconds on Windows at the sync commit (28 tests). `npm test`
-runs it, so CI runs it on every push.
+About 11 seconds on Windows at the sync commit (28 tests); CI runs it
+in `npm test`.
 
 ## Bounds and assumptions
 - One fault per run, at each write index of the command as counted by a
@@ -67,17 +67,15 @@ runs it, so CI runs it on every push.
   run and the journal as they were), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
   BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
-  and no worktree path, card T0-PREPARE-WORKTREE).
+  and no worktree path, card T0-PREPARE-WORKTREE), other `card close` flags.
 - A confirmed violation the current code shows is not a pass: it is
   pinned in `KNOWN_VIOLATIONS` with its counterexample and filed as a
-  T0-bugfix card, so those fault points are known defects, not covered
-  behaviour.
+  T0-bugfix card.
 
 ## Shown failing
 Scratch break, never committed: in `src/loop/card-runner.ts`,
 `CardRunner.preReview`, the `PRE_REVIEW_DECIDED` journal append was moved
-from after `this.commitReviewed` (the store write that saves the R2 pass
-round) to before it. `git diff --name-only` against the sync commit listed
+from after `this.commitReviewed` (the R2 pass round write) to before it. `git diff --name-only` against the sync commit listed
 `src/loop/card-runner.ts`; the check then failed (exit 1, 2 of 28 failed):
 the record write after the early append failed, and the journal reported
 a pass the run did not hold. `git restore` dropped the change and the

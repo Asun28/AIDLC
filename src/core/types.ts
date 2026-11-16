@@ -924,7 +924,8 @@ export const CardRun = z.object({
   redReceipt: z.string().optional(),
   dodReceipt: z.string().optional(),
   mergeVerified: z.boolean().default(false),
-  closure: z
+  /** A new run (no closure yet) starts with the `followups` step false; a stored closure without the key predates the step and parses with it true, so no closed or closing run gains a step (card T1-REVIEW-FOLLOWUP-ISSUE). */
+  closure: z.preprocess((v) => (v === undefined ? { followups: false } : v !== null && typeof v === 'object' && !('followups' in v) ? { ...v, followups: true } : v), z
     .object({
       metadata: z.boolean().default(false),
       docSync: z.boolean().default(false),
@@ -933,8 +934,13 @@ export const CardRun = z.object({
       cleanup: z.boolean().default(false),
       /** A lesson line appended to docs/LESSONS.md or a recorded reason to skip; `--all` never asserts it. Always false by default: a run persisted as DONE before the predicate existed stays DONE through the state evidence, not through this default. */
       lessons: z.boolean().default(false),
-    })
-    .prefault({}),
+      /** One `review-followup` issue filed, found or ruled unneeded (`card close --followups`). */
+      followups: z.boolean().default(false),
+    })),
+  /** The `review-followup` issue the followups step filed or found; null when it filed none (card T1-REVIEW-FOLLOWUP-ISSUE). */
+  followupIssue: z.number().int().positive().nullable().optional(),
+  /** Why the followups step filed no issue. */
+  followupNote: z.string().optional(),
   evidence: z.array(EvidenceRef).default([]),
   stop: StopRecord.optional(),
   blocker: z.string().optional(),

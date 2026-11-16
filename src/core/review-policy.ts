@@ -230,6 +230,33 @@ export function findingMarker(cardId: string, prNumber: number | undefined, sha:
   return `aidlc-finding:${cardId}:${prNumber ?? 'nopr'}:${sha.slice(0, 12)}:${slug}`;
 }
 
+/**
+ * The follow-up findings of a card run (card T1-REVIEW-FOLLOWUP-ISSUE R2), once each by trimmed text, in this order: the
+ * advisory reasons of its decided formal invocations, its formal findings raised as advisory, and its findings deferred
+ * by a ruling that names no issue.
+ */
+export function followupFindings(run: Pick<CardRun, 'review' | 'findings'>): Array<{ id?: string; text: string }> {
+  const out: Array<{ id?: string; text: string }> = [];
+  const add = (text: string, id?: string) => {
+    const t = text.trim();
+    if (t && !out.some((f) => f.text === t)) out.push(id ? { id, text: t } : { text: t });
+  };
+  for (const i of run.review.invocations) if (i.outcome === 'pass' || i.outcome === 'block') for (const r of i.advisory ?? []) add(r);
+  for (const f of run.findings) if (f.stage === 'formal' && f.advisory) add(f.reason, f.id);
+  for (const f of run.findings) if (f.ruling?.decision === 'deferred' && f.ruling.issue === undefined) add(f.reason, f.id);
+  return out;
+}
+
+/**
+ * The body of a `review-followup` issue. Reviewer text is untrusted: each finding is one list item on one line, and an
+ * `@` before a name gets a zero-width space so the issue mentions no one. The marker is the last line.
+ */
+export function followupIssueBody(cardId: string, prNumber: number | undefined, sha: string, findings: Array<{ id?: string; text: string }>, marker: string): string {
+  const line = (t: string) => t.replace(/\s+/g, ' ').replace(/@(?=[A-Za-z0-9])/g, '@​');
+  const items = findings.map((f) => `- ${f.id ? `${f.id}: ` : ''}${line(f.text)}`);
+  return [`Review follow-ups of ${cardId}, PR ${prNumber === undefined ? 'none' : `#${prNumber}`}, candidate ${sha}.`, '', 'The advisory and deferred findings of its formal review, as the reviewers wrote them:', '', ...items, '', marker, ''].join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Review findings: identity, dispositions, re-raises (T1-REVIEW-FINDINGS)
 // ---------------------------------------------------------------------------
