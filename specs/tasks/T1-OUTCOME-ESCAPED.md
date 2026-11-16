@@ -117,7 +117,7 @@ The test of acceptance 4 parses the file and checks: the keys are `commit`, `ran
 
 Attempt 1, implementer. RED at becb2458 (tests only, on base 332956a2): `node --test tests/surface/outcome-ingest.test.ts tests/surface/outcome-github.test.ts` exit 1, pass 19 fail 5: INGEST acceptance 1 and 3 by assertion (no `diagnosis`/`mentions` keys), GITHUB-2 acceptance 12 by assertion (no `summary_escaped` among the printed views), ESCAPED acceptance 2 (`Catalog Error: Table with name summary_escaped does not exist!`), ESCAPED acceptance 4 (ENOENT on bench/outcome/escaped.json).
 
-Revert table (scratch, restored): week from the TIMESTAMPTZ in the Tokyo session, earlier-merge condition dropped, `bugfix_cards` without the diagnosis filter: each turns ESCAPED acceptance 2 red.
+Revert table (scratch, restored): week from the TIMESTAMPTZ in the Tokyo session, earlier-merge condition dropped, `bugfix_cards` without the diagnosis filter: each turns ESCAPED acceptance 2 red. Repair of R3 decision 2 (475c8651, scratch, restored): `<` to `<=` in the earlier-merge condition turns "ESCAPED R8" red; `same_class` not read, the `\b` boundaries dropped, the `Set` dropped, the sort dropped: each turns "ESCAPED R7" red.
 
 Run of R4, from this worktree at 1cd55ef2 (view text final):
 
@@ -156,9 +156,9 @@ Command on both: `npm run typecheck && node --test` over the eight DoD files (ou
 
 | Platform | Node | Tested SHA | Tests | Pass | Fail | Skipped | Exit |
 |---|---|---|---|---|---|---|---|
-| Windows 11, this worktree, DuckDB v1.5.6 on PATH | v22.23.1 | a4cfd67b | 69 | 69 | 0 | 0 | 0 |
-| Linux, WSL Ubuntu, git 2.43.0, fresh clone in a mktemp directory, `npm ci` | v24.3.0 | a4cfd67b | 69 | 57 | 0 | 12 | 0 |
+| Windows 11, this worktree, DuckDB v1.5.6 on PATH | v22.23.1 | 475c8651 | 71 | 71 | 0 | 0 | 0 |
+| Linux, WSL Ubuntu, git 2.43.0, fresh clone in a mktemp directory, `npm ci` | v24.3.0 | 475c8651 | 71 | 58 | 0 | 13 | 0 |
 
-On Linux no DuckDB binary is found (`DUCKDB_BIN` unset, no `duckdb` on PATH), so the 12 view tests are skipped with `no duckdb binary`. Among them are "T1-OUTCOME-ESCAPED acceptance 2" and "T1-OUTCOME-GITHUB-2 acceptance 12", so on Linux this card's view SQL is not covered; it is covered only by the Windows row. On Linux the typecheck, the ingest tests (acceptance 1 and 3 included) and "T1-OUTCOME-ESCAPED acceptance 4" ran and passed.
+On Linux no DuckDB binary is found (`DUCKDB_BIN` unset, no `duckdb` on PATH), so the 13 view tests are skipped with `no duckdb binary`. Among them are "T1-OUTCOME-ESCAPED acceptance 2", "T1-OUTCOME-ESCAPED R8" and "T1-OUTCOME-GITHUB-2 acceptance 12", so on Linux this card's view SQL is not covered; it is covered only by the Windows row. On Linux the typecheck, the ingest tests (acceptance 1 and 3 included) "T1-OUTCOME-ESCAPED acceptance 4" and "T1-OUTCOME-ESCAPED R7" ran and passed.
 
-`git diff --stat a4cfd67b <new sha>`: this section only (specs/tasks/T1-OUTCOME-ESCAPED.md).
+`git diff --stat 475c8651 <new sha>`: this section only (specs/tasks/T1-OUTCOME-ESCAPED.md).
