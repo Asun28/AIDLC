@@ -1,7 +1,7 @@
 ---
 id: T1-BENCH-ORDER-PRE
 title: aidlc review bench run takes --order analysis-first, which puts the reasons before the verdict in the schema and contract, and --pre-command, an R2 reviewer argv for one run that writes no configuration
-status: todo
+status: merged
 branch: T1-BENCH-ORDER-PRE
 worktree: D:\wt\AIDLC\T1-BENCH-ORDER-PRE
 plan_ref: plans/review-recall.md#order-of-work
