@@ -747,6 +747,12 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     assert.ok(holds(operations), 'the current version and every move before it');
     for (const clause of HISTORY) assert.equal(holds(operations.replace(clause, '')), false, `removing this clause still passes: ${clause}`);
     assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');
+    const current = Number(/^REVIEW\.md@(\d+)$/.exec((JSON.parse(readFileSync(path.join(root, 'aidlc.config.json'), 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion)?.[1]);
+    const sentence = (n: number) => `\`reviewPolicyVersion\` is \`REVIEW.md@${n}\``;
+    const noEarlier = (text: string) => !text.includes(sentence(5));
+    assert.ok(current > 1 && operations.includes(sentence(current)), `OPERATIONS.md names REVIEW.md@${current} as current`);
+    assert.ok(noEarlier(operations), 'no version before the current one is named as current');
+    for (let n = 1; n < current; n++) assert.equal(noEarlier(operations.replace(sentence(current), sentence(n))), false, `naming REVIEW.md@${n} as current still passes`);
   });
 
   test('acceptance 5: the CHANGELOG Unreleased section carries the entry; removing any sentence fails [R4]', () => {
@@ -762,5 +768,17 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
       assert.ok(sectionOf(text, '## Two axes, never merged').includes(AXES.join('\n')), `${file}: the axes text`);
       assert.equal(text.includes('they never become a silent merge bar'), false, `${file}: the replaced sentence`);
     }
+  });
+});
+
+describe('the policy version the test titles name (T0-REVIEW-VERSION-TITLES)', () => {
+  test('acceptance 1: every REVIEW.md version a test title in this file names is the version both configs carry [R1]', () => {
+    const versions = [path.join(root, 'aidlc.config.json'), path.join(tpl, 'aidlc.config.json')].map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion);
+    assert.equal(versions[1], versions[0], 'both configs carry one version');
+    const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const titles = [...source.matchAll(/^\s*test\((['"`])(.*?)\1, /gm)].map((match) => match[2] ?? '');
+    assert.equal(titles.length, [...source.matchAll(/^\s*test\(/gm)].length, 'every test title was read');
+    const stale = titles.filter((title) => [...title.matchAll(/REVIEW\.md@\d+/g)].some((named) => named[0] !== versions[0]));
+    assert.deepEqual(stale, [], `titles naming a version other than ${versions[0]}`);
   });
 });
