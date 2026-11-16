@@ -80,7 +80,7 @@ Platform runs of the three changed test files:
 
 | Platform | Command | Node | Tested SHA | Tests / pass / fail / skipped | Exit |
 |---|---|---|---|---|---|
-| Windows 11 | `npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/scenarios/dod-receipt-required.test.ts tests/scenarios/review-rule-ship.test.ts` (in the card worktree) | v22.18 or later (repo minimum) | baf1e5097917cf148391ae3cc3709980905a038a | 70 / 69 / 0 / 1 (EACCES test, skipped on Windows) | 0 |
+| Windows 11 | `npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/scenarios/dod-receipt-required.test.ts tests/scenarios/review-rule-ship.test.ts` (in the card worktree) | v22.23.1 | baf1e5097917cf148391ae3cc3709980905a038a | 70 / 69 / 0 / 1 (EACCES test, skipped on Windows) | 0 |
 | Linux (WSL Ubuntu, git 2.43.0) | fresh `git clone --no-checkout` of the main checkout into a `mktemp -d` directory, `git checkout <sha>`, `npm ci`, then `node --test --test-reporter=tap tests/scenarios/dirty-success.test.ts tests/scenarios/dod-receipt-required.test.ts tests/scenarios/review-rule-ship.test.ts` | v24.3.0 (the WSL host has no node 22 at or above 22.18) | baf1e5097917cf148391ae3cc3709980905a038a | 70 / 70 / 0 / 0 | 0 |
 
-The Linux run was on baf1e509; the candidate that carries this table differs from it only in specs/tasks/T1-DOD-GATE-FIXTURES.md (`git diff --stat baf1e509 <candidate>` in the attempt receipt).
+The Linux run was on baf1e509; the candidate that carries this table differs from it only in specs/tasks/T1-DOD-GATE-FIXTURES.md : `git diff --stat baf1e509 <candidate>` gives `specs/tasks/T1-DOD-GATE-FIXTURES.md | 1 file changed, insertions only`; the exact count is in the attempt receipt.
