@@ -149,3 +149,38 @@ Attempt 1, after the R8 amendment (74dba070), candidate e40388f6:
 Attempt 1, after the R7 amendment (64ce6f58), merged at 60d0c586:
 - R7: card-loop.md and its template are unchanged under the amendment. `git diff main -- .claude/skills/aidlc-loop/card-loop.md templates/claude/skills/aidlc-loop/card-loop.md` is empty. The CLOSE directive names `--followups` (R6), and docs/OPERATIONS.md states the step.
 - DoD: exit 0, 129 tests, 127 pass, 0 fail, 2 skipped. The full suite passed at e40388f6 (3745 tests, 3717 pass, 0 fail, 28 skipped). The merge since then brings only card text.
+
+Attempt 2, the repair of R3 decision 1 (F1-F4), at 5498a0de:
+- F1: a duplicate keeps its first position and gains the finding id it lacked. Acceptance 1 now expects `- F2: Prefer a Map for the lookup.`, and fixture F8 shows a first id is never replaced.
+- F2: `issuesWithLabel` reads `gh api repos/<repo>/issues?labels=<label>&state=all&per_page=100&page=N` until a short page. Pull requests are left out, and a null body reads as empty. Past 1000 pages it throws instead of returning a partial list.
+  - The argv and keys of `tests/infra/gh.test.ts` T1-GH-ISSUES acceptance 1 and 3 change from `gh issue list` to the API (amendment 4178f0a7).
+  - New tests: a match on page 2 in gh.test.ts and in followup-issue.test.ts.
+- F3: the lookup and the create run under an `other` operation with the effect `review-followup issue`, journaled with `OPERATION_INTENT`.
+  - While its intent is unresolved, `close()` refuses a takeover of the card lease.
+  - The lease is fenced again before the create and before the result.
+  - The reservation resolves as `succeeded` before the card-run write, or as `failed` on any error. A retry reuses an unresolved reservation, journals a missing intent, and looks up by marker again before it creates.
+  - Tested: a lease that expires during the lookup gets its takeover refused and the old closer files nothing; a lease that expires during the create records nothing.
+- F4: a recorded issue clears `followupNote`. Tested: a skip without a repository, then a success.
+- Fault points: the followups case now expects the writes `OPERATION_INTENT`, `EVIDENCE_RETAINED` and the record write, plus a second case that fails each of the two operation writes in turn. The retry files no second issue, and every reservation is resolved and journaled. The verify-card-run-writes record names the operation writes.
+- Sweep:
+  - Dedupe sites: only `followupFindings`.
+  - gh calls treated as complete in this step: only `issuesWithLabel`. `checkRuns` (50-page cap) and `prsForBranch` predate this card and are outside its scope.
+  - Network calls between a fence and a write: the lookup and the create, both fenced again.
+  - Optional fields a later success must clear: `followupNote`.
+- Mutants, all 15 killed:
+  - N1: no id enrichment
+  - N2: id overwritten
+  - N3: first page only
+  - N4: pull requests included
+  - N5: stop on a full page
+  - N6, N15: takeover ignores the reservation
+  - N7: no fence before the create
+  - N8: no fence before the result
+  - N9: reservation not reused
+  - N10: intent not journaled on reuse
+  - N11: no failed result
+  - N12: note kept
+  - N13: no lookup before the create
+  - N14: success not marked
+- DoD: exit 0, 134 tests, 132 pass, 0 fail, 2 skipped.
+- `npm run check`: exit 0, 3750 tests, 3722 pass, 0 fail, 28 skipped.
