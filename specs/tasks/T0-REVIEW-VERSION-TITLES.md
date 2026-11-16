@@ -39,3 +39,13 @@ npm run typecheck && node --test tests/surface/templates.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every test in the file passes and the typecheck is clean.
+
+## Attempt evidence
+
+RED on 037a15d0 (titles and stale check as on main 39dc7121): `node --test tests/surface/templates.test.ts` exit 1, 38 pass, 2 fail: acceptance 1 lists the five stale titles (:196, :549, :567, :666, :738) under `titles naming a version other than REVIEW.md@7`; acceptance 2 fails `naming REVIEW.md@1 as current still passes` under the old check, which rejects only `@5`.
+
+| # | proof | result |
+|---|---|---|
+| 1 | `T0-REVIEW-VERSION-TITLES` acceptance 1 test; revert run: the :666 title set back to `REVIEW.md@6` | pass on the candidate; revert run red (39 pass, 1 fail) |
+| 2 | `T0-REVIEW-IMPACT-BAR` acceptance 3 test, mutants `@1` to `@6` in the test; revert run: docs/OPERATIONS.md:434 changed to name `REVIEW.md@6` as current, which the old check passed | pass on the candidate; revert run red (`no version before the current one is named as current`) |
+| 3 | `npm run typecheck && node --test tests/surface/templates.test.ts`; `git diff 39dc7121 -- tests/` removes no assertion line and changes no expected value | exit 0, 40 pass, 0 fail |
