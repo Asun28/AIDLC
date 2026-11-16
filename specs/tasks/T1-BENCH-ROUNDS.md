@@ -56,3 +56,37 @@ npm run typecheck && node --test tests/surface/review-bench-rounds.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; no existing test line changes.
+
+## Attempt evidence
+
+Attempt 1 (base main 7001e968).
+
+RED: commit 9b52b7b3, `node --test tests/surface/review-bench-rounds.test.ts`, 4 of 4 failing for the stated reasons:
+- `not ok 1 - T1-BENCH-ROUNDS acceptance 1: ...`: AssertionError, `calls.length` actual 1, expected 2 (the option is ignored, one review).
+- `not ok 2 - T1-BENCH-ROUNDS acceptance 2: ...`: AssertionError, actual 1, expected 2 (scenario "the same identity in other words": no second round).
+- `not ok 3 - T1-BENCH-ROUNDS acceptance 3: ...`: AssertionError, actual 2, expected 5 (one review per candidate).
+- `not ok 4 - T1-BENCH-ROUNDS acceptance 4: ...`: `Missing expected rejection: 0` (`--rounds 0` not refused).
+
+Changed after RED, in the new test file only: the acceptance 1 literal `## Prior findings\n- none` corrected to `- none (first round of this cycle)`, the text `renderPriorFindings` gives for no finding (the test was wrong, the prompt is unchanged); added at GREEN, each shown failing by a mutant below: the acceptance 2 check that a repeated reason is listed again (M8), the acceptance 3 duration sum with scripted receipt durations (M26), and the acceptance 4 CLI refusal naming `"two"` (M25).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/review-bench-rounds.test.ts, acceptance 1 (scripted runner, real git checkout) | pass |
+| 2 | same file, acceptance 2 (pass, no verdict in round 1 or 2, same identity in other words, same trimmed text with no identity, P2-only and repeated-only rounds, quota hold, the working-tree reader) | pass |
+| 3 | same file, acceptance 3 | pass |
+| 4 | same file, acceptance 4 (library and CLI refusals, `--rounds 1` prompt equal to a run without the option, empty `foundInDecision` byte-identical) | pass |
+| 5 | review-bench, pre-review, lesson-match, r2-pass-notes, edge-scope and prose tests in the DoD, all pass; pre-review.test.ts prompt hashes unchanged | pass |
+| 6 | docs/OPERATIONS.md, Reviewer bench, new paragraph "`--rounds <n>` (card T1-BENCH-ROUNDS; ...)" directly after the `aidlc review bench run` paragraph | reviewer-verified |
+
+Pinned literals updated (forbid exception), tests/surface/review-bench.test.ts:
+- line 440, `OPERATIONS_SECTION`: one element added, the R6 paragraph, its text equal to the docs paragraph; no existing element changed.
+- line 766, `Object.keys(report)` in "T1-BENCH-TRIALS-2 acceptance 3": `'options'` added after `'rules'` (R5); nothing else.
+
+Working-tree reader (`checkoutLines`, src/review/bench.ts): realpath, then `resolvesInside` the checkout, then `isFile`, all inside a try; a NUL path, `../outside.ts`, an absolute outside path, a directory and a missing file give no lines (acceptance 2). The symlink-out case runs where the account can create links; this Windows account cannot (EPERM), so it ran here only through the `../` and absolute cases.
+
+Mutants (each applied alone, `node --test tests/surface/review-bench-rounds.test.ts`): all 26 killed.
+M1 severity filter dropped (acc 2); M2 P0 only (acc 1-3); M3 P1 only (acc 2-3); M4 newness by text only (acc 2-3); M5 newness by identity only (acc 2); M6 no trim (acc 2); M7 every reason new (acc 2-3); M8 only new reasons passed on (acc 2); M9 score on the last round only (acc 1-3); M10 clean false block on the last round only (acc 3); M11 no roundTotals carry-forward (acc 3); M12 range refusal dropped (acc 4); M13 pre refusal dropped (acc 4); M14 found reasons not passed (acc 1-3); M15 quota hold not held (acc 2); M16 reader leaves the checkout (acc 2); M17 reader throws (acc 2); M18 `rounds` on one round (acc 4); M19 `roundTotals` on one round (acc 4); M20 per-round cited count of the union (acc 1-3); M21 section on the pre stage only (acc 1-3); M22 section text changed (acc 1-3); M23 section on an empty list (acc 1, 4); M24 `options` dropped (acc 1, 3, 4); M25 CLI integer check dropped (acc 4); M26 case duration of the last round (acc 3).
+
+DoD: exit 0, 151 tests, 150 pass, 0 fail, 1 skipped (T1-LESSON-MATCH acceptance 4, NTFS refuses a tab or a quote in a name).
+Full suite (`npm run check` on 99ac1143): exit 0, 3737 tests, 3709 pass, 0 fail, 28 skipped.
+Diff against main: src 94 added, 23 removed (bench.ts +83/-21, pre-review.ts +5, main.ts +4/-2); docs +2; tests +253/-1 (new file 251).
