@@ -209,6 +209,35 @@ test('T1-BENCH-ROUNDS acceptance 3: rounds and roundTotals score each round on t
     assert.deepEqual((report as { roundTotals?: unknown }).roundTotals, [totals(0, 2), totals(1, 1), totals(1, 1)], 'c-clean keeps its round 2 score in round 3');
     assert.deepEqual(report.totals, totals(1, 1));
     assert.deepEqual((report as { options?: unknown }).options, { rounds: 3 });
+
+    // Every path that builds a case result carries rounds: an error entry per round run for a case the bench cannot score
+    // in a reviewed group, and none for a case no round reviewed (card absent, failed checkout, card id mismatch, quota stop).
+    const other = (id: string, extra: Record<string, unknown>) => ({ ...bugCase(fx, id, fx.c1, 13), ...extra });
+    const paths = writeCases(fx, 'paths', [
+      bugCase(fx, 'a-scored', fx.c1, 13),
+      other('b-unscorable', { expected: [{ file: 'src/other.ts', line: 1, window: 0, class: 'dim-2' }] }),
+      other('c-card-absent', { card: { id: CARD_ID, path: 'specs/tasks/NONE.md' } }),
+      other('d-bad-checkout', { candidate: 'f'.repeat(40) }),
+      other('e-wrong-card', { candidate: fx.c2, base: fx.c1, card: { id: 'T1-OTHER', path: CARD_PATH } }),
+      other('f-quota', { candidate: fx.c2 }),
+      other('g-skipped', { candidate: fx.c2, card: { id: CARD_ID, path: 'specs/tasks/OTHER.md' } }),
+    ]);
+    const all = await runRounds(fx, paths, [block(MISS), verdict('pass'), QUOTA], { rounds: 2 });
+    assert.equal(all.calls.length, 3);
+    const outcomes = (c: bench.BenchCaseResult) => [c.id, c.outcome, roundsOf(c)?.map((r) => r.outcome)];
+    assert.deepEqual(all.report.cases.map(outcomes), [
+      ['a-scored', 'miss', ['miss', 'miss']],
+      ['b-unscorable', 'error', ['error', 'error']],
+      ['c-card-absent', 'error', []],
+      ['d-bad-checkout', 'error', []],
+      ['e-wrong-card', 'error', []],
+      ['f-quota', 'no-verdict', ['no-verdict']],
+      ['g-skipped', 'no-verdict', []],
+    ]);
+    assert.deepEqual(roundsOf(all.report.cases[1])!.map((r) => r.cited), [1, 0], 'an error entry counts the cited reasons of its round');
+    // A case with no round keeps its own outcome in every entry of roundTotals.
+    const kept = { bugCases: 7, hits: 0, misses: 1, recall: 0, cleanCases: 0, cleanPasses: 0, falseBlocks: 0, falseBlockRate: null, noVerdict: 2, errors: 4, skippedUnconfirmed: 0 };
+    assert.deepEqual((all.report as { roundTotals?: unknown }).roundTotals, [kept, kept]);
   } finally {
     fx.cleanup();
   }
