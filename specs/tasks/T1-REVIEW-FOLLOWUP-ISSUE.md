@@ -29,6 +29,8 @@ allow_paths:
   - tests/scenarios/worktree-reclaim.test.ts
   - tests/surface/lessons.test.ts
   - tests/surface/removed-surface.test.ts
+  - src/probes/gh.ts
+  - tests/infra/gh.test.ts
   - specs/tasks/T1-REVIEW-FOLLOWUP-ISSUE.md
 dod_command: npm run typecheck && node --test tests/scenarios/followup-issue.test.ts tests/infra/gh.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/card-close-cleanup.test.ts tests/scenarios/goal-close-stages.test.ts tests/surface/templates.test.ts
 dod_exit: 0
