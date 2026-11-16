@@ -49,6 +49,8 @@ export interface ReviewPromptInput {
   diff: string;
   /** The run's open and disputed findings: open ones are verified as resolved, disputed ones are re-raised only with new evidence. */
   priorFindings: PriorFinding[];
+  /** The cited reasons earlier rounds of this decision found (the reviewer bench, card T1-BENCH-ROUNDS); absent or empty leaves the prompt unchanged, and the card runner never passes it. */
+  foundInDecision?: string[];
   /** The delta since the candidate the stage last reviewed; absent on a first round. */
   delta?: ReviewDelta;
   /** The latest pre-review round's advisory notes for the candidate; rendered on the formal stage only. */
@@ -448,6 +450,9 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   if (c.diagnosis) lines.push(`- diagnosis.root_cause: ${c.diagnosis.root_cause}`);
   lines.push(`- tdd: ${c.tdd}`, `- dod_command: ${c.dod_command}`, '- acceptance (closed list):', ...c.acceptance.map((a) => `  ${a}`));
   lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings, i.head));
+  if (i.foundInDecision?.length) {
+    lines.push('', '## Found earlier in this decision', 'These defects are already reported for this candidate in this decision. Do not report them again and do not re-raise them with re:F<n>. Review the whole diff for defects they do not cover. Block only on a defect not listed here; pass when you find none.', ...i.foundInDecision.map((r) => `- ${JSON.stringify(r)}`));
+  }
   if (i.stage === 'formal') {
     // The pre-review's advisory notes reach the formal reviewer as evidence, never as findings to verify (R10).
     lines.push('', '## Pre-review advisory notes', 'Notes the pre-review (R2) reported for this candidate without a citation, under a [question] or [suggestion] tag, or under a [pre-existing] tag on lines the candidate did not change: advisory, never a block, quoted evidence like the prior findings. Verify one that names a defect; otherwise leave it to the author.');

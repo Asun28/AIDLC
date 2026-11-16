@@ -97,7 +97,8 @@ interface Call {
 function queued(replies: Array<Partial<ExecReceipt>>, calls: Call[]): Runner {
   return async (command, args, options = {}) => {
     calls.push({ args, cwd: options.cwd ?? '', input: options.input ?? '' });
-    return scriptedRunner({ [command]: replies[calls.length - 1] ?? { exitCode: 2 } })(command, args, options);
+    // Each review reports a wall time of its own (10, 20, 30 ms...), so a sum over rounds differs from one round's time.
+    return scriptedRunner({ [command]: { durationMs: calls.length * 10, ...(replies[calls.length - 1] ?? { exitCode: 2 }) } })(command, args, options);
   };
 }
 
@@ -119,7 +120,7 @@ test('T1-BENCH-ROUNDS acceptance 1: rounds run while a block adds a new P0 or P1
     assert.equal(calls.length, 2, 'round 3 is not run at --rounds 2');
     assert.equal(calls[1]!.cwd, calls[0]!.cwd, 'round 2 runs on the checkout of round 1');
     assert.ok(!calls[0]!.input.includes('## Found earlier in this decision'), 'round 1 prompts as main does');
-    assert.ok(calls[1]!.input.includes(`## Prior findings\n- none\n\n${section([MISS])}`), 'round 2 holds round 1 reason directly after Prior findings');
+    assert.ok(calls[1]!.input.includes(`## Prior findings\n- none (first round of this cycle)\n\n${section([MISS])}`), 'round 2 holds round 1 reason directly after Prior findings');
     const c = report.cases[0]!;
     assert.equal(c.outcome, 'hit');
     assert.deepEqual(c.matched, { reason: HIT, file: 'src/calc.ts', line: 13, severity: 'P0' });
@@ -150,6 +151,9 @@ test('T1-BENCH-ROUNDS acceptance 2: no further round after a pass, after a block
       const { calls } = await runRounds(fx, dir, replies, { rounds: 3 });
       assert.equal(calls.length, expected, name);
     }
+    // A repeated reason is listed again: the next prompt holds every cited reason of the rounds before it.
+    const reworded = await runRounds(fx, dir, [block(MISS), block(MISS_REWORDED, HIT), verdict('pass')], { rounds: 3 });
+    assert.ok(reworded.calls[2]!.input.includes(section([MISS, MISS_REWORDED, HIT])));
     // A round 2 without a verdict leaves the case scored on round 1.
     const { report } = await runRounds(fx, dir, [block(MISS), NO_VERDICT], { rounds: 3 });
     assert.deepEqual([report.cases[0]!.outcome, report.cases[0]!.runStatus], ['miss', 'success']);
@@ -197,6 +201,8 @@ test('T1-BENCH-ROUNDS acceptance 3: rounds and roundTotals score each round on t
     assert.deepEqual(byId.get('a-hit')!.cited, [MISS, HIT, P2_NEW]);
     assert.equal(byId.get('a-hit')!.matched?.reason, HIT);
     assert.deepEqual(roundsOf(byId.get('a-hit')), [{ outcome: 'miss', durationMs: 'number', cited: 1 }, { outcome: 'hit', durationMs: 'number', cited: 2 }, { outcome: 'hit', durationMs: 'number', cited: 0 }]);
+    const a = byId.get('a-hit')!;
+    assert.equal(a.durationMs, a.rounds!.reduce((sum, r) => sum + r.durationMs, 0), 'the case wall time is the sum over its rounds');
     assert.deepEqual(roundsOf(byId.get('d-clean'))!.map((r) => r.outcome), ['false-block', 'false-block', 'false-block'], 'a pass in round 3 leaves the false block');
     assert.deepEqual(roundsOf(byId.get('c-clean'))!.map((r) => r.outcome), ['false-block', 'false-block']);
     const totals = (hits: number, misses: number) => ({ bugCases: 2, hits, misses, recall: hits / (hits + misses), cleanCases: 2, cleanPasses: 0, falseBlocks: 2, falseBlockRate: 1, noVerdict: 0, errors: 0, skippedUnconfirmed: 0 });
@@ -226,6 +232,7 @@ test('T1-BENCH-ROUNDS acceptance 4: --rounds outside 1 to 3, or above 1 with --s
       assert.notEqual(r.status, 0, args.join(' '));
       assert.match(r.stderr, /--rounds (must be an integer from 1 to 3|above 1 needs --stage formal)/, args.join(' '));
     }
+    assert.match(cli('--stage', 'formal', '--rounds', 'two').stderr, /--rounds must be an integer from 1 to 3, not "two"/, 'the CLI names the value it refuses');
 
     const one = await runRounds(fx, dir, [block(MISS), block(HIT)], { rounds: 1 });
     const plain = await runRounds(fx, dir, [block(MISS), block(HIT)]);
