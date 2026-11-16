@@ -73,5 +73,5 @@ No file outside the four of the sweep logged one. review-rule-ship.test.ts logge
 | 1 | dirty-success.test.ts "T1-DOD-GATE-FIXTURES acceptance 1 - ..." | RED at 27d77737 (exitCode 127), passes with the entry |
 | 2 | dod-receipt-required.test.ts "T1-DOD-GATE-FIXTURES acceptance 2 - ..." | RED at 27d77737 (exitCode 127), passes with the entry |
 | 3 | review-rule-ship.test.ts "acceptance 7, git-backed (R3 decision 2, re:F1)", assertion after each success | RED at 27d77737 (127), passes with the entry |
-| 4 | DoD: 70 tests, 69 pass, 0 fail, 1 skipped (existing Windows skip, EACCES); `git diff --numstat 332956a2`: 12/0, 9/0, 3/1 | the 1 deleted line in review-rule-ship.test.ts is the one-line `scriptedRunner({...})` call that gains the entry; no assertion changed |
+| 4 | DoD: 70 tests, 69 pass, 0 fail, 1 skipped (existing Windows skip, EACCES); `git diff --numstat 332956a2 -- tests`: `12 0 dirty-success.test.ts`, `9 0 dod-receipt-required.test.ts`, `5 0 review-rule-ship.test.ts` | added lines only in all three files (attempt 2, R3 F1: the DoD entry of review-rule-ship.test.ts is added by a block-scoped wrapper that shadows `scriptedRunner` inside that test, so line 377 is as on main); no assertion changed |
 | 5 | the probe table above | 4 files, as listed |
