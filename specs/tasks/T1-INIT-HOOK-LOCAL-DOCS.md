@@ -23,19 +23,19 @@ acceptance:
   - 2. `tests/surface/init-no-package.test.ts`, test "T1-INIT-HOOK-PATH acceptance 7: OPERATIONS and the CHANGELOG hold the exact texts" (:319; its name ends with two requirement tags of its own card, left out here): the literal `paragraph` (:320) is the text of acceptance detail 3; the `entry` literal (:325), which is the CHANGELOG entry of T1-INIT-HOOK-PATH, and every other line are unchanged. Fails on main for the new paragraph. [R3] [dod arm 2]
   - 3. tests/infra/init.test.ts (its :168-185 pin the two Setup sentences as adjacent and the upgrade paragraph), tests/surface/readme.test.ts "T1-INIT-SURFACE acceptance 2" (:60, the README path list against `initProject({ target })`) and its check that neither document holds `so no guard runs` (:85), tests/surface/ps-guard-wire.test.ts (:139-147), tests/surface/hook-lazy.test.ts (:210), tests/surface/init-base-ci.test.ts (:394), tests/surface/prose.test.ts and tests/surface/templates.test.ts pass with no line changed. They pass on main and with this card. [R4] [dod arm 2]
   - 4. Each sentence of the three texts holds against src/scaffold/init.ts and src/probes/hook-wiring.ts as T1-INIT-HOOK-LOCAL and T1-HOOK-WIRING-LOCAL left them, and the diff changes only the three paragraphs and the three literals (reviewer-verified against the diff). [R4]
-depends_on: [T1-INIT-HOOK-LOCAL]
+depends_on: [T1-INIT-HOOK-LOCAL, T1-CHANGELOG-FRAGMENTS]
 budget: 40
 tdd: true
 sweep: "On main at 35de54fe. `grep -rnE 'no Node package|per machine|writes the same files|not wired|settings\\.json' tests docs README.md`. The three paragraphs and their pins: README.md:95, pinned whole by tests/surface/readme.test.ts:52 (`README_SENTENCES[1]`, checked with `includes` inside the section What aidlc init writes at :81); docs/OPERATIONS.md:15, pinned by readme.test.ts:57 (`SETUP_SENTENCE`, checked with `includes` inside the section Setup at :84); docs/OPERATIONS.md:325, pinned as one whole line after the PowerShell paragraph by tests/surface/init-no-package.test.ts:320-323. Pins that stay: readme.test.ts:51 (`README_SENTENCES[0]`), :53-54, :56 (`SETUP_USAGE`), :58 (the CHANGELOG entry of T1-INIT-SURFACE, a record of that card), :60-69 (the README path list against `initProject({ target })`, which passes no `hookEntry`, so it holds no `.claude/settings.local.json`), :85 (neither document may hold `so no guard runs`); tests/infra/init.test.ts:167-185 (the Setup list sentence, its `.review/` sentence, adjacent, and the upgrade paragraph); tests/surface/ps-guard-wire.test.ts:139-147 and tests/surface/hook-lazy.test.ts:210 (sentences of the section Hooks that this card does not touch); tests/surface/init-base-ci.test.ts:394 (the default-branch paragraph); init-no-package.test.ts:325 (the CHANGELOG entry of T1-INIT-HOOK-PATH, a record of that card). tests/surface/prose.test.ts sizes the section Sessions (:326-359), which this card does not touch. The three old texts are false after T1-INIT-HOOK-LOCAL: `--no-hooks` no longer writes the same files as a plain init on a repository with no aidlc package, the hook entries are no longer in `.claude/settings.json` there, and on another machine doctor prints `not wired`, not `FAILED`."
 forbid:
   - weakening, skipping or deleting a test to go green
   - a change to a test line other than the three literals of acceptance 1 and 2
-  - a change to the README path list, to `README_SENTENCES[0]`, to `SETUP_USAGE`, to the Setup list sentence or to a CHANGELOG entry
+  - a change to the README path list, to `README_SENTENCES[0]`, to `SETUP_USAGE`, to the Setup list sentence or to a CHANGELOG entry; the card changes no byte of CHANGELOG.md
   - the text `so no guard runs` in either document (tests/surface/readme.test.ts:85)
   - a line break inside the paragraph of acceptance detail 3 (the test finds it as one line)
   - a change under src
 non_goals:
-  - CHANGELOG.md; the entry of T1-INIT-HOOK-LOCAL records the behaviour
+  - a changelog entry; the fragment changelog.d/T1-INIT-HOOK-LOCAL.md of T1-INIT-HOOK-LOCAL records the behaviour
   - listing `.claude/settings.local.json` in the README path list; the test builds that list from an init with no `hookEntry`, which writes no local file
   - docs/QUICKSTART.md and the `--profile` text, which T1-INIT-PROFILE writes
   - docs/ARCHITECTURE.md, whose sentence on `hook-wiring.ts` T1-HOOK-WIRING-LOCAL updates; it has no sentence on where init writes hook entries

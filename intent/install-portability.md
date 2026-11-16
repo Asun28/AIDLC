@@ -40,31 +40,36 @@ install or run aidlc outside this checkout. Each point was checked against main 
 
 ## Proposed outcome
 1. `npm i -D github:Asun28/AIDLC`, and a tarball of `npm pack`, install a CLI that starts; a
-   script proves it and CI runs the script.
+   script proves it and CI runs the script on pushes. The package builds once per packaging
+   operation.
 2. `aidlc init` writes a machine-specific hook command into `.claude/settings.local.json` and
    never an absolute path into `.claude/settings.json`.
 3. A `run-card` directive loads its context pack on macOS.
-4. On git older than 2.45 the base-sync check and the finding-identity read work in a
-   repository with no promisor remote and stay refused in one that has a promisor remote;
-   `aidlc doctor` names the limit and the README states the git versions the code needs.
+4. The README and `aidlc doctor` state git 2.45 or newer as the one supported minimum, so
+   the two documented versions no longer disagree.
 5. `aidlc init --profile claude-github` writes a configuration that can ship a pull request
-   with the Claude Code provider, the `github` ship path and a Claude formal reviewer, and a
-   quickstart lists the steps from install to the first pull request.
+   with the Claude Code provider, the `github` ship path, a required review gate and a Claude
+   formal reviewer whose model the caller names at setup, and a quickstart lists the steps
+   from install to the first pull request.
 6. CI runs the suite on `macos-latest` on pushes, as a job that is not a required check.
 
 ## Affected users and systems
 A team installing aidlc into its own repository; `package.json`, `scripts/`,
 `.github/workflows/ci.yml`, `src/scaffold/init.ts`, `src/loop/context-pack.ts`,
-`src/probes/base-sync.ts`, `src/loop/card-runner.ts`, `src/cli/main.ts` (doctor line, init
-option), `templates/`, `README.md`, `docs/OPERATIONS.md`, `CHANGELOG.md`.
+`src/cli/main.ts` (doctor line, init option), `templates/`, `README.md`,
+`docs/OPERATIONS.md`, `CHANGELOG.md`.
 
 ## Constraints
 - Owner decision of 2026-11-16: the machine-specific hook command goes to
   `.claude/settings.local.json`; the committed `.claude/settings.json` keeps no absolute path.
 - No new provider, ship path or stage; `--profile` is an option of the existing `init` command.
 - Publishing to the npm registry and the rename are not in this goal.
-- A partial clone on git older than 2.45 stays refused: no git call may fetch from a promisor
-  remote.
+- Owner decision of 2026-11-17 (approval of the reviewed plan, in the session): support for
+  a git older than 2.45 is not built now. The probe of `--no-lazy-fetch` support and the
+  finding-identity read on an old git are deferred (drafts at commit 33b32e01), and no code of
+  `src/probes/base-sync.ts` or `src/loop/card-runner.ts` changes in this goal.
+- Owner decision of 2026-11-17: the install check runs on pushes only, so a registry outage
+  cannot stop a ship; the profile names no reviewer model of its own and sets `gateRequired`.
 - Cards of at most 200 changed lines and at most 8 allowed paths.
 
 ## Open questions
