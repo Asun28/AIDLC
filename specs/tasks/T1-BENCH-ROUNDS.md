@@ -1,7 +1,7 @@
 ---
 id: T1-BENCH-ROUNDS
 title: aidlc review bench run --rounds reviews a blocked candidate again inside one decision with the found reasons marked not to repeat, while a round adds a new P0 or P1 reason, and scores every round
-status: todo
+status: merged
 branch: T1-BENCH-ROUNDS
 worktree: D:\wt\AIDLC\T1-BENCH-ROUNDS
 plan_ref: plans/review-recall.md#order-of-work
