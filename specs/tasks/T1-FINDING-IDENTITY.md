@@ -1,7 +1,7 @@
 ---
 id: T1-FINDING-IDENTITY
 title: Each formal finding stores an identity computed in code from its cited path, its class or dimension and the whitespace-normalised cited lines at the candidate, and aidlc review stats reports repeat findings by it
-status: todo
+status: merged
 branch: T1-FINDING-IDENTITY
 worktree: D:\wt\AIDLC\T1-FINDING-IDENTITY
 plan_ref: plans/review-recall.md#order-of-work
