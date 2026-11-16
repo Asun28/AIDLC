@@ -55,3 +55,34 @@ npm run typecheck && node --test tests/surface/review-bench-order-pre.test.ts te
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; no existing test line changes.
+
+## Attempt evidence
+
+Attempt 1 (base main 35de54fe).
+
+RED: commit 22841212, `node --test tests/surface/review-bench-order-pre.test.ts`, 3 of 3 failing for the stated reasons:
+- `not ok 1 - T1-BENCH-ORDER-PRE acceptance 1: ...`: AssertionError, schema file name actual `verdict.schema.json`, expected `verdict.schema.analysis-first.json` (the option is ignored).
+- `not ok 2 - T1-BENCH-ORDER-PRE acceptance 2: ...`: `preReview.command is not configured (aidlc.config.json): there is no reviewer to score` (the file is ignored).
+- `not ok 3 - T1-BENCH-ORDER-PRE acceptance 3: ...`: the missing-file refusal names `preReview.command`, not `--pre-command`.
+
+Changed after RED, in the new test file only: the acceptance 1 check that the reordered schema accepts the same documents compared `required` as an ordered array, which contradicts R2; it now compares it as a set (the test was wrong). Added at GREEN, each shown failing by a mutant below: the CLI pass-through of `--order` (acc 1, M38) and of `--pre-command` (acc 2, M39) on an empty case directory, and `no such file` in the missing-file refusal (acc 3, M3).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/review-bench-order-pre.test.ts, acceptance 1 (default schema bytes equal `VERDICT_SCHEMA`, default contract line, `verdict-first` prompt equal to no option, analysis-first schema through `{schema}`, both stages, `options`) | pass |
+| 2 | same file, acceptance 2 (argv, reviewer, timeoutMs, answerMarker, maxDiffBytes from the file and each fallback to `preReview`, `perspectives`, `rounds`, `coverage` kept, `aidlc.config.json` and the files byte-identical) | pass |
+| 3 | same file, acceptance 3 (missing, not JSON, 9 malformed shapes, unknown key, formal stage, unknown `--order`; library and CLI; no reviewer call) | pass |
+| 4 | review-bench-rounds, review-bench, pre-review, r2-pass-notes and prose tests in the DoD, all pass; pre-review.test.ts prompt hashes unchanged | pass |
+| 5 | docs/OPERATIONS.md, Reviewer bench, new paragraph "`--order <verdict-first|analysis-first>` and `--pre-command <file>` (card T1-BENCH-ORDER-PRE) ..." directly after the `--rounds` paragraph | reviewer-verified |
+
+Pinned literals updated (forbid exception):
+- tests/surface/review-bench-rounds.test.ts lines 129, 211, 273: `options` deepEqual `{ rounds: n }` extended by `order: 'verdict-first', preCommand: null` (R4); nothing else.
+- tests/surface/review-bench.test.ts line 441, `OPERATIONS_SECTION`: one element added, the R5 paragraph, its text equal to the docs paragraph; no existing element changed.
+
+Mutants (each applied alone, `node --test tests/surface/review-bench-order-pre.test.ts`): all 39 killed.
+M1 `--order` refusal dropped (acc 3); M2 formal-stage refusal dropped (3); M3 missing-file check dropped (3); M4 unknown key admitted (3); M5 empty command (3); M6 blank argument (3); M7 blank reviewer (3); M8 timeoutMs 0 (3); M9 fractional maxDiffBytes (3); M10 non-string answerMarker (3); M11 file keys not applied (2); M12 fallback reversed (2); M13 answerMarker ignored (2); M14 timeoutMs ignored (2); M15 maxDiffBytes ignored (2); M16 reviewer ignored (2); M17 absent key overrides preReview (2); M18 perspectives dropped (2); M19 rounds changed (2); M20 coverage dropped (2); M21 file resolved against the process directory (2); M22 `options.order` fixed (1); M23 `options.preCommand` always null (2); M24 report reviewer from the config file (2); M25 config file written (2); M26 order not in the pre prompt (1); M27 order not in the formal prompt (1); M28 order not in the schema (1); M29 properties keep verdict first (1); M30 required keeps verdict first (1); M31 analysis-first file name (1); M32 default reordered schema (1); M33 contract unchanged under analysis-first (1); M34 contract reordered by default (1); M35 added sentence dropped (1); M36 added sentence on every prompt (1); M37 added sentence text (1); M38 CLI drops `--order` (1); M39 CLI drops `--pre-command` (2, 3).
+
+Report paths swept for `options`: `runReviewBench` returns one report object (selected cases and the `note` path alike); `formatBenchReport` and `SavedReport` read no `options`.
+
+DoD: exit 0, 134 tests, 134 pass, 0 fail, 0 skipped.
+Full suite (`npm run check`, candidate 5200045b): exit 0, 3740 tests, 3712 pass, 0 fail, 28 skipped.

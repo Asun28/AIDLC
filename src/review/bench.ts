@@ -27,7 +27,7 @@ import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../c
 import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
-import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
+import { COVERAGE_ANGLE, VERDICT_ORDERS, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult, type VerdictOrder } from './pre-review.ts';
 
 const BenchOutcome = z.enum(['hit', 'miss', 'pass', 'false-block', 'no-verdict', 'error']);
 export type BenchOutcome = z.infer<typeof BenchOutcome>;
@@ -74,8 +74,8 @@ export interface ReviewBenchReport {
   reviewer: string;
   /** How the learned rules were chosen. */
   rules: BenchRules;
-  /** The options the run used (card T1-BENCH-ROUNDS). */
-  options: { rounds: number };
+  /** The options the run used (cards T1-BENCH-ROUNDS and T1-BENCH-ORDER-PRE): `preCommand` is the `--pre-command` file's `command`, else null. */
+  options: { rounds: number; order: VerdictOrder; preCommand: string[] | null };
   policyHash: string;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
@@ -105,6 +105,10 @@ export interface ReviewBenchOptions {
   trials?: number;
   /** How many rounds one formal decision may take, 1 to 3; default 1. Round r+1 runs while round r blocks with a new P0 or P1 cited reason. */
   rounds?: number;
+  /** Where the verdict stands in the schema and the contract line; default `verdict-first`. */
+  order?: VerdictOrder;
+  /** `--stage pre` only: a JSON file, resolved against `root`, whose `command`, `reviewer` and optional `answerMarker`, `timeoutMs` and `maxDiffBytes` replace those of `preReview` for this run. */
+  preCommand?: string;
   /** The reviewer runner; default `run`. */
   runner?: Runner;
   /** The git runner; default `runSync`. */
@@ -144,6 +148,7 @@ interface BenchContext {
   lessons: ReviewLessons;
   rules: BenchRules;
   rounds: number;
+  order: VerdictOrder;
   runner: Runner;
   git: SyncRunner;
   tmpRoot: string;
@@ -162,7 +167,13 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   if (rounds > 1 && o.stage === 'pre') throw new Error('--rounds above 1 needs --stage formal, not --stage pre');
   const policyFile = path.join(o.root, 'REVIEW.md');
   if (!existsSync(policyFile)) throw new Error(`no REVIEW.md in ${o.root}: the reviewer bench reviews with this checkout's policy`);
-  const { config } = loadProjectConfig(o.root);
+  const order = o.order ?? 'verdict-first';
+  if (!VERDICT_ORDERS.includes(order)) throw new Error(`--order must be verdict-first or analysis-first, not ${order}`);
+  if (o.preCommand !== undefined && o.stage !== 'pre') throw new Error('--pre-command needs --stage pre, not --stage formal');
+  const preCommand = o.preCommand === undefined ? undefined : readPreCommand(path.resolve(o.root, o.preCommand));
+  const loaded = loadProjectConfig(o.root).config;
+  // The file's keys replace preReview's for this run alone; nothing is written back.
+  const config = preCommand ? { ...loaded, preReview: { ...loaded.preReview, ...preCommand } } : loaded;
   const reviewer = o.stage === 'pre' ? config.preReview : config.formalReview;
   if (!reviewer.command.length) throw new Error(`${o.stage === 'pre' ? 'preReview' : 'formalReview'}.command is not configured (aidlc.config.json): there is no reviewer to score`);
   const dir = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
@@ -174,7 +185,7 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   if (o.caseId !== undefined && !o.includeUnconfirmed && !pool[0]!.confirmed) throw new Error(`case ${o.caseId} is not confirmed: confirm it (evals/review/README.md) or pass --include-unconfirmed`);
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
-  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', rounds, runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], held: false };
+  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', rounds, order, runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], held: false };
   // One review per distinct candidate, base and card path and trial, one after another, scoring every case of it.
   const groups = new Map<string, ReviewBenchCase[]>();
   for (const c of selected) {
@@ -201,7 +212,31 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const after = (r: number) => trialResults[0]!.cases.map((c) => (c.rounds?.length ? { ...c, outcome: c.rounds[Math.min(r, c.rounds.length) - 1]!.outcome } : c));
   const roundTotals = rounds > 1 ? Array.from({ length: rounds }, (_, i) => totalsOf(after(i + 1), skipped)) : undefined;
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds, order, preCommand: preCommand?.command ?? null }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
+}
+
+/** The `--pre-command` file (card T1-BENCH-ORDER-PRE): an unknown key is refused, so a key meant for `preReview` never goes unused in silence. */
+const PreCommandFile = z
+  .object({
+    command: z.array(z.string().regex(/\S/, 'must not be blank')).min(1),
+    reviewer: z.string().regex(/\S/, 'must not be blank'),
+    answerMarker: z.string().regex(/^$|\S/, 'must be empty or not blank').optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    maxDiffBytes: z.number().int().positive().optional(),
+  })
+  .strict();
+
+function readPreCommand(file: string): z.infer<typeof PreCommandFile> {
+  if (!existsSync(file)) throw new Error(`--pre-command ${file}: no such file`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new Error(`--pre-command ${file}: not JSON (${(err as Error).message})`);
+  }
+  const parsed = PreCommandFile.safeParse(raw);
+  if (!parsed.success) throw new Error(`--pre-command ${file}: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'file'}: ${i.message}`).join('; ')}`);
+  return parsed.data;
 }
 
 /** The summary over the totals of every trial; `aidlc review bench compare` checks a saved report against it. */
@@ -300,13 +335,13 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
     if (pre) {
       const r2 = ctx.config.preReview;
       const coverage = r2.coverage === 'shadow' && r2.perspectives.includes(COVERAGE_ANGLE);
-      const promptFor = (perspective?: string) => buildReviewPrompt({ ...common, stage: 'pre', perspective, coverage, maxRounds: Math.max(r2.rounds, 1) });
+      const promptFor = (perspective?: string) => buildReviewPrompt({ ...common, stage: 'pre', perspective, coverage, order: ctx.order, maxRounds: Math.max(r2.rounds, 1) });
       return runReviewPanel({ ...retention, perspectives: r2.perspectives, promptFor, vars, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: r2.answerMarker });
     }
     const r3 = ctx.config.formalReview;
     const effort = r3.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(r3.effort, diff, changedPaths, pathAllowed) : undefined;
-    const schema = materialiseVerdictSchema(ctx.reviewDir);
-    const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1), foundInDecision: found });
+    const schema = materialiseVerdictSchema(ctx.reviewDir, ctx.order);
+    const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', order: ctx.order, advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1), foundInDecision: found });
     return runReviewPanel({ ...retention, fileStem: round > 1 ? `${fileStem}.round-${round}` : fileStem, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
   };
   // Rounds inside one decision (card T1-BENCH-ROUNDS): round r+1 runs while round r blocks with a new P0 or P1 cited reason.
