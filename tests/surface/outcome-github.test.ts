@@ -6,7 +6,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { branchCommits, checkRuns, githubTables, pullRequests, reverts } from '../../bench/outcome/github.ts';
-import { COLUMNS, GITHUB_COLUMNS, USAGE_COLUMNS, writeTables, type Row, type Tables } from '../../bench/outcome/ingest.ts';
+import { COLUMNS, GITHUB_COLUMNS, USAGE_COLUMNS, ingestState, writeTables, type Row, type Tables } from '../../bench/outcome/ingest.ts';
 import { runSync, scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 import { tmpDir } from '../infra/helpers.ts';
 
@@ -607,4 +607,21 @@ test('T1-OUTCOME-ESCAPED acceptance 4 - bench/outcome/escaped.json has the commi
   const rowLines = lines.slice(4, -3);
   assert.equal(rowLines.length, file.rows.length);
   rowLines.forEach((line, i) => assert.equal(line, `    ${JSON.stringify(file.rows[i])}${i < rowLines.length - 1 ? ',' : ''}`));
+});
+
+test('T1-OUTCOME-ESCAPED R7 - mentions holds the ids of root_cause and same_class once each, sorted, and no id inside a longer token', () => {
+  const dir = tempDir();
+  put(path.join(dir, 'T1-Z.md'), cardText('T1-Z', 'diagnosis:\n  root_cause: T1-B broke T1-A, then T1-B again; XT1-C and T1-Ex are no ids\n  same_class: as in T1-D\n'));
+  assert.deepEqual(ingestState({ stateDir: path.join(dir, 'state'), cardsDir: dir }).cards.map((c) => c['mentions']), [['T1-A', 'T1-B', 'T1-D']]);
+});
+
+test('T1-OUTCOME-ESCAPED R8 - a bugfix card merged at the same time as the card it mentions counts no mention', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+  const out = tempDir();
+  const empty = Object.fromEntries(Object.keys({ ...COLUMNS, ...USAGE_COLUMNS, ...GITHUB_COLUMNS }).map((name) => [name, []])) as unknown as Tables;
+  const card = (id: string, diagnosis: boolean, mentions: string[]): Row => ({ id, status: 'merged', diagnosis, mentions });
+  writeTables({ ...empty, cards: [card('T1-A', false, []), card('T0-B', true, ['T1-A'])], card_runs: ['T1-A', 'T0-B'].map((cardId, i) => ({ goalId: 'g', cardId, prNumber: i + 1 })), prs: [prRow(1, 'T1-A', null, at(6), '1'.repeat(40)), prRow(2, 'T0-B', null, at(6), '2'.repeat(40))] }, out);
+  const sql = ['10-cards.sql', '30-github.sql'].map((name) => readFileSync(path.join(root, 'bench', 'outcome', 'views', name), 'utf8')).join('\n');
+  const r = spawnSync(duckdb!, ['-json', '-bail'], { cwd: out, input: `${sql}\nSELECT * FROM summary_escaped;\n`, encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), [{ week: '2026-01-05', merged_cards: 2, bugfix_cards: 1, reverts: 0, mentions_a_merged_card: 0 }]);
 });
