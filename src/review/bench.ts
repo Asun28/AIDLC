@@ -22,7 +22,7 @@ import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, matchedLessons, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
-import { FINDING_LOCATION, classifyVerdict, findingLocation, findingSeverity } from '../core/review-policy.ts';
+import { FINDING_LOCATION, classifyVerdict, findingIdentity, findingLocation, findingSeverity } from '../core/review-policy.ts';
 import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
 import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
@@ -45,7 +45,10 @@ export interface BenchCaseResult {
   detail?: string;
   verdictRef?: string;
   logRef?: string;
+  /** The wall time of the review, summed over its rounds. */
   durationMs: number;
+  /** With `--rounds` above 1 (card T1-BENCH-ROUNDS): per round run, the score on rounds 1 to r, that round's wall time and its count of cited reasons. */
+  rounds?: Array<{ outcome: BenchOutcome; durationMs: number; cited: number }>;
 }
 
 export interface BenchTotals {
@@ -71,6 +74,8 @@ export interface ReviewBenchReport {
   reviewer: string;
   /** How the learned rules were chosen. */
   rules: BenchRules;
+  /** The options the run used (card T1-BENCH-ROUNDS). */
+  options: { rounds: number };
   policyHash: string;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
@@ -82,6 +87,8 @@ export interface ReviewBenchReport {
   /** The cases and totals of every trial, the first included. */
   trialResults: Array<{ cases: BenchCaseResult[]; totals: BenchTotals }>;
   summary: TrialSummary;
+  /** With `--rounds` above 1: the first trial's totals after rounds 1 to r, for r from 1 to the rounds asked; a case with fewer rounds keeps its last score. */
+  roundTotals?: BenchTotals[];
 }
 
 export interface ReviewBenchOptions {
@@ -96,6 +103,8 @@ export interface ReviewBenchOptions {
   rules?: BenchRules;
   /** How many times each selected case is reviewed, 1 to 20; default 1. */
   trials?: number;
+  /** How many rounds one formal decision may take, 1 to 3; default 1. Round r+1 runs while round r blocks with a new P0 or P1 cited reason. */
+  rounds?: number;
   /** The reviewer runner; default `run`. */
   runner?: Runner;
   /** The git runner; default `runSync`. */
@@ -134,6 +143,7 @@ interface BenchContext {
   hash: string;
   lessons: ReviewLessons;
   rules: BenchRules;
+  rounds: number;
   runner: Runner;
   git: SyncRunner;
   tmpRoot: string;
@@ -147,6 +157,9 @@ interface BenchContext {
 export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBenchReport> {
   const trials = o.trials ?? 1;
   if (!Number.isInteger(trials) || trials < 1 || trials > 20) throw new Error(`--trials must be an integer from 1 to 20, not ${trials}`);
+  const rounds = o.rounds ?? 1;
+  if (!Number.isInteger(rounds) || rounds < 1 || rounds > 3) throw new Error(`--rounds must be an integer from 1 to 3, not ${rounds}`);
+  if (rounds > 1 && o.stage === 'pre') throw new Error('--rounds above 1 needs --stage formal, not --stage pre');
   const policyFile = path.join(o.root, 'REVIEW.md');
   if (!existsSync(policyFile)) throw new Error(`no REVIEW.md in ${o.root}: the reviewer bench reviews with this checkout's policy`);
   const { config } = loadProjectConfig(o.root);
@@ -161,7 +174,7 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   if (o.caseId !== undefined && !o.includeUnconfirmed && !pool[0]!.confirmed) throw new Error(`case ${o.caseId} is not confirmed: confirm it (evals/review/README.md) or pass --include-unconfirmed`);
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
-  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], held: false };
+  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', rounds, runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], held: false };
   // One review per distinct candidate, base and card path and trial, one after another, scoring every case of it.
   const groups = new Map<string, ReviewBenchCase[]>();
   for (const c of selected) {
@@ -174,7 +187,8 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
     for (const trial of results) {
       n += 1;
       const stopped = (c: ReviewBenchCase): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'no-verdict', cited: [], detail: 'not reviewed: a quota hold stopped the run', durationMs: 0 });
-      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n)) trial.set(r.id, r);
+      // With rounds, a case no round reviewed (a checkout or card error, a quota stop) carries an empty list.
+      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n)) trial.set(r.id, rounds > 1 && !r.rounds ? { ...r, rounds: [] } : r);
     }
   }
   const skipped = pool.length - selected.length;
@@ -183,8 +197,11 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
     return { cases: ordered, totals: totalsOf(ordered, skipped) };
   });
   const summary = summaryOf(trialResults.map((t) => t.totals));
+  // A case with fewer rounds keeps its last score; a case with none keeps its own outcome.
+  const after = (r: number) => trialResults[0]!.cases.map((c) => (c.rounds?.length ? { ...c, outcome: c.rounds[Math.min(r, c.rounds.length) - 1]!.outcome } : c));
+  const roundTotals = rounds > 1 ? Array.from({ length: rounds }, (_, i) => totalsOf(after(i + 1), skipped)) : undefined;
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
 }
 
 /** The summary over the totals of every trial; `aidlc review bench compare` checks a saved report against it. */
@@ -276,27 +293,70 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   const includeDiff = !cfg.command.some((a) => a.includes('{instructions}'));
   const lessons = ctx.rules === 'matched' ? matchedLessons(lessonsPath(ctx.root), { changedPaths, diff, history: new GitProbe(ctx.git).commitFiles(checkout, base) }) : ctx.lessons;
   const common = { reviewPolicy: ctx.reviewPolicy, lessons, card, base, head: candidate, changedPaths, diff, priorFindings: [], includeDiff, round: 1 };
-  const retention = { runner: ctx.runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem: `${card.id}.bench-${ctx.stage}.${n}.${candidate.slice(0, 12)}`, head: candidate, reviewer: cfg.reviewer, changedPaths, changedLines: changedLineRanges(diff, changedPaths), policyHash: ctx.hash };
+  const fileStem = `${card.id}.bench-${ctx.stage}.${n}.${candidate.slice(0, 12)}`;
+  const retention = { runner: ctx.runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem, head: candidate, reviewer: cfg.reviewer, changedPaths, changedLines: changedLineRanges(diff, changedPaths), policyHash: ctx.hash };
   const vars = { cwd: checkout, base, head: candidate, card: card.id };
-  let panel: PanelResult;
-  if (pre) {
-    const r2 = ctx.config.preReview;
-    const coverage = r2.coverage === 'shadow' && r2.perspectives.includes(COVERAGE_ANGLE);
-    const promptFor = (perspective?: string) => buildReviewPrompt({ ...common, stage: 'pre', perspective, coverage, maxRounds: Math.max(r2.rounds, 1) });
-    panel = await runReviewPanel({ ...retention, perspectives: r2.perspectives, promptFor, vars, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: r2.answerMarker });
-  } else {
+  const review = async (round: number, found: string[]): Promise<PanelResult> => {
+    if (pre) {
+      const r2 = ctx.config.preReview;
+      const coverage = r2.coverage === 'shadow' && r2.perspectives.includes(COVERAGE_ANGLE);
+      const promptFor = (perspective?: string) => buildReviewPrompt({ ...common, stage: 'pre', perspective, coverage, maxRounds: Math.max(r2.rounds, 1) });
+      return runReviewPanel({ ...retention, perspectives: r2.perspectives, promptFor, vars, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: r2.answerMarker });
+    }
     const r3 = ctx.config.formalReview;
     const effort = r3.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(r3.effort, diff, changedPaths, pathAllowed) : undefined;
     const schema = materialiseVerdictSchema(ctx.reviewDir);
-    const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1) });
-    panel = await runReviewPanel({ ...retention, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
+    const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1), foundInDecision: found });
+    return runReviewPanel({ ...retention, fileStem: round > 1 ? `${fileStem}.round-${round}` : fileStem, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
+  };
+  // Rounds inside one decision (card T1-BENCH-ROUNDS): round r+1 runs while round r blocks with a new P0 or P1 cited reason.
+  const panels: PanelResult[] = [];
+  const found: Array<{ text: string; identity?: string }> = [];
+  const readLines = checkoutLines(checkout);
+  for (let round = 1; round <= ctx.rounds; round += 1) {
+    const panel = await review(round, found.map((f) => f.text));
+    if (panel.outcome === 'quota-hold') ctx.held = true;
+    const bound = ctx.stage === 'formal' ? bindToCandidate(panel, candidate, card.id) : panel;
+    panels.push(bound);
+    const cited = citedOf(bound, changedPaths).map((text) => ({ text, identity: findingIdentity(text, readLines) }));
+    const fresh = cited.filter((r) => !found.some((f) => sameFinding(r, f)));
+    found.push(...cited);
+    if (!fresh.some((r) => ['P0', 'P1'].includes(findingSeverity(r.text)))) break;
   }
-  if (panel.outcome === 'quota-hold') ctx.held = true;
-  const bound = ctx.stage === 'formal' ? bindToCandidate(panel, candidate, card.id) : panel;
   return cases.map((c) => {
     const reason = unscorable(c);
-    return reason ? errorOf(c, reason) : score(c, bound, changedPaths);
+    if (ctx.rounds === 1) return reason ? errorOf(c, reason) : score(c, panels, changedPaths);
+    // A case the bench cannot score in a reviewed group gets an error entry for each round run.
+    const steps = panels.map((_, r) => (reason ? errorOf(c, reason) : score(c, panels.slice(0, r + 1), changedPaths)));
+    return { ...steps.at(-1)!, rounds: steps.map((step, r) => ({ outcome: step.outcome, durationMs: panels[r]!.durationMs, cited: citedOf(panels[r]!, changedPaths).length })) };
   });
+}
+
+/** The cited reasons of a block (`citedReasonsOf` over the changed paths); none for any other outcome. */
+const citedOf = (panel: PanelResult, changedPaths: string[]): string[] => (panel.outcome === 'block' && panel.verdict ? citedReasonsOf(panel.verdict, changedPaths) : []);
+
+/** Two cited reasons name one finding: the same `findingIdentity` when both have one, else the same trimmed text. */
+const sameFinding = (a: { text: string; identity?: string }, b: { text: string; identity?: string }): boolean => (a.identity && b.identity ? a.identity === b.identity : a.text.trim() === b.text.trim());
+
+/**
+ * The cited-line reader of the new-reason test (card T1-BENCH-ROUNDS): the lines of `file` in the checkout's working tree,
+ * each file read once. A path the OS refuses (a NUL byte), one that resolves, links followed, outside the checkout, a
+ * directory, a missing file or any read that fails gives no lines and no error.
+ */
+export function checkoutLines(checkout: string): (file: string, from: number, to: number) => string[] | undefined {
+  const files = new Map<string, string[] | undefined>();
+  const load = (file: string): string[] | undefined => {
+    try {
+      const real = realpathSync.native(path.resolve(checkout, file));
+      return resolvesInside(checkout, real) && statSync(real).isFile() ? readFileSync(real, 'utf8').split('\n') : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  return (file, from, to) => {
+    if (!files.has(file)) files.set(file, load(file));
+    return files.get(file)?.slice(from - 1, to);
+  };
 }
 
 /** The file and line range a cited reason names: the `:n` or `:n-m` that ends its `FINDING_LOCATION` match. */
@@ -324,11 +384,14 @@ function bindToCandidate(panel: PanelResult, candidate: string, cardId: string):
   return panel;
 }
 
-function score(c: ReviewBenchCase, panel: PanelResult, changedPaths: string[]): BenchCaseResult {
-  const cited = panel.outcome === 'block' && panel.verdict ? citedReasonsOf(panel.verdict, changedPaths) : [];
-  const common = { id: c.id, kind: c.kind, confirmed: c.confirmed, runStatus: panel.runStatus, cited, verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs };
-  if (panel.outcome === 'no-verdict' || panel.outcome === 'quota-hold') return { ...common, outcome: 'no-verdict', detail: panel.reasons.join('; ') || panel.runStatus };
-  if (c.kind === 'clean') return { ...common, outcome: panel.outcome === 'block' ? 'false-block' : 'pass' };
+/** The score on the rounds given: the cited reasons of every round in order, a block in any round, and the last round with a verdict. */
+function score(c: ReviewBenchCase, panels: PanelResult[], changedPaths: string[]): BenchCaseResult {
+  const scored = panels.filter((p) => p.outcome === 'pass' || p.outcome === 'block');
+  const panel = scored.at(-1) ?? panels[0]!;
+  const cited = [...new Set(scored.flatMap((p) => citedOf(p, changedPaths)))];
+  const common = { id: c.id, kind: c.kind, confirmed: c.confirmed, runStatus: panel.runStatus, cited, verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panels.reduce((sum, p) => sum + p.durationMs, 0) };
+  if (!scored.length) return { ...common, outcome: 'no-verdict', detail: panel.reasons.join('; ') || panel.runStatus };
+  if (c.kind === 'clean') return { ...common, outcome: scored.some((p) => p.outcome === 'block') ? 'false-block' : 'pass' };
   for (const reason of cited) {
     const at = citedSite(reason);
     const site = at && c.expected.find((e) => e.file === at.file && at.from <= e.line + e.window && at.to >= e.line - e.window);

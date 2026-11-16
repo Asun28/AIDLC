@@ -1174,14 +1174,16 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--include-unconfirmed', 'score the unconfirmed cases too')
     .option('--rules <rules>', 'how the learned rules are chosen: newest or matched', 'newest')
     .option('--trials <n>', 'review every selected case n times (1 to 20) and report the median and range', '1')
-    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string }) => {
+    .option('--rounds <n>', 'formal stage: review a blocked candidate again inside one decision while a round adds a new P0 or P1 reason (1 to 3)', '1')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string; rounds: string }) => {
       if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
       if (o.rules !== 'newest' && o.rules !== 'matched') fail(`--rules must be newest or matched, not ${o.rules}`);
       if (!/^[0-9]+$/.test(o.trials)) fail(`--trials must be an integer from 1 to 20, not ${JSON.stringify(o.trials)}`);
+      if (!/^[0-9]+$/.test(o.rounds)) fail(`--rounds must be an integer from 1 to 3, not ${JSON.stringify(o.rounds)}`);
       // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
       // No ctx(): the bench reads no goal state and writes nothing under the state directory.
       const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
-      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials) });
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials), rounds: Number(o.rounds) });
       out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
       if (report.leftCheckouts.length) process.exitCode = 1;
     });
