@@ -400,6 +400,8 @@ test('acceptance 7, git-backed (R3 decision 2, re:F1): a commit made on the card
       shas.push(commit(n));
       // The attempt names no sha: the runner records the candidate from the checkout.
       runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${n}`, redReceipt: 'red:1' });
+      const dod = persisted().effort?.attempts.at(-1)?.loopDod;
+      assert.deepEqual(dod?.ran === true ? [dod.ran, dod.exitCode] : dod, [true, 0], `the loop-run DoD of success ${n}`);
       assert.deepEqual([next().directive.kind, persisted().candidate?.sha], ['review', shas[n - 1]]);
       if (n === 2) runner.disputeFinding(g(), card, persisted(), 'F1', 'the row exists');
       await runner.formalReview(g(), card, persisted());

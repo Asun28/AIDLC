@@ -418,3 +418,14 @@ describe('T0-DIRTY-SUCCESS: a run stored before the card with a dirty candidate 
       },
     ));
 });
+
+describe('T1-DOD-GATE-FIXTURES: the loop-run DoD of the github fixture [R1]', () => {
+  it('T1-DOD-GATE-FIXTURES acceptance 1 - a clean success of the github fixture carries a loop-run DoD that ran and exited 0', () =>
+    withCtx(
+      () => atBuild('github'),
+      (c) => {
+        const dod = attempt(c, SUCCESS).effort?.attempts.at(-1)?.loopDod;
+        assert.deepEqual(dod?.ran === true ? [dod.ran, dod.exitCode, dod.expectedExit, dod.timedOut] : dod, [true, 0, 0, false]);
+      },
+    ));
+});

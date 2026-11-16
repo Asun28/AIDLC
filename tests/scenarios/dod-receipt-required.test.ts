@@ -461,3 +461,11 @@ describe('T0-DOD-RECEIPT-REQUIRED: the documents and both card-loop copies [R7] 
     assert.ok(flat.indexOf('card close --all') > flat.indexOf('aidlc evidence retain --card'));
   });
 });
+
+describe('T1-DOD-GATE-FIXTURES: the loop-run DoD of the git fixture [R2]', () => {
+  it('T1-DOD-GATE-FIXTURES acceptance 2 - a clean success of the git fixture carries a loop-run DoD that ran and exited 0', (t) => {
+    const c = atBuildGit(t, 'github');
+    const dod = c.attempt({ outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1' }).effort?.attempts.at(-1)?.loopDod;
+    assert.deepEqual(dod?.ran === true ? [dod.ran, dod.exitCode, dod.expectedExit, dod.timedOut] : dod, [true, 0, 0, false]);
+  });
+});
