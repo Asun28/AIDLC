@@ -187,7 +187,8 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
     for (const trial of results) {
       n += 1;
       const stopped = (c: ReviewBenchCase): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'no-verdict', cited: [], detail: 'not reviewed: a quota hold stopped the run', durationMs: 0 });
-      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n)) trial.set(r.id, r);
+      // With rounds, a case no round reviewed (a checkout or card error, a quota stop) carries an empty list.
+      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n)) trial.set(r.id, rounds > 1 && !r.rounds ? { ...r, rounds: [] } : r);
     }
   }
   const skipped = pool.length - selected.length;
@@ -196,8 +197,8 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
     return { cases: ordered, totals: totalsOf(ordered, skipped) };
   });
   const summary = summaryOf(trialResults.map((t) => t.totals));
-  // A case with fewer rounds, or none (an error, a quota stop), keeps its last score.
-  const after = (r: number) => trialResults[0]!.cases.map((c) => (c.rounds ? { ...c, outcome: c.rounds[Math.min(r, c.rounds.length) - 1]!.outcome } : c));
+  // A case with fewer rounds keeps its last score; a case with none keeps its own outcome.
+  const after = (r: number) => trialResults[0]!.cases.map((c) => (c.rounds?.length ? { ...c, outcome: c.rounds[Math.min(r, c.rounds.length) - 1]!.outcome } : c));
   const roundTotals = rounds > 1 ? Array.from({ length: rounds }, (_, i) => totalsOf(after(i + 1), skipped)) : undefined;
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
   return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
@@ -324,9 +325,9 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   }
   return cases.map((c) => {
     const reason = unscorable(c);
-    if (reason) return errorOf(c, reason);
-    if (ctx.rounds === 1) return score(c, panels, changedPaths);
-    const steps = panels.map((_, r) => score(c, panels.slice(0, r + 1), changedPaths));
+    if (ctx.rounds === 1) return reason ? errorOf(c, reason) : score(c, panels, changedPaths);
+    // A case the bench cannot score in a reviewed group gets an error entry for each round run.
+    const steps = panels.map((_, r) => (reason ? errorOf(c, reason) : score(c, panels.slice(0, r + 1), changedPaths)));
     return { ...steps.at(-1)!, rounds: steps.map((step, r) => ({ outcome: step.outcome, durationMs: panels[r]!.durationMs, cited: citedOf(panels[r]!, changedPaths).length })) };
   });
 }
