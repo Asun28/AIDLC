@@ -20,6 +20,15 @@ allow_paths:
   - docs/REQUIREMENTS-TRACEABILITY.md
   - tests/scenarios/card-close-cleanup.test.ts
   - tests/scenarios/goal-close-stages.test.ts
+  - tests/scenarios/_harness.ts
+  - tests/scenarios/audit.test.ts
+  - tests/scenarios/review-rule-goal.test.ts
+  - tests/scenarios/run-driver.test.ts
+  - tests/scenarios/t0-flow.test.ts
+  - tests/scenarios/lesson-dup.test.ts
+  - tests/scenarios/worktree-reclaim.test.ts
+  - tests/surface/lessons.test.ts
+  - tests/surface/removed-surface.test.ts
   - specs/tasks/T1-REVIEW-FOLLOWUP-ISSUE.md
 dod_command: npm run typecheck && node --test tests/scenarios/followup-issue.test.ts tests/infra/gh.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/card-close-cleanup.test.ts tests/scenarios/goal-close-stages.test.ts tests/surface/templates.test.ts
 dod_exit: 0
@@ -30,6 +39,7 @@ requirements:
   - R4. The marker shall be `findingMarker(cardId, prNumber, candidateSha, 'review followups')` (src/core/review-policy.ts:223). The step shall use the runner's injected `GhProbe` methods of T1-GH-ISSUES: it files with `createIssue(repo, title, body, 'review-followup')` only when no issue of `issuesWithLabel(repo, 'review-followup')` holds the marker in its body; a match is recorded instead. The issue title is `Review follow-ups: <cardId>`; the body names the card, the PR number, the candidate SHA, each follow-up finding as a list item with its finding id where it has one, and the marker on its last line.
   - R5. A failure of either gh call shall leave the step unset and the run unchanged, and `card close` shall exit non-zero naming the call; the next `card close --followups` retries and, through R4, files no second issue.
   - R6. `close()` (card-runner.ts:3197-3248) shall list `followups` among the missing steps until it is recorded, and its narration shall name `--followups`.
+  - R8. The existing tests and helpers that drive a new card run to DONE by marking the six closure steps of main (tests/scenarios/_harness.ts `driveCardToDone`, audit.test.ts, review-rule-goal.test.ts, run-driver.test.ts, t0-flow.test.ts, lesson-dup.test.ts, worktree-reclaim.test.ts, tests/surface/lessons.test.ts, card-close-cleanup.test.ts) shall also mark or expect `followups`, and an expected narration that lists the closure flags shall name `--followups`; each such line changes by that addition only and is listed in the Attempt evidence. The R25-R27 row of docs/REQUIREMENTS-TRACEABILITY.md and its pin in tests/surface/removed-surface.test.ts shall say that the loop calls `findingMarker` in the `followups` closure step, which this card makes true; no other row or line changes. card-loop.md keeps its sentence on unrelated findings (a deduplicated issue keyed by a card/PR/SHA marker); the new CLOSE text is fitted within the byte cap by its own wording, not by removing another rule.
   - R7. .claude/skills/aidlc-loop/card-loop.md and its template copy (CLOSE section), docs/OPERATIONS.md (closure), docs/ARCHITECTURE.md (closure record) and docs/REQUIREMENTS-TRACEABILITY.md (the R25-R27 row, which says idempotent issue creation is not implemented) shall state R1 to R6; the two card-loop.md files stay identical and within the byte cap tests/surface/templates.test.ts asserts.
 acceptance:
   - 1. `tests/scenarios/followup-issue.test.ts` (new), "T1-REVIEW-FOLLOWUP-ISSUE acceptance 1: a merged run with advisory and deferred findings files one issue with the marker, the label and each finding, and records its number". Scripted `gh` (the injected runner). Fails on main (no flag). [R1] [R2] [R3] [R4] [dod arm 1]
