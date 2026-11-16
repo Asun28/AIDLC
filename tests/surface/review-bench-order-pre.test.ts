@@ -121,7 +121,9 @@ test('T1-BENCH-ORDER-PRE acceptance 1: analysis-first writes the schema and cont
     assert.deepEqual(Object.keys(parsed.properties), ['reasons', 'axes', 'verdict']);
     assert.deepEqual(parsed.required, ['reasons', 'axes', 'verdict']);
     assert.deepEqual(Object.keys(parsed), ['type', 'properties', 'required', 'additionalProperties']);
-    assert.deepEqual(parsed, VERDICT_SCHEMA as unknown, 'the reordered schema accepts the same documents');
+    // deepEqual ignores key order but not array order, so `required` is compared as a set.
+    const asSet = (s: { required: readonly string[] }) => ({ ...s, required: [...s.required].sort() });
+    assert.deepEqual(asSet(parsed), asSet(VERDICT_SCHEMA) as unknown, 'the reordered schema accepts the same documents');
     assert.equal(readFileSync(plainSchema, 'utf8'), MAIN_SCHEMA_TEXT, 'the default schema file keeps its bytes');
     // The contract line moves the verdict last and is followed by the added sentence; the rest of the prompt is unchanged.
     assert.equal(analysis.calls[0]!.input, plain.calls[0]!.input.replace(`\n${VERDICT_CONTRACT}\n`, `\n${ANALYSIS_FIRST_CONTRACT}\n${REASONS_FIRST}\n`));
@@ -138,6 +140,12 @@ test('T1-BENCH-ORDER-PRE acceptance 1: analysis-first writes the schema and cont
     assert.deepEqual(optionsOf(analysis.report), { rounds: 1, order: 'analysis-first', preCommand: null });
     assert.deepEqual(optionsOf(preAnalysis.report), { rounds: 1, order: 'analysis-first', preCommand: null });
     assert.equal(plain.report.reviewer, 'bench-r3');
+
+    // The CLI passes --order through: a run that selects no case reviews nothing and still reports its options.
+    mkdirSync(path.join(fx.root, 'evals', 'empty'));
+    const cli = spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), '-C', fx.root, 'review', 'bench', 'run', '--dir', path.join('evals', 'empty'), '--stage', 'formal', '--order', 'analysis-first', '--json'], { encoding: 'utf8', windowsHide: true });
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.deepEqual(optionsOf(JSON.parse(cli.stdout)), { rounds: 1, order: 'analysis-first', preCommand: null });
   } finally {
     fx.cleanup();
   }
@@ -190,6 +198,14 @@ test('T1-BENCH-ORDER-PRE acceptance 2: --pre-command runs R2 with the given argv
     const absolute = await runBench(fx, 'pre', { preCommand: path.join(fx.root, 'bench', 'own.json') }, reply);
     assert.equal(absolute.report.reviewer, 'ds-r2');
 
+    // The CLI passes --pre-command through: a run that selects no case reviews nothing and still reports its options and reviewer.
+    mkdirSync(path.join(fx.root, 'evals', 'empty'));
+    const cli = spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), '-C', fx.root, 'review', 'bench', 'run', '--dir', path.join('evals', 'empty'), '--stage', 'pre', '--pre-command', path.join('bench', 'own.json'), '--json'], { encoding: 'utf8', windowsHide: true });
+    assert.equal(cli.status, 0, cli.stderr);
+    const cliReport = JSON.parse(cli.stdout) as bench.ReviewBenchReport;
+    assert.deepEqual(optionsOf(cliReport), { rounds: 1, order: 'verdict-first', preCommand: own.command });
+    assert.equal(cliReport.reviewer, 'ds-r2');
+
     assert.deepEqual(readFileSync(path.join(fx.root, 'aidlc.config.json')), configBefore, 'aidlc.config.json is byte-identical after the runs');
     assert.deepEqual(['own', 'kept', 'small'].map((n) => readFileSync(path.join(fx.root, 'bench', `${n}.json`))), fileBytes, 'the pre-command files keep their bytes');
   } finally {
@@ -223,7 +239,7 @@ test('T1-BENCH-ORDER-PRE acceptance 3: a missing or malformed --pre-command file
       await assert.rejects(bench.runReviewBench({ root: fx.root, stage, dir: fx.dir, runner: replying({ stdout: `${BLOCK_JSON}\n` }, calls), tmpRoot: fx.tmpRoot, ...extra } as bench.ReviewBenchOptions), pattern, JSON.stringify(extra));
       assert.equal(calls.length, 0, `no review: ${JSON.stringify(extra)}`);
     };
-    await refused('pre', { preCommand: path.join('bench', 'absent.json') }, /--pre-command .*absent\.json/);
+    await refused('pre', { preCommand: path.join('bench', 'absent.json') }, /--pre-command .*absent\.json: no such file/);
     for (const name of Object.keys(malformed)) await refused('pre', { preCommand: path.join('bench', name) }, new RegExp(`--pre-command .*${name.replace('.', '\\.')}`));
     await refused('formal', { preCommand: good }, /--pre-command needs --stage pre/);
     await refused('pre', { order: 'reasons-first' }, /--order must be verdict-first or analysis-first, not reasons-first/);

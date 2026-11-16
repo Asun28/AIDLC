@@ -126,7 +126,7 @@ test('T1-BENCH-ROUNDS acceptance 1: rounds run while a block adds a new P0 or P1
     assert.deepEqual(c.matched, { reason: HIT, file: 'src/calc.ts', line: 13, severity: 'P0' });
     assert.deepEqual(c.cited, [MISS, HIT]);
     assert.deepEqual(roundsOf(c), [{ outcome: 'miss', durationMs: 'number', cited: 1 }, { outcome: 'hit', durationMs: 'number', cited: 1 }]);
-    assert.deepEqual((report as { options?: unknown }).options, { rounds: 2 });
+    assert.deepEqual((report as { options?: unknown }).options, { rounds: 2, order: 'verdict-first', preCommand: null });
   } finally {
     fx.cleanup();
   }
@@ -208,7 +208,7 @@ test('T1-BENCH-ROUNDS acceptance 3: rounds and roundTotals score each round on t
     const totals = (hits: number, misses: number) => ({ bugCases: 2, hits, misses, recall: hits / (hits + misses), cleanCases: 2, cleanPasses: 0, falseBlocks: 2, falseBlockRate: 1, noVerdict: 0, errors: 0, skippedUnconfirmed: 0 });
     assert.deepEqual((report as { roundTotals?: unknown }).roundTotals, [totals(0, 2), totals(1, 1), totals(1, 1)], 'c-clean keeps its round 2 score in round 3');
     assert.deepEqual(report.totals, totals(1, 1));
-    assert.deepEqual((report as { options?: unknown }).options, { rounds: 3 });
+    assert.deepEqual((report as { options?: unknown }).options, { rounds: 3, order: 'verdict-first', preCommand: null });
 
     // Every path that builds a case result carries rounds: an error entry per round run for a case the bench cannot score
     // in a reviewed group, and none for a case no round reviewed (card absent, failed checkout, card id mismatch, quota stop).
@@ -270,7 +270,7 @@ test('T1-BENCH-ROUNDS acceptance 4: --rounds outside 1 to 3, or above 1 with --s
     assert.ok(!one.calls[0]!.input.includes('## Found earlier in this decision'));
     assert.equal(roundsOf(one.report.cases[0]), undefined, 'a case of one round carries no rounds');
     assert.equal((one.report as { roundTotals?: unknown }).roundTotals, undefined);
-    assert.deepEqual((plain.report as { options?: unknown }).options, { rounds: 1 });
+    assert.deepEqual((plain.report as { options?: unknown }).options, { rounds: 1, order: 'verdict-first', preCommand: null });
     // An absent or empty list leaves the prompt byte for byte as it was.
     const input = { stage: 'formal' as const, includeDiff: true, reviewPolicy: 'p', card: { id: 'X', title: 't', allow_paths: ['a'], dod_command: 'd', tdd: true, acceptance: ['1. a'] } as never, base: 'b', head: 'h', changedPaths: ['a'], diff: 'd', priorFindings: [], round: 1, maxRounds: 4 };
     assert.equal(buildReviewPrompt({ ...input, foundInDecision: [] } as Parameters<typeof buildReviewPrompt>[0]), buildReviewPrompt(input));

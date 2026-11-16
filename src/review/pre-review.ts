@@ -63,6 +63,8 @@ export interface ReviewPromptInput {
   baseSync?: boolean;
   /** Ask for acceptance coverage (`preReview.coverage: shadow`); it reaches the pre-review's `ac-coverage` angle alone and every other prompt is unchanged. */
   coverage?: boolean;
+  /** The reviewer bench's `--order` (card T1-BENCH-ORDER-PRE); absent or `verdict-first` leaves the prompt unchanged, and the card runner never passes it. */
+  order?: VerdictOrder;
   round: number;
   maxRounds: number;
 }
@@ -306,9 +308,21 @@ export const COVERAGE_ANGLE = 'ac-coverage';
 /** The coverage list as the contract line asks for it: one entry per numbered acceptance item. */
 export const COVERAGE_CONTRACT = '"coverage":[{"item":1,"status":"supported|violated|unknown","impl":"file:line","test":"file:line"}]';
 
+/**
+ * Where the verdict stands in the verdict document (card T1-BENCH-ORDER-PRE): `verdict-first`, the frozen order, or
+ * `analysis-first`, the reasons and axes before the verdict. Only the reviewer bench asks for `analysis-first`.
+ */
+export type VerdictOrder = 'verdict-first' | 'analysis-first';
+export const VERDICT_ORDERS: readonly VerdictOrder[] = ['verdict-first', 'analysis-first'];
+
+/** The line that follows the contract line under `analysis-first`. */
+export const REASONS_FIRST_LINE = 'Write the reasons before the verdict.';
+
 /** The output contract line: the frozen verdict document, with the coverage list appended for an angle asked to account for the acceptance items. */
-export function verdictContract(coverage = false): string {
-  return coverage ? `${VERDICT_CONTRACT.slice(0, -1)},${COVERAGE_CONTRACT}}` : VERDICT_CONTRACT;
+export function verdictContract(coverage = false, order: VerdictOrder = 'verdict-first'): string {
+  const head = '{"verdict":"pass|block",';
+  const doc = order === 'analysis-first' ? `{${VERDICT_CONTRACT.slice(head.length, -1)},"verdict":"pass|block"}` : VERDICT_CONTRACT;
+  return coverage ? `${doc.slice(0, -1)},${COVERAGE_CONTRACT}}` : doc;
 }
 
 /** JSON schema of the verdict document, for reviewers that enforce structured output (`codex exec --output-schema`). */
@@ -331,11 +345,17 @@ export const VERDICT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** Write the verdict schema next to the candidate and return its path (the `{schema}` placeholder). */
-export function materialiseVerdictSchema(reviewDir: string): string {
+/**
+ * Write the verdict schema next to the candidate and return its path (the `{schema}` placeholder). `analysis-first` writes
+ * `verdict.schema.analysis-first.json`, with `reasons` and `axes` before `verdict` in `properties` and `required`.
+ */
+export function materialiseVerdictSchema(reviewDir: string, order: VerdictOrder = 'verdict-first'): string {
   mkdirSync(reviewDir, { recursive: true });
-  const file = path.join(reviewDir, 'verdict.schema.json');
-  writeFileSync(file, JSON.stringify(VERDICT_SCHEMA, null, 2) + '\n', 'utf8');
+  const first = order === 'analysis-first';
+  const { verdict, reasons, axes } = VERDICT_SCHEMA.properties;
+  const schema = first ? { ...VERDICT_SCHEMA, properties: { reasons, axes, verdict }, required: ['reasons', 'axes', 'verdict'] } : VERDICT_SCHEMA;
+  const file = path.join(reviewDir, first ? 'verdict.schema.analysis-first.json' : 'verdict.schema.json');
+  writeFileSync(file, JSON.stringify(schema, null, 2) + '\n', 'utf8');
   return file;
 }
 
@@ -408,7 +428,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   const coverage = i.coverage === true && i.stage === 'pre' && i.perspective === COVERAGE_ANGLE;
   // The end-of-turn line (Opus 5.5 guide, unattended runs): a turn can end on a progress note, which for a headless reviewer is a
   // missing verdict.
-  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', verdictContract(coverage), 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict. A note after the verdict line is ignored only when it contains no JSON: the reader takes the last JSON document that parses as the verdict, and a JSON document after it that does not parse leaves no verdict.', '`verdict` is the worse of the two axes; `reasons` is empty on a pass that carries no notes.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
+  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', verdictContract(coverage, i.order), ...(i.order === 'analysis-first' ? [REASONS_FIRST_LINE] : []), 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict. A note after the verdict line is ignored only when it contains no JSON: the reader takes the last JSON document that parses as the verdict, and a JSON document after it that does not parse leaves no verdict.', '`verdict` is the worse of the two axes; `reasons` is empty on a pass that carries no notes.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
   // A pass that wrote each note in both places ended one closing brace short and left the round no verdict (issue #82); the
   // reader never repairs such a document, so the prompt asks for the short form and a balance check.
   lines.push('A pass that carries notes lists each note once, in the top-level `reasons`, and leaves the `reasons` of both axes empty, so the verdict line stays short.', 'Before you send the verdict line, check that it is one complete JSON document: every `{` and `[` is closed by its `}` or `]`, and the line ends with the `}` that closes the document. A line one closing brace short does not parse and returns no verdict.');
