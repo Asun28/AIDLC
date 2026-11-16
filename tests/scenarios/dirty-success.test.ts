@@ -80,6 +80,7 @@ function atBuild(ship: 'github' | 'scaffold' | 'dry-run' = 'github', options: { 
     'git diff': { stdout: 'diff --git a/src/t0-ds.ts b/src/t0-ds.ts\n+export const ds = 1;\n' },
     'fake-r2': { stdout: PASS },
     'fake-p': { stdout: PASS },
+    'node --test tests/t0-ds.test.ts': { exitCode: 0, stdout: '', stderr: '' },
   });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: ship, ...(ship === 'github' ? { repository: 'o/r' } : {}) }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
   return {

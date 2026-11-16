@@ -53,3 +53,25 @@ npm run typecheck && node --test tests/scenarios/dirty-success.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: dod arm 1 is `npm run typecheck`, dod arm 2 is the `node --test` command; every test of the three files passes, the new assertions included.
+
+## Attempt evidence
+
+Hygiene probe at PREPARE (base 332956a2): an uncommitted line after card-runner.ts:1268 appended every success whose `loopDod` had `ran` true and `timedOut` true or `exitCode` other than `expectedExit` to a log; the 54 files of `git grep -l -e 'recordAttempt(' -e "'attempt'" -- tests` were run with it (run exit 0), then the line was restored. Logged successes, by file:
+
+| File | Count | Command | Exit code |
+|---|---|---|---|
+| tests/scenarios/dirty-success.test.ts | 24 | `node --test tests/t0-ds.test.ts` | 127 |
+| tests/scenarios/dod-receipt-required.test.ts | 2 | `node --test tests/t0-drg.test.ts` | 127 |
+| tests/scenarios/review-rule-ship.test.ts | 2 | `node --test tests/t1-rs.test.ts` | 127 |
+| tests/scenarios/dod-record.test.ts | 1 | `node dod.mjs 3` | 3 |
+| tests/scenarios/dod-record.test.ts | 1 | `node "<worktree>\tests\infra\exec-tree.child.ts" stay tree.pid` | null (timed out) |
+
+No file outside the four of the sweep logged one. review-rule-ship.test.ts logged both of its successes (the sweep had one).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | dirty-success.test.ts "T1-DOD-GATE-FIXTURES acceptance 1 - ..." | RED at 27d77737 (exitCode 127), passes with the entry |
+| 2 | dod-receipt-required.test.ts "T1-DOD-GATE-FIXTURES acceptance 2 - ..." | RED at 27d77737 (exitCode 127), passes with the entry |
+| 3 | review-rule-ship.test.ts "acceptance 7, git-backed (R3 decision 2, re:F1)", assertion after each success | RED at 27d77737 (127), passes with the entry |
+| 4 | DoD: 70 tests, 69 pass, 0 fail, 1 skipped (existing Windows skip, EACCES); `git diff --numstat 332956a2`: 12/0, 9/0, 3/1 | the 1 deleted line in review-rule-ship.test.ts is the one-line `scriptedRunner({...})` call that gains the entry; no assertion changed |
+| 5 | the probe table above | 4 files, as listed |

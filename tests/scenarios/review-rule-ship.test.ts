@@ -374,7 +374,7 @@ test('acceptance 7, git-backed (R3 decision 2, re:F1): a commit made on the card
     const wt = path.join(wtRoot, 'T1-RS');
     // git runs for real; the reviewer and gh are scripted, and every command is recorded.
     const verdicts = RERAISE.map(block);
-    const scripted = scriptedRunner({ 'fake-r3': () => ({ stdout: verdicts.shift()! }), 'gh api user -q .login': { stdout: 'alice\n' } });
+    const scripted = scriptedRunner({ 'fake-r3': () => ({ stdout: verdicts.shift()! }), 'gh api user -q .login': { stdout: 'alice\n' }, 'node --test tests/t1-rs.test.ts': { exitCode: 0, stdout: '', stderr: '' } });
     const calls: string[] = [];
     const run: SyncRunner = (cmd, args, o) => { calls.push([cmd, ...args].join(' ')); return cmd === 'git' ? runSync(cmd, args, o) : scripted(cmd, args, o); };
     const shipPath = new GitHubShipPath({ mainRoot, worktreeRoot: wtRoot, repository: 'o/r', runner: run, sleep: () => {} });
