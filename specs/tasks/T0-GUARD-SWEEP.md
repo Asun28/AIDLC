@@ -1,7 +1,7 @@
 ---
 id: T0-GUARD-SWEEP
 title: Before the first review the implementer loosens each guard its change adds, one at a time, and sees a test fail, as both copies of implementer.md (step 2 and the report) and a new Guards section of both copies of the tdd skill say
-status: todo
+status: merged
 branch: T0-GUARD-SWEEP
 worktree: D:\wt\AIDLC\T0-GUARD-SWEEP
 allow_paths:
