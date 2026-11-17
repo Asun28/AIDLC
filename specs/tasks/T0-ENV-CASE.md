@@ -47,3 +47,12 @@ npm run typecheck && node --test tests/infra/env-name.test.ts tests/infra/stray-
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/env-name.test.ts`, describe `envValue [R1]`, eight rows, the seven of the item plus the exact spelling standing after another (`{ SYSTEMROOT: 'E:\B', SystemRoot: 'D:\A' }` gives `D:\A`). RED on 6507d0e6 (stub with the exact-name read): 3 of 8 failed on the assertion (another case, empty is missing, key order). Revert check, each mutant alone, one row red each: exact first removed, key order reversed, empty kept on win32, empty kept off win32, win32 only removed | pass |
+| 2 | `tests/infra/env-name.test.ts`, describe `the three reads [R2]`: killProcessTree with SYSTEMROOT and with WINDIR, listProcesses with `SYSTEMROOT: 'D:\Windows\'` and with WINDIR, resolveWorktreeRoot with SYSTEMDRIVE. RED on 6507d0e6: 5 of 5 failed with the `C:\Windows` or `C:` fallback. Revert check: each of the five reads put back to `env['<name>']` alone turns its own row red | pass |
+| 3 | `tests/infra/stray-processes.test.ts`, `tests/surface/config.test.ts` in the DoD, neither changed; `tests/infra/exec.test.ts` unchanged, runs in CI (issue 341) | pass |
+| 4 | `changelog.d/T0-ENV-CASE.md`; `tests/infra/env-name.test.ts`, describe `[R3]`, reads it with `fragmentEntry` and fails with the file removed (revert check); `tests/surface/changelog-fragments.test.ts` in the DoD; `git diff origin/main -- CHANGELOG.md docs` is empty | pass |
