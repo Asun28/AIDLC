@@ -110,8 +110,9 @@ calls `Date.now()`.
   caps asserted by `tests/surface/templates.test.ts`. The section below is
   `templates/CLAUDE.aidlc.md`, which `aidlc init` appends to a downstream
   repo's CLAUDE.md; keep the two identical.
-- Record behaviour changes in `CHANGELOG.md` (Unreleased) and, where they
-  touch the loop, in `docs/ARCHITECTURE.md` and `docs/OPERATIONS.md`.
+- Record a behaviour change in a new file `changelog.d/<card id>.md`, not
+  in `CHANGELOG.md` (the form: `changelog.d/README.md`), and, where it
+  touches the loop, in `docs/ARCHITECTURE.md` and `docs/OPERATIONS.md`.
 - This file stays within 200 lines (`tests/surface/claude-md-size.test.ts`):
   every session loads it, and a longer file costs context and adherence, so
   detail goes in `docs/`.
