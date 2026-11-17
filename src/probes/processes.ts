@@ -6,6 +6,7 @@
  */
 import path from 'node:path';
 import { resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
+import { envValue } from '../core/env-name.ts';
 import type { ExecReceipt, Runner } from './exec.ts';
 
 /** How long the one process listing may run before the runner requests its cancellation. */
@@ -131,7 +132,7 @@ export async function listProcesses(runner: Runner, platform: NodeJS.Platform, e
   try {
     const win = platform === 'win32';
     // The SystemRoot expression of killProcessTree (src/probes/exec.ts).
-    const command = win ? `${(env['SystemRoot'] || env['windir'] || 'C:\\Windows').replace(/[\\/]+$/, '')}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : 'ps';
+    const command = win ? `${(envValue(env, 'SystemRoot', platform) || envValue(env, 'windir', platform) || 'C:\\Windows').replace(/[\\/]+$/, '')}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : 'ps';
     const args = win ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', CIM_SCRIPT] : [...PS_ARGS];
     let receipt: ExecReceipt;
     try {
