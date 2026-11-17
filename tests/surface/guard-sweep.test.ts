@@ -49,7 +49,7 @@ function sameAsciiLf(a: string, b: string): string[] {
 }
 
 test('T0-GUARD-SWEEP acceptance 1 - both implementer copies carry the guard sweep in step 2 and in the report', () => {
-  const files = ['.claude/agents/implementer.md', 'templates/claude/agents/implementer.md'];
+  const files = ['.claude/agents/implementer.md', 'templates/claude/agents/implementer.md'] as const;
   sameAsciiLf(files[0], files[1]);
   for (const file of files) {
     const lines = bytes(file).toString('latin1').split('\n');
@@ -64,7 +64,7 @@ test('T0-GUARD-SWEEP acceptance 1 - both implementer copies carry the guard swee
 });
 
 test('T0-GUARD-SWEEP acceptance 2 - both tdd skill copies carry the Guards section between Seams and Anti-patterns within the cap', () => {
-  const files = ['.claude/skills/tdd/SKILL.md', 'templates/claude/skills/tdd/SKILL.md'];
+  const files = ['.claude/skills/tdd/SKILL.md', 'templates/claude/skills/tdd/SKILL.md'] as const;
   sameAsciiLf(files[0], files[1]);
   for (const file of files) {
     const buf = bytes(file);
