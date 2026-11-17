@@ -51,3 +51,21 @@ npm run typecheck && node --test tests/infra/dod-shell.test.ts tests/scenarios/d
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Attempt 1, effort medium. RED commit 8f83d6c6 (tests only): 9 of 19 tests in tests/infra/dod-shell.test.ts and tests/scenarios/dod-record.test.ts failed on the old code. The scaffold call returned the platform call, so cmd.exe printed `'$ErrorActionPreference' is not recognized` (exit 1), the record carried no `shell`, and the doc sentences did not exist yet. GREEN commit 2c9ad8c0.
+
+| Item | Test | Result |
+| --- | --- | --- |
+| 1 | dod-shell.test.ts "dodCall by ship path [R1]": scaffold exact call with no shell key; github and dry-run platform call | pass; scaffold case fails on main |
+| 2 | dod-shell.test.ts "a real pwsh through the scaffold call [R1]": issue 348 shape exits 0 and prints [DOD-PASS]; `node -e "process.exit(3)"; exit 0` exits nonzero; `exit 4` exits 4; on win32 the issue 348 shape through the platform call does not exit 0 | pass; first and third fail on main |
+| 3 | dod-shell.test.ts "the loop-run DoD on the scaffold path [R2] [R3]": one call `pwsh -NoProfile -Command <prefix+dod>` with `killTree: true` and `shell: 'pwsh'`; a stored record without `shell` parses and `card status` prints the same `loopDod=` line. dod-record.test.ts first test: `shell: 'platform'` added to the record literal, call assertion unchanged | pass; all three fail on main |
+| 4 | dod-shell.test.ts "runMutants passes the ship path to the DoD call [R2]": scaffold call on the baseline and on 3 mutants; github platform call. tests/surface/mutants.test.ts unchanged | pass; scaffold case fails on main |
+| 5 | dod-shell.test.ts "docs carry the rule [R4]": each of the 4 paragraph sentences, the mutants sentence after the platform-shell sentence, the CHANGELOG entry under Unreleased. tests/surface/loop-evidence-docs.test.ts unchanged | pass; fails on main |
+
+Revert check (each guard reverted alone, the two test files run, the file restored from HEAD): scaffold branch removed fails 6; native-command preference removed fails 4, including the real-pwsh native-exit test; `ErrorActionPreference='Stop'` removed fails 4, including the same test; loopDod passing `dry-run` instead of `config.shipPath` fails 2; the `shell` field removed fails 3, including dod-record test 1; the schema field made required fails 1 (the old-record test); runMutants passing `dry-run` fails 1; each of an OPERATIONS sentence, the mutants sentence and the CHANGELOG entry removed fails 1. Not covered by a test: `card mutants` in src/cli/main.ts passing `c.config.shipPath`, since no acceptance item names that seam.
+
+Placement: R4 asks for the new OPERATIONS paragraph right after the T1-DOD-RECORD-2 paragraph, but tests/surface/loop-evidence-docs.test.ts (which must pass unchanged) asserts that the line after that paragraph is empty and the line after that is `### T1 feature`, and that the paragraph before it is the DoD receipt paragraph. The new paragraph therefore stands directly before the DoD receipt paragraph, in the same `### T0 bugfix` section, two paragraphs above the T1-DOD-RECORD-2 paragraph.
+
+Doc-reading tests: every test file under tests/ that names OPERATIONS.md or CHANGELOG.md was run, plus tests/surface/prose.test.ts. 2049 of 2066 passed, 15 were skipped, and 2 files were ended by a 580 s timeout while other worktrees ran tests on the same machine. Those 2 files, run alone afterwards (review-bench-export and review-bench), passed 66 of 66; prose and changelog passed 38 of 38.
