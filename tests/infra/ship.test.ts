@@ -642,6 +642,10 @@ describe('delivery/ship saga leg report (T0-SHIP-SAGA-LEG)', () => {
     const between = '  [SAGA-FAIL] preflight (review-backend availability / account guard / env bootstrap - between card-check and DoD); first pending leg after it = DoD';
     assert.equal(classify(`${LICENSE}\n${between}`).outcome, 'unclassified', 'a between-legs failure with only the license text');
     assert.equal(classify(`${LICENSE}\n${DOD}\n[SAGA-FAIL] preflight; first pending leg after it = license-gate  `).outcome, 'unclassified', 'a between-legs failure naming a leg-bound leg after it');
+    // R3 decision 1 F1: each of the four text rules alone, with no other leg-bound text and no bracketed sentinel.
+    for (const own of [DOD, VERIFY, LICENSE, SECRETS]) {
+      for (const line of ['[SAGA-FAIL] commit (= first pending leg)', between]) assert.equal(classify(`${own}\n${line}`).outcome, 'unclassified', `${own} alone under ${line}`);
+    }
   });
 
   it("acceptance 3: a last [SAGA-FAIL] line that is neither a leg report nor a between-legs failure keeps main's class [R1] [R3]", () => {
@@ -680,7 +684,8 @@ describe('delivery/ship saga leg report (T0-SHIP-SAGA-LEG)', () => {
     const operations = read('docs', 'OPERATIONS.md');
     assert.equal(SAGA_LEG_OPERATIONS_SENTENCES.length, 4);
     for (const sentence of SAGA_LEG_OPERATIONS_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
-    assert.ok(read('docs', 'ARCHITECTURE.md').includes(SAGA_LEG_ARCHITECTURE_SENTENCE), `docs/ARCHITECTURE.md states: ${SAGA_LEG_ARCHITECTURE_SENTENCE}`);
+    assert.equal(SAGA_LEG_ARCHITECTURE_SENTENCES.length, 3);
+    for (const sentence of SAGA_LEG_ARCHITECTURE_SENTENCES) assert.ok(read('docs', 'ARCHITECTURE.md').includes(sentence), `docs/ARCHITECTURE.md states: ${sentence}`);
     assert.ok(changelogSince010(read('CHANGELOG.md')).split('\n').includes(SAGA_LEG_CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
   });
 });
@@ -692,9 +697,12 @@ const SAGA_LEG_OPERATIONS_SENTENCES = [
   'A leg report naming any other leg, or a between-legs failure `[SAGA-FAIL] <operation>; first pending leg after it = <leg>`, keeps the license, secrets, verify and DoD text rules from deciding: every other rule decides in the existing order, and an output none of them matches is `unclassified`.',
   "An output with no `[SAGA-FAIL]` line, or whose last `[SAGA-FAIL]` line has neither form (the github path's bare `[SAGA-FAIL]`, for one), is classified as before; the `[SHIP-EFFECT-UNKNOWN]` rule, the exit-0 contract and the whole-receipt timeout are read first, unchanged.",
 ];
-/** The sentence card T0-SHIP-SAGA-LEG adds to the `ScaffoldShipPath` item of docs/ARCHITECTURE.md. */
-const SAGA_LEG_ARCHITECTURE_SENTENCE =
-  "The last `[SAGA-FAIL]` line, the saga leg report, comes before the order of the map (card T0-SHIP-SAGA-LEG): a report naming `DoD`, `verify`, `license-gate` or `leak-gate` makes that leg's class the outcome, and a report naming another leg, or a between-legs failure, keeps the license, secrets, verify and DoD text rules from deciding.";
+/** The sentences card T0-SHIP-SAGA-LEG adds to the `ScaffoldShipPath` item of docs/ARCHITECTURE.md (R3 decision 1 F2: R1 to R3 in full). */
+const SAGA_LEG_ARCHITECTURE_SENTENCES = [
+  "The saga leg report comes before the order of the map (card T0-SHIP-SAGA-LEG): it is the last line holding `[SAGA-FAIL]` when, trimmed of white space, it reads `[SAGA-FAIL] <leg>` or `[SAGA-FAIL] <leg> (= first pending leg)`, with `<leg>` exactly one of `card-check`, `DoD`, `verify`, `commit`, `scope-gate`, `budget-gate`, `license-gate`, `leak-gate`, `push+PR`, `R3-review`, `CI-gate`, `merge` and `local-merge`.",
+  "A report naming `DoD`, `verify`, `license-gate` or `leak-gate` makes that leg's class (`dod-failed`, `verify-failed`, `license-blocked`, `secrets-blocked`) the outcome, with the detail and failing line of that class's rule when the rule matches the output, else the detail `saga leg <leg>`.",
+  'A report naming another leg, or a between-legs failure `[SAGA-FAIL] <operation>; first pending leg after it = <leg>`, keeps the license, secrets, verify and DoD text rules from deciding; any other last `[SAGA-FAIL]` line, or none, leaves the map unchanged.',
+];
 /** The CHANGELOG entry of card T0-SHIP-SAGA-LEG, one line under Unreleased. */
 const SAGA_LEG_CHANGELOG_ENTRY =
   "- T0-SHIP-SAGA-LEG (bugfix, issue 347): `classifyShipOutput` reads the scaffold's saga report, the last `[SAGA-FAIL] <leg>` line, before the order of the sentinel map. A ship that failed at its `DoD`, `verify`, `license-gate` or `leak-gate` leg gets that leg's class (`dod-failed`, `verify-failed`, `license-blocked`, `secrets-blocked`), so a DoD failure whose output holds license words, such as a card text naming docs/LICENSE-POLICY.md, is a counted failed attempt instead of a final risk stop. A report naming another leg, or a between-legs failure, keeps the license, secrets, verify and DoD text rules from deciding; an output with no leg report is classified as before.";
