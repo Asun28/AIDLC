@@ -296,17 +296,25 @@ function scaleFor(measured: number | undefined): number {
   return Math.min(SCALE_MAX, Math.max(1, Math.ceil(measured / CALIBRATION_BASE_MS)));
 }
 
-/** Main's timeout and bounds times `scale`; TIMEOUT_GRACE_MS, the helper's backstop and the slow kill's duration are the product's and stay. */
+/** What the timeout adds to main's 1500 ms per scale: one calibration unit, so the fixture has three units to be ready. */
+const READY_MARGIN_MS = CALIBRATION_BASE_MS;
+
+/**
+ * The timeout is three calibration units per scale ((1500 + READY_MARGIN_MS) times `scale`), and each bound counted from
+ * the call is that timeout plus what main allows after its own timeout at the same scale; goneWithinMs and runnerExitBoundMs
+ * are not counted from the call and keep main's values. TIMEOUT_GRACE_MS, the helper's backstop and the slow kill's duration
+ * are the product's and stay.
+ */
 function boundsAt(scale: number): Bounds {
-  const timeoutMs = 1500 * scale;
+  const timeoutMs = (1500 + READY_MARGIN_MS) * scale;
   return {
     timeoutMs,
-    stayBoundMs: 6000 * scale,
+    stayBoundMs: timeoutMs + 4500 * scale,
     exitCloseMs: timeoutMs + TIMEOUT_GRACE_MS,
-    noKillBoundMs: (1500 + 1000) * scale + TIMEOUT_GRACE_MS,
-    slowKillBoundMs: (1500 + 1000) * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
+    noKillBoundMs: timeoutMs + 1000 * scale + TIMEOUT_GRACE_MS,
+    slowKillBoundMs: timeoutMs + 1000 * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
     goneWithinMs: 3000 * scale,
-    syncBoundMs: Math.min(6000 * scale, timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
+    syncBoundMs: timeoutMs + Math.min(4500 * scale, TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
     runnerExitBoundMs: TIMEOUT_MS + TIMEOUT_GRACE_MS + 3000 * scale,
   };
 }
@@ -349,9 +357,9 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     for (const measured of [undefined, NaN, -1, Infinity, -Infinity]) {
       assert.throws(() => scaleFor(measured), { message: `calibration failed: ${String(measured)}` }, `scaleFor(${String(measured)})`);
     }
-    assert.deepEqual(boundsAt(1), { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000, runnerExitBoundMs: 6500 });
-    assert.deepEqual(Object.values(boundsAt(4)), [6000, 24_000, 8000, 12_000, 13_500, 12_000, 23_000, 15_500]);
-    assert.deepEqual(Object.values(boundsAt(8)), [12_000, 48_000, 14_000, 22_000, 23_500, 24_000, 29_000, 27_500]);
+    assert.deepEqual(boundsAt(1), { timeoutMs: 2250, stayBoundMs: 6750, exitCloseMs: 4250, noKillBoundMs: 5250, slowKillBoundMs: 6750, goneWithinMs: 3000, syncBoundMs: 6750, runnerExitBoundMs: 6500 });
+    assert.deepEqual(Object.values(boundsAt(4)), [9000, 27_000, 11_000, 15_000, 16_500, 12_000, 26_000, 15_500]);
+    assert.deepEqual(Object.values(boundsAt(8)), [18_000, 54_000, 20_000, 28_000, 29_500, 24_000, 35_000, 27_500]);
     assert.ok(boundsAt(8).stayBoundMs < 60_000);
     assert.ok(boundsAt(8).runnerExitBoundMs < 60_000);
 
@@ -370,6 +378,31 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
 
     const from = { GIT_DIR: 'a', git_work_tree: 'b', Git_Config_Global: 'c', GIT_CEILING_DIRECTORIES: 'd', NODE_OPTIONS: 'e', node_options: 'f', AIDLC_STATE_DIR: 'g', aidlc_state_dir: 'h', PATH: 'p', KEEP: 'k' };
     assert.deepEqual(fixtureEnv(dir, from), { PATH: 'p', KEEP: 'k', GIT_CEILING_DIRECTORIES: [dirname(dir), dirname(realpathSync.native(dir))].join(delimiter), AIDLC_STATE_DIR: join(dir, 'state') });
+  });
+
+  it('T0-EXEC-READY-MARGIN acceptance 1 - what each bound allows after the timeout is main\'s at scales 1, 4 and 8', () => {
+    const afterTimeout = (scale: number): number[] => {
+      const b = boundsAt(scale);
+      return [b.stayBoundMs - b.timeoutMs, b.exitCloseMs - b.timeoutMs, b.noKillBoundMs - b.timeoutMs, b.slowKillBoundMs - b.timeoutMs, b.syncBoundMs - b.timeoutMs, b.goneWithinMs, b.runnerExitBoundMs];
+    };
+    assert.deepEqual(afterTimeout(1), [4500, 2000, 3000, 4500, 4500, 3000, 6500]);
+    assert.deepEqual(afterTimeout(4), [18_000, 2000, 6000, 7500, 17_000, 12_000, 15_500]);
+    assert.deepEqual(afterTimeout(8), [36_000, 2000, 10_000, 11_500, 17_000, 24_000, 27_500]);
+  });
+
+  it('T0-EXEC-READY-MARGIN acceptance 2 - the timeout is three calibration units and the two starts of issue 341 are inside it', () => {
+    assert.deepEqual([1, 2, 4, 8].map((scale) => boundsAt(scale).timeoutMs), [2250, 4500, 9000, 18_000]);
+    for (let scale = 1; scale <= 8; scale++) assert.equal(boundsAt(scale).timeoutMs, 3 * CALIBRATION_BASE_MS * scale, `boundsAt(${scale}).timeoutMs`);
+
+    // The two starts issue 341 reports, at scale 2, against the 3000 ms timeout they ran with.
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4556, startedMs: 1000 }, 3000, 2), notReadyMessage(2, "the sleeper's pid file was written 3556 ms after the call, the timeout was 3000 ms"));
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4722, startedMs: 1000 }, 3000, 2), notReadyMessage(2, "the sleeper's pid file was written 3722 ms after the call, the timeout was 3000 ms"));
+    // The same starts are inside the timeout of scale 2.
+    assertSleeperExisted({ sleeperWrittenMs: 4556, startedMs: 1000 }, boundsAt(2).timeoutMs, 2);
+    assertSleeperExisted({ sleeperWrittenMs: 4722, startedMs: 1000 }, boundsAt(2).timeoutMs, 2);
+    // The precondition still holds at the new timeout.
+    assertSleeperExisted({ sleeperWrittenMs: 5500, startedMs: 1000 }, boundsAt(2).timeoutMs, 2);
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 5501, startedMs: 1000 }, boundsAt(2).timeoutMs, 2), notReadyMessage(2, "the sleeper's pid file was written 4501 ms after the call, the timeout was 4500 ms"));
   });
 
   it('calibrate times the exit fixture and ends its sleeper, and returns undefined when the fixture cannot start', async (t) => {
@@ -579,7 +612,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     await assert.rejects(raceFixture(late, 'stay', 50, () => {}), /past the 50 ms bound/);
   });
 
-  it('acceptance 3: run on the stay fixture with timeoutMs 1500 times the calibrated scale resolves within 6 s times that scale, timed out and not ok, and the sleeper is gone', async (t) => {
+  it('acceptance 3: run on the stay fixture with timeoutMs 2250 times the calibrated scale resolves within 6750 ms times that scale, timed out and not ok, and the sleeper is gone', async (t) => {
     const b = await calibratedBounds(t);
     await raceFixture(run, 'stay', b.stayBoundMs, async ({ receipt, elapsedMs, sleeper, startedMs, sleeperWrittenMs }) => {
       assertSleeperExisted({ sleeperWrittenMs, startedMs }, b.timeoutMs, b.scale);
@@ -603,7 +636,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     }, b.timeoutMs);
   });
 
-  it('acceptance 4: in exit mode (the root gone, the sleeper holding its output) the tree kill is never called and the receipt resolves within 6 s times the calibrated scale, timed out', async (t) => {
+  it('acceptance 4: in exit mode (the root gone, the sleeper holding its output) the tree kill is never called and the receipt resolves within 6750 ms times the calibrated scale, timed out', async (t) => {
     const b = await calibratedBounds(t);
     const { calls, aliveAtCall, treeKill } = delegatingTreeKill();
     await raceFixture(createRun(treeKill), 'exit', b.stayBoundMs, ({ receipt, elapsedMs }) => {
@@ -620,7 +653,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     }, b.timeoutMs);
   });
 
-  it('acceptance 5: with a tree kill that kills nothing, the receipt resolves by (1500 + 1000) ms times the calibrated scale + TIMEOUT_GRACE_MS (2000), timed out, exitCode and signal null, root and sleeper still alive', async (t) => {
+  it('acceptance 5: with a tree kill that kills nothing, the receipt resolves by (2250 + 1000) ms times the calibrated scale + TIMEOUT_GRACE_MS (2000), timed out, exitCode and signal null, root and sleeper still alive', async (t) => {
     const b = await calibratedBounds(t);
     assert.equal(TIMEOUT_GRACE_MS, 2000);
     const calls: number[] = [];
@@ -737,7 +770,7 @@ describe('T0-EXEC-TREE-KILL docs [R5] [R6] [R7]', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R2]', () => {
-  it("acceptance 1: on the stay fixture with timeoutMs 1500 times the calibrated scale returns within 6 s times that scale and before the helper's backstop, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async (t) => {
+  it("acceptance 1: on the stay fixture with timeoutMs 2250 times the calibrated scale returns within 6750 ms times that scale and before the helper's backstop, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async (t) => {
     const b = await calibratedBounds(t);
     const dir = tmpDir('aidlc-exec-sync-tree-');
     const pidFile = join(dir, 'sleeper.pid');
