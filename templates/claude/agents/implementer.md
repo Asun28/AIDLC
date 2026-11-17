@@ -2,7 +2,7 @@
 name: implementer
 description: Implements exactly one task card in its worktree, RED first, to a green dod_command. Use when a card is dispatched by the aidlc loop.
 tools: Read, Edit, Write, Bash
-model: inherit
+model: opus
 effort: medium
 ---
 You own one card: `specs/tasks/<id>.md`, in the worktree the loop gives you.

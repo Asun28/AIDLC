@@ -636,6 +636,19 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   const runCtx = (c: Ctx, goalRec: Goal, cardId: string) => ({ goalRec, parsed: cardOf(c, cardId), run: c.controller.ensureCardRun(goalRec, cardId) });
   // `guard: false` is `card ci-reconcile`: it records an observed CI rerun, so it runs on a stopped goal too.
   const cardCtx = (c: Ctx, cardId: string, goalId?: string, guard = true) => runCtx(c, checkedGoal(c, cardId, goalId, guard), cardId);
+  /**
+   * `review pre` and `review r3` (card T0-REVIEW-NO-RUN-2, issue 328): after the goal checks, the existing run of the goal,
+   * read and never created, refused when there is none or none of its attempts succeeded, so no reviewer runs on a
+   * checkout no attempt bound and nothing is written. A withdrawn candidate keeps the runner's own refusal.
+   */
+  const reviewCtx = (c: Ctx, cardId: string, goalId?: string) => {
+    const goalRec = checkedGoal(c, cardId, goalId);
+    const parsed = cardOf(c, cardId);
+    const run = c.store.getCardRun(goalRec.id, cardId);
+    if (!run) fail(`${cardId} has no card run in goal ${goalRec.id}; run \`aidlc card next ${cardId} --goal ${goalRec.id}\` first`);
+    if (!run.effort?.attempts.some((a) => a.outcome === 'success') && run.pendingRepair?.kind !== 'withdrawn') fail(`${cardId} has no successful attempt in goal ${goalRec.id}; record one first with \`aidlc card attempt ${cardId} --outcome success --dod-receipt "<command: exit code and counts>"\``);
+    return { goalRec, parsed, run };
+  };
   card
     .command('next <cardId>')
     .description('gather evidence, select the card state and perform its bounded action')
@@ -1030,7 +1043,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action(async (cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = reviewCtx(c, cardId, o.goal);
       const r = await runnerFor(c).preReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
       const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, advisory: r.result.advisory ?? [], coverage: r.round.coverage, policyHash: r.round.policyHash, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
@@ -1042,7 +1055,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action(async (cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = reviewCtx(c, cardId, o.goal);
       let r: Awaited<ReturnType<CardRunner['formalReview']>>;
       try {
         r = await runnerFor(c).formalReview(goalRec, parsed.card, run);

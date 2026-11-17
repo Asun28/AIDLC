@@ -25,7 +25,7 @@ extension is explicit and recorded (`aidlc goal extend`).
   they read project rules themselves and return compact state
   plus verifiable refs, never a transcript or a bare success line.
 - Start an implementer subagent with the `run-card` directive's `effort`
-  as its effort; it inherits the session's model.
+  as its effort; its agent file names its model.
 - Child STOP blocks its dependents; independent ready work continues. An
   empty ready set with required gaps is WAIT or STOP, never DONE.
 - Tier S / scaffold-core cards go through task-loop under the same shared
