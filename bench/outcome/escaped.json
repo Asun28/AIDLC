@@ -1,0 +1,16 @@
+{
+  "commit": "332956a25cc631ae50ba36299b87fa993b3e0fd8",
+  "ranAt": "2026-11-16T23:03:54.394Z",
+  "rows": [
+    {"week":"2026-09-07","merged_cards":5,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":2},
+    {"week":"2026-09-14","merged_cards":20,"bugfix_cards":6,"reverts":1,"mentions_a_merged_card":1},
+    {"week":"2026-09-21","merged_cards":56,"bugfix_cards":30,"reverts":0,"mentions_a_merged_card":17},
+    {"week":"2026-09-28","merged_cards":5,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":0},
+    {"week":"2026-10-05","merged_cards":6,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":0},
+    {"week":"2026-10-12","merged_cards":7,"bugfix_cards":2,"reverts":0,"mentions_a_merged_card":0},
+    {"week":"2026-10-19","merged_cards":21,"bugfix_cards":8,"reverts":0,"mentions_a_merged_card":3},
+    {"week":"2026-11-02","merged_cards":43,"bugfix_cards":14,"reverts":0,"mentions_a_merged_card":3},
+    {"week":"2026-11-09","merged_cards":75,"bugfix_cards":51,"reverts":0,"mentions_a_merged_card":18},
+    {"week":"2026-11-16","merged_cards":4,"bugfix_cards":1,"reverts":0,"mentions_a_merged_card":1}
+  ]
+}
