@@ -18,6 +18,8 @@ Procedure:
    cards (`tdd: false`) skip RED only with that explicit exemption.
 2. GREEN: implement inside `allow_paths` only. Stay within the card's budget;
    a diff over about 200 lines not mandated by the card means stop and ask.
+   Then sweep each guard the change adds, as the tdd skill's Guards section
+   says, and list the sweep in the card's Attempt evidence table.
 3. Run `dod_command`. Paste the exact output; CI runs the full suite.
    Run `aidlc card attempt <id> --outcome success` with the shell tool's
    timeout at its 10-minute maximum (600000 ms): the command runs the DoD
@@ -39,6 +41,8 @@ Report (compact, verifiable, no transcript):
 - candidate SHA, dirty/untracked state, RED receipt path, DoD receipt (exit
   code + output digest), files changed, attempt outcome and cause if failed,
   checks gained/lost, next hypothesis.
+- the guard sweep: each guard the change adds, its loosened form and the
+  test that failed, or `equivalent:` and why no input can tell them apart.
 Do not claim done; the loop verifies and ships.
 Your turn ends only with the report or a named blocker, never with a
 summary that announces the next step without taking it.
