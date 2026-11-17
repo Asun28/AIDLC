@@ -131,3 +131,8 @@ RED commit 913eb73d (tests only): `node --test tests/surface/changelog-fragments
 | 2, guard relaxed | qualifier `+` to `*` (empty allowed) | that test red, restored |
 | 2, guard relaxed | `: \S` to `: .` (blank text allowed) | that test red, restored |
 | 2, guard relaxed | return right after the registry problem | that test red, restored |
+| 2 (R3 decision 2 re:F1) | same test - `- T1-X (a (b): a change.\n`, `- T1-X (a) b): a change.\n` give the start problem | pass |
+| 2 (sweep after decision 2) | same test - `- T1-X (a: ...`, `- T1-X a): ...`, `- T1-X(a): ...`, `- T1-X (a) (b): ...`, `- T1-X:a change.\n`, ` T1-X: a change.\n` give the start problem; name `T1-X_md` gives the name problem only | pass |
+| 2, guard relaxed | class `[^()\n]` to `[^)\n]` (allows `(`), and to `[^(\n]` (allows `)`), each run alone | that test red, restored |
+| 2, guard relaxed | each of: ` ?\(`, `\(?`, `\)?`, group `?` to `*`, `+` to `?`, group required, `:?`, `: ?`, `\S` to `\s`, `\S` dropped, `^` dropped, `^-?`, `^.`, registry check dropped, carriage return check dropped, second line feed check dropped, final line feed check dropped, `.md` check dropped; the four relaxations above rerun | red for each (24 of 25), restored |
+| 2, guard relaxed | class `[^()\n]` to `[^()]` | green: equivalent, the line holds no line feed once the one-line check passed |

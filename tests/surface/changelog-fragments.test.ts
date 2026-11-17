@@ -53,6 +53,15 @@ test('T1-CHANGELOG-FRAGMENTS acceptance 2 - fragmentProblems refuses a nested or
   assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (a (b)): a change.\n', ids), [start], 'nested qualifier');
   assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (): a change.\n', ids), [start], 'empty qualifier');
   assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X:   \n', ids), [start], 'blank text');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (a (b): a change.\n', ids), [start], 'opening parenthesis in the qualifier');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (a) b): a change.\n', ids), [start], 'closing parenthesis in the qualifier');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (a: a change.\n', ids), [start], 'qualifier without its closing parenthesis');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X a): a change.\n', ids), [start], 'qualifier without its opening parenthesis');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X(a): a change.\n', ids), [start], 'no space before the qualifier');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (a) (b): a change.\n', ids), [start], 'two qualifiers');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X:a change.\n', ids), [start], 'no space after the colon');
+  assert.deepEqual(fragmentProblems('T1-X.md', ' T1-X: a change.\n', ids), [start], 'no hyphen before the id');
+  assert.deepEqual(fragmentProblems('T1-X_md', '- T1-X: a change.\n', ids), ['T1-X_md: the file name is not <card id>.md'], 'no .md extension');
   const registry = 'T9-NONE.md: no card T9-NONE in specs/tasks or specs/archive/tasks';
   assert.deepEqual(fragmentProblems('T9-NONE.md', '- T9-NONE: a change.', ids), [
     registry,
