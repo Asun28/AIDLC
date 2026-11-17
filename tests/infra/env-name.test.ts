@@ -26,6 +26,11 @@ describe('envValue (card T0-ENV-CASE) [R1]', () => {
     ['win32', {}, 'SystemRoot', undefined, 'no spelling gives undefined'],
     ['linux', { SYSTEMROOT: 'D:\\Win' }, 'SystemRoot', undefined, 'only the exact name off win32'],
     ['linux', { HOME: '' }, 'HOME', undefined, 'an empty value is missing off win32'],
+    ['linux', { HOME: '/home/u' }, 'HOME', '/home/u', 'the exact name is read off win32'],
+    ['win32', { PATH: 'C:\\bin', SYSTEMROOT: 'D:\\Win' }, 'SystemRoot', 'D:\\Win', 'a key of another name before a matching one does not count'],
+    ['win32', { PATH: 'C:\\bin' }, 'SystemRoot', undefined, 'a key of another name alone gives undefined'],
+    ['win32', Object.defineProperty({}, 'SYSTEMROOT', { value: 'D:\\Win' }), 'SystemRoot', 'D:\\Win', 'a non-enumerable own key counts (R3 decision 1 F1)'],
+    ['win32', Object.assign(Object.create({ SystemRoot: 'X:\\Proto' }), { SYSTEMROOT: 'D:\\Own' }), 'SystemRoot', 'D:\\Own', 'an inherited exact name is not an own key (R3 decision 1 F3)'],
   ];
   for (const [platform, env, name, expected, rule] of rows) {
     test(`${rule}: ${platform} ${JSON.stringify(env)} read as ${name} gives ${String(expected)}`, () => {
