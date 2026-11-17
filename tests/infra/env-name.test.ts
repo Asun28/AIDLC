@@ -83,8 +83,8 @@ describe('the three reads take an environment whose names are upper case (card T
   });
 });
 
-describe('the change is recorded in changelog.d (card T0-ENV-CASE) [R3]', () => {
-  test('changelog.d/T0-ENV-CASE.md carries the bugfix entry of issue 307', () => {
-    assert.match(fragmentEntry(repo, 'T0-ENV-CASE'), /^- T0-ENV-CASE \(bugfix, issue 307\): .*SystemRoot, windir and SystemDrive.* any letter case on win32/);
+describe('the change is recorded in changelog.d (card T0-ENV-CASE-2) [R3]', () => {
+  test('changelog.d/T0-ENV-CASE-2.md carries the bugfix entry of issue 307', () => {
+    assert.match(fragmentEntry(repo, 'T0-ENV-CASE-2'), /^- T0-ENV-CASE-2 \(bugfix, issue 307\): .*SystemRoot, windir and SystemDrive.* any letter case on win32/);
   });
 });
