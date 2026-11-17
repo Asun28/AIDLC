@@ -46,3 +46,18 @@ npm run typecheck && node --test tests/infra/review-queue-key.test.ts tests/infr
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+RED commit b1c76e90: 14 of 19 rows of tests/infra/review-queue-key.test.ts fail on main (the alias rows of acceptance 1 and 2, every retry row, the fragment row). Each revert below was applied alone to the GREEN candidate and the file re-run.
+
+| item | test | result |
+| --- | --- | --- |
+| 1 (hold) | acceptance 1, `hold` upper-case and backslash rows | `releaseSlot(r.pool, key, now)` in `hold`: 2 rows fail |
+| 1 (cancel) | acceptance 1, `cancel` upper-case and backslash rows | `releaseSlot(r.pool, key, now)` in `cancel`: 2 rows fail |
+| 1 (release) | acceptance 1, `release` rows; acceptance 2 first-release rows | `releaseSlot(r.pool, key, now)` in `release`: 4 rows fail |
+| 2 (NOTE key) | acceptance 2, upper-case and backslash release rows, upper-case first-release retry rows | NOTE `key` as supplied: 4 rows fail |
+| 2 (retry check) | acceptance 2, upper-case retry after upper-case, backslash retry after stored | retry check `e.data['key'] === key`: 2 rows fail |
+| 3 | tests/infra/review-queue.test.ts, tests/scenarios/review-resolve.test.ts unchanged | pass in the DoD |
+| 4 (fragment) | acceptance 4 row | fails on main (no file); passes with the fragment |
+| 4 (OPERATIONS sentence) | not written | blocked: review-resolve.test.ts:946 and review-release.test.ts:727 require the Ship gates section to end with `PARAGRAPH_S`, a blank line and the pinned release sentence exactly; adding the R3 sentence to that paragraph turns both red |

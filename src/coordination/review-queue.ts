@@ -270,7 +270,7 @@ export class ReviewQueue {
     return this.requestSection(key, (r) => {
       const held: ReviewRequest = { ...r, state: 'retry-after', retryAfter, lastError: `quota/admission hold: ${evidence}`, startedAt: undefined, slotOwner: undefined };
       atomicWriteJson(this.requestFile(key), held);
-      this.releaseSlot(r.pool, key, now);
+      this.releaseSlot(r.pool, r.key, now);
       const p = this.pool(r.pool, now);
       const resetAt = p.resetAt && Date.parse(p.resetAt) > Date.parse(retryAfter) ? p.resetAt : retryAfter;
       this.writePool({ ...p, resetAt, notificationOwner: p.notificationOwner ?? currentActor(), updatedAt: now });
@@ -293,7 +293,7 @@ export class ReviewQueue {
       if (!r) return undefined;
       const cancelled: ReviewRequest = { ...r, state: 'cancelled', finishedAt: now, lastError: reason };
       atomicWriteJson(this.requestFile(key), cancelled);
-      this.releaseSlot(r.pool, key, now);
+      this.releaseSlot(r.pool, r.key, now);
       return cancelled;
     });
   }
@@ -323,7 +323,7 @@ export class ReviewQueue {
       if (refusal) throw new Error(refusal);
       options.before?.(r);
       const now = options.now ?? nowIso();
-      this.releaseSlot(r.pool, key, now);
+      this.releaseSlot(r.pool, r.key, now);
       const cancelled: ReviewRequest = { ...r, state: 'cancelled', finishedAt: now, lastError: reason };
       atomicWriteJson(this.requestFile(key), cancelled);
       return cancelled;

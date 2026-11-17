@@ -1,0 +1,1 @@
+- T0-REVIEW-QUEUE-KEY (bugfix, issue 304): `ReviewQueue.hold`, `cancel` and `release` free the slot of the request's stored key, and `aidlc review release` journals its `review-slot-released` NOTE and checks a retry by that stored key, so a key given in another letter case or with `\` for `/` leaves no stale entry in the pool's `active` list and no second NOTE.
