@@ -15,13 +15,19 @@ on:
 permissions:
   contents: read
 
+# A new run of a pull request cancels the older run of that pull request. A push run has a group of its own run id,
+# so no push run waits for or cancels another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
         node: [22]
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +42,40 @@ jobs:
       - name: doctor (informational)
         shell: bash
         run: node bin/aidlc.js doctor --json || true
+
+  # The Windows suite in four shards; Node splits the test files by path. The option stays before the pattern: Node reads
+  # an argument after the pattern as another pattern and runs every file.
+  check-windows-shard:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node --test --test-reporter=spec --test-shard=${{ matrix.shard }}/4 "tests/**/*.test.ts"
+      - run: npm run build
+      - name: doctor (informational)
+        shell: bash
+        run: node bin/aidlc.js doctor --json || true
+
+  # Keeps the required check name of aidlc.config.json and the `main required checks` ruleset; runs no test and
+  # succeeds only when every shard succeeded.
+  check-windows:
+    name: check (windows-latest, 22)
+    needs: check-windows-shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULT: ${{ needs.check-windows-shard.result }}
+        run: test "$RESULT" = success
 
   # The loop benchmark (docs/OPERATIONS.md, Loop benchmark): deterministic counts of each hook event and the CLI start
   # against bench/baseline.json, apart from `check` so no local step waits on it. The build comes first, so the

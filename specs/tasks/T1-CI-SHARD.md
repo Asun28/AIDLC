@@ -1,7 +1,7 @@
 ---
 id: T1-CI-SHARD
 title: The ci workflow runs the Windows suite in four test shards behind one job that keeps the required check name check (windows-latest, 22) and succeeds only when all four succeeded, and a new run of a pull request cancels the older in-progress run of that pull request
-status: todo
+status: merged
 branch: T1-CI-SHARD
 worktree: D:\wt\AIDLC\T1-CI-SHARD
 plan_ref: plans/loop-throughput.md#7-task-split-dependencies-and-parallel-windows
@@ -127,3 +127,39 @@ In `check`, `os: [ubuntu-latest, windows-latest]` becomes `os: [ubuntu-latest]`.
 - a. A URL naming `HEAD` gets all success; any other URL gets `S(1)` to `S(4)` `cancelled` and `W` `failure`. Outcome `merged`; every recorded URL starts with `repos/o/r/commits/<HEAD>/check-runs`.
 - b. `HEAD` gets `S(2)` `cancelled` and `W` `failure`. Outcome `ci-red`; the receipt holds `[CI-GATE-RED] [{"name":"check-windows-shard (2)","conclusion":"cancelled"},{"name":"check (windows-latest, 22)","conclusion":"failure"}]`; `gh pr merge` is not called.
 - c. `HEAD` gets `S(3)` `failure` and `W` `success`. Outcome `ci-red`; the gate line names `S(3)` alone; no merge.
+
+## Attempt evidence
+RED commit fb9e0122 (test files only, ci.yml unchanged): `node --test tests/surface/ci-shard.test.ts tests/infra/github-ship.test.ts` 73 tests, 69 pass, 4 fail; acceptance 1 to 4 each fail with AssertionError at their first assertion (no `check-windows-shard` job, no `check-windows` job, no `concurrency` block), acceptance 5 passes.
+
+| Item | Proving test or command | Result |
+|------|-------------------------|--------|
+| 1 | tests/surface/ci-shard.test.ts, acceptance 1 | pass |
+| 2 | tests/surface/ci-shard.test.ts, acceptance 2 | pass |
+| 3 | tests/surface/ci-shard.test.ts, acceptance 3 | pass |
+| 4 | tests/surface/ci-shard.test.ts, acceptance 4 (shards 1/4 to 4/4 over the ten-file fixture) | pass |
+| 5 | tests/infra/github-ship.test.ts, `T1-CI-SHARD shard checks on the ship gate` | pass |
+| 6 | the dod_command (bench, workflow-permissions, init-base-ci, config, github-ship, prose) | pass, exit 0 |
+| 7 | CHANGELOG.md entry above `- T0-R3-POOL-WAIT` | reviewer-verified against the diff |
+
+Revert table, each row a scratch change restored afterwards: concurrency removed (3 red); `cancel-in-progress: true` (3 red); `windows-latest` back in the `check` matrix (2 red); shard 4 removed (1 red); the option after the pattern (1 and 4 red); `/3` in place of `/4` (1 and 4 red); `if: always()` removed (2 red); the gate read given `BASE_OID` in place of `head` at github-ship.ts:375 (5 red).
+
+## Closing note (coordinator, CLOSE)
+
+The record of this card, for the reader of the audit.
+
+What merged. PR 349, candidate e0bf74f1, merge commit 1895905e at 2026-11-17T02:14:24Z. R3 decision 1 and its second pass (rules matched to the diff) both passed with no finding; CI passed on its first run with no rerun.
+
+The check names of the `ci` workflow on the pull-request run (run 44000541636), all `success`: `check (ubuntu-latest, 22)`, `check-windows-shard (1)`, `check-windows-shard (2)`, `check-windows-shard (3)`, `check-windows-shard (4)`, `bench` and `check (windows-latest, 22)`. The other workflows reported `build-test` (aidlc CI) and `Gitleaks (committed history)` (Security scanners), both `success`.
+
+| Shard | Test step (`node --test ... --test-shard=<k>/4`) | Job |
+|---|---|---|
+| 1 | 02:07:17Z to 02:10:42Z, 3 min 25 s | 4 min 20 s |
+| 2 | 02:07:15Z to 02:13:04Z, 5 min 49 s | 6 min 37 s |
+| 3 | 02:07:17Z to 02:13:47Z, 6 min 30 s | 7 min 20 s |
+| 4 | 02:07:22Z to 02:11:52Z, 4 min 30 s | 5 min 26 s |
+
+The Windows critical path, from the earliest shard start (02:06:41Z) to the end of `check (windows-latest, 22)` (02:14:09Z), is 7 min 28 s, against 18 min 23 s on PR 342. The plan's limit was 10 minutes. The aggregate job started 3 s after the last shard ended and took 5 s.
+
+Two figures differ from the plan. The heaviest shard was 3, not 2. And `check (ubuntu-latest, 22)` ran from 02:06:41Z to 02:14:09Z, ending in the same second as the Windows check; its `npm test` step took 6 min 57 s, against 4 min 49 s in run 43831983917. On this run the Ubuntu job is as long as the Windows path, so a further cut in CI wall time needs both.
+
+Of the items the plan listed as not verified before the cards ran, this run confirms the shard check names and that the aggregate reports `success` when all four shards succeeded. A failed or cancelled shard, and the aggregate on a cancelled older head, did not occur on this run; acceptance 5 covers the ship gate's reading of them.
