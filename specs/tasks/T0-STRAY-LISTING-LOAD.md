@@ -38,3 +38,10 @@ npm run typecheck && node --test tests/infra/stray-processes.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+| Item | Check | Result |
+|---|---|---|
+| 1 | Attempt 2 (R3 decision 1 F1: the assertion moved inside the runner, no declaration outside it). `node --test --test-name-pattern "the real listing shows" tests/infra/stray-processes.test.ts` as committed; then with the runner's `assert.equal(options?.timeoutMs, ...)` expected value changed to `60_000`; then with the runner calling `run(command, args, options)` (override removed); each change restored | pass 1/1 (listing 4436 ms); with 60_000: fail 1/1, the runner throws, `listProcesses` returns `unknown: the process listing failed (no exit code)` and `assert.ok(Array.isArray(rows), String(rows))` fails (that string is not the early-return string, so no platform skips the failure); override removed: pass 1/1 (1878 ms) on an idle machine |
+| 2 | `git diff origin/main -- tests/infra/stray-processes.test.ts`; `git diff --name-only origin/main...HEAD` | test file: the import gains `PROCESS_LIST_TIMEOUT_MS`; inside the runner, `assert.equal(options?.timeoutMs, PROCESS_LIST_TIMEOUT_MS)` before the call and `run` called with `{ ...options, timeoutMs: 60_000 }`; no other line changes; names: only the two allow_paths; no change under `src/` |
+| DoD | `npm run typecheck && node --test tests/infra/stray-processes.test.ts` | exit 0; tsc clean; tests 22, pass 21, fail 0, skipped 1 (pre-existing POSIX-only row) |
