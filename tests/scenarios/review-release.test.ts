@@ -82,6 +82,21 @@ function cliFailingWrite(fx: Fixture, key: string, file: string): SpawnSyncRetur
   return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, MAIN, 'review', 'release', key, '--reason', REASON], { cwd: fx.tmp, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-B', FAIL_WRITE_TO: file } });
 }
 
+/** The CLI with a preload that fails every read of one file with an error of the given code, as a read under a parent that cannot be searched fails. */
+function cliFailingRead(fx: Fixture, key: string, file: string, code: string): SpawnSyncReturns<string> {
+  const preload = path.join(fx.tmp, 'fail-read.mjs');
+  writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const read = fs.readFileSync;',
+    "fs.readFileSync = (file, ...rest) => { if (typeof file !== 'number' && path.resolve(String(file)) === path.resolve(process.env.FAIL_READ_OF)) throw Object.assign(new Error('injected read failure'), { code: process.env.FAIL_READ_CODE }); return read(file, ...rest); };",
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, MAIN, 'review', 'release', key, '--reason', REASON], { cwd: fx.tmp, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-B', FAIL_READ_OF: file, FAIL_READ_CODE: code } });
+}
+
 const poolFile = (fx: Fixture): string => readdirSync(fx.paths.reviewQueue).find((name) => name.startsWith('_pool-'))!;
 
 const notes = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released');
@@ -617,6 +632,30 @@ test('acceptance 6: a release whose second journal cannot be written exits non-z
     assert.equal(fx.queue.get(request.key)?.state, 'cancelled');
     assert.deepEqual(noteFields(fx, one.id), [[one.id, CARD, request.key, request.seq, REASON]]);
     assert.deepEqual(noteFields(fx, two.id), [[two.id, 'T1-TWO', request.key, request.seq, REASON]]);
+  });
+});
+
+test('T0-STORE-READ-ENOENT acceptance 6 - a release whose requester goal cannot be inspected exits 1 with the slot held and no NOTE, and running it again finishes it', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const request = running(fx, ownerOf(deadPid()), `${goal.id}:${CARD}`);
+    const file = fx.store.goalFile(goal.id);
+    const kept = readFileSync(file, 'utf8');
+    rmSync(file);
+    const before = queueFiles(fx);
+
+    const failed = cliFailingRead(fx, request.key, file, 'EACCES');
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.equal(failed.stderr, `aidlc: READ_FAILED: injected read failure (${file})\n`);
+    assert.deepEqual(queueFiles(fx), before);
+    assert.deepEqual(notes(fx, goal.id), []);
+
+    writeFileSync(file, kept);
+    const finished = cli(fx, request.key);
+    assert.equal(finished.status, 0, finished.stderr);
+    assert.deepEqual(fx.queue.pool(POOL).active, []);
+    assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, request.key, request.seq, REASON]]);
   });
 });
 

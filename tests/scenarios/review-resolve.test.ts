@@ -382,12 +382,14 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
   }
 
   await t.test('a request or goal record that cannot be read', async (t) => {
-    const breakers: Array<[string, string, (file: string) => void]> = [
+    const breakers: Array<[string, string, (file: string) => void, ((file: string) => RunOptions)?]> = [
       ['MALFORMED_JSON', 'a file holding {', (file) => writeFileSync(file, '{')],
       ['SCHEMA_VIOLATION', 'a file holding {}', (file) => writeFileSync(file, '{}')],
       ['READ_FAILED', 'a directory', (file) => mkdirSync(file)],
+      // T0-STORE-READ-ENOENT acceptance 5: the record is not on disk and its read fails with another code than ENOENT, as under a parent that cannot be searched.
+      ['READ_FAILED', 'nothing, with a read that fails with EACCES', () => undefined, (file) => ({ preload: true, env: { FAIL_READ_OF: file, FAIL_READ_CODE: 'EACCES' } })],
     ];
-    for (const [code, what, replace] of breakers) {
+    for (const [code, what, replace, faults] of breakers) {
       for (const record of ['request', 'goal']) {
         await t.test(`${record} replaced by ${what}`, (t) => {
           const r = rig(t);
@@ -396,7 +398,7 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
           rmSync(file);
           replace(file);
           const before = snapshot(r.fx);
-          const res = resolve(r, lost.key, ['--no-result', ...LOOKED]);
+          const res = resolve(r, lost.key, ['--no-result', ...LOOKED], faults?.(file));
           assert.equal(res.status, 1, res.stderr);
           assert.ok(res.stderr.startsWith(`aidlc: ${code}: `), res.stderr);
           assert.ok(res.stderr.endsWith(` (${file})\n`), res.stderr);
