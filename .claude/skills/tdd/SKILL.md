@@ -30,6 +30,14 @@ exercise; a bugfix card's `diagnosis:` may add the regression seam.
 - Read the existing tests for that seam once; match their vocabulary and
   placement (new units get new files).
 
+## Guards
+A guard the change adds (a bound or comparison, a regex class, quantifier
+or anchor, an early return, a filter, sort or dedupe) is behaviour of the
+acceptance item it serves: test it at that item's seam. Before the first
+review, loosen each guard in turn, run its test file, see a test fail,
+then restore it. A guard no test catches gets an assertion there; a
+loosened form no input can detect is recorded as `equivalent:` with why.
+
 ## Anti-patterns (a fake RED)
 - Implementation-coupled: mocks internal collaborators, calls private
   functions, asserts call counts or order, verifies through a side
