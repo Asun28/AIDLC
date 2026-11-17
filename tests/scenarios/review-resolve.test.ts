@@ -429,6 +429,26 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
   });
 });
 
+test('T0-STORE-READ-ENOENT-2 acceptance 9 - a resolve whose second requester goal cannot be inspected exits 1 with every journal and the queue unchanged, and running it again gives each goal its NOTE', (t) => {
+  const r = rig(t);
+  const lost = lostRequest(r.fx, bothRequesters(r));
+  assert.deepEqual(lost.requesters, bothRequesters(r));
+  const file = r.fx.store.goalFile(r.two.id);
+  const before = snapshot(r.fx);
+
+  const failed = resolve(r, lost.key, ['--no-result', ...LOOKED], { preload: true, env: { FAIL_READ_OF: file, FAIL_READ_CODE: 'EACCES' } });
+  assert.equal(failed.status, 1, failed.stderr);
+  assert.equal(failed.stderr, `aidlc: READ_FAILED: injected read failure (${file})\n`);
+  assert.deepEqual(changedPaths(before, snapshot(r.fx)), []);
+
+  const finished = resolve(r, lost.key, ['--no-result', ...LOOKED]);
+  assert.equal(finished.status, 0, finished.stderr);
+  assert.deepEqual(active(r.fx), []);
+  for (const [goal, card] of [[r.one, HELD], [r.two, TWO]] as const) {
+    assert.deepEqual(noteRows(r.fx, goal.id), [[goal.id, card, goal.generation, lost.key, POOL, lost.seq, lost.attempts, 'not-found', 'looked-up', undefined]]);
+  }
+});
+
 test('every document the verdict-file parser accepts is a found result, read once and digested as bytes', async (t) => {
   await t.test('every accepted shape completes the request', (t) => {
     const r = rig(t);

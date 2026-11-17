@@ -659,6 +659,32 @@ test('T0-STORE-READ-ENOENT acceptance 6 - a release whose requester goal cannot 
   });
 });
 
+test('T0-STORE-READ-ENOENT-2 acceptance 9 - a release whose second requester goal cannot be inspected exits 1 with both journals and the queue unchanged, and running it again gives each goal its NOTE', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    writeCard(fx, { id: 'T1-TWO', title: 'second requester' });
+    const one = goalForCards(fx, [CARD]);
+    const two = goalForCards(fx, ['T1-TWO']);
+    const request = running(fx, ownerOf(deadPid()), `${one.id}:${CARD}`);
+    fx.queue.enqueue(input(`${two.id}:T1-TWO`));
+    assert.deepEqual(fx.queue.get(request.key)?.requesters, [`${one.id}:${CARD}`, `${two.id}:T1-TWO`]);
+    const file = fx.store.goalFile(two.id);
+    const journals = (): string[] => [one, two].map((goal) => readFileSync(path.join(fx.paths.journal, `${goal.id}.jsonl`), 'utf8'));
+    const before = { queue: queueFiles(fx), journals: journals() };
+
+    const failed = cliFailingRead(fx, request.key, file, 'EACCES');
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.equal(failed.stderr, `aidlc: READ_FAILED: injected read failure (${file})\n`);
+    assert.deepEqual({ queue: queueFiles(fx), journals: journals() }, before);
+
+    const finished = cli(fx, request.key);
+    assert.equal(finished.status, 0, finished.stderr);
+    assert.deepEqual(fx.queue.pool(POOL).active, []);
+    assert.deepEqual(noteFields(fx, one.id), [[one.id, CARD, request.key, request.seq, REASON]]);
+    assert.deepEqual(noteFields(fx, two.id), [[two.id, 'T1-TWO', request.key, request.seq, REASON]]);
+  });
+});
+
 test('acceptance 7: two processes releasing one key end with one exit 0, the other refused or LOCKED, one NOTE per goal and a chain that verifies [R1] [R3]', async () => {
   const fx = makeFixture();
   try {
