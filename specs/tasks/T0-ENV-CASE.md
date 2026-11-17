@@ -2,6 +2,7 @@
 id: T0-ENV-CASE
 title: killProcessTree, listProcesses and resolveWorktreeRoot read SystemRoot, windir and SystemDrive through one helper that ignores the letter case of a variable name on win32, so an environment object copied from a process started in Git Bash (SYSTEMROOT, WINDIR, SYSTEMDRIVE) finds the system root and drive instead of falling back to C:\Windows and C: (issue 307)
 status: todo
+superseded_by: T0-ENV-CASE-2
 branch: T0-ENV-CASE
 worktree: D:\wt\AIDLC\T0-ENV-CASE
 allow_paths:
