@@ -296,17 +296,25 @@ function scaleFor(measured: number | undefined): number {
   return Math.min(SCALE_MAX, Math.max(1, Math.ceil(measured / CALIBRATION_BASE_MS)));
 }
 
-/** Main's timeout and bounds times `scale`; TIMEOUT_GRACE_MS, the helper's backstop and the slow kill's duration are the product's and stay. */
+/** What the timeout adds to main's 1500 ms per scale: one calibration unit, so the fixture has three units to be ready. */
+const READY_MARGIN_MS = CALIBRATION_BASE_MS;
+
+/**
+ * The timeout is three calibration units per scale ((1500 + READY_MARGIN_MS) times `scale`), and each bound counted from
+ * the call is that timeout plus what main allows after its own timeout at the same scale; goneWithinMs and runnerExitBoundMs
+ * are not counted from the call and keep main's values. TIMEOUT_GRACE_MS, the helper's backstop and the slow kill's duration
+ * are the product's and stay.
+ */
 function boundsAt(scale: number): Bounds {
-  const timeoutMs = 1500 * scale;
+  const timeoutMs = (1500 + READY_MARGIN_MS) * scale;
   return {
     timeoutMs,
-    stayBoundMs: 6000 * scale,
+    stayBoundMs: timeoutMs + 4500 * scale,
     exitCloseMs: timeoutMs + TIMEOUT_GRACE_MS,
-    noKillBoundMs: (1500 + 1000) * scale + TIMEOUT_GRACE_MS,
-    slowKillBoundMs: (1500 + 1000) * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
+    noKillBoundMs: timeoutMs + 1000 * scale + TIMEOUT_GRACE_MS,
+    slowKillBoundMs: timeoutMs + 1000 * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
     goneWithinMs: 3000 * scale,
-    syncBoundMs: Math.min(6000 * scale, timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
+    syncBoundMs: timeoutMs + Math.min(4500 * scale, TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
     runnerExitBoundMs: TIMEOUT_MS + TIMEOUT_GRACE_MS + 3000 * scale,
   };
 }
@@ -604,7 +612,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     await assert.rejects(raceFixture(late, 'stay', 50, () => {}), /past the 50 ms bound/);
   });
 
-  it('acceptance 3: run on the stay fixture with timeoutMs 1500 times the calibrated scale resolves within 6 s times that scale, timed out and not ok, and the sleeper is gone', async (t) => {
+  it('acceptance 3: run on the stay fixture with timeoutMs 2250 times the calibrated scale resolves within 6750 ms times that scale, timed out and not ok, and the sleeper is gone', async (t) => {
     const b = await calibratedBounds(t);
     await raceFixture(run, 'stay', b.stayBoundMs, async ({ receipt, elapsedMs, sleeper, startedMs, sleeperWrittenMs }) => {
       assertSleeperExisted({ sleeperWrittenMs, startedMs }, b.timeoutMs, b.scale);
@@ -628,7 +636,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     }, b.timeoutMs);
   });
 
-  it('acceptance 4: in exit mode (the root gone, the sleeper holding its output) the tree kill is never called and the receipt resolves within 6 s times the calibrated scale, timed out', async (t) => {
+  it('acceptance 4: in exit mode (the root gone, the sleeper holding its output) the tree kill is never called and the receipt resolves within 6750 ms times the calibrated scale, timed out', async (t) => {
     const b = await calibratedBounds(t);
     const { calls, aliveAtCall, treeKill } = delegatingTreeKill();
     await raceFixture(createRun(treeKill), 'exit', b.stayBoundMs, ({ receipt, elapsedMs }) => {
@@ -645,7 +653,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     }, b.timeoutMs);
   });
 
-  it('acceptance 5: with a tree kill that kills nothing, the receipt resolves by (1500 + 1000) ms times the calibrated scale + TIMEOUT_GRACE_MS (2000), timed out, exitCode and signal null, root and sleeper still alive', async (t) => {
+  it('acceptance 5: with a tree kill that kills nothing, the receipt resolves by (2250 + 1000) ms times the calibrated scale + TIMEOUT_GRACE_MS (2000), timed out, exitCode and signal null, root and sleeper still alive', async (t) => {
     const b = await calibratedBounds(t);
     assert.equal(TIMEOUT_GRACE_MS, 2000);
     const calls: number[] = [];
@@ -762,7 +770,7 @@ describe('T0-EXEC-TREE-KILL docs [R5] [R6] [R7]', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R2]', () => {
-  it("acceptance 1: on the stay fixture with timeoutMs 1500 times the calibrated scale returns within 6 s times that scale and before the helper's backstop, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async (t) => {
+  it("acceptance 1: on the stay fixture with timeoutMs 2250 times the calibrated scale returns within 6750 ms times that scale and before the helper's backstop, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async (t) => {
     const b = await calibratedBounds(t);
     const dir = tmpDir('aidlc-exec-sync-tree-');
     const pidFile = join(dir, 'sleeper.pid');
