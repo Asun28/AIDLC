@@ -620,7 +620,7 @@ describe('delivery/ship saga leg report (T0-SHIP-SAGA-LEG)', () => {
     }
     assert.equal(classify(`${body}\n[SAGA-FAIL] DoD\n${VERIFY}\n[SAGA-FAIL] verify (= first pending leg)`).outcome, 'verify-failed', 'two reports: the last decides');
     assert.equal(classify(`${body}\n[SAGA-FAIL] verify\n[SAGA-FAIL] DoD (= first pending leg)`).outcome, 'dod-failed', 'two reports, reversed: the last decides');
-    assert.equal(classify(`${body}\n[SAGA-FAIL] DoD (= first pending leg)\n[SAGA-FAIL]`).outcome, 'license-blocked', 'a bare [SAGA-FAIL] after a report is the last line and no report');
+    assert.equal(classify(`${body}\n[SAGA-FAIL] DoD (= first pending leg)\n[SAGA-FAIL]`).outcome, 'secrets-blocked', "a bare [SAGA-FAIL] after a report is the last line and no report: main's class");
     const onStderr = classifyShipOutput(receipt(body, 1, { stderr: '  [SAGA-FAIL] DoD (= first pending leg)\r\n' }));
     assert.equal(onStderr.outcome, 'dod-failed', 'the report on stderr');
   });
@@ -664,6 +664,7 @@ describe('delivery/ship saga leg report (T0-SHIP-SAGA-LEG)', () => {
       assert.equal(classify(`${body}\n${line}`).outcome, 'license-blocked', JSON.stringify(line));
     }
     assert.equal(classify(body).outcome, 'license-blocked', 'no [SAGA-FAIL] line');
+    assert.equal(classify(`${body}\n[SAGA-FAIL] DoD (= first pending leg)\nnote: [SAGA-FAIL] DoD`).outcome, 'license-blocked', 'a later line holding [SAGA-FAIL] inside its text is the last [SAGA-FAIL] line');
     assert.equal(classify(`${body}\n[SAGA-FAIL] commit (= first pending leg)\n[SAGA-FAIL] ship`).outcome, 'license-blocked', 'a non-report after a report of another leg');
   });
 

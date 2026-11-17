@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-SHIP-SAGA-LEG (bugfix, issue 347): `classifyShipOutput` reads the scaffold's saga report, the last `[SAGA-FAIL] <leg>` line, before the order of the sentinel map. A ship that failed at its `DoD`, `verify`, `license-gate` or `leak-gate` leg gets that leg's class (`dod-failed`, `verify-failed`, `license-blocked`, `secrets-blocked`), so a DoD failure whose output holds license words, such as a card text naming docs/LICENSE-POLICY.md, is a counted failed attempt instead of a final risk stop. A report naming another leg, or a between-legs failure, keeps the license, secrets, verify and DoD text rules from deciding; an output with no leg report is classified as before.
+
 - T1-XHIGH-COORDINATOR-EFFORT: the router skill starts a helper subagent for a search or a fetch as a named agent type at `medium`, not as a fork, which runs at the coordinator session's effort. Its Effort section no longer repeats that `aidlc card attempt` records every attempt and that limits persist across sessions; `card-loop.md` BUILD states both. `docs/OPERATIONS.md` says who sets the coordinator's effort and what `xhigh` does to a coordinator turn on Claude Opus 5.5, and recommends no level.
 - T1-XHIGH-PROSE-GUARD: the prompt guard of `tests/surface/prose.test.ts` also refuses prose that steers thinking depth (think harder, less or more; do not overthink; do not think) and prose that suppresses updates (hold the findings; do not narrate; no interim updates), and it reads `CLAUDE.md` and `templates/CLAUDE.aidlc.md` beside the agent, skill and review files. On Claude Opus 5.5 the effort level sets how much the model thinks, and a line that suppresses updates makes it report less while it works.
 
