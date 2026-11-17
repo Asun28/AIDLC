@@ -125,3 +125,9 @@ RED commit 913eb73d (tests only): `node --test tests/surface/changelog-fragments
 | 7 | the eight listed test files in the dod_command | pass |
 | 8 | `git diff --stat main` names no path under CHANGELOG.md, templates/, .claude/, src/ or .github/ | reviewer-verified |
 | 9 | `npm run typecheck` (dod arm 1) | exit 0 |
+| 2 (R3 decision 1 F1) | changelog-fragments.test.ts, "acceptance 2 - fragmentProblems refuses a nested or empty qualifier and blank text, ..." - `- T1-X (a (b)): a change.\n`, `- T1-X (): a change.\n` and `- T1-X:   \n` each give the start problem | pass |
+| 2 (R3 decision 1 F2) | same test - name `T9-NONE.md` with no final line feed, with two lines, and with `* T9-NONE: a change.\n` give the registry problem then the one-line or start problem, compared whole with `deepEqual` | pass |
+| 2, guard relaxed | qualifier class `[^()\n]+` to `[^\n]+` (nested allowed) | that test red, restored |
+| 2, guard relaxed | qualifier `+` to `*` (empty allowed) | that test red, restored |
+| 2, guard relaxed | `: \S` to `: .` (blank text allowed) | that test red, restored |
+| 2, guard relaxed | return right after the registry problem | that test red, restored |

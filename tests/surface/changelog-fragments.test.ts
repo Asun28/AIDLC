@@ -47,6 +47,27 @@ test('T1-CHANGELOG-FRAGMENTS acceptance 2 - fragmentProblems refuses each malfor
   ]);
 });
 
+test('T1-CHANGELOG-FRAGMENTS acceptance 2 - fragmentProblems refuses a nested or empty qualifier and blank text, and reports a text problem after the registry problem', () => {
+  const ids: ReadonlySet<string> = new Set(['T1-X', 'T0-Y']);
+  const start = 'T1-X.md: the line does not start with "- T1-X: " or "- T1-X (<qualifier>): "';
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (a (b)): a change.\n', ids), [start], 'nested qualifier');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X (): a change.\n', ids), [start], 'empty qualifier');
+  assert.deepEqual(fragmentProblems('T1-X.md', '- T1-X:   \n', ids), [start], 'blank text');
+  const registry = 'T9-NONE.md: no card T9-NONE in specs/tasks or specs/archive/tasks';
+  assert.deepEqual(fragmentProblems('T9-NONE.md', '- T9-NONE: a change.', ids), [
+    registry,
+    'T9-NONE.md: the text is not one line ended by one line feed',
+  ]);
+  assert.deepEqual(fragmentProblems('T9-NONE.md', '- T9-NONE: a.\n- T9-NONE: b.\n', ids), [
+    registry,
+    'T9-NONE.md: the text is not one line ended by one line feed',
+  ]);
+  assert.deepEqual(fragmentProblems('T9-NONE.md', '* T9-NONE: a change.\n', ids), [
+    registry,
+    'T9-NONE.md: the line does not start with "- T9-NONE: " or "- T9-NONE (<qualifier>): "',
+  ]);
+});
+
 test('T1-CHANGELOG-FRAGMENTS acceptance 3 - the fragment of this card holds its entry', () => {
   assert.equal(fragmentEntry(root, 'T1-CHANGELOG-FRAGMENTS'), ENTRY);
 });
