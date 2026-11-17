@@ -349,9 +349,9 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     for (const measured of [undefined, NaN, -1, Infinity, -Infinity]) {
       assert.throws(() => scaleFor(measured), { message: `calibration failed: ${String(measured)}` }, `scaleFor(${String(measured)})`);
     }
-    assert.deepEqual(boundsAt(1), { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000, runnerExitBoundMs: 6500 });
-    assert.deepEqual(Object.values(boundsAt(4)), [6000, 24_000, 8000, 12_000, 13_500, 12_000, 23_000, 15_500]);
-    assert.deepEqual(Object.values(boundsAt(8)), [12_000, 48_000, 14_000, 22_000, 23_500, 24_000, 29_000, 27_500]);
+    assert.deepEqual(boundsAt(1), { timeoutMs: 2250, stayBoundMs: 6750, exitCloseMs: 4250, noKillBoundMs: 5250, slowKillBoundMs: 6750, goneWithinMs: 3000, syncBoundMs: 6750, runnerExitBoundMs: 6500 });
+    assert.deepEqual(Object.values(boundsAt(4)), [9000, 27_000, 11_000, 15_000, 16_500, 12_000, 26_000, 15_500]);
+    assert.deepEqual(Object.values(boundsAt(8)), [18_000, 54_000, 20_000, 28_000, 29_500, 24_000, 35_000, 27_500]);
     assert.ok(boundsAt(8).stayBoundMs < 60_000);
     assert.ok(boundsAt(8).runnerExitBoundMs < 60_000);
 
@@ -370,6 +370,31 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
 
     const from = { GIT_DIR: 'a', git_work_tree: 'b', Git_Config_Global: 'c', GIT_CEILING_DIRECTORIES: 'd', NODE_OPTIONS: 'e', node_options: 'f', AIDLC_STATE_DIR: 'g', aidlc_state_dir: 'h', PATH: 'p', KEEP: 'k' };
     assert.deepEqual(fixtureEnv(dir, from), { PATH: 'p', KEEP: 'k', GIT_CEILING_DIRECTORIES: [dirname(dir), dirname(realpathSync.native(dir))].join(delimiter), AIDLC_STATE_DIR: join(dir, 'state') });
+  });
+
+  it('T0-EXEC-READY-MARGIN acceptance 1 - what each bound allows after the timeout is main\'s at scales 1, 4 and 8', () => {
+    const afterTimeout = (scale: number): number[] => {
+      const b = boundsAt(scale);
+      return [b.stayBoundMs - b.timeoutMs, b.exitCloseMs - b.timeoutMs, b.noKillBoundMs - b.timeoutMs, b.slowKillBoundMs - b.timeoutMs, b.syncBoundMs - b.timeoutMs, b.goneWithinMs, b.runnerExitBoundMs];
+    };
+    assert.deepEqual(afterTimeout(1), [4500, 2000, 3000, 4500, 4500, 3000, 6500]);
+    assert.deepEqual(afterTimeout(4), [18_000, 2000, 6000, 7500, 17_000, 12_000, 15_500]);
+    assert.deepEqual(afterTimeout(8), [36_000, 2000, 10_000, 11_500, 17_000, 24_000, 27_500]);
+  });
+
+  it('T0-EXEC-READY-MARGIN acceptance 2 - the timeout is three calibration units and the two starts of issue 341 are inside it', () => {
+    assert.deepEqual([1, 2, 4, 8].map((scale) => boundsAt(scale).timeoutMs), [2250, 4500, 9000, 18_000]);
+    for (let scale = 1; scale <= 8; scale++) assert.equal(boundsAt(scale).timeoutMs, 3 * CALIBRATION_BASE_MS * scale, `boundsAt(${scale}).timeoutMs`);
+
+    // The two starts issue 341 reports, at scale 2, against the 3000 ms timeout they ran with.
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4556, startedMs: 1000 }, 3000, 2), notReadyMessage(2, "the sleeper's pid file was written 3556 ms after the call, the timeout was 3000 ms"));
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4722, startedMs: 1000 }, 3000, 2), notReadyMessage(2, "the sleeper's pid file was written 3722 ms after the call, the timeout was 3000 ms"));
+    // The same starts are inside the timeout of scale 2.
+    assertSleeperExisted({ sleeperWrittenMs: 4556, startedMs: 1000 }, boundsAt(2).timeoutMs, 2);
+    assertSleeperExisted({ sleeperWrittenMs: 4722, startedMs: 1000 }, boundsAt(2).timeoutMs, 2);
+    // The precondition still holds at the new timeout.
+    assertSleeperExisted({ sleeperWrittenMs: 5500, startedMs: 1000 }, boundsAt(2).timeoutMs, 2);
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 5501, startedMs: 1000 }, boundsAt(2).timeoutMs, 2), notReadyMessage(2, "the sleeper's pid file was written 4501 ms after the call, the timeout was 4500 ms"));
   });
 
   it('calibrate times the exit fixture and ends its sleeper, and returns undefined when the fixture cannot start', async (t) => {
