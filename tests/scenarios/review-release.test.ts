@@ -15,7 +15,7 @@ import { hostName, shortKey } from '../../src/state/paths.ts';
 import { atomicWriteJson, listJsonFiles } from '../../src/state/store.ts';
 import type { ActorIdentity, ReviewRequest } from '../../src/core/types.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
-import { deadPid } from '../infra/dead-pid.ts';
+import { deadPid as unheldPid } from '../infra/dead-pid.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -25,6 +25,11 @@ const AT = '2026-09-11T01:00:00.000Z';
 const FAR = '2126-01-01T00:00:00.000Z';
 const REASON = 'the owner died';
 
+const deadPid = (): number => {
+  const pid = unheldPid();
+  assert.ok(pid > 0);
+  return pid;
+};
 const ownerOf = (pid: number, host = hostName()): ActorIdentity => ({ session: 'gone', pid, processStart: T0, host });
 
 const input = (requester: string, digest = 'held', pool = POOL): EnqueueInput => ({ pool, repository: 'o/r', candidateDigest: digest, base: 'main', policyVersion: 'p', reviewer: 'r', requester, deadline: FAR });
