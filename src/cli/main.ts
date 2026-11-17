@@ -972,9 +972,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const released = new ReviewQueue(c.paths.reviewQueue).release(key, o.reason, {
         // Inside the release's section: each goal journals before the slot is freed, once per stored key, pool and seq (a seq is local to its pool and a cancelled key can move pools), so a run that failed part way is finished by running it again.
         before: (request) => {
-          for (const requester of request.requesters) {
+          // Every requester goal is read before any NOTE is appended, so a goal record that cannot be read leaves every journal as it was.
+          const requesters = request.requesters.map((requester) => {
             const [goalId, cardId] = requester.split(':');
-            const goal = goalId ? c.store.getGoal(goalId) : undefined;
+            return { goal: goalId ? c.store.getGoal(goalId) : undefined, cardId };
+          });
+          for (const { goal, cardId } of requesters) {
             if (!goal) continue;
             const journal = Journal.forGoal(c.paths.journal, goal.id);
             if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === request.key && e.data['pool'] === request.pool && e.data['seq'] === request.seq)) continue;
@@ -1024,9 +1027,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const outcome = verdict ? 'found' : 'not-found';
       const resolved = new ReviewQueue(c.paths.reviewQueue).resolveLost(key, verdict ? { found: true, verdictRef: verdict.ref } : { found: false }, nowIso(), (request) => {
         // Inside the queue's section, before any queue write: each existing goal journals once per key, pool, seq, attempts, outcome and verdict digest, so a run that failed part way is finished by running it again.
-        for (const requester of request.requesters) {
+        // Every requester goal is read before any NOTE is appended, so a goal record that cannot be read leaves every journal as it was.
+        const requesters = request.requesters.map((requester) => {
           const [goalId, cardId] = requester.split(':');
-          const goal = goalId ? c.store.getGoal(goalId) : undefined;
+          return { goal: goalId ? c.store.getGoal(goalId) : undefined, cardId };
+        });
+        for (const { goal, cardId } of requesters) {
           if (!goal) continue;
           const journal = Journal.forGoal(c.paths.journal, goal.id);
           const same = (e: { type: string; data: Record<string, unknown> }): boolean =>

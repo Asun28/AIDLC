@@ -82,13 +82,16 @@ export function atomicWriteJson(file: string, value: unknown): number {
   return atomicWriteText(file, stableStringify(value) + '\n');
 }
 
-/** Read and validate a JSON record. Missing file returns undefined; invalid content throws. */
+/**
+ * Read and validate a JSON record. A file that is not there (its read fails with the code ENOENT) returns undefined; any
+ * other failure to read it throws READ_FAILED, and invalid content throws MALFORMED_JSON or SCHEMA_VIOLATION.
+ */
 export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
-  if (!existsSync(file)) return undefined;
   let raw: string;
   try {
     raw = readFileSync(file, 'utf8');
   } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined;
     throw new StoreError('READ_FAILED', file, (err as Error).message);
   }
   let parsed: unknown;
