@@ -88,7 +88,7 @@ describe('T1-DOD-RECORD', () => {
       assert.ok(rec, 'the attempt carries loopDod');
       const { durationMs, ...rest } = rec;
       assert.ok(Number.isInteger(durationMs), `durationMs is an integer: ${durationMs}`);
-      assert.deepEqual(rest, { ran: true, command: 'node dod.mjs 0', worktree: c.worktree, commit: HEAD, clean: true, exitCode: 0, timedOut: false, expectedExit: 0, timeoutMs: 540000, outputSha256: OUT_SHA, outputTail: OUT_TAIL });
+      assert.deepEqual(rest, { ran: true, shell: 'platform', command: 'node dod.mjs 0', worktree: c.worktree, commit: HEAD, clean: true, exitCode: 0, timedOut: false, expectedExit: 0, timeoutMs: 540000, outputSha256: OUT_SHA, outputTail: OUT_TAIL });
       assert.deepEqual(c.nonGit(), [['node dod.mjs 0', [], { cwd: c.worktree, shell: true, timeoutMs: 540000, killTree: true }]]);
       const line = statusLine(c);
       assert.ok(line.startsWith('loopDod=attempt 1 exit=0 dod_exit=0 matches timedOut=false commit='), line);
