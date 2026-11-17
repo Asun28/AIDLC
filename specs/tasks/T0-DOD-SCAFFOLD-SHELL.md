@@ -2,6 +2,7 @@
 id: T0-DOD-SCAFFOLD-SHELL
 title: On the scaffold ship path the loop-run DoD of `card attempt` and the DoD runs of `card mutants` run the card's dod_command as the scaffold ship's DoD leg does, through `pwsh -NoProfile -Command` with its two preferences, and the loopDod record names the shell that ran it (issue 348)
 status: todo
+superseded_by: T0-DOD-SCAFFOLD-SHELL-2
 branch: T0-DOD-SCAFFOLD-SHELL
 worktree: D:\wt\AIDLC\T0-DOD-SCAFFOLD-SHELL
 allow_paths:

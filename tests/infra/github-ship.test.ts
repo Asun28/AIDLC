@@ -1779,3 +1779,39 @@ describe('GitHubShipPath subprocess timeouts and effects of unknown outcome (T0-
     assert.ok(!clean.calls.some((c) => c.key.startsWith('git commit')) && clean.r.outcome === 'merged', clean.r.receipt.stdout);
   });
 });
+
+describe('T1-CI-SHARD shard checks on the ship gate', () => {
+  const U = 'check (ubuntu-latest, 22)';
+  const W = 'check (windows-latest, 22)';
+  const S = (k: number): string => `check-windows-shard (${k})`;
+  /** The check runs of one read: U, S(1) to S(4), W, each completed and success unless `over` names another conclusion. */
+  const runs = (over: Record<string, string> = {}) => [U, S(1), S(2), S(3), S(4), W].map((name) => ({ name, status: 'completed', conclusion: over[name] ?? 'success' }));
+  function shipRow(atHead: Record<string, string>, elsewhere: Record<string, string>) {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    const urls: string[] = [];
+    let merges = 0;
+    const runner = runnerWith({
+      'gh api repos/o/r/commits': (args) => {
+        urls.push(args[1]!);
+        return { stdout: JSON.stringify({ check_runs: runs(args[1]!.includes(HEAD) ? atHead : elsewhere) }) };
+      },
+      'gh pr merge': () => { merges += 1; return {}; },
+    });
+    const ship = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {}, requiredChecks: [U, W] });
+    return { r: ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }), urls, merges: () => merges };
+  }
+
+  test('T1-CI-SHARD acceptance 5 - the gate reads the check runs of the candidate head only, so a cancelled run of an older head stops nothing, and a red or cancelled shard on the head is ci-red', () => {
+    const a = shipRow({}, { [S(1)]: 'cancelled', [S(2)]: 'cancelled', [S(3)]: 'cancelled', [S(4)]: 'cancelled', [W]: 'failure' });
+    assert.equal(a.r.outcome, 'merged', a.r.receipt.stdout);
+    assert.ok(a.urls.length > 0 && a.urls.every((u) => u.startsWith(`repos/o/r/commits/${HEAD}/check-runs`)), a.urls.join('\n'));
+    const b = shipRow({ [S(2)]: 'cancelled', [W]: 'failure' }, {});
+    assert.equal(b.r.outcome, 'ci-red', b.r.receipt.stdout);
+    assert.ok(b.r.receipt.stdout.includes(`[CI-GATE-RED] [{"name":"${S(2)}","conclusion":"cancelled"},{"name":"${W}","conclusion":"failure"}]`), b.r.receipt.stdout);
+    assert.equal(b.merges(), 0);
+    const c = shipRow({ [S(3)]: 'failure' }, {});
+    assert.equal(c.r.outcome, 'ci-red', c.r.receipt.stdout);
+    assert.deepEqual(c.r.receipt.stdout.split('\n').filter((l) => l.startsWith('[CI-GATE-RED] ')), [`[CI-GATE-RED] [{"name":"${S(3)}","conclusion":"failure"}]`]);
+    assert.equal(c.merges(), 0);
+  });
+});
