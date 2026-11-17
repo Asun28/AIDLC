@@ -103,3 +103,61 @@ The comment above `boundsAt` (main :299) says that the timeout is three calibrat
 Three runs of `node --test tests/infra/exec.test.ts` alone and three under load, on the base commit (the commit the branch starts from) and on the candidate, twelve runs in all, each recorded with its pass and fail counts, the titles that failed and every `calibration <m> ms, scale <s>` diagnostic. The load is 24 node processes, each running `const end = Date.now() + 200000; while (Date.now() < end) {}`, started directly before the test run; they end on their own after 200 s.
 
 A run of the candidate alone that fails is a defect. A run of the candidate under load that fails is either the named precondition, quoted with its milliseconds (a burst beyond the new margin, a non-goal), or a defect to report. The burst of the issue cannot be produced on demand, since a steady load raises the calibration with it; these runs show that the bounds hold at scales above 1 and that the file stays inside the time of the DoD, and acceptance 2 holds the two reported starts.
+
+## Attempt evidence
+
+Base 44d859a2 (origin/main). Seam commit 7930c0cc (RED), GREEN commit 49f65996. Windows 11, Node v22.23.1, 16 logical CPUs; Linux run through WSL Ubuntu, Node v24.3.0.
+
+### Acceptance items
+| Item | Evidence | Result |
+|---|---|---|
+| 1 | On the seam 7930c0cc (main's `boundsAt`): `node --test --test-name-pattern "T0-EXEC-TEST-LOAD the calibrated scale" tests/infra/exec.test.ts` -> `ok 2 - T0-EXEC-READY-MARGIN acceptance 1 ...`; on 49f65996 passes with no line of the test changed between the two commits (`git diff 7930c0cc 49f65996` touches `boundsAt`, its comment, the constant and four titles only) | pass on both |
+| 2 | Seam: `not ok 3 - T0-EXEC-READY-MARGIN acceptance 2 ...`, first failing assertion actual `[1500, 3000, 6000, 12000]` expected `[2250, 4500, 9000, 18000]`; candidate: pass | RED then green |
+| 3 | Seam: `not ok 1 - the calibrated scale and the scaled bounds on each input class`, `boundsAt(1)` actual timeoutMs 1500, stayBoundMs 6000, exitCloseMs 3500, noKillBoundMs 4500, slowKillBoundMs 6000, syncBoundMs 6000 against the new row; candidate: pass. Only the three `boundsAt` rows of that test change | RED then green |
+| 4 | Candidate runs below: the seven calibrated tests pass under the titles of Acceptance detail 3; diff of the candidate against 44d859a2 changes four titles and no other line of the seven tests, `calibrate`, `scaleFor`, `calibratedBounds`, `raceFixture`, the three preconditions or the runner-handle test (reviewer-verified) | pass |
+| 5 | The twelve runs below | recorded |
+| DoD | `npm run typecheck && node --test tests/infra/exec.test.ts` on 49f65996: exit 0, tsc clean, tests 72, suites 15, pass 72, fail 0, cancelled 0, skipped 0, duration_ms 75510; calibrations 1321/2, 517/1, 529/1, 1261/2, 363/1, 486/1, 334/1 (ms/scale) | exit 0 |
+
+RED receipt: 7930c0cc:tests/infra/exec.test.ts (seam describe run: tests 11, pass 9, fail 2; failing: the table test and acceptance 2; acceptance 1 passes).
+
+### Revert table (guard sweep)
+Each row a scratch change to `boundsAt` on 49f65996, run alone with `node --test --test-name-pattern "T0-EXEC-TEST-LOAD the calibrated scale" tests/infra/exec.test.ts`, then restored with `git checkout -- tests/infra/exec.test.ts` (worktree clean after the table).
+
+| Row | Change | Red tests |
+|---|---|---|
+| r1 | margin dropped: `timeoutMs = 1500 * scale` | table test, acceptance 2 |
+| r2 | margin not multiplied: `1500 * scale + READY_MARGIN_MS` | table test, acceptance 2 |
+| r3 | margin doubled: `(1500 + 2 * READY_MARGIN_MS) * scale` | table test, acceptance 2; the table test stops at the `boundsAt(1)` row, before `boundsAt(8).stayBoundMs < 60_000`, which this change makes 3000 x 8 + 4500 x 8 = 60 000 and so false |
+| r4 | `stayBoundMs: 6000 * scale` | table test, acceptance 1 |
+| r5 | margin out of `noKillBoundMs`: `(1500 + 1000) * scale + TIMEOUT_GRACE_MS` | table test, acceptance 1 |
+| r6 | margin out of `slowKillBoundMs`: `(1500 + 1000) * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS` | table test, acceptance 1 |
+| r7 | margin out of the first arm of `syncBoundMs` (main's form `Math.min(6000 * scale, timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS)`) | table test, acceptance 1 |
+| r8 | margin added to `goneWithinMs` | table test, acceptance 1 |
+| r9 | margin added to `runnerExitBoundMs` | table test, acceptance 1 |
+| g1 | margin out of `exitCloseMs`: `1500 * scale + TIMEOUT_GRACE_MS` | table test, acceptance 1 |
+| g2 | `Math.min` in `syncBoundMs` loosened to `Math.max` | table test, acceptance 1 |
+| g3 | `READY_MARGIN_MS = CALIBRATION_BASE_MS - 1` | table test, acceptance 2 |
+
+Each row: exit 1, pass 9, fail 2. No guard is left `equivalent:`.
+
+### Runs of Acceptance detail 4
+`node --test tests/infra/exec.test.ts` in the worktree. Load: 24 detached node processes each running `const end = Date.now() + 200000; while (Date.now() < end) {}`, started from a script file outside the worktree directly before the run; after each load run every one of the 24 pids was polled until `process.kill(pid, 0)` threw ESRCH (24 of 24 gone after each run, none stopped by hand). Calibrations are ms/scale in test order.
+
+| Run | Commit | Tests | Pass | Fail | Time | Failing titles | Calibrations |
+|---|---|---|---|---|---|---|---|
+| alone 1 | base 44d859a2 | 70 | 70 | 0 | 56 s | - | 209/1, 423/1, 190/1, 199/1, 230/1, 199/1, 208/1 |
+| alone 2 | base | 70 | 70 | 0 | 58 s | - | 457/1, 205/1, 441/1, 262/1, 219/1, 249/1, 210/1 |
+| alone 3 | base | 70 | 70 | 0 | 59 s | - | 208/1, 228/1, 471/1, 232/1, 325/1, 230/1, 241/1 |
+| load 1 | base | 70 | 70 | 0 | 106 s | - | 1171/2, 707/1, 1130/2, 728/1, 1190/2, 2263/4, 840/2 |
+| load 2 | base | 70 | 69 | 1 | 104 s | `acceptance 5: with a tree kill that kills nothing, the receipt resolves by (1500 + 1000) ms times the calibrated scale + TIMEOUT_GRACE_MS (2000), ...` with `fixture not ready before the timeout at scale 1: the machine got slower after calibration (the sleeper's pid file was written 3062 ms after the call, the timeout was 1500 ms)` | 1154/2, 776/2, 672/1, 669/1, 661/1, 981/2, 722/1 |
+| load 3 | base | 70 | 70 | 0 | 100 s | - | 877/2, 715/1, 720/1, 1588/3, 731/1, 851/2, 802/2 |
+| alone 1 | candidate 49f65996 | 72 | 72 | 0 | 61 s | - | 207/1, 205/1, 206/1, 232/1, 442/1, 231/1, 478/1 |
+| alone 2 | candidate | 72 | 72 | 0 | 64 s | - | 240/1, 277/1, 515/1, 260/1, 216/1, 231/1, 203/1 |
+| alone 3 | candidate | 72 | 72 | 0 | 64 s | - | 238/1, 230/1, 231/1, 490/1, 714/1, 443/1, 452/1 |
+| load 1 | candidate | 72 | 72 | 0 | 201 s | - | 1964/3, 1960/3, 1320/2, 2193/3, 2713/4, 4581/7, 2274/4 |
+| load 2 | candidate | 72 | 72 | 0 | 217 s | - | 3102/5, 3284/5, 3066/5, 2019/3, 2159/3, 1839/3, 1527/3 |
+| load 3 | candidate | 72 | 72 | 0 | 209 s | - | 2770/4, 1986/3, 3026/5, 3153/5, 2975/4, 2802/4, 1810/3 |
+
+Base load 2 reproduces the class of issue 341 (a start of 3062 ms against the 1500 ms timeout of scale 1). The candidate's load runs ran at scales 2 to 7 and took up to 217 s, inside the 540 s limit of a loop-run DoD. The machine also carried other sessions' work during these runs, so the base and candidate load runs are not equal loads (base calibrations 661 to 2263 ms, candidate 1320 to 4581 ms).
+
+Linux (WSL Ubuntu, Node v24.3.0, worktree at 49f65996 through /mnt/d): tests 72, pass 72, fail 0, 59 s; calibrations 231/1, 208/1, 224/1, 188/1, 184/1, 163/1, 194/1.
