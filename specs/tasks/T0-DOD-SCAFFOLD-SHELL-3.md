@@ -52,3 +52,19 @@ npm run typecheck && node --test tests/infra/dod-shell.test.ts tests/scenarios/d
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Attempt 1, effort medium. Carried candidate f7fb4a69 (T0-DOD-SCAFFOLD-SHELL-2), merged with origin/main at 07014efb: docs/OPERATIONS.md resolved to the merge-contract paragraph, the T0-SHIP-SAGA-LEG leg paragraph, the DoD shell paragraph, the DoD receipt paragraph, the T1-DOD-RECORD-2 paragraph, `### T1 feature`; CHANGELOG.md taken from main. RED commit d2a62a85 (tests only): the placement and sentence test failed on the -2 card id, and the fragment test failed with ENOENT on changelog.d/T0-DOD-SCAFFOLD-SHELL-3.md. GREEN commit 78a0d785.
+
+| Item | Test | Result |
+| --- | --- | --- |
+| 1 | dod-shell.test.ts "dodCall: scaffold is pwsh with the two preferences and no shell key; github and dry-run are the platform shell [R1]" | pass |
+| 2 | dod-shell.test.ts "a real pwsh through the DoD call [R1]": issue 348 shape exits 0 with [DOD-PASS]; `node -e "process.exit(3)"; exit 0` exits nonzero; `exit 4` exits 4; on win32 the issue 348 shape through the platform call does not exit 0 | pass |
+| 3 | dod-shell.test.ts "the loop-run DoD on the scaffold path [R2] [R3]" (one pwsh call with `killTree: true`, `shell: 'pwsh'`; a record without `shell` parses and `card status` prints the same line); dod-record.test.ts first test with `shell: 'platform'` | pass |
+| 4 | dod-shell.test.ts "card mutants passes the ship path to the DoD call [R2]": runMutants scaffold and github calls on the baseline and 3 mutants; `aidlc card mutants` through src/cli/main.ts on a `shipPath: scaffold` config with a PowerShell-only DoD exits 0, writes the report, 3 mutants killed. tests/surface/mutants.test.ts unchanged | pass |
+| 5 | dod-shell.test.ts "docs carry the rule [R4]": the 4 sentences as one paragraph directly before the "A DoD receipt names the command" paragraph, the mutants sentence after the platform-shell sentence, the fragment read with `fragmentEntry`, no card id in CHANGELOG.md; changelog-fragments.test.ts and loop-evidence-docs.test.ts unchanged | pass |
+
+Revert check (each guard reverted alone, dod-shell.test.ts and dod-record.test.ts run, the file restored from HEAD): scaffold branch removed fails 7; native-command preference removed fails 4, including the real-pwsh exit-3 test; `ErrorActionPreference='Stop'` removed fails 4, including the same test; loopDod passing `dry-run` fails 2; the `shell` field removed fails 3, including dod-record test 1; schema field required fails 1; runMutants passing `dry-run` fails 2, including the CLI test; `card mutants` in main.ts without `shipPath` fails the CLI test, which reports "the DoD ended with exit code 1 on the unmutated candidate, not 0" (R3 decision 1 F1); each OPERATIONS sentence, the mutants sentence and the fragment line removed fails 1; the paragraph moved below the DoD receipt paragraph fails 1.
+
+Replaced cards: T0-DOD-SCAFFOLD-SHELL (R3 decision 1 blocked it: F1, no test of `card mutants` passing the ship path; F2, R4's placement contradicted the pin in loop-evidence-docs.test.ts) and T0-DOD-SCAFFOLD-SHELL-2 (its R4 placed the paragraph directly before the T1-DOD-RECORD-2 paragraph, which the same pin forbids; ruling option 1 places it directly before the DoD receipt paragraph). tests/infra/dod-shell.test.ts was compacted from 224 to 197 lines with shared helpers and table rows; no assertion was dropped.
