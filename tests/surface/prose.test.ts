@@ -447,3 +447,43 @@ describe('goal lease and unresolved operations in the documents (T0-UNRESOLVED-N
     assert.equal(occurrences(changelog, ENTRY), 1, 'the entry occurs once');
   });
 });
+
+describe('T1-XHIGH-PROSE-GUARD', () => {
+  test('acceptance 1: removedInstructions flags prose that steers thinking depth or suppresses updates [R1] [R2]', () => {
+    const cases: Array<[string, string]> = [
+      ['Think harder about the edge cases.', 'think harder, less or more'],
+      ['Think less and act.', 'think harder, less or more'],
+      ['Think more before you answer.', 'think harder, less or more'],
+      ['think\n  harder about it', 'think harder, less or more'],
+      ["Don't overthink it.", 'do not overthink'],
+      ['Do not over-think the plan.', 'do not overthink'],
+      ['Never overthink a T0 card.', 'do not overthink'],
+      ['Do not think before a simple command.', 'do not think'],
+      ["Don't think, run the command.", 'do not think'],
+      ['Hold all findings for the final response.', 'hold the findings'],
+      ['Hold your results until the end.', 'hold the findings'],
+      ['Do not narrate your tool calls.', 'do not narrate'],
+      ["Don't narrate.", 'do not narrate'],
+      ['Send no interim updates.', 'no interim updates'],
+      ['No interim messages.', 'no interim updates'],
+    ];
+    for (const [text, name] of cases) assert.deepEqual(removedInstructions(text), [name], text);
+  });
+
+  test('acceptance 2: look-alike phrasings of thinking and updates stay clean [R1] [R2]', () => {
+    const clean = [
+      'Think about what the failing test shows.',
+      'The model thinks more per turn at xhigh.',
+      'Rethink the plan when the base moved.',
+      'Hold the lock until the write ends.',
+      'The narrative of the incident is in the journal.',
+      'An interim result is kept on the attempt.',
+      'Report each finding as it arrives.',
+    ];
+    for (const text of clean) assert.deepEqual(removedInstructions(text), [], text);
+  });
+
+  test('acceptance 3: PROMPT_FILES holds CLAUDE.md and templates/CLAUDE.aidlc.md [R3]', () => {
+    for (const file of [path.join(root, 'CLAUDE.md'), path.join(root, 'templates', 'CLAUDE.aidlc.md')]) assert.ok(PROMPT_FILES.includes(file), `${path.relative(root, file)} is scanned`);
+  });
+});
