@@ -42,3 +42,14 @@ npm run typecheck && node --test tests/infra/dead-pid.test.ts tests/scenarios/re
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+| item | test | result |
+|---|---|---|
+| 1 [R1] | tests/infra/dead-pid.test.ts (2 tests: range above 2**22 and at most 2**31-1, `processAlive` false, `process.kill(pid, 0)` throws ESRCH, two calls) | pass 2/2; the helper returns 2**31-4 |
+| 2 [R2] | tests/scenarios/review-release.test.ts + tests/scenarios/journal-lock-refusal.test.ts, three runs in a row | run 1: 35/35 pass, exit 0; run 2: 35/35 pass, exit 0; run 3: 35/35 pass, exit 0. `git grep -n "spawnSync(process.execPath, \['-e', ''\])" -- tests` returns nothing (exit 1). The diff of the two files changes only the import, the `deadPid` helper (removed, now imported) and the `gone` variable; `spawnSync` stays imported in both, each still uses it for its CLI calls. |
+| R3 decision 1 F1 (attempt 2) | tests/scenarios/review-release.test.ts | the local `deadPid` wrapper is restored with its `assert.ok(pid > 0)` and `return pid`; the shared function is imported as `unheldPid` and replaces only the `spawnSync(process.execPath, ['-e', '']).pid` expression. `git diff origin/main -- tests/scenarios/review-release.test.ts tests/scenarios/journal-lock-refusal.test.ts \| grep -E "^[+-].*assert"` returns nothing (exit 1): no assert line is added or removed in either file. |
+
+Repair after CI (coordinating session): CI run 44013941867 failed only tests/infra/stray-processes.test.ts "the real listing shows this process" (listing timed out at 10000 ms in Windows shard 3, which this card's new test file moves it into; issue 359). Issue 359's fix (T0-STRAY-LISTING-LOAD, PR 360, 6c085226) is merged into this branch; no line of this card's change differs.
+
+T0-DEAD-PID-TESTS-2, attempt 1 (coordinating session, no code change): carries candidate 2dddca81 of T0-DEAD-PID-TESTS (R3 decision 1 block F1 repaired, decision 2 pass, CI run 44013941867 failed only on the issue 359 shard timeout, main with its fix merged), merged with main again; specs/tasks/T0-DEAD-PID-TESTS.md is restored to its text on main and this evidence moves here.
