@@ -7,6 +7,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ReviewEffortPolicy } from './core/types.ts';
 import { DEFAULT_SCAN_SETUP_STEPS, DEFAULT_TRANSIENT_STEPS } from './core/ci-policy.ts';
+import { envValue } from './core/env-name.ts';
 
 const nonBlank = z.string().regex(/\S/, 'must not be blank');
 
@@ -224,6 +225,6 @@ export function resolveWorktreeRoot(config: ProjectConfig, mainRoot: string, env
   const p = platform === 'win32' ? path.win32 : path.posix;
   const name = p.basename(mainRoot);
   if (!name) throw new Error(`the main checkout '${mainRoot}' has no directory name to scope the worktree root by; set worktreeRoot in ${CONFIG_FILE}`);
-  if (platform === 'win32') return p.join(env['SystemDrive'] || 'C:', 'wt', name);
+  if (platform === 'win32') return p.join(envValue(env, 'SystemDrive', platform) || 'C:', 'wt', name);
   return p.join(env['HOME'] || '/tmp', '.wt', name);
 }
