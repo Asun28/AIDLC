@@ -59,3 +59,5 @@ Carries candidate 3063b471 of T0-REVIEW-QUEUE-KEY, which stopped on its R3 (the 
 | 2 (retry check) | acceptance 2, upper-case retry after upper-case, backslash retry after stored | retry check `e.data['key'] === key`: 2 rows fail |
 | 3 | tests/infra/review-queue.test.ts, tests/scenarios/review-resolve.test.ts unchanged | pass in the DoD |
 | 4 | acceptance 4 row (`fragmentEntry`) | fails with the fragment absent (RED 3d8e7455); `git diff origin/main -- docs/OPERATIONS.md CHANGELOG.md specs/tasks/T0-REVIEW-QUEUE-KEY.md` is empty |
+
+Repair after CI (coordinating session): CI run 44015148761 failed only tests/infra/stray-processes.test.ts "the real listing shows this process" (listing timed out at 10000 ms in Windows shard 3, which this card's new test file moves it into; issue 359). Issue 359's fix (T0-STRAY-LISTING-LOAD, PR 360, 6c085226) is merged into this branch; no line of this card's change differs.
