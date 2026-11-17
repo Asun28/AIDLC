@@ -49,3 +49,28 @@ npm run typecheck && node --test tests/infra/ship.test.ts tests/scenarios/ship-s
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Attempt 1, effort medium. RED commit 817e4049 (tests only): 6 tests failed on the first-match rule, each for the stated reason: acceptance 1 (`license-blocked`, expected `dod-failed`), acceptance 2 both tests (`merge-failed`, `secrets-blocked` where the leg's class was expected), acceptance 3 other-leg test (`license-blocked`, expected `unclassified`), acceptance 5 (sentences not yet written), acceptance 4 build test (stop instead of build). The tests that pin unchanged behaviour (no leg report, exit-0 contract, the STOP/risk scenario) passed on main as intended. One RED expectation was wrong and corrected in GREEN with evidence: a bare `[SAGA-FAIL]` after a report over a body holding the secrets text is `secrets-blocked` on main (the secrets rule precedes the license rule), not `license-blocked`.
+
+| Item | Test | Result |
+| --- | --- | --- |
+| 1 | ship.test.ts "acceptance 1: the issue 347 DoD-leg failure holding license words is dod-failed ..." | pass; fails on main: license-blocked |
+| 2 | ship.test.ts "acceptance 2: a leg report naming DoD, verify, license-gate or leak-gate decides ..." and "acceptance 2: the report decides alike with or without its suffix ..." | pass; fails on main |
+| 3 | ship.test.ts "acceptance 3: a report naming another leg ...", "acceptance 3: a last [SAGA-FAIL] line that is neither ...", "acceptance 3: the exit-0 contract ..."; existing SENTINELS table and exit-0 tests unchanged | pass |
+| 4 | ship-saga-leg.test.ts "acceptance 4: a DoD-leg ship failure ... is one counted failed attempt and a build" and "acceptance 4: the same ship without its leg report ... STOP/risk" | pass; the first fails on main: stop instead of build |
+| 5 | ship.test.ts "acceptance 5: docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md Unreleased ..." (4 OPERATIONS sentences, 1 ARCHITECTURE sentence, 1 CHANGELOG line) | pass |
+
+Revert check (each change applied alone to src/delivery/ship.ts, the DoD tests run, source restored): 23 of 23 mutants fail at least one test. Leg name not checked (10 failing), leg name case-insensitive (1), first `[SAGA-FAIL]` line instead of last (2), suffix required (1), suffix not accepted (4), end anchor dropped (1), start anchor dropped (1), no trim (4), trimStart only (2), trimEnd only (4), line filter by line start instead of `includes` (1), between-legs form removed (1), between-legs leg not checked (1), between-legs operation may be empty (1), rule filter removed (1), leg override removed (3), class rule taken without matching the output (1), `saga leg` detail replaced (1), failing line dropped (1), leak-gate mapped to license (1), verify mapped to dod (2), license-gate missing (2), `merge` dropped from the leg list (1).
+
+Attempt 2, effort medium, REVIEW_FIX of R3 decision 1 (candidate e05f2345), no source change:
+
+| Item | Test | Result |
+| --- | --- | --- |
+| F1 | ship.test.ts "acceptance 3: a report naming another leg ...": each of the DoD, verify, license and secrets texts alone under a `commit` report and under the between-legs report is `unclassified` | pass (the candidate's behaviour was correct; the gap was the test) |
+| F1 revert | the suppressed set without `dod-failed`, without `verify-failed`, without `license-blocked`, without `secrets-blocked` (each alone) | 4 of 4 killed, each by the F1 rows |
+| F2 | docs/ARCHITECTURE.md `ScaffoldShipPath` item states R1 to R3 (report forms, trimming, last line, leg names, between-legs form, detail fallback, no report); ship.test.ts acceptance 5 reads its 3 sentences | pass |
+| 1-5 | the tests of attempt 1, unchanged apart from the acceptance 5 sentence list | pass |
+
+Documents read by tests (attempt 2: the 35 files that read docs/ARCHITECTURE.md, 891 pass, 0 fail): no test pins the `ScaffoldShipPath` item of docs/ARCHITECTURE.md; tests/scenarios/merge-unconfirmed.test.ts pins the merge contract paragraph of docs/OPERATIONS.md, left unchanged (the new paragraph follows it). All 93 test files that read docs/OPERATIONS.md, docs/ARCHITECTURE.md or CHANGELOG.md: 2112 pass, 1 fail (tests/infra/exec-sync-tree.test.ts, a process-kill timing test under the parallel load; 23 of 23 pass when run alone).
