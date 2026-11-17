@@ -1,5 +1,5 @@
 /**
- * Card T0-REVIEW-QUEUE-KEY (issue 304): `ReviewQueue.hold`, `cancel` and `release` find a request by `shortKey` of the key they
+ * Cards T0-REVIEW-QUEUE-KEY and T0-REVIEW-QUEUE-KEY-2 (issue 304): `ReviewQueue.hold`, `cancel` and `release` find a request by `shortKey` of the key they
  * are given, which ignores letter case and reads `\` as `/`, and free the slot of the request's stored key; `aidlc review
  * release` journals its `review-slot-released` NOTE and checks a retry by that stored key.
  */
@@ -145,7 +145,7 @@ test('acceptance 2: aidlc review release journals its NOTE under the stored key 
 
 test('acceptance 4: the fragment of this card holds its entry [R3]', () => {
   assert.equal(
-    fragmentEntry(ROOT, 'T0-REVIEW-QUEUE-KEY'),
-    "- T0-REVIEW-QUEUE-KEY (bugfix, issue 304): `ReviewQueue.hold`, `cancel` and `release` free the slot of the request's stored key, and `aidlc review release` journals its `review-slot-released` NOTE and checks a retry by that stored key, so a key given in another letter case or with `\\` for `/` leaves no stale entry in the pool's `active` list and no second NOTE.",
+    fragmentEntry(ROOT, 'T0-REVIEW-QUEUE-KEY-2'),
+    "- T0-REVIEW-QUEUE-KEY-2 (bugfix, issue 304): `ReviewQueue.hold`, `cancel` and `release` free the slot of the request's stored key, and `aidlc review release` journals its `review-slot-released` NOTE and checks a retry by that stored key, so a key given in another letter case or with `\\` for `/` leaves no stale entry in the pool's `active` list and no second NOTE.",
   );
 });
