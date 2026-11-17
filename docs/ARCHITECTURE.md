@@ -33,6 +33,8 @@ The release runner matches a release step's ledger records by goal and the exact
 
 `src/core/trial-compare.ts` is the pure verdict of `aidlc review bench compare` and of `aidlc evals run --variant`: `trialRange` gives the median, minimum and maximum over trials, and `compareTrials` returns `better`, `worse`, `no-measurable-difference` or `inconclusive` with a one-line reason, deciding by recall, then by the false-block rate, only when the two ranges do not overlap; the names it takes can drop the second metric, as the eval variant run does with the pass rate in the place of recall. `src/review/bench.ts` builds the `summary` it reads with `--trials <n>`.
 
+`src/core/env-name.ts` reads one variable by name from an environment object passed in, in any letter case on win32, the exact spelling first, with an empty value counted as missing; `killProcessTree`, `listProcesses` and `resolveWorktreeRoot` read `SystemRoot`, `windir` and `SystemDrive` through it.
+
 `bench/` (outside `src/` and never shipped) holds the loop benchmark: `npm run bench` counts the modules, fs calls, child processes and output of each hook event and the CLI start, and compares them with the ceilings in `bench/baseline.json` (docs/OPERATIONS.md, Loop benchmark).
 
 `src/audit/` provides the evidence manifest with sealing (`manifest.ts`) and the independent verifier (`verifier.ts`).

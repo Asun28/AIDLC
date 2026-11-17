@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-NO-RUN-2
 title: (replaces T0-REVIEW-NO-RUN and carries its candidate) aidlc review r3 and aidlc review pre refuse a card that has no card run in the goal, or whose run holds no successful attempt, before any reviewer runs, without creating a card run and naming the next command (issue 328)
-status: todo
+status: merged
 branch: T0-REVIEW-NO-RUN-2
 worktree: D:\wt\AIDLC\T0-REVIEW-NO-RUN-2
 allow_paths:

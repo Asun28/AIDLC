@@ -13,6 +13,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { candidateShaFor, driveCardToDone, goalForCards, makeFixture, opsConfigured, opsRunner, writeCard, T0, type Fixture } from './_harness.ts';
 import { cleanup } from '../infra/helpers.ts';
+import { deadPid } from '../infra/dead-pid.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { ReleaseRunner, releaseOperationOf } from '../../src/loop/release-runner.ts';
 import { Journal } from '../../src/state/journal.ts';
@@ -117,7 +118,7 @@ test('(a) a refused delivery of the owed ATTEMPT_FINISHED leaves the attempt rec
 
 test('(b) a refused OPERATION_ISSUED of the ship leaves the operation issued and the pool request running, and runs no ship; after ops reconcile and review release the next card next ships once [R6]', (t) => {
   // The shipping process has exited by the time the operator recovers: its admission names a pid that is gone, on this host.
-  const gone = spawnSync(process.execPath, ['-e', '']).pid;
+  const gone = deadPid();
   assert.ok(gone > 0);
   const shipper: ActorIdentity = { session: 'win-A', pid: gone, processStart: T0, host: hostname() };
   const fx = fixture(t, shipper);
