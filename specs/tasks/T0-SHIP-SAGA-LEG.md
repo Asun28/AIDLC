@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-SAGA-LEG
 title: A scaffold ship that reports the leg that failed in its saga report (`[SAGA-FAIL] <leg> (= first pending leg)`) is classified by that leg for the DoD, verify, license and leak legs, so a DoD failure whose output holds license words is a counted failed attempt instead of a final risk stop (issue 347)
-status: todo
+status: merged
 branch: T0-SHIP-SAGA-LEG
 worktree: D:\wt\AIDLC\T0-SHIP-SAGA-LEG
 allow_paths:
