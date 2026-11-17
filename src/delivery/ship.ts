@@ -211,6 +211,31 @@ function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp):
   return line === undefined ? undefined : encodeUntrusted(firstCodePoints(normaliseCause(line), FAILING_LINE_WIDTH));
 }
 
+/** The leg names of the scaffold's saga (`$sagaLegs` of task.ps1), matched exactly. */
+const SAGA_LEGS: readonly string[] = ['card-check', 'DoD', 'verify', 'commit', 'scope-gate', 'budget-gate', 'license-gate', 'leak-gate', 'push+PR', 'R3-review', 'CI-gate', 'merge', 'local-merge'];
+
+/** The legs whose class is read from throw text, and that class (card T0-SHIP-SAGA-LEG R2). */
+const LEG_CLASS: Record<string, ShipOutcomeClass> = { DoD: 'dod-failed', verify: 'verify-failed', 'license-gate': 'license-blocked', 'leak-gate': 'secrets-blocked' };
+const LEG_BOUND = new Set<ShipOutcomeClass>(Object.values(LEG_CLASS));
+
+/**
+ * The scaffold's saga report, read from the last line holding `[SAGA-FAIL]` once trimmed: the leg it names when it reads
+ * `[SAGA-FAIL] <leg>` or `[SAGA-FAIL] <leg> (= first pending leg)`, `other` for a between-legs failure
+ * `[SAGA-FAIL] <operation>; first pending leg after it = <leg>`, and undefined for any other line or none (card T0-SHIP-SAGA-LEG R1).
+ */
+function sagaReport(text: string): string | undefined {
+  const last = text
+    .split(/\r?\n/)
+    .filter((l) => l.includes('[SAGA-FAIL]'))
+    .at(-1)
+    ?.trim();
+  if (last === undefined) return undefined;
+  const leg = /^\[SAGA-FAIL\] (\S+)(?: \(= first pending leg\))?$/.exec(last)?.[1];
+  if (leg !== undefined && SAGA_LEGS.includes(leg)) return leg;
+  const after = /^\[SAGA-FAIL\] .+; first pending leg after it = (\S+)$/.exec(last)?.[1];
+  return after !== undefined && SAGA_LEGS.includes(after) ? 'other' : undefined;
+}
+
 export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   const text = `${receipt.stdout}\n${receipt.stderr}`;
   const sentinels = [...new Set([...text.matchAll(/\[[A-Z0-9-]+\]/g)].map((m) => m[0]))];
@@ -232,7 +257,19 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
     }
   }
   if (receipt.timedOut) return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: 'ship timed out; reconcile before retry' };
+  // The scaffold's saga report names the leg that failed (card T0-SHIP-SAGA-LEG): a leg-bound leg decides its class, and any
+  // other leg or a between-legs failure keeps the four leg-bound text rules from deciding.
+  const report = sagaReport(text);
+  if (report !== undefined && Object.hasOwn(LEG_CLASS, report)) {
+    const cls = LEG_CLASS[report]!;
+    const rule = SENTINEL_MAP.find(([re, c]) => c === cls && re.test(text));
+    if (rule === undefined) return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: `saga leg ${report}` };
+    const detail = `sentinel ${rule[0].source.split('|')[0]}`;
+    const line = failingLine(text, cls, rule[0]);
+    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
+  }
   for (const [re, cls] of SENTINEL_MAP) {
+    if (report !== undefined && LEG_BOUND.has(cls)) continue;
     if (!re.test(text)) continue;
     const detail = `sentinel ${re.source.split('|')[0]}`;
     const line = failingLine(text, cls, re);
