@@ -2,6 +2,7 @@
 id: T0-STORE-READ-ENOENT
 title: readJson reads a stored record as absent only when its read fails with ENOENT and throws READ_FAILED for any other failure to read the path, so `aidlc review release` and `aidlc review resolve` stop before any queue write on a requester goal whose record cannot be inspected, where they skipped that goal's NOTE and freed the slot (issue 303)
 status: todo
+superseded_by: T0-STORE-READ-ENOENT-2
 branch: T0-STORE-READ-ENOENT
 worktree: D:\wt\AIDLC\T0-STORE-READ-ENOENT
 allow_paths:
