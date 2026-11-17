@@ -797,7 +797,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         return;
       }
       const base = cardRun.base?.oid ?? c.config.base;
-      const { report, path: reportPath } = await runMutants({ card: parsed.card, worktree, base, max: Number(o.max), timeoutMs: Number(o.timeoutMs) }, { git: runSync, dod: run, now: nowIso, progress: (line) => process.stderr.write(`${line}\n`) });
+      const { report, path: reportPath } = await runMutants({ card: parsed.card, worktree, base, max: Number(o.max), timeoutMs: Number(o.timeoutMs), shipPath: c.config.shipPath }, { git: runSync, dod: run, now: nowIso, progress: (line) => process.stderr.write(`${line}\n`) });
       out(c, { ...report, path: reportPath }, () => mutantSummaryText(report, reportPath));
     });
   card

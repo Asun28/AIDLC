@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-DOD-SCAFFOLD-SHELL (bugfix, issue 348): on a repository whose `shipPath` is `scaffold`, the loop-run DoD of `aidlc card attempt --outcome success` and the DoD runs of `aidlc card mutants` run the card's `dod_command` through `pwsh -NoProfile -Command` with the payload prefix `$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; `, as the scaffold ship's DoD leg does. Before, both ran it through the platform shell, so on Windows `cmd.exe` refused a PowerShell DoD and the record held exit code 255. The `loopDod` record names the shell that ran the DoD in `shell` (`pwsh` or `platform`); a record written before this change has no `shell` and still parses. The `github` and `dry-run` paths are unchanged.
+
 - T1-XHIGH-COORDINATOR-EFFORT: the router skill starts a helper subagent for a search or a fetch as a named agent type at `medium`, not as a fork, which runs at the coordinator session's effort. Its Effort section no longer repeats that `aidlc card attempt` records every attempt and that limits persist across sessions; `card-loop.md` BUILD states both. `docs/OPERATIONS.md` says who sets the coordinator's effort and what `xhigh` does to a coordinator turn on Claude Opus 5.5, and recommends no level.
 - T1-XHIGH-PROSE-GUARD: the prompt guard of `tests/surface/prose.test.ts` also refuses prose that steers thinking depth (think harder, less or more; do not overthink; do not think) and prose that suppresses updates (hold the findings; do not narrate; no interim updates), and it reads `CLAUDE.md` and `templates/CLAUDE.aidlc.md` beside the agent, skill and review files. On Claude Opus 5.5 the effort level sets how much the model thinks, and a line that suppresses updates makes it report less while it works.
 
