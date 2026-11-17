@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-ESCAPED
 title: The outcome cards table gains the columns diagnosis and mentions, bench/outcome/views/30-github.sql gains summary_escaped (per UTC week the merged cards, the merged cards with a diagnosis block, the reverts, and mentions_a_merged_card, a proxy labelled "mentions a merged card" that counts the merged bugfix cards whose diagnosis names an earlier merged card and the reverts of a merged card's merge commit), and bench/outcome/escaped.json holds its rows from one run; summary.json is not regenerated
-status: todo
+status: merged
 branch: T1-OUTCOME-ESCAPED
 worktree: D:\wt\AIDLC\T1-OUTCOME-ESCAPED
 plan_ref: plans/execution-gate.md#7-task-split-dependencies-and-parallel-windows
