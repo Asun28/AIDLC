@@ -90,3 +90,15 @@ Look-alike phrasings that stay clean (acceptance 2):
 Changelog entry (acceptance 5), one line:
 
 "- T1-XHIGH-PROSE-GUARD: the prompt guard of `tests/surface/prose.test.ts` also refuses prose that steers thinking depth (think harder, less or more; do not overthink; do not think) and prose that suppresses updates (hold the findings; do not narrate; no interim updates), and it reads `CLAUDE.md` and `templates/CLAUDE.aidlc.md` beside the agent, skill and review files. On Claude Opus 5.5 the effort level sets how much the model thinks, and a line that suppresses updates makes it report less while it works."
+
+## Attempt evidence
+Build attempt 1. RED receipt `59f6ecb1:1` (acceptance 1 and 3 failed: names missing, `CLAUDE.md is scanned` false).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `T1-XHIGH-PROSE-GUARD` > `acceptance 1` in `tests/surface/prose.test.ts` | pass (failed at RED) |
+| 2 | `T1-XHIGH-PROSE-GUARD` > `acceptance 2` | pass |
+| 3 | `T1-XHIGH-PROSE-GUARD` > `acceptance 3` | pass (failed at RED) |
+| 4 | existing `acceptance 5: no agent, skill, REVIEW.md or review prompt ...` and every other test of the file, no line changed | pass, 21 of 21 |
+| 5 | `CHANGELOG.md` Unreleased, first entry, the card's text | present |
+| 6 | `npm run typecheck` | exit 0 |
