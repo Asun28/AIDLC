@@ -46,6 +46,7 @@ const SCOPE: string[] = [
   ...markdownFiles(path.join(root, 'specs'), true),
   ...markdownFiles(path.join(root, 'intent'), false),
   ...markdownFiles(path.join(root, 'plans'), false),
+  ...markdownFiles(path.join(root, 'changelog.d'), false),
 ];
 
 describe('prose (writing density)', () => {
