@@ -153,3 +153,37 @@ One card and one goal (`goalForCards`) and one running request of a dead owner f
 - changelog.d/T0-STORE-READ-ENOENT.md, one line and one line feed:
 
 "- T0-STORE-READ-ENOENT (bugfix, issue 303): a stored record is read as absent only when reading its file fails with `ENOENT`. Any other failure to read the path, such as a parent directory that cannot be searched (`EACCES`), a parent that is a regular file on POSIX (`ENOTDIR`) or a loop of links, is `READ_FAILED` naming the file, where `readJson` answered that the record was absent because `existsSync` could not see it. So `aidlc review release` and `aidlc review resolve` exit 1 before any queue write when the record of a requester goal cannot be inspected, where they freed the slot without that goal's NOTE, and every command that reads a goal, a card run, a release attempt, a lease, an operation, a review request or a review pool by its path refuses such a record the same way. On Windows a path under a regular file reports no entry and is still read as absent."
+
+## Attempt evidence
+Build attempt 1, on base main 44d859a2. RED receipt `102c274a:tests/infra/store.test.ts` (seam commit, `readJson` as on main): on Windows acceptance 1, 4, 5 (both new rows) and 6 failed for the asserted reason (`Missing expected exception: EACCES: EACCES: permission denied, open`, `Missing expected exception: store.getGoal('g-1')`, `aidlc: unknown review request ...` and exit 0, exit 0 where 1 was expected); acceptance 2 passed on its Windows branch and acceptance 3 was skipped with its reason; 140 tests, 130 pass, 7 fail (with parents), 3 skipped. Fix commit 4aafeb77; diff against origin/main 185 insertions and 9 deletions over the six allow_paths.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/infra/store.test.ts "T0-STORE-READ-ENOENT acceptance 1 - ..." | pass on Windows and Linux (failed at RED) |
+| 2 | same file "T0-STORE-READ-ENOENT acceptance 2 - ..." | pass on Windows (Windows branch) and Linux (POSIX branch); passed at RED on Windows; on Linux with the `existsSync` line put back it fails |
+| 3 | same file "T0-STORE-READ-ENOENT acceptance 3 - ..." | skipped on Windows with `Windows has no POSIX mode bits, so a directory mode cannot hide a record`; pass on Linux (uid 1000); on Linux with the `existsSync` line put back it fails |
+| 4 | same file "T0-STORE-READ-ENOENT acceptance 4 - ..." | pass on Windows and Linux (failed at RED) |
+| 5 | tests/scenarios/review-resolve.test.ts "request / goal replaced by nothing, with a read that fails with EACCES" | pass on Windows and Linux (failed at RED: `unknown review request`, exit 0) |
+| 6 | tests/scenarios/review-release.test.ts "T0-STORE-READ-ENOENT acceptance 6 - ..." | pass on Windows and Linux (failed at RED: exit 0) |
+| 7 | every other test of the three changed files and the unchanged DoD files, no line changed | pass (DoD) |
+| 8 | the `readJson` doc comment, the `strictLedger` parenthesis, changelog.d/T0-STORE-READ-ENOENT.md (one line, one LF); changelog-fragments and prose tests; `git diff origin/main -- CHANGELOG.md docs README.md` | pass; diff empty |
+
+Revert table (Windows, each a scratch change of `readJson` run alone and restored with `git checkout`; the tree was clean after):
+
+| Scratch change | Run | Failed |
+|---|---|---|
+| the `existsSync` line put back | store, review-resolve, review-release | acceptance 1, 4, 5 (both rows), 6 |
+| the code comparison replaced by `message.includes('ENOENT')` | store | acceptance 1 at the row `a message that names no code` (the first failing row of the loop) |
+| the code check kept and `\|\| message.includes('ENOENT')` added | store | acceptance 1 at the row `a denied read of ENOENT.json` |
+| the comparison made case-insensitive (`code?.toUpperCase()`) | store | acceptance 1 at the row `enoent: a code in another letter case` |
+| every read error read as absent (`if (err !== null) return undefined`) | store | acceptance 1 (row EACCES), 2 (the directory row), 4 |
+| ENOENT thrown as READ_FAILED (the check removed) | store | `readJson returns undefined for a missing file`, acceptance 1 (the ENOENT rows), 2 (the Windows branch), 4 (the missing-record half) |
+| the file left out of the StoreError (`''`) | store | acceptance 1, 2, 4 |
+
+Guard sweep: the one guard the change adds is `code === 'ENOENT'` in the catch of `readJson`. Loosened forms and the test that failed are the rows 2 to 6 of the revert table; no `equivalent:` entry.
+
+Linux run (WSL Ubuntu, Node v24.3.0 from ~/.nvm/versions/node/v24.3.0/bin, uid 1000, tmp /tmp on ext4, the worktree at 4aafeb77 read through /mnt/d): `node --test tests/infra/store.test.ts tests/scenarios/review-resolve.test.ts tests/scenarios/review-release.test.ts` - tests 140, pass 138, fail 0, skipped 2 (the two `Windows only` rows of review-resolve), exit 0. With the `existsSync` line put back, tests/infra/store.test.ts on Linux: tests 14, pass 10, fail 4 (acceptance 1 to 4), exit 1.
+
+Write protocol: .claude/skills/verify-card-run-writes/SKILL.md names src/state/store.ts for `atomicWriteJson` and `atomicWriteText`; this card changes `readJson` only and no write or its order, so the skill's outcome stays in sync and the skill file is unchanged; tests/scenarios/fault-points.test.ts is in the DoD.
+
+npm test on Windows (once, at 4aafeb77): tests 3841, suites 277, pass 3810, fail 2, cancelled 0, skipped 29, 916 s. The two failures are tests/surface/init-no-package.test.ts:254 and :261, the `the absolute spelling` rows of acceptance 6, each with the spawned `aidlc doctor` stopped at its 60 s timeout (status null) under the load of the full run; tests/infra/exec.test.ts passed in that run. Run alone afterwards, tests/surface/init-no-package.test.ts gave tests 38, pass 38, fail 0, those two rows in 0.9 s and 1.5 s. Neither row reads a stored record that is not there or cannot be inspected; not a failure of this card.
