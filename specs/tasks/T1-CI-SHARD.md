@@ -127,3 +127,18 @@ In `check`, `os: [ubuntu-latest, windows-latest]` becomes `os: [ubuntu-latest]`.
 - a. A URL naming `HEAD` gets all success; any other URL gets `S(1)` to `S(4)` `cancelled` and `W` `failure`. Outcome `merged`; every recorded URL starts with `repos/o/r/commits/<HEAD>/check-runs`.
 - b. `HEAD` gets `S(2)` `cancelled` and `W` `failure`. Outcome `ci-red`; the receipt holds `[CI-GATE-RED] [{"name":"check-windows-shard (2)","conclusion":"cancelled"},{"name":"check (windows-latest, 22)","conclusion":"failure"}]`; `gh pr merge` is not called.
 - c. `HEAD` gets `S(3)` `failure` and `W` `success`. Outcome `ci-red`; the gate line names `S(3)` alone; no merge.
+
+## Attempt evidence
+RED commit fb9e0122 (test files only, ci.yml unchanged): `node --test tests/surface/ci-shard.test.ts tests/infra/github-ship.test.ts` 73 tests, 69 pass, 4 fail; acceptance 1 to 4 each fail with AssertionError at their first assertion (no `check-windows-shard` job, no `check-windows` job, no `concurrency` block), acceptance 5 passes.
+
+| Item | Proving test or command | Result |
+|------|-------------------------|--------|
+| 1 | tests/surface/ci-shard.test.ts, acceptance 1 | pass |
+| 2 | tests/surface/ci-shard.test.ts, acceptance 2 | pass |
+| 3 | tests/surface/ci-shard.test.ts, acceptance 3 | pass |
+| 4 | tests/surface/ci-shard.test.ts, acceptance 4 (shards 1/4 to 4/4 over the ten-file fixture) | pass |
+| 5 | tests/infra/github-ship.test.ts, `T1-CI-SHARD shard checks on the ship gate` | pass |
+| 6 | the dod_command (bench, workflow-permissions, init-base-ci, config, github-ship, prose) | pass, exit 0 |
+| 7 | CHANGELOG.md entry above `- T0-R3-POOL-WAIT` | reviewer-verified against the diff |
+
+Revert table, each row a scratch change restored afterwards: concurrency removed (3 red); `cancel-in-progress: true` (3 red); `windows-latest` back in the `check` matrix (2 red); shard 4 removed (1 red); the option after the pattern (1 and 4 red); `/3` in place of `/4` (1 and 4 red); `if: always()` removed (2 red); the gate read given `BASE_OID` in place of `head` at github-ship.ts:375 (5 red).
