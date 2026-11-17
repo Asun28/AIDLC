@@ -5,14 +5,14 @@
  */
 
 /**
- * The value of `name` in `env`, or undefined. On win32 every own key whose upper-case form equals the upper-case name is
+ * The value of `name` in `env`, or undefined. On win32 every own key, enumerable or not, whose upper-case form equals the upper-case name is
  * considered, the exact spelling first and then the others in key order, and the first non-empty value wins; elsewhere only
  * the exact name is the variable. An empty value counts as missing on every platform.
  */
 export function envValue(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platform): string | undefined {
   if (platform !== 'win32') return env[name] || undefined;
   const upper = name.toUpperCase();
-  const others = Object.keys(env).filter((k) => k !== name && k.toUpperCase() === upper);
+  const others = Object.getOwnPropertyNames(env).filter((k) => k !== name && k.toUpperCase() === upper);
   for (const k of Object.hasOwn(env, name) ? [name, ...others] : others) {
     if (env[k]) return env[k];
   }
