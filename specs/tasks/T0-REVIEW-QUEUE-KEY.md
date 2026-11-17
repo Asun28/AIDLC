@@ -2,6 +2,7 @@
 id: T0-REVIEW-QUEUE-KEY
 title: ReviewQueue.hold, cancel and release free the slot of the request's stored key, and aidlc review release journals its NOTE and checks a retry by that stored key, so a key given in another letter case or with backslashes leaves no stale active entry and no second NOTE (issue 304)
 status: todo
+superseded_by: T0-REVIEW-QUEUE-KEY-2
 branch: T0-REVIEW-QUEUE-KEY
 worktree: D:\wt\AIDLC\T0-REVIEW-QUEUE-KEY
 allow_paths:
