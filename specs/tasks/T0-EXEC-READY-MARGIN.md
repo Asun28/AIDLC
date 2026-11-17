@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-READY-MARGIN
 title: The six process-tree tests of tests/infra/exec.test.ts that pass a timeout to the fixture wait three calibration units before it (2250 ms times the scale, was 1500) and move each bound counted from the call by the same 750 ms times the scale, so what a bound allows after the timeout and every assertion about the kill stay as on main (issue 341)
-status: todo
+status: merged
 branch: T0-EXEC-READY-MARGIN
 worktree: D:\wt\AIDLC\T0-EXEC-READY-MARGIN
 allow_paths:
