@@ -1,7 +1,7 @@
 ---
 id: T1-XHIGH-PROSE-GUARD
 title: The prompt guard of prose.test.ts refuses prose that steers thinking depth or suppresses updates, and it reads CLAUDE.md and templates/CLAUDE.aidlc.md beside the agent, skill and review files
-status: todo
+status: merged
 branch: T1-XHIGH-PROSE-GUARD
 worktree: D:\wt\AIDLC\T1-XHIGH-PROSE-GUARD
 plan_ref: plans/coordinator-xhigh.md#7-task-split-dependencies-and-parallel-windows
