@@ -42,3 +42,9 @@ npm run typecheck && node --test tests/infra/dead-pid.test.ts tests/scenarios/re
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+| item | test | result |
+|---|---|---|
+| 1 [R1] | tests/infra/dead-pid.test.ts (2 tests: range above 2**22 and at most 2**31-1, `processAlive` false, `process.kill(pid, 0)` throws ESRCH, two calls) | pass 2/2; the helper returns 2**31-4 |
+| 2 [R2] | tests/scenarios/review-release.test.ts + tests/scenarios/journal-lock-refusal.test.ts, three runs in a row | run 1: 35/35 pass, exit 0; run 2: 35/35 pass, exit 0; run 3: 35/35 pass, exit 0. `git grep -n "spawnSync(process.execPath, \['-e', ''\])" -- tests` returns nothing (exit 1). The diff of the two files changes only the import, the `deadPid` helper (removed, now imported) and the `gone` variable; `spawnSync` stays imported in both, each still uses it for its CLI calls. |
