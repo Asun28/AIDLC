@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { ProjectConfig } from '../../src/config.ts';
 import { run, scriptedRunner, type ExecOptions, type ExecReceipt, type Runner } from '../../src/probes/exec.ts';
-import { STRAY_AGE_MS, STRAY_CPU_RATIO, listProcesses, strayEntries, strayProcessesReport, type ProcessRow, type StrayInput, type StrayValue } from '../../src/probes/processes.ts';
+import { PROCESS_LIST_TIMEOUT_MS, STRAY_AGE_MS, STRAY_CPU_RATIO, listProcesses, strayEntries, strayProcessesReport, type ProcessRow, type StrayInput, type StrayValue } from '../../src/probes/processes.ts';
 import { cleanup, tmpDir } from './helpers.ts';
 import { changelogSince010 } from './changelog.ts';
 
@@ -562,7 +562,8 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
   test('the real listing shows this process and leaves it out of the report [R1] [R2] [R3] [R4] [R7]', async (t) => {
     let receipt: ExecReceipt | undefined;
     const runner: Runner = async (command, args, options) => {
-      receipt = await run(command, args, options);
+      assert.equal(options?.timeoutMs, PROCESS_LIST_TIMEOUT_MS);
+      receipt = await run(command, args, { ...options, timeoutMs: 60_000 });
       return receipt;
     };
     const rows = await listProcesses(runner, process.platform, process.env, Date.parse(NOW));
