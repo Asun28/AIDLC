@@ -1,7 +1,7 @@
 ---
 id: T1-IMPLEMENTER-MODEL
 title: Both implementer agent files name the model opus in place of inherit, so the coordinator session's model no longer sets the implementer's model; arc.md, OPERATIONS.md and the two pinned test values say the same
-status: todo
+status: merged
 branch: T1-IMPLEMENTER-MODEL
 worktree: D:\wt\AIDLC\T1-IMPLEMENTER-MODEL
 plan_ref: plans/loop-throughput.md#7-task-split-dependencies-and-parallel-windows
