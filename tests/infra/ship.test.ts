@@ -562,3 +562,138 @@ describe('delivery/ship effect of unknown outcome (T0-SHIP-TIMEOUT)', () => {
     assert.deepEqual(twice.sentinels, ['[SHIP-EFFECT-UNKNOWN]', '[SAGA-FAIL]', '[SAGA-RESUME]']);
   });
 });
+
+describe('delivery/ship saga leg report (T0-SHIP-SAGA-LEG)', () => {
+  const LICENSE = '依赖许可不合规（见 docs/LICENSE-POLICY.md）';
+  const SECRETS = '检出疑似机密（见上 check-secrets）';
+  const VERIFY = 'verify.ps1 未过（项目级回归红）。修绿再 ship。';
+  const DOD = 'DoD 未通过（退出码 1）。修绿再 ship。';
+  /** The issue 347 shape, built from task.ps1: the card text, the DoD output, the saga report, then the throw text. */
+  const ISSUE_347 = [
+    'card T0-SCRIPTS-ORPHAN-FUNCS: allow_paths docs/LICENSE-POLICY.md',
+    `forbid: ${LICENSE}`,
+    'TAP version 13',
+    'ok 1 - keeps the orphan list',
+    'not ok 2 - removes the orphan functions',
+    '-- ship saga report [T26-SHIPSAGA] --',
+    '  [SAGA-DONE] card-check',
+    '  [SHIP-TIME] (incomplete leg) 41.2s',
+    '  [SAGA-FAIL] DoD (= first pending leg)',
+    '  [SAGA-TODO] verify -> commit -> scope-gate -> budget-gate -> license-gate -> leak-gate -> push+PR -> R3-review -> CI-gate -> merge',
+    DOD,
+  ].join('\n');
+  const withoutReport = (text: string) => text.split('\n').filter((l) => !l.includes('[SAGA-FAIL]')).join('\n');
+  const classify = (text: string) => classifyShipOutput(receipt(text, 1));
+
+  it('acceptance 1: the issue 347 DoD-leg failure holding license words is dod-failed with the DoD sentinel and the failing TAP line [R2]', () => {
+    const r = classify(ISSUE_347);
+    assert.equal(r.outcome, 'dod-failed');
+    assert.equal(r.detail, 'sentinel DoD 未通过; failing line: not ok N - removes the orphan functions');
+    // Without its leg report the output is classified as main classifies it: the license words decide.
+    assert.equal(classify(withoutReport(ISSUE_347)).outcome, 'license-blocked');
+  });
+
+  /** Per leg of R2: its class, its own throw text, and the texts of the other three leg-bound rules. */
+  const LEG_ROWS: Array<[string, ShipOutcomeClass, string, string[]]> = [
+    ['DoD', 'dod-failed', DOD, [LICENSE, SECRETS, VERIFY]],
+    ['verify', 'verify-failed', VERIFY, [LICENSE, SECRETS, DOD]],
+    ['license-gate', 'license-blocked', LICENSE, [SECRETS, VERIFY, DOD]],
+    ['leak-gate', 'secrets-blocked', SECRETS, [LICENSE, VERIFY, DOD]],
+  ];
+
+  it('acceptance 2: a leg report naming DoD, verify, license-gate or leak-gate decides that class over every other rule; without its throw text the detail is saga leg <leg> [R1] [R2]', () => {
+    for (const [leg, cls, own, others] of LEG_ROWS) {
+      for (const earlier of ['[SHIP-MERGE-FAIL] PR #7 state OPEN', '[CI-GATE-RED] [{"name":"ci","conclusion":"failure"}]']) {
+        const r = classify([...others, earlier, `  [SAGA-FAIL] ${leg} (= first pending leg)`, own].join('\n'));
+        assert.equal(r.outcome, cls, `${leg} beside ${earlier}`);
+        assert.match(r.detail, /^sentinel /, `${leg}: the detail of the class's own rule`);
+      }
+      const bare = classify([...others, '[SHIP-MERGE-FAIL] x', `[SAGA-FAIL] ${leg} (= first pending leg)`].join('\n'));
+      assert.deepEqual([bare.outcome, bare.detail], [cls, `saga leg ${leg}`], `${leg} without its throw text`);
+    }
+  });
+
+  it('acceptance 2: the report decides alike with or without its suffix and with leading or trailing spaces; the last [SAGA-FAIL] line decides [R1]', () => {
+    const body = [LICENSE, SECRETS, DOD].join('\n');
+    for (const line of ['[SAGA-FAIL] DoD', '[SAGA-FAIL] DoD (= first pending leg)', '    [SAGA-FAIL] DoD (= first pending leg)', '\t[SAGA-FAIL] DoD  ', '  [SAGA-FAIL] DoD (= first pending leg)\r']) {
+      assert.equal(classify(`${body}\n${line}\n`).outcome, 'dod-failed', JSON.stringify(line));
+    }
+    assert.equal(classify(`${body}\n[SAGA-FAIL] DoD\n${VERIFY}\n[SAGA-FAIL] verify (= first pending leg)`).outcome, 'verify-failed', 'two reports: the last decides');
+    assert.equal(classify(`${body}\n[SAGA-FAIL] verify\n[SAGA-FAIL] DoD (= first pending leg)`).outcome, 'dod-failed', 'two reports, reversed: the last decides');
+    assert.equal(classify(`${body}\n[SAGA-FAIL] DoD (= first pending leg)\n[SAGA-FAIL]`).outcome, 'license-blocked', 'a bare [SAGA-FAIL] after a report is the last line and no report');
+    const onStderr = classifyShipOutput(receipt(body, 1, { stderr: '  [SAGA-FAIL] DoD (= first pending leg)\r\n' }));
+    assert.equal(onStderr.outcome, 'dod-failed', 'the report on stderr');
+  });
+
+  it('acceptance 3: a report naming another leg leaves the bracketed sentinels to decide, and the four text rules never decide [R3]', () => {
+    const texts = [LICENSE, SECRETS, VERIFY, DOD];
+    for (const [leg, sentinel, cls] of [
+      ['scope-gate', "[SHIP-SCOPE-BLOCK] out-of-scope changes (not under the card's allow_paths): src/a.ts", 'scope-blocked'],
+      ['budget-gate', "[CARD-BUDGET-OVER] this card's diff is 812 lines against a budget of 720", 'budget-over'],
+      ['CI-gate', '[CI-GATE-RED] [{"name":"ci","conclusion":"failure"}]', 'ci-red'],
+      ['R3-review', '[R3-SPEC-BLOCK] spec finding', 'review-blocked'],
+    ] as const) {
+      assert.equal(classify([...texts, sentinel, `  [SAGA-FAIL] ${leg} (= first pending leg)`].join('\n')).outcome, cls, leg);
+    }
+    for (const leg of ['card-check', 'commit', 'scope-gate', 'budget-gate', 'push+PR', 'R3-review', 'CI-gate', 'merge', 'local-merge']) {
+      assert.equal(classify(`${LICENSE}\n${DOD}\n  [SAGA-FAIL] ${leg} (= first pending leg)`).outcome, 'unclassified', `${leg} with only the license and DoD texts`);
+    }
+    assert.equal(classify(`${LICENSE}\n  [SAGA-FAIL] commit (= first pending leg)`).outcome, 'unclassified', 'commit with only the license text');
+    const between = '  [SAGA-FAIL] preflight (review-backend availability / account guard / env bootstrap - between card-check and DoD); first pending leg after it = DoD';
+    assert.equal(classify(`${LICENSE}\n${between}`).outcome, 'unclassified', 'a between-legs failure with only the license text');
+    assert.equal(classify(`${LICENSE}\n${DOD}\n[SAGA-FAIL] preflight; first pending leg after it = license-gate  `).outcome, 'unclassified', 'a between-legs failure naming a leg-bound leg after it');
+  });
+
+  it("acceptance 3: a last [SAGA-FAIL] line that is neither a leg report nor a between-legs failure keeps main's class [R1] [R3]", () => {
+    const body = `${LICENSE}\n${DOD}`;
+    for (const line of [
+      '[SAGA-FAIL]',
+      '[SAGA-FAIL] ship',
+      '[SAGA-FAIL] leg failed',
+      '[SAGA-FAIL] dod',
+      '[SAGA-FAIL] DOD (= first pending leg)',
+      '[SAGA-FAIL] DoD failed',
+      '[SAGA-FAIL] DoD (= first pending)',
+      '[SAGA-FAIL]DoD',
+      '[SAGA-FAIL]  DoD',
+      'saga [SAGA-FAIL] DoD',
+      '[SAGA-FAIL] preflight; first pending leg after it = (undecidable: every leg already marked done)',
+      '[SAGA-FAIL] preflight; first pending leg after it = dod',
+      '[SAGA-FAIL] ; first pending leg after it = DoD',
+    ]) {
+      assert.equal(classify(`${body}\n${line}`).outcome, 'license-blocked', JSON.stringify(line));
+    }
+    assert.equal(classify(body).outcome, 'license-blocked', 'no [SAGA-FAIL] line');
+    assert.equal(classify(`${body}\n[SAGA-FAIL] commit (= first pending leg)\n[SAGA-FAIL] ship`).outcome, 'license-blocked', 'a non-report after a report of another leg');
+  });
+
+  it('acceptance 3: the exit-0 contract, [SHIP-EFFECT-UNKNOWN] and the whole-receipt timeout come before the leg report [R2]', () => {
+    assert.equal(classifyShipOutput(receipt(`${LICENSE}\n[SAGA-FAIL] DoD\nPR #7 MERGED`, 0)).outcome, 'merge-unconfirmed');
+    assert.equal(classifyShipOutput(receipt(`${LICENSE}\n[SAGA-FAIL] DoD\n[SHIP-EFFECT-UNKNOWN] git push timed out`, 1)).outcome, 'effect-unknown');
+    assert.equal(classifyShipOutput(receipt(`${LICENSE}\n[SAGA-FAIL] DoD`, 1, { timedOut: true })).outcome, 'unclassified');
+  });
+
+  it('acceptance 5: docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md Unreleased state the rule under this card id [R4]', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const operations = read('docs', 'OPERATIONS.md');
+    assert.equal(SAGA_LEG_OPERATIONS_SENTENCES.length, 4);
+    for (const sentence of SAGA_LEG_OPERATIONS_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    assert.ok(read('docs', 'ARCHITECTURE.md').includes(SAGA_LEG_ARCHITECTURE_SENTENCE), `docs/ARCHITECTURE.md states: ${SAGA_LEG_ARCHITECTURE_SENTENCE}`);
+    assert.ok(changelogSince010(read('CHANGELOG.md')).split('\n').includes(SAGA_LEG_CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
+  });
+});
+
+/** The sentences card T0-SHIP-SAGA-LEG adds to docs/OPERATIONS.md, after the merge contract paragraph. */
+const SAGA_LEG_OPERATIONS_SENTENCES = [
+  "A scaffold ship is classified by the leg its saga report names (card T0-SHIP-SAGA-LEG): the leg report is the last line of the ship output holding `[SAGA-FAIL]` when, with leading and trailing white space removed, it reads `[SAGA-FAIL] <leg>` or `[SAGA-FAIL] <leg> (= first pending leg)`, where `<leg>` is one of the scaffold's leg names `card-check`, `DoD`, `verify`, `commit`, `scope-gate`, `budget-gate`, `license-gate`, `leak-gate`, `push+PR`, `R3-review`, `CI-gate`, `merge` and `local-merge`, matched exactly.",
+  "A leg report naming `DoD`, `verify`, `license-gate` or `leak-gate` makes that leg's class the outcome (`dod-failed`, `verify-failed`, `license-blocked` or `secrets-blocked`), whatever other rule of the sentinel map the output also matches, so a word of the card text or of the DoD output cannot turn a DoD failure into a license or secrets stop; the detail and the failing line are those of that class's rule when the rule matches the output, else the detail is `saga leg <leg>`.",
+  'A leg report naming any other leg, or a between-legs failure `[SAGA-FAIL] <operation>; first pending leg after it = <leg>`, keeps the license, secrets, verify and DoD text rules from deciding: every other rule decides in the existing order, and an output none of them matches is `unclassified`.',
+  "An output with no `[SAGA-FAIL]` line, or whose last `[SAGA-FAIL]` line has neither form (the github path's bare `[SAGA-FAIL]`, for one), is classified as before; the `[SHIP-EFFECT-UNKNOWN]` rule, the exit-0 contract and the whole-receipt timeout are read first, unchanged.",
+];
+/** The sentence card T0-SHIP-SAGA-LEG adds to the `ScaffoldShipPath` item of docs/ARCHITECTURE.md. */
+const SAGA_LEG_ARCHITECTURE_SENTENCE =
+  "The last `[SAGA-FAIL]` line, the saga leg report, comes before the order of the map (card T0-SHIP-SAGA-LEG): a report naming `DoD`, `verify`, `license-gate` or `leak-gate` makes that leg's class the outcome, and a report naming another leg, or a between-legs failure, keeps the license, secrets, verify and DoD text rules from deciding.";
+/** The CHANGELOG entry of card T0-SHIP-SAGA-LEG, one line under Unreleased. */
+const SAGA_LEG_CHANGELOG_ENTRY =
+  "- T0-SHIP-SAGA-LEG (bugfix, issue 347): `classifyShipOutput` reads the scaffold's saga report, the last `[SAGA-FAIL] <leg>` line, before the order of the sentinel map. A ship that failed at its `DoD`, `verify`, `license-gate` or `leak-gate` leg gets that leg's class (`dod-failed`, `verify-failed`, `license-blocked`, `secrets-blocked`), so a DoD failure whose output holds license words, such as a card text naming docs/LICENSE-POLICY.md, is a counted failed attempt instead of a final risk stop. A report naming another leg, or a between-legs failure, keeps the license, secrets, verify and DoD text rules from deciding; an output with no leg report is classified as before.";
