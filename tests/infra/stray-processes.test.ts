@@ -561,14 +561,12 @@ describe('strayProcesses (card T0-DOCTOR-STRAY-PROCESSES-2)', () => {
 
   test('the real listing shows this process and leaves it out of the report [R1] [R2] [R3] [R4] [R7]', async (t) => {
     let receipt: ExecReceipt | undefined;
-    let askedMs: number | undefined;
     const runner: Runner = async (command, args, options) => {
-      askedMs = options?.timeoutMs;
+      assert.equal(options?.timeoutMs, PROCESS_LIST_TIMEOUT_MS);
       receipt = await run(command, args, { ...options, timeoutMs: 60_000 });
       return receipt;
     };
     const rows = await listProcesses(runner, process.platform, process.env, Date.parse(NOW));
-    assert.equal(askedMs, PROCESS_LIST_TIMEOUT_MS);
     t.diagnostic(`receipt: exit ${receipt?.exitCode}, timedOut ${receipt?.timedOut}, ${receipt?.durationMs} ms, ${Buffer.byteLength(receipt?.stdout ?? '')} output bytes`);
     if (process.platform !== 'win32' && process.platform !== 'linux' && rows === 'unknown: the process listing failed (exit -2)') return;
     assert.ok(Array.isArray(rows), String(rows));
