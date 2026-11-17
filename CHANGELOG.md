@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- T0-REVIEW-NO-RUN (bugfix, issue 328): `aidlc review r3` and `aidlc review pre` no longer create a card run. On a card with no run in the goal they resolve, each exits 1 with one `aidlc: ` line naming `aidlc card next <card> --goal <goal>`, and on a run with no successful attempt with one line naming `aidlc card attempt <card> --outcome success`; in both cases no reviewer runs and nothing is written. Before, either command created the run, started its deadline, ran the reviewer on the checkout HEAD and recorded its decision.
 - T1-XHIGH-COORDINATOR-EFFORT: the router skill starts a helper subagent for a search or a fetch as a named agent type at `medium`, not as a fork, which runs at the coordinator session's effort. Its Effort section no longer repeats that `aidlc card attempt` records every attempt and that limits persist across sessions; `card-loop.md` BUILD states both. `docs/OPERATIONS.md` says who sets the coordinator's effort and what `xhigh` does to a coordinator turn on Claude Opus 5.5, and recommends no level.
 - T1-XHIGH-PROSE-GUARD: the prompt guard of `tests/surface/prose.test.ts` also refuses prose that steers thinking depth (think harder, less or more; do not overthink; do not think) and prose that suppresses updates (hold the findings; do not narrate; no interim updates), and it reads `CLAUDE.md` and `templates/CLAUDE.aidlc.md` beside the agent, skill and review files. On Claude Opus 5.5 the effort level sets how much the model thinks, and a line that suppresses updates makes it report less while it works.
 
