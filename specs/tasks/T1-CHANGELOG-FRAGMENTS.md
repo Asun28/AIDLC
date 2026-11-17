@@ -1,7 +1,7 @@
 ---
 id: T1-CHANGELOG-FRAGMENTS
 title: A card records its behaviour change in its own new file changelog.d/<card id>.md, not in CHANGELOG.md; CLAUDE.md states the rule, changelog.d/README.md the form, and a surface test refuses a file in changelog.d whose name is not a registered card id or whose text is not one entry line
-status: todo
+status: merged
 branch: T1-CHANGELOG-FRAGMENTS
 worktree: D:\wt\AIDLC\T1-CHANGELOG-FRAGMENTS
 plan_ref: plans/loop-throughput.md#7-task-split-dependencies-and-parallel-windows
