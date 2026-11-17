@@ -1,4 +1,4 @@
-// Card T0-DOD-SCAFFOLD-SHELL-2 (issue 348): on the scaffold ship path the loop-run DoD of `card attempt` and the DoD runs of
+// Card T0-DOD-SCAFFOLD-SHELL-3 (issue 348): on the scaffold ship path the loop-run DoD of `card attempt` and the DoD runs of
 // `card mutants` run the card's dod_command through `pwsh -NoProfile -Command` with the scaffold's two preferences, as the
 // scaffold ship's DoD leg does; the github and dry-run paths keep the platform shell, and loopDod names the shell.
 import { describe, test } from 'node:test';
@@ -13,7 +13,7 @@ import { runSync, scriptedRunner, type ExecOptions, type ExecReceipt } from '../
 import { dodCall, mutantsReportPath, runMutants } from '../../src/review/mutants.ts';
 import type { CardRun, LoopDod } from '../../src/core/types.ts';
 import { goalForCards, makeFixture, writeCard } from '../scenarios/_harness.ts';
-import { changelogSince010 } from './changelog.ts';
+import { fragmentEntry } from './changelog.ts';
 import { tmpDir } from './helpers.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
@@ -171,14 +171,14 @@ describe('card mutants passes the ship path to the DoD call [R2]', () => {
 
 const read = (file: string) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\r\n/g, '\n');
 const OPS = [
-  'DoD shell on the scaffold ship path (card T0-DOD-SCAFFOLD-SHELL-2, issue 348, replaces T0-DOD-SCAFFOLD-SHELL).',
+  'DoD shell on the scaffold ship path (card T0-DOD-SCAFFOLD-SHELL-3, issue 348, replaces T0-DOD-SCAFFOLD-SHELL-2, which replaced T0-DOD-SCAFFOLD-SHELL).',
   "When the configured `shipPath` is `scaffold`, the loop-run DoD of `aidlc card attempt <card> --outcome success` and the DoD runs of `aidlc card mutants` run the card's `dod_command` as the scaffold ship's DoD leg runs it: the program `pwsh` with the arguments `-NoProfile`, `-Command` and the payload `$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; ` followed by the `dod_command` (the text `Get-ScaffoldDodPayload` of the scaffold's scripts/_cards.ps1 builds), in the card worktree and with no platform shell.",
   "On the `github` and `dry-run` paths both commands run the `dod_command` as one string through the platform shell, as before, and on every path the timeout, the tree kill, the sweep's outcome rule and its report are unchanged.",
   'The `loopDod` record of a DoD that ran names the shell in `shell`: `pwsh` for the scaffold call and `platform` for the platform-shell call. A record written before this card has no `shell`, still parses, and `aidlc card status` prints its `loopDod=` line as before.',
 ];
-const MUTANTS_SENTENCE = 'On the scaffold ship path it runs the `dod_command` through `pwsh -NoProfile -Command` with the payload prefix of the scaffold ship instead, as the loop-run DoD does (card T0-DOD-SCAFFOLD-SHELL-2).';
-const CHANGELOG =
-  "- T0-DOD-SCAFFOLD-SHELL-2 (bugfix, issue 348, replaces T0-DOD-SCAFFOLD-SHELL): on a repository whose `shipPath` is `scaffold`, the loop-run DoD of `aidlc card attempt --outcome success` and the DoD runs of `aidlc card mutants` run the card's `dod_command` through `pwsh -NoProfile -Command` with the payload prefix `$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; `, as the scaffold ship's DoD leg does. Before, both ran it through the platform shell, so on Windows `cmd.exe` refused a PowerShell DoD and the record held exit code 255. The `loopDod` record names the shell that ran the DoD in `shell` (`pwsh` or `platform`); a record written before this change has no `shell` and still parses. The `github` and `dry-run` paths are unchanged.";
+const MUTANTS_SENTENCE = 'On the scaffold ship path it runs the `dod_command` through `pwsh -NoProfile -Command` with the payload prefix of the scaffold ship instead, as the loop-run DoD does (card T0-DOD-SCAFFOLD-SHELL-3).';
+const FRAGMENT =
+  "- T0-DOD-SCAFFOLD-SHELL-3 (bugfix, issue 348): on a repository whose `shipPath` is `scaffold`, the loop-run DoD of `aidlc card attempt --outcome success` and the DoD runs of `aidlc card mutants` run the card's `dod_command` through `pwsh -NoProfile -Command` with the payload prefix `$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; `, as the scaffold ship's DoD leg does. Before, both ran it through the platform shell, so on Windows `cmd.exe` refused a PowerShell DoD and the record held exit code 255. The `loopDod` record names the shell that ran the DoD in `shell` (`pwsh` or `platform`); a record written before this change has no `shell` and still parses. The `github` and `dry-run` paths are unchanged.";
 
 describe('docs carry the rule [R4]', () => {
   test('OPERATIONS.md: each sentence of the DoD shell paragraph, its place, and the mutants sentence after the platform-shell sentence', () => {
@@ -191,8 +191,8 @@ describe('docs carry the rule [R4]', () => {
     assert.ok(text.includes(`in the worktree, once on the unmutated candidate and then once per mutant with only that mutant applied. ${MUTANTS_SENTENCE} `), 'the mutants sentence follows the platform-shell sentence');
   });
 
-  test('CHANGELOG.md: the entry under Unreleased', () => {
-    const part = changelogSince010(read('CHANGELOG.md'));
-    assert.ok(part.slice(0, part.indexOf('\n## ', 1)).split('\n').includes(CHANGELOG), 'the entry stands as one line under Unreleased');
+  test('the fragment changelog.d/T0-DOD-SCAFFOLD-SHELL-3.md holds the entry, and CHANGELOG.md holds none of the three card ids', () => {
+    assert.equal(fragmentEntry(ROOT, 'T0-DOD-SCAFFOLD-SHELL-3'), FRAGMENT);
+    assert.equal(read('CHANGELOG.md').includes('T0-DOD-SCAFFOLD-SHELL'), false);
   });
 });
