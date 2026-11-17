@@ -312,7 +312,7 @@ describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule
   const front = (text: string) => text.slice(0, text.indexOf('\n---', 4));
 
   test('acceptance 1: each agent file names exactly one model and one effort [R1]', () => {
-    const want: Record<string, [string, string]> = { planner: ['opus', 'high'], reviewer: ['opus', 'medium'], 'release-specialist': ['opus', 'medium'], investigator: ['sonnet', 'medium'], verifier: ['sonnet', 'medium'], implementer: ['inherit', 'medium'] };
+    const want: Record<string, [string, string]> = { planner: ['opus', 'high'], reviewer: ['opus', 'medium'], 'release-specialist': ['opus', 'medium'], investigator: ['sonnet', 'medium'], verifier: ['sonnet', 'medium'], implementer: ['opus', 'medium'] };
     for (const [name, [model, effort]] of Object.entries(want)) {
       const fm = front(read(`templates/claude/agents/${name}.md`));
       assert.deepEqual(fm.match(/^model: .*$/gm), [`model: ${model}`], name);
@@ -347,7 +347,7 @@ describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule
 
   test('acceptance 5: OPERATIONS names the six agent defaults and the implementer effort rule; the CHANGELOG Unreleased section names the card [R5]', () => {
     const ops = flat('docs/OPERATIONS.md');
-    for (const phrase of ['the planner on `opus` at `high`', 'the reviewer and the release-specialist on `opus` at `medium`', 'the investigator and the verifier on `sonnet` at `medium`', "the implementer on the session's model (`inherit`) at `medium`", "starts an implementer subagent with the `run-card` directive's `effort`"]) {
+    for (const phrase of ['the planner on `opus` at `high`', 'the reviewer and the release-specialist on `opus` at `medium`', 'the investigator and the verifier on `sonnet` at `medium`', 'the implementer on `opus` at `medium`', "starts an implementer subagent with the `run-card` directive's `effort`"]) {
       assert.ok(ops.includes(phrase), phrase);
     }
     const changelog = read('CHANGELOG.md');

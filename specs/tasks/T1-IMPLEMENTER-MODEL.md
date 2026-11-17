@@ -67,3 +67,17 @@ docs/OPERATIONS.md, the paragraph that starts `Agent files name a model and an e
 changelog.d/T1-IMPLEMENTER-MODEL.md (new), this one line and one line feed:
 
 "- T1-IMPLEMENTER-MODEL: the implementer agent file names its model. Both copies of `implementer.md` carry `model: opus` in place of `model: inherit`, so an implementer subagent no longer runs on the model of the coordinator session that starts it (the usage record of `bench/outcome/summary.json` holds 4,096 requests on `claude-fable-5-2` beside 16,665 on `claude-opus-5-5`). `effort` stays `medium` and the `run-card` directive still sets the effort of a run. This replaces the statement of the T1-EFF-AGENTS-DOD entry that the implementer is on the session's model."
+
+## Attempt evidence
+RED commit 36cf8232 (acceptance 1 and 2 values only): `node --test --test-name-pattern "T1-EFF-AGENTS-DOD" tests/surface/templates.test.ts` on the unchanged files, pass 3 fail 2; acceptance 1 fails on `model: inherit` against `model: opus`, acceptance 5 on the phrase "the implementer on `opus` at `medium`" absent from docs/OPERATIONS.md.
+
+| Item | Proving test or command | Result |
+| --- | --- | --- |
+| 1 | tests/surface/templates.test.ts, T1-EFF-AGENTS-DOD `acceptance 1` (want map `implementer: ['opus', 'medium']`) | red on RED commit, green after GREEN |
+| 2 | tests/surface/templates.test.ts, T1-EFF-AGENTS-DOD `acceptance 5` (phrase "the implementer on `opus` at `medium`") | red on RED commit, green after GREEN |
+| 3 | tests/surface/templates.test.ts, T1-EFF-AGENTS-DOD `acceptance 2`, unchanged; arc.md 4438 bytes, copies equal; clause reviewer-verified against the diff | green |
+| 4 | tests/infra/stray-processes.test.ts, tests/surface/loop-evidence-docs.test.ts, tests/surface/prose.test.ts, tests/surface/init-base-ci.test.ts, unchanged | green (one POSIX-only row of stray-processes skips on Windows, as on main) |
+| 5 | tests/surface/changelog-fragments.test.ts with changelog.d/T1-IMPLEMENTER-MODEL.md; OPERATIONS text reviewer-verified against the diff | green |
+| 6 | `npm run typecheck` (dod arm 1) | exit 0 |
+
+DoD (`dod_command`, Windows): exit 0, tests 149, pass 148, fail 0, skipped 1.
