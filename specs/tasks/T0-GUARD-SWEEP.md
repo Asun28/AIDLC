@@ -1,7 +1,7 @@
 ---
 id: T0-GUARD-SWEEP
 title: Before the first review the implementer loosens each guard its change adds, one at a time, and sees a test fail, as both copies of implementer.md (step 2 and the report) and a new Guards section of both copies of the tdd skill say
-status: todo
+status: merged
 branch: T0-GUARD-SWEEP
 worktree: D:\wt\AIDLC\T0-GUARD-SWEEP
 allow_paths:
@@ -75,3 +75,34 @@ loosened form no input can detect is recorded as `equivalent:` with why.
 ```
 - T0-GUARD-SWEEP: before the first review the implementer loosens each guard its change adds, one at a time, and sees a test fail. Both copies of `implementer.md` add the sweep to step 2 and to the report, and both copies of the tdd skill gain a `## Guards` section: a guard the change adds (a bound or comparison, a regex class, quantifier or anchor, an early return, a filter, sort or dedupe) is tested at the seam of the acceptance item it serves, each guard is loosened in turn and its test file run until a test fails, then restored, and a loosened form no input can detect is recorded as `equivalent:`. Of the 40 most recently reviewed cards before this change, 6 of 33 blocking R3 decisions held only untested-guard findings.
 ```
+
+## Attempt evidence
+
+RED: commits 02fb13c9 (test) and b8974c05 (typecheck fix of the same test, no assertion changed); `node --test tests/surface/guard-sweep.test.ts` on the unchanged files: tests 3, pass 0, fail 3 (acceptance 1: AssertionError "G1 follows the second line of step 2"; acceptance 2: AssertionError "\"## Guards\" stands once"; acceptance 3: ENOENT, no `changelog.d/T0-GUARD-SWEEP.md`).
+
+| Item | Proving test or command | Result |
+| --- | --- | --- |
+| 1 | tests/surface/guard-sweep.test.ts, "T0-GUARD-SWEEP acceptance 1 - ..." | pass (red on main) |
+| 2 | tests/surface/guard-sweep.test.ts, "T0-GUARD-SWEEP acceptance 2 - ..." | pass (red on main) |
+| 3 | tests/surface/guard-sweep.test.ts, "T0-GUARD-SWEEP acceptance 3 - ..." | pass (red on main, no file) |
+| 4 | loop-evidence-docs, stray-processes, templates, mirror, prose, changelog-fragments tests (dod arm 2), no line changed | pass |
+| 5 | `npm run typecheck` (dod arm 1) | exit 0 |
+
+Revert table: each change made alone, `node --test tests/surface/guard-sweep.test.ts` run, the file restored.
+
+| Row | Scratch change | Red test (first failing assertion) |
+| --- | --- | --- |
+| a | delete G1 from `.claude/agents/implementer.md` | acceptance 1 (the copies are byte-equal) |
+| a2 | delete G1 from both implementer copies | acceptance 1 (G1 follows the second line of step 2) |
+| b | delete G2 from both implementer copies | acceptance 1 (G2 follows the report bullet) |
+| c | change one byte of G1 in the template copy only (sweep to swept) | acceptance 1 (the copies are byte-equal) |
+| d | move the Guards section after Anti-patterns, both copies | acceptance 2 (Seams ends right before Guards) |
+| e | pad the `.claude` tdd copy to 3501 bytes | acceptance 2 (the copies are byte-equal) |
+| e2 | pad both tdd copies to 3501 bytes | acceptance 2 (at most 3500 bytes, is 3501) |
+| f | change one word of the fragment (one to each) | acceptance 3 (strict equality) |
+| g | add a CR before a line feed in the template tdd copy | acceptance 2 (the copies are byte-equal) |
+| g2 | add a CR before a line feed in both implementer copies | acceptance 1 (LF line endings only) |
+
+Guard sweep: the change adds no code guard (text only); every row above turned a test red, none is `equivalent:`.
+
+Note: the tdd skill comes to 3442 bytes, not the 3441 R2 states: 2998 on main plus the section's 7 lines (436 characters and 7 line feeds) and the blank line after it is 3442; the section matches Acceptance detail 2 byte for byte, and the 3500 cap holds.

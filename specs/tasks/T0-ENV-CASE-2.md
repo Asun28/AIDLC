@@ -1,7 +1,7 @@
 ---
 id: T0-ENV-CASE-2
 title: (replaces T0-ENV-CASE and carries its candidate) killProcessTree, listProcesses and resolveWorktreeRoot read SystemRoot, windir and SystemDrive through one helper that ignores the letter case of a variable name on win32, so an environment object copied from a process started in Git Bash (SYSTEMROOT, WINDIR, SYSTEMDRIVE) finds the system root and drive instead of falling back to C:\Windows and C: (issue 307)
-status: todo
+status: merged
 branch: T0-ENV-CASE-2
 worktree: D:\wt\AIDLC\T0-ENV-CASE-2
 allow_paths:
@@ -48,3 +48,14 @@ npm run typecheck && node --test tests/infra/env-name.test.ts tests/infra/stray-
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Carried candidate 00e7fc8a (T0-ENV-CASE attempt 2, R3 decision 2 and its second pass passed on it), merged with origin/main (issue 359 fix included).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/env-name.test.ts`, describe `envValue [R1]`, 13 rows: the seven of the item, the exact spelling standing after another, and the five rows of R3 decision 1 F1-F4 (non-enumerable own key, a key of another name before a matching one and alone, inherited exact name loses to an own other spelling, linux `{ HOME: '/home/u' }`). RED carried: 6507d0e6 (3 of 8 failed on the assertion) and 242b6364 (F1 row failed on 3d27ba11). Mutants carried from attempt 2, each alone, one row red each: exact first removed, key order reversed, empty kept on win32, empty kept off win32, win32 only removed, own keys back to `Object.keys`, name filter removed, own check removed, non-win32 branch returning undefined | pass |
+| 2 | `tests/infra/env-name.test.ts`, describe `the three reads [R2]`, five rows (killProcessTree SYSTEMROOT and WINDIR, listProcesses SYSTEMROOT and WINDIR, resolveWorktreeRoot SYSTEMDRIVE). RED carried: 6507d0e6, 5 of 5 failed with the `C:\Windows` or `C:` fallback. Mutants carried: each of the five reads put back to `env['<name>']` alone turns its own row red (14 mutants named in items 1 and 2 of the T0-ENV-CASE evidence on 00e7fc8a) | pass |
+| 3 | `tests/infra/stray-processes.test.ts` (issue 359 version from main) and `tests/surface/config.test.ts` in the DoD, unchanged by this card; `tests/infra/exec.test.ts` unchanged, passed in the 35-file run below, runs in CI (issue 341) | pass |
+| 4 | `changelog.d/T0-ENV-CASE-2.md` (renamed from T0-ENV-CASE.md); row `changelog.d/T0-ENV-CASE-2.md carries the bugfix entry of issue 307` RED on 5b3bfbc9 (ENOENT, file not yet renamed), green on 0deeab38. `tests/surface/module-map.test.ts` RED on 00e7fc8a and on this branch with the env-name paragraph removed (`not ok 1 - docs/ARCHITECTURE.md module map`, 2 pass 1 fail), green with it (3 pass). `git diff origin/main -- CHANGELOG.md docs/OPERATIONS.md specs/tasks/T0-ENV-CASE.md` empty; `git diff origin/main -- docs/ARCHITECTURE.md` adds the paragraph and one blank line. The 35 test files that name docs/ARCHITECTURE.md, prose.test.ts among them: 898 tests, 892 pass, 0 fail, 6 skipped | pass |

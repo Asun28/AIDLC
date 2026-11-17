@@ -2,6 +2,7 @@
 id: T0-DEAD-PID-TESTS
 title: The tests that need the pid of a gone process take one that no process can hold, from one shared helper, instead of the pid of an exited child that Windows can hand to another process before the code under test looks it up (issue 312)
 status: todo
+superseded_by: T0-DEAD-PID-TESTS-2
 branch: T0-DEAD-PID-TESTS
 worktree: D:\wt\AIDLC\T0-DEAD-PID-TESTS
 allow_paths:

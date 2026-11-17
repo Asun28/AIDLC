@@ -7,6 +7,7 @@
 import { spawn, spawnSync, type SpawnSyncOptionsWithBufferEncoding, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { envValue } from '../core/env-name.ts';
 
 export interface ExecOptions {
   cwd?: string;
@@ -250,7 +251,7 @@ function sigkill(pid: number, killer: ProcessKiller): void {
  */
 export function killProcessTree(pid: number, platform: NodeJS.Platform, runner: SyncRunner, killer: ProcessKiller, env: NodeJS.ProcessEnv = process.env): void {
   if (platform === 'win32') {
-    const systemRoot = (env['SystemRoot'] || env['windir'] || 'C:\\Windows').replace(/[\\/]+$/, '');
+    const systemRoot = (envValue(env, 'SystemRoot', platform) || envValue(env, 'windir', platform) || 'C:\\Windows').replace(/[\\/]+$/, '');
     const receipt = runner(`${systemRoot}\\System32\\taskkill.exe`, ['/pid', String(pid), '/T', '/F'], { timeoutMs: TREE_KILL_HELPER_TIMEOUT_MS, shell: false });
     if (!ok(receipt)) sigkill(pid, killer);
     return;
