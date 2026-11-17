@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import type { ProjectConfig } from '../config.ts';
 import { nulList } from '../core/parse-guard.ts';
 import { MUTATION_OPERATORS, MutantReport, MutantPending, type Card, type MutantOutcome, type MutantResult } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
@@ -45,6 +46,8 @@ export interface RunMutantsInput {
   base: string;
   max?: number;
   timeoutMs?: number;
+  /** The configured ship path, which picks the DoD call (`dodCall`); absent, the platform shell runs it. */
+  shipPath?: ProjectConfig['shipPath'];
 }
 
 export interface MutantsDeps {
@@ -157,14 +160,22 @@ function outcomeOf(receipt: ExecReceipt, dodExit: number): MutantOutcome {
   return receipt.exitCode === dodExit ? 'survived' : 'killed';
 }
 
-/** The one call of a card's DoD, shared by the sweep and `card attempt` (card T1-DOD-RECORD): through the platform shell in the worktree. */
-export function dodCall(card: Pick<Card, 'dod_command'>, worktree: string, timeoutMs: number): [string, string[], { cwd: string; shell: true; timeoutMs: number }] {
+/** The payload prefix of the scaffold ship's DoD leg (`Get-ScaffoldDodPayload`, scripts/_cards.ps1 of a scaffold repository). */
+const SCAFFOLD_DOD_PREFIX = "$ErrorActionPreference='Stop'; $PSNativeCommandUseErrorActionPreference=$true; ";
+
+/**
+ * The one call of a card's DoD, shared by the sweep and `card attempt` (card T1-DOD-RECORD), in the worktree. On the scaffold
+ * ship path it is the program the scaffold ship's DoD leg runs, `pwsh -NoProfile -Command` with the two preferences before the
+ * `dod_command` (card T0-DOD-SCAFFOLD-SHELL); on the github and dry-run paths the `dod_command` runs through the platform shell.
+ */
+export function dodCall(card: Pick<Card, 'dod_command'>, worktree: string, timeoutMs: number, shipPath: ProjectConfig['shipPath']): [string, string[], { cwd: string; shell?: true; timeoutMs: number }] {
+  if (shipPath === 'scaffold') return ['pwsh', ['-NoProfile', '-Command', SCAFFOLD_DOD_PREFIX + card.dod_command], { cwd: worktree, timeoutMs }];
   return [card.dod_command, [], { cwd: worktree, shell: true, timeoutMs }];
 }
 
 /** Apply the mutants of a committed candidate one at a time under the card's DoD and write the report bound to that commit. */
 export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Promise<{ report: MutantReport; path: string }> {
-  const { card, worktree, base, max = MUTANT_MAX_DEFAULT, timeoutMs = MUTANT_TIMEOUT_DEFAULT_MS } = input;
+  const { card, worktree, base, max = MUTANT_MAX_DEFAULT, timeoutMs = MUTANT_TIMEOUT_DEFAULT_MS, shipPath = 'dry-run' } = input;
   if (!positive(max)) throw new Error(`--max must be a positive integer, got ${max}`);
   if (!positive(timeoutMs) || timeoutMs > MAX_TIMEOUT_MS) throw new Error(`--timeout-ms must be a positive integer of at most ${MAX_TIMEOUT_MS}, got ${timeoutMs}`);
   if (base.startsWith('-')) throw new Error(`the base ${JSON.stringify(base)} starts with -, which git would read as an option`);
@@ -181,7 +192,7 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
   const candidate = git.head(worktree);
   const targets = targetsOf(worktree, diffOf(read, worktree, `${base}...${candidate}`), regularFiles(read, worktree, candidate));
   const chosen = targets.slice(0, max);
-  const dod = () => deps.dod(...dodCall(card, worktree, timeoutMs));
+  const dod = () => deps.dod(...dodCall(card, worktree, timeoutMs, shipPath));
 
   const baseline = await dod();
   if (baseline.timedOut) throw new Error(`the DoD timed out after ${timeoutMs} ms on the unmutated candidate; raise --timeout-ms`);

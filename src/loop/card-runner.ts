@@ -299,11 +299,13 @@ export class CardRunner {
     const command = card.dod_command;
     if (!worktree) return { ran: false, command, reason: 'no-worktree' };
     if (pathKind(worktree) !== 'directory') return { ran: false, command, reason: 'no-directory' };
-    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs);
+    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs, this.config.shipPath);
     const receipt = this.runner(cmd, args, { ...options, killTree: true });
     const output = Buffer.from(receipt.stdout + receipt.stderr, 'utf8');
     return {
       ran: true,
+      // The shell the call names (card T0-DOD-SCAFFOLD-SHELL): the platform shell, else the scaffold's pwsh.
+      shell: options.shell ? 'platform' : 'pwsh',
       command,
       worktree,
       ...(probe ? { commit: probe.sha, clean: probe.clean } : {}),

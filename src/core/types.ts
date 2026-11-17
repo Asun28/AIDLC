@@ -640,6 +640,8 @@ export type NotCountedReason = z.infer<typeof NotCountedReason>;
 export const LoopDod = z.discriminatedUnion('ran', [
   z.object({
     ran: z.literal(true),
+    /** The shell that ran the DoD (card T0-DOD-SCAFFOLD-SHELL); absent on a record written before that card. */
+    shell: z.enum(['pwsh', 'platform']).optional(),
     command: z.string(),
     worktree: z.string(),
     commit: z.string().optional(),
