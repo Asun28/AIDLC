@@ -105,6 +105,13 @@ const REMOVED_INSTRUCTIONS: Array<[string, { test(text: string): boolean }]> = [
   ['use a subagent to verify', { test: verifiesWithSubagent }],
   ['be conservative', /(?:be|stay)\s+conservative|\b(?:be|stay)\s+(?:(?:very|more|even|extra)\s+){1,2}conservative/i],
   ['only report high-severity', /(?:only\s+report|report\s+only)\s+(?:the\s+)?high(?:-|\s+)severity/i],
+  // T1-XHIGH-PROSE-GUARD: on Opus 5.5 the effort level sets thinking depth, and an update suppressor makes it report less.
+  ['think harder, less or more', /\bthink\s+(?:harder|less|more)\b/i],
+  ['do not overthink', /\b(?:do\s+not|don['’]t|never)\s+over-?think/i],
+  ['do not think', /\b(?:do\s+not|don['’]t|never)\s+think\b/i],
+  ['hold the findings', /\bhold\s+(?:(?:all|your|the)\s+)*(?:findings|results)\b/i],
+  ['do not narrate', /\b(?:do\s+not|don['’]t|never)\s+narrate\b/i],
+  ['no interim updates', /\bno\s+interim\s+(?:updates|messages)\b/i],
 ];
 
 /** The instructions of REMOVED_INSTRUCTIONS that `text` carries; words may be separated by any whitespace, a line break included. */
@@ -113,7 +120,7 @@ export function removedInstructions(text: string): string[] {
 }
 
 /** Every agent and skill file, both copies, and the review policy the prompts carry (both copies). */
-const PROMPT_FILES: string[] = [...markdownFiles(path.join(root, '.claude', 'agents'), true), ...markdownFiles(path.join(root, '.claude', 'skills'), true), ...markdownFiles(path.join(root, 'templates', 'claude'), true), path.join(root, 'REVIEW.md'), path.join(root, 'templates', 'REVIEW.md')];
+const PROMPT_FILES: string[] = [...markdownFiles(path.join(root, '.claude', 'agents'), true), ...markdownFiles(path.join(root, '.claude', 'skills'), true), ...markdownFiles(path.join(root, 'templates', 'claude'), true), path.join(root, 'REVIEW.md'), path.join(root, 'templates', 'REVIEW.md'), path.join(root, 'CLAUDE.md'), path.join(root, 'templates', 'CLAUDE.aidlc.md')];
 
 /** The review prompts buildReviewPrompt writes, every stage and angle, with this repository's REVIEW.md as the policy, plus the angle texts themselves. */
 function reviewPromptTexts(): string[] {
@@ -445,5 +452,45 @@ describe('goal lease and unresolved operations in the documents (T0-UNRESOLVED-N
     assert.ok(board, 'the T0-BOARD-OWNER-WAIT entry is present');
     assert.ok(changelog.includes(`${ENTRY}\n\n${board}`), 'the entry sits directly above T0-BOARD-OWNER-WAIT');
     assert.equal(occurrences(changelog, ENTRY), 1, 'the entry occurs once');
+  });
+});
+
+describe('T1-XHIGH-PROSE-GUARD', () => {
+  test('acceptance 1: removedInstructions flags prose that steers thinking depth or suppresses updates [R1] [R2]', () => {
+    const cases: Array<[string, string]> = [
+      ['Think harder about the edge cases.', 'think harder, less or more'],
+      ['Think less and act.', 'think harder, less or more'],
+      ['Think more before you answer.', 'think harder, less or more'],
+      ['think\n  harder about it', 'think harder, less or more'],
+      ["Don't overthink it.", 'do not overthink'],
+      ['Do not over-think the plan.', 'do not overthink'],
+      ['Never overthink a T0 card.', 'do not overthink'],
+      ['Do not think before a simple command.', 'do not think'],
+      ["Don't think, run the command.", 'do not think'],
+      ['Hold all findings for the final response.', 'hold the findings'],
+      ['Hold your results until the end.', 'hold the findings'],
+      ['Do not narrate your tool calls.', 'do not narrate'],
+      ["Don't narrate.", 'do not narrate'],
+      ['Send no interim updates.', 'no interim updates'],
+      ['No interim messages.', 'no interim updates'],
+    ];
+    for (const [text, name] of cases) assert.deepEqual(removedInstructions(text), [name], text);
+  });
+
+  test('acceptance 2: look-alike phrasings of thinking and updates stay clean [R1] [R2]', () => {
+    const clean = [
+      'Think about what the failing test shows.',
+      'The model thinks more per turn at xhigh.',
+      'Rethink the plan when the base moved.',
+      'Hold the lock until the write ends.',
+      'The narrative of the incident is in the journal.',
+      'An interim result is kept on the attempt.',
+      'Report each finding as it arrives.',
+    ];
+    for (const text of clean) assert.deepEqual(removedInstructions(text), [], text);
+  });
+
+  test('acceptance 3: PROMPT_FILES holds CLAUDE.md and templates/CLAUDE.aidlc.md [R3]', () => {
+    for (const file of [path.join(root, 'CLAUDE.md'), path.join(root, 'templates', 'CLAUDE.aidlc.md')]) assert.ok(PROMPT_FILES.includes(file), `${path.relative(root, file)} is scanned`);
   });
 });
