@@ -1,7 +1,7 @@
 ---
 id: T1-XHIGH-COORDINATOR-EFFORT
 title: The router skill starts a helper subagent for a search or a fetch as a named agent type at medium, not as a fork, within its 4500-byte cap, and docs/OPERATIONS.md says who sets the coordinator's effort and what xhigh does to a coordinator turn
-status: todo
+status: merged
 branch: T1-XHIGH-COORDINATOR-EFFORT
 worktree: D:\wt\AIDLC\T1-XHIGH-COORDINATOR-EFFORT
 plan_ref: plans/coordinator-xhigh.md#7-task-split-dependencies-and-parallel-windows
