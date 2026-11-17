@@ -78,3 +78,15 @@ env setup do not count.
 Changelog entry (acceptance 5), one line:
 
 "- T1-XHIGH-COORDINATOR-EFFORT: the router skill starts a helper subagent for a search or a fetch as a named agent type at `medium`, not as a fork, which runs at the coordinator session's effort. Its Effort section no longer repeats that `aidlc card attempt` records every attempt and that limits persist across sessions; `card-loop.md` BUILD states both. `docs/OPERATIONS.md` says who sets the coordinator's effort and what `xhigh` does to a coordinator turn on Claude Opus 5.5, and recommends no level."
+
+## Attempt evidence
+Build attempt 1. RED receipt `19cc0561:1` (acceptance 1 failed: old Effort section; acceptance 2 failed: `records every attempt` still present; acceptance 3 failed: line i+2 was the Card front matter paragraph).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `acceptance 1` in `tests/surface/coordinator-effort.test.ts`; both SKILL.md copies 4479 bytes, `cmp` identical | pass (failed at RED) |
+| 2 | `acceptance 2` in `tests/surface/coordinator-effort.test.ts` | pass (failed at RED) |
+| 3 | `acceptance 3` in `tests/surface/coordinator-effort.test.ts` | pass (failed at RED) |
+| 4 | templates, mirror, prose, command-lines, removed-surface, readme, init-base-ci, frontmatter (tests/surface) and tests/infra/init.test.ts, no line changed | pass, DoD 175 of 175 |
+| 5 | `CHANGELOG.md` Unreleased, first entry, the card's text (CLAUDE.md Conventions still names `CHANGELOG.md` (Unreleased)) | present |
+| 6 | `npm run typecheck` | exit 0 |
