@@ -38,3 +38,10 @@ npm run typecheck && node --test tests/infra/stray-processes.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+| Item | Check | Result |
+|---|---|---|
+| 1 | `node --test --test-name-pattern "the real listing shows" tests/infra/stray-processes.test.ts` as committed; then with the expected value of the new assertion changed to `60_000`; then with the runner calling `run(command, args, options)` (override removed); each change restored | pass (1/1, listing 1971 ms); with 60_000: fail 1/1, `expected: 60000, actual: 10000`; override removed: pass 1/1 (2170 ms) on an idle machine |
+| 2 | `git diff origin/main -- tests/infra/stray-processes.test.ts`; `git diff --name-only origin/main...HEAD` | test file: the import gains `PROCESS_LIST_TIMEOUT_MS`, the runner records `options?.timeoutMs` and calls `run` with `{ ...options, timeoutMs: 60_000 }`, one `assert.equal(askedMs, PROCESS_LIST_TIMEOUT_MS)` after `listProcesses`; names: only the two allow_paths; no change under `src/` |
+| DoD | `npm run typecheck && node --test tests/infra/stray-processes.test.ts` | exit 0; tsc clean; tests 22, pass 21, fail 0, skipped 1 (pre-existing POSIX-only row) |
