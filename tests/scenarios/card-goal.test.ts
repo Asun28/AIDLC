@@ -67,7 +67,11 @@ test('T0-CARD-GOAL-RESOLVE acceptance 3: review pre, r3, dispute and accept with
     try {
       const r = cli(...args);
       assert.ok(!r.stderr.includes(newer.id), `${args.join(' ')} never names the newer goal: ${r.stderr}`);
-      assert.ok(fx.store.getCardRun(older.id, 'T1-OLD'), `${args.join(' ')} reads the run of the goal that projects the card`);
+      // T0-REVIEW-NO-RUN-2: review pre and r3 create no run, so the refusal naming the older goal is the proof it was resolved.
+      if (args[1] === 'pre' || args[1] === 'r3') {
+        assert.ok(r.stderr.includes(older.id), `${args.join(' ')} names the goal that projects the card: ${r.stderr}`);
+        assert.equal(fx.store.getCardRun(older.id, 'T1-OLD'), undefined, `${args.join(' ')} creates no run in the goal that projects the card`);
+      } else assert.ok(fx.store.getCardRun(older.id, 'T1-OLD'), `${args.join(' ')} reads the run of the goal that projects the card`);
       assert.equal(fx.store.getCardRun(newer.id, 'T1-OLD'), undefined, `${args.join(' ')} creates no run in the newer goal`);
     } finally {
       fx.cleanup();

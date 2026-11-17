@@ -47,3 +47,16 @@ npm run typecheck && node --test tests/scenarios/review-no-run.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Attempt 1, effort medium. Carried RED aab85514 (T0-REVIEW-NO-RUN): on main the four refusal tests exited 0 (the reviewer ran and recorded a decision). RED commit 386409d9 (tests only): the withdrawn case failed on the carried candidate with the R2 line in place of the runner's refusal, and the card-goal row of `review pre` failed on main (no line names the older goal; the run is created).
+
+| Item | Test | Result |
+| --- | --- | --- |
+| 1 | review-no-run.test.ts "acceptance 1: review r3 / review pre on a card with no run ..." (one line naming `aidlc card next`, cards, journal and queue unchanged, no `.review/`, no marker) | pass; on main exit 0, reviewer ran |
+| 2 | review-no-run.test.ts "acceptance 2: review r3 / review pre with no attempt, then after a failed and a not-counted attempt ..." and "after a successful attempt withdrawn with card withdraw ..." | pass; withdrawn row fails on 487ad5b5 |
+| 3 | review-no-run.test.ts "acceptance 3: after a successful attempt ..."; card-goal.test.ts "T0-CARD-GOAL-RESOLVE acceptance 3: review pre, r3, dispute and accept ..." (pre and r3 rows); review-r3-wait.test.ts and card-terminal-goal.test.ts unchanged | pass |
+| 4 | review-no-run.test.ts "acceptance 4: ..." (OPERATIONS_SENTENCES, CHANGELOG_SENTENCES) | pass |
+
+Revert check (each guard of `reviewCtx` in src/cli/main.ts reverted alone, review-no-run.test.ts run, source restored): `getCardRun` replaced by `ensureCardRun` fails both acceptance 1 tests; the success check removed fails both acceptance 2 tests; the withdrawn exemption removed fails the withdrawn test.
