@@ -45,3 +45,17 @@ npm run typecheck && node --test tests/infra/review-queue-key.test.ts tests/infr
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Carries candidate 3063b471 of T0-REVIEW-QUEUE-KEY, which stopped on its R3 (the OPERATIONS sentence two unchanged tests pin out) and recorded no attempt. RED commit b1c76e90: 14 of 19 rows of tests/infra/review-queue-key.test.ts fail on main. RED commit 3d8e7455: the fragment row fails (ENOENT) before the fragment is renamed to this card id. Each revert below was applied alone to the candidate and the file re-run.
+
+| item | test | result |
+| --- | --- | --- |
+| 1 (hold) | acceptance 1, `hold` upper-case and backslash rows | `releaseSlot(r.pool, key, now)` in `hold`: 2 rows fail |
+| 1 (cancel) | acceptance 1, `cancel` upper-case and backslash rows | `releaseSlot(r.pool, key, now)` in `cancel`: 2 rows fail |
+| 1 (release) | acceptance 1, `release` rows; acceptance 2 upper-case and backslash release rows | `releaseSlot(r.pool, key, now)` in `release`: 4 rows fail |
+| 2 (NOTE key) | acceptance 2, upper-case and backslash release rows, retries after an upper-case release | NOTE `key` as supplied: 4 rows fail |
+| 2 (retry check) | acceptance 2, upper-case retry after upper-case, backslash retry after stored | retry check `e.data['key'] === key`: 2 rows fail |
+| 3 | tests/infra/review-queue.test.ts, tests/scenarios/review-resolve.test.ts unchanged | pass in the DoD |
+| 4 | acceptance 4 row (`fragmentEntry`) | fails with the fragment absent (RED 3d8e7455); `git diff origin/main -- docs/OPERATIONS.md CHANGELOG.md specs/tasks/T0-REVIEW-QUEUE-KEY.md` is empty |
