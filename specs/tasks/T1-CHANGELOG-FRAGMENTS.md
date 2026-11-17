@@ -109,3 +109,19 @@ Rows of acceptance 2, with `cardIds` = {`T1-X`, `T0-Y`} and the name `T1-X.md` u
 `changelog.d/T1-CHANGELOG-FRAGMENTS.md`, one line and a line feed:
 
 - T1-CHANGELOG-FRAGMENTS: a card records its behaviour change in its own new file `changelog.d/<card id>.md` and leaves `CHANGELOG.md` as it is, so two cards that run at the same time and both write fragments change no file in common for their entries. The file holds one line ended by one line feed, `- <card id>: <text>` or `- <card id> (<qualifier>): <text>`, and its name is the id of a card in `specs/tasks/` or `specs/archive/tasks/`; `tests/surface/changelog-fragments.test.ts` refuses any other file in `changelog.d/` except its README. The changes not yet released are the Unreleased section of `CHANGELOG.md` and the files in `changelog.d/`; `CLAUDE.md` (Conventions) states the rule and `changelog.d/README.md` the form. The base-sync merge of `CHANGELOG.md` entries (card T0-BASE-SYNC-CHANGELOG-2) is unchanged for the cards that still add an entry there.
+
+## Attempt evidence
+
+RED commit 913eb73d (tests only): `node --test tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts` - tests 22, pass 21, fail 1; the new file fails at load with `SyntaxError: The requested module '../infra/changelog.ts' does not provide an export named 'fragmentEntry'`, prose passes.
+
+| Item | Proving test or command | Result |
+|---|---|---|
+| 1 | tests/surface/changelog-fragments.test.ts, acceptance 1 | pass |
+| 2 | tests/surface/changelog-fragments.test.ts, acceptance 2 | pass |
+| 3 | tests/surface/changelog-fragments.test.ts, acceptance 3 | pass |
+| 4 | tests/surface/prose.test.ts, "tracked prose carries no em dash and no corner brackets"; SCOPE line reviewer-verified | pass |
+| 5 | tests/surface/claude-md-size.test.ts, tests/surface/mirror.test.ts; CLAUDE.md 191 to 192 lines, diff reviewer-verified | pass |
+| 6 | changelog.d/README.md, reviewer-verified against the diff | written |
+| 7 | the eight listed test files in the dod_command | pass |
+| 8 | `git diff --stat main` names no path under CHANGELOG.md, templates/, .claude/, src/ or .github/ | reviewer-verified |
+| 9 | `npm run typecheck` (dod arm 1) | exit 0 |

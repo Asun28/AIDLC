@@ -1,4 +1,8 @@
 // Card T0-RELEASE-0-2-0: the part of CHANGELOG.md a test reads for its entry, from the Unreleased heading down to the 0.1.0 heading.
+// Card T1-CHANGELOG-FRAGMENTS: the form of a fragment `changelog.d/<card id>.md` and the entry it holds.
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { CARD_ID_REGEX } from '../../src/core/types.ts';
 
 /** The heading of the first release; every entry written after it stands above it. */
 export const FIRST_RELEASE_HEADING = '## 0.1.0 - 2026-09-11';
@@ -26,4 +30,28 @@ export function changelogSince010(text: string): string {
   const [end, ...moreEnds] = headingLines(text, FIRST_RELEASE_HEADING);
   if (start === undefined || end === undefined || moreStarts.length > 0 || moreEnds.length > 0 || end < start) return '';
   return text.slice(start, end - 1);
+}
+
+/**
+ * The problems of the file `name` of `changelog.d/` with the text `text`, in this order: a name that is not `<card id>.md` (and no
+ * other problem), an id not in `cardIds`, a text that is not one line ended by one line feed, and a line that does not match
+ * `^- <id>( \([^()\n]+\))?: \S`. The empty array for a well-formed fragment of a registered card.
+ */
+export function fragmentProblems(name: string, text: string, cardIds: ReadonlySet<string>): string[] {
+  const id = name.endsWith('.md') ? name.slice(0, -'.md'.length) : '';
+  if (!CARD_ID_REGEX.test(id)) return [`${name}: the file name is not <card id>.md`];
+  const problems: string[] = [];
+  if (!cardIds.has(id)) problems.push(`${name}: no card ${id} in specs/tasks or specs/archive/tasks`);
+  const line = text.slice(0, -1);
+  if (!text.endsWith('\n') || line.includes('\n') || text.includes('\r')) {
+    problems.push(`${name}: the text is not one line ended by one line feed`);
+  } else if (!new RegExp(String.raw`^- ${id}( \([^()\n]+\))?: \S`).test(line)) {
+    problems.push(`${name}: the line does not start with "- ${id}: " or "- ${id} (<qualifier>): "`);
+  }
+  return problems;
+}
+
+/** The text of `<root>/changelog.d/<cardId>.md` without its final line feed. */
+export function fragmentEntry(root: string, cardId: string): string {
+  return readFileSync(path.join(root, 'changelog.d', `${cardId}.md`), 'utf8').replace(/\n$/, '');
 }
