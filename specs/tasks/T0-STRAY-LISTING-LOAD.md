@@ -1,7 +1,7 @@
 ---
 id: T0-STRAY-LISTING-LOAD
 title: The real-listing test of stray-processes.test.ts runs the real process listing with a 60 s timeout while asserting that listProcesses asked for the production 10 s budget, so contention in a CI shard no longer fails it (issue 359)
-status: todo
+status: merged
 branch: T0-STRAY-LISTING-LOAD
 worktree: D:\wt\AIDLC\T0-STRAY-LISTING-LOAD
 allow_paths:
