@@ -3,9 +3,8 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import fs, { readFileSync, writeFileSync } from 'node:fs';
+import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -112,7 +111,7 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 1: issue 358 - a goal in CLOSE reaches 
 });
 
 test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves the run and the journal as they were [R2] [R3]', () => {
-  type Row = { name: string; card?: string; exec?: (fx: Fixture, goalId: string) => SyncRunner; config?: Record<string, unknown>; arrange?: (fx: Fixture, goalId: string) => void; message: RegExp };
+  type Row = { name: string; card?: string; noBranch?: boolean; exec?: (fx: Fixture, goalId: string) => SyncRunner; config?: Record<string, unknown>; arrange?: (fx: Fixture, goalId: string) => void; message: RegExp };
   const rows: Row[] = [
     { name: '(a) a card outside the goal', card: 'T0-OUTSIDE', arrange: (fx, goalId) => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, cardId: 'T0-OUTSIDE', revision: 0 }), message: /T0-OUTSIDE is not listed in goal/ },
     { name: '(b) a merge already verified', arrange: (fx, goalId) => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }), message: /merge is already verified/ },
@@ -126,11 +125,8 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
       setActorForTests(actorA);
     }, message: /card lease is held by session win-B/ },
     { name: '(e) no repository', config: { repository: undefined }, message: /no repository is configured/ },
-    { name: '(f) no branch', arrange: (fx, goalId) => {
-      fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, branch: undefined });
-      const file = path.join(fx.cardsDir, `${SHIPPED}.md`);
-      writeFileSync(file, readFileSync(file, 'utf8').replace(/^branch: .*\r?\n/m, ''), 'utf8');
-    }, message: /names no branch/ },
+    // The card parser defaults `branch` to the id, so an empty branch reaches the method only as its argument.
+    { name: '(f) no branch', noBranch: true, arrange: (fx, goalId) => void fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, branch: undefined }), message: /names no branch/ },
     { name: '(g) gh pr list fails', exec: () => probes(SHIPPED, { listFails: true }), message: /PR #41.*gh/ },
     { name: '(g) the PR is not of the branch', exec: () => probes(SHIPPED, { list: [{ number: 40, state: 'MERGED', headRefOid: HEAD, baseRefName: 'main', url: '' }] }), message: /PR #41 is not a PR of branch T0-SHIPPED into main/ },
     { name: '(h) gh pr view fails', exec: () => probes(SHIPPED, { viewFails: true }), message: /PR #41.*gh/ },
@@ -152,7 +148,9 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
       if (row.card) writeCard(fx, { id: row.card, title: 'outside the goal' });
       const before = JSON.stringify(fx.store.getCardRun(goalId, id));
       const events = fx.events(goalId).length;
-      assert.throws(() => adopt(fx, goalId, id, row.exec?.(fx, goalId) ?? probes(id), row.config), row.message, row.name);
+      const exec = row.exec?.(fx, goalId) ?? probes(id);
+      const call = row.noBranch ? () => runnerWith(fx, exec).adoptMerge(fx.goal(goalId), { ...fx.card(id), branch: '' }, fx.store.getCardRun(goalId, id)!, PR) : () => adopt(fx, goalId, id, exec, row.config);
+      assert.throws(call, row.message, row.name);
       if (!row.name.startsWith('R3')) assert.equal(JSON.stringify(fx.store.getCardRun(goalId, id)), before, `${row.name}: the run is unchanged`);
       else assert.equal(fx.store.getCardRun(goalId, id)!.state, 'SHIP', `${row.name}: the adoption wrote nothing`);
       assert.equal(fx.events(goalId).length, events, `${row.name}: the journal is unchanged`);

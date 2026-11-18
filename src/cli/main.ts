@@ -695,6 +695,22 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       out(c, { effort: updated.effort, candidate: updated.candidate, pendingRepair: updated.pendingRepair }, () => `withdrew candidate ${updated.candidate?.sha.slice(0, 12)}; the attempt that bound it counts as failed; run \`aidlc card next ${cardId}\``);
     });
   card
+    .command('adopt-merge <cardId>')
+    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE)')
+    .option('--goal <id>')
+    .requiredOption('--pr <n>', 'the merged PR of the card branch into the base')
+    .action((cardId: string, o: { goal?: string; pr: string }) => {
+      if (!/^[1-9]\d*$/.test(o.pr)) fail(`--pr must be a positive integer, got ${JSON.stringify(o.pr)}`);
+      const c = ctx(g());
+      const goalRec = checkedGoal(c, cardId, o.goal);
+      // The existing run only, as for withdraw: `ensureCardRun` would start the card's deadline for a command that then refuses.
+      const run = c.store.getCardRun(goalRec.id, cardId);
+      if (!run) fail(`no run record for ${cardId} in ${goalRec.id}; start it with aidlc card next ${cardId} --goal ${goalRec.id}`);
+      const updated = runnerFor(c).adoptMerge(goalRec, cardOf(c, cardId).card, run, Number(o.pr));
+      c.controller.writeBoard(goalRec);
+      out(c, { state: updated.state, mergeVerified: updated.mergeVerified, pr: updated.pr }, () => `adopted PR #${updated.pr?.number} (merge ${updated.pr?.mergeCommit?.slice(0, 12)}); state=${updated.state}; run \`aidlc card next ${cardId}\``);
+    });
+  card
     .command('close <cardId>')
     .description('do the cleanup and metadata steps and record the closure predicates')
     .option('--goal <id>')

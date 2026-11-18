@@ -60,7 +60,10 @@ runs it, so CI runs it on every push.
   `CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's
   `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`),
   `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
+  `tests/scenarios/candidate-withdraw.test.ts`),
+  `CardRunner.adoptMerge` (`aidlc card adopt-merge`, card
+  T0-ADOPT-EXTERNAL-MERGE: its own fault rows are acceptance 4 of
+  `tests/scenarios/adopt-merge.test.ts`), `aidlc review repro`
   (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
   `GoalStore.updateCardRun` write of the finding's `repro` after both runs
   and no journal append, so a failed write throws, exits 1 and leaves the

@@ -3286,12 +3286,67 @@ export class CardRunner {
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
   }
 
-  adoptMerge(goal: Goal, card: Card, run: CardRun, pr: number): CardRun {
-    void goal;
-    void card;
-    void run;
-    void pr;
-    throw new Error('not implemented');
+  /**
+   * `aidlc card adopt-merge` (card T0-ADOPT-EXTERNAL-MERGE, issue 358): a merge made outside a ship operation of the loop is
+   * recorded once gh shows PR `pr` as a PR of the card's branch into the base, MERGED there with a head and a merge commit,
+   * and git shows that merge commit on the fetched base with a tree. The run is written once under the card-run lock with
+   * `mergeVerified`, state CLOSE and its stop removed (a final stop too: the verified merge supersedes it), with
+   * `MERGE_ADOPTED` owed in that write and appended after it. Every refusal throws before the write.
+   */
+  adoptMerge(goal: Goal, card: Card, caller: CardRun, pr: number): CardRun {
+    const now = this.clock();
+    const refuse: (why: string) => never = (why) => {
+      throw new Error(`adopt-merge ${card.id} PR #${pr}: ${why}`);
+    };
+    if (!goal.cards.includes(card.id)) refuse(`${card.id} is not listed in goal ${goal.id} (${goal.cards.join(', ')})`);
+    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
+    const verified = `the merge is already verified; run aidlc card next ${card.id} --goal ${goal.id}`;
+    if (run.mergeVerified) refuse(verified);
+    const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+    if (open.length) refuse(`unresolved operation ${open.join(', ')}; reconcile it first with aidlc ops reconcile`);
+    const lease = this.leases.read(resourceKeys.card(this.repo.key, card.id));
+    const me = currentActor();
+    if (lease && !lease.released && !(lease.owner.session === me.session && lease.owner.host === me.host) && Date.parse(lease.expiresAt) >= Date.parse(now)) refuse(`the card lease is held by session ${lease.owner.session} (generation ${lease.generation}) until ${lease.expiresAt}`);
+    const repository = this.config.repository;
+    if (!repository) refuse('no repository is configured (repository in aidlc.config.json), so gh cannot be asked');
+    const branch = run.branch ?? card.branch;
+    if (!branch) refuse('the run names no branch and the card names no branch');
+    const base = this.config.base.replace(/^origin\//, '');
+    const ask = <T>(what: string, read: () => T): T => {
+      try {
+        return read();
+      } catch (err) {
+        return refuse(`gh ${what} failed: ${oneLine((err as Error).message)}`);
+      }
+    };
+    const listed = ask('pr list', () => this.gh.prsForBranch(repository, branch, base, this.repo.mainRoot));
+    if (!listed.some((p) => p.number === pr)) refuse(`PR #${pr} is not a PR of branch ${branch} into ${base} (gh lists ${listed.map((p) => `#${p.number}`).join(', ') || 'none'})`);
+    const view = ask('pr view', () => this.gh.prView(repository, pr, this.repo.mainRoot));
+    const oid = /^[0-9a-f]{40}$/;
+    if (view.number !== pr) refuse(`gh answered number ${view.number} for it`);
+    if (view.state !== 'MERGED') refuse(`PR #${pr} is ${view.state}, not MERGED`);
+    if (view.baseRefName !== base) refuse(`it targets base ${view.baseRefName ?? '(unreported)'}, not ${base}`);
+    const headSha = view.headRefOid;
+    const mergeSha = view.mergeCommit;
+    if (!headSha || !oid.test(headSha)) refuse(`gh reports head ${JSON.stringify(headSha ?? null)}, not a lowercase 40-character object id`);
+    if (!mergeSha || !oid.test(mergeSha)) refuse(`gh reports merge commit ${JSON.stringify(mergeSha ?? null)}, not a lowercase 40-character object id`);
+    if (this.git.fetchBase(this.repo.mainRoot, base).exitCode !== 0) refuse(`git fetch of ${base} failed`);
+    if (this.git.contains(this.repo.mainRoot, `origin/${base}`, mergeSha) !== true) refuse(`merge commit ${mergeSha} is not on origin/${base}`);
+    const tree = this.git.treeOf(this.repo.mainRoot, mergeSha);
+    if (!tree) refuse(`git cannot read the tree of merge commit ${mergeSha}`);
+    const owed = this.owe(goal, 'MERGE_ADOPTED', { pr, headSha, mergeSha, tree, branch, base });
+    // The record as persisted decides what the adoption supersedes: a stop or a candidate written since the first read counts.
+    const written = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      const current = persisted ?? run;
+      if (current.mergeVerified) refuse(verified);
+      const { stop, blocker, ...rest } = current;
+      void blocker;
+      const candidateSha = current.candidate?.sha ?? null;
+      const event = { ...owed, data: { ...owed.data, candidateSha, headMatchesCandidate: candidateSha === headSha, priorState: current.state, priorStop: stop?.reason ?? null } };
+      return { ...rest, state: 'CLOSE', mergeVerified: true, pr: { number: pr, state: 'MERGED', headRefOid: headSha, baseRefName: view.baseRefName, mergeCommit: mergeSha, mergedAt: view.mergedAt, url: view.url }, journalOwed: this.owedWith(goal.id, current, event), updatedAt: now };
+    });
+    this.deliverOwed(goal, card, written, { keys: [owed.key] });
+    return this.store.getCardRun(goal.id, card.id) ?? written;
   }
 
   /**
