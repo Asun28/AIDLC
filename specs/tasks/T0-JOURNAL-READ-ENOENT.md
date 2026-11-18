@@ -1,7 +1,7 @@
 ---
 id: T0-JOURNAL-READ-ENOENT
 title: Journal.readAll, head and verify read a goal journal as empty only when reading its file fails with ENOENT and throw READ_FAILED for any other failure, and LeaseStore.list lists through readDirNames, so aidlc audit verify refuses a journal it cannot read where it reported level none with an intact chain (issue 370)
-status: todo
+status: merged
 branch: T0-JOURNAL-READ-ENOENT
 allow_paths:
   - src/state/journal.ts
