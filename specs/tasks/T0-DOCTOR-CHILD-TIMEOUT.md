@@ -58,3 +58,10 @@ npm run typecheck && node --test tests/surface/init-no-package.test.ts tests/sur
 | Earlier doctor runs in shard 4 | runs 44270781001 and 44074492771 | config.test.ts only (0.9 s and 1.5 s), which exits before the probes |
 | Process listing in the failing row | src/probes/processes.ts:305 | not run: the target is not a git repository |
 | A tool that never exits | WSL, stub first on PATH, `timeout 30` | doctor still running at 30 s for `pwsh`, `gh` and `git` (issue 371) |
+
+## Attempt evidence
+| Item | Check | Result |
+|---|---|---|
+| 1 | `git diff --stat origin/main -- tests`; `git diff -U0 origin/main -- tests`; `git diff --name-only origin/main...HEAD` | 2 files, 4 insertions, 4 deletions; each removed line ends `timeout: 60_000 ...` and its replacement differs only in `timeout: 120_000`, at init-no-package.test.ts:228 and cli-cwd-paths.test.ts:73, :153 and :298; names: the two test files and this card; nothing under src/, .github/ or docs/ |
+| 2 | `grep -rn "'doctor'" tests` filtered to `spawnSync` lines, with each timeout; cli-cwd-paths.test.ts:73 and :153 read for the fixture helpers | base-sync.test.ts:181, stray-processes.test.ts:601, doctor-interrupted-writes.test.ts:427 and :502, init-no-package.test.ts:228 and cli-cwd-paths.test.ts:298 at 120_000; cli-cwd-paths.test.ts:284, :621, :662, :671 and :686 run through the helpers at :73 and :153, now 120_000; config.test.ts:315 and :376 at 60_000, each run asserted to exit 1 at the configuration check (config.test.ts:318-323, :401-418) |
+| 3 | DoD `npm run typecheck && node --test tests/surface/init-no-package.test.ts tests/surface/cli-cwd-paths.test.ts` (Windows 11, a loaded machine) | exit 0; tsc clean; tests 63, pass 60, fail 0, skipped 3 (the existing platform skips of cli-cwd-paths.test.ts: mode 0o000 on Windows, file link EPERM, POSIX-only path); 322 s |
