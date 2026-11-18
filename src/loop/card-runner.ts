@@ -3286,6 +3286,14 @@ export class CardRunner {
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
   }
 
+  adoptMerge(goal: Goal, card: Card, run: CardRun, pr: number): CardRun {
+    void goal;
+    void card;
+    void run;
+    void pr;
+    throw new Error('not implemented');
+  }
+
   /**
    * Closure flags for a card whose merge is verified. The card lease is the serialisation: the run is reloaded, its merge
    * evidence and a present lease generation are required, and the lease is fenced (a stale or foreign session refused);
