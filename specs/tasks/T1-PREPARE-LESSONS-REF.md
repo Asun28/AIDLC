@@ -1,7 +1,7 @@
 ---
 id: T1-PREPARE-LESSONS-REF
 title: The PREPARE narration names the lesson count and docs/LESSONS.md for reference with no instruction to read the file, and the Lessons paragraph of docs/OPERATIONS.md says the loop reads it
-status: todo
+status: merged
 branch: T1-PREPARE-LESSONS-REF
 worktree: D:\wt\AIDLC\T1-PREPARE-LESSONS-REF
 plan_ref: plans/card-contract-scope.md#7-task-split-dependencies-and-parallel-windows
