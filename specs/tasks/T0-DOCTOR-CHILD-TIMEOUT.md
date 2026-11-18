@@ -1,7 +1,7 @@
 ---
 id: T0-DOCTOR-CHILD-TIMEOUT
 title: Every test spawn of the real aidlc doctor that reaches its toolchain probes gives the child 120 s, where init-no-package.test.ts and cli-cwd-paths.test.ts gave 60 s, so the cold first start of the probes on a Windows CI runner no longer fails the test that runs first in its shard (issue 365)
-status: todo
+status: merged
 branch: T0-DOCTOR-CHILD-TIMEOUT
 worktree: D:\wt\AIDLC\T0-DOCTOR-CHILD-TIMEOUT
 allow_paths:
