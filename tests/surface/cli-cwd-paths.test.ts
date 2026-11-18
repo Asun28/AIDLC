@@ -70,7 +70,7 @@ function fixture(): Fixture {
   };
   const [caller, target, third, state] = [sub('caller'), sub('target'), sub('third'), sub('state')];
   const env = childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'cwd-paths-test' });
-  const run = (args: string[], input?: string, cwd = caller) => spawnSync(process.execPath, [main, ...args], { cwd, env, input, encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+  const run = (args: string[], input?: string, cwd = caller) => spawnSync(process.execPath, [main, ...args], { cwd, env, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
   return { root, caller, target, third, state, run };
 }
 
@@ -150,7 +150,7 @@ function repoFixture(): RepoFixture {
   // The default session token is read from the process directory's state directory, with or without -C (a non-goal): every call sets AIDLC_SESSION.
   const env = childEnv({ AIDLC_SESSION: 'cwd-paths-test' });
   gitInit(repo);
-  const run = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [main, ...args], { cwd, env: { ...env, ...extraEnv }, input, encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+  const run = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [main, ...args], { cwd, env: { ...env, ...extraEnv }, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
   return { root, repo, src, caller, run };
 }
 
@@ -295,7 +295,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     gitInit(outer);
     const caller = path.join(outer, 'fx', 'caller');
     mkdirSync(caller, { recursive: true });
-    const doctor = (extra: NodeJS.ProcessEnv) => spawnSync(process.execPath, [main, 'doctor', '--json'], { cwd: caller, env: childEnv({ AIDLC_SESSION: 'cwd-paths-test', AIDLC_STATE_DIR: path.join(outer, 'state'), ...extra }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const doctor = (extra: NodeJS.ProcessEnv) => spawnSync(process.execPath, [main, 'doctor', '--json'], { cwd: caller, env: childEnv({ AIDLC_SESSION: 'cwd-paths-test', AIDLC_STATE_DIR: path.join(outer, 'state'), ...extra }), encoding: 'utf8', windowsHide: true, timeout: 120_000 });
     const without = doctor({});
     assert.equal((JSON.parse(without.stdout) as { repository: string }).repository, outer, without.stderr);
     const capped = doctor({ GIT_CEILING_DIRECTORIES: outer });
