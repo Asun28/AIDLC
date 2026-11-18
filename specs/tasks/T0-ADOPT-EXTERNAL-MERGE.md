@@ -2,6 +2,7 @@
 id: T0-ADOPT-EXTERNAL-MERGE
 title: "`aidlc card adopt-merge <card> --pr <n>` verifies from gh and git a merge made outside a ship operation and moves the card run to CLOSE, so a goal whose arc-verified accepted a card merged outside the loop can reach DONE (issue 358)"
 status: todo
+superseded_by: T0-ADOPT-EXTERNAL-MERGE-2
 branch: T0-ADOPT-EXTERNAL-MERGE
 size_exception: "approved by the owner (asun28) in the session of 2026-11-18 that opened goal g-20261118090038-9544d2: about 80 source lines (src/loop/card-runner.ts about 60, src/cli/main.ts about 18, src/core/types.ts 2), about 250 test lines (the issue scenario, the refusal table of R2, the fault rows, the CLI refusals) and about 40 lines of docs, skill text, fragment and attempt evidence"
 allow_paths:
