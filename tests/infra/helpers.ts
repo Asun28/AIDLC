@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { Card, CardRun, Goal, type ActorIdentity, type DeliveryTarget, type StageStatus } from '../../src/core/types.ts';
@@ -140,4 +141,26 @@ export function makeCardRun(goalId: string, cardId: string, overrides: Partial<C
     updatedAt: now,
     ...overrides,
   });
+}
+
+/** `body` with `fs[name]` throwing `error` for the path `target` and calling the real function for any other; the real function is restored after. */
+export function failingFs<T>(name: 'readFileSync' | 'readdirSync', target: string, error: unknown, body: () => T): T {
+  const mod = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const real = mod[name]!;
+  mod[name] = (...args: unknown[]) => {
+    if (args[0] === target) throw error;
+    return real(...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    return body();
+  } finally {
+    mod[name] = real;
+    syncBuiltinESMExports();
+  }
+}
+
+/** An error of a row: its message, and its code unless the row has none. */
+export function fsError(code: string | undefined, message: string): Error {
+  return code === undefined ? new Error(message) : Object.assign(new Error(message), { code });
 }
