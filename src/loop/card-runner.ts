@@ -1108,7 +1108,7 @@ export class CardRunner {
         worktree: decision.path,
         skills: [],
         lessons,
-        narration: `Read docs/LESSONS.md once before the first attempt (${lessons.count} lessons so far; the most recent are in this directive). ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
+        narration: `${lessons.count} lessons so far; the most recent are in this directive, and docs/LESSONS.md holds them all for reference. ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
   }
