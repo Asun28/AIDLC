@@ -140,6 +140,15 @@ export function resolvePathArg(value: string, option: string, base: string, flav
   return { ok: true, path: flavour.resolve(base, value) };
 }
 
+/** What `card adopt-merge` prints for an adopted run (card T0-ADOPT-EXTERNAL-MERGE-3 R1): the same facts and next step in both modes. */
+export function adoptMergeReport(cardId: string, goalId: string, run: CardRun): { json: { state: CardRun['state']; mergeVerified: boolean; pr: CardRun['pr']; next: string }; text: string } {
+  const next = `aidlc card next ${cardId} --goal ${goalId}`;
+  return {
+    json: { state: run.state, mergeVerified: run.mergeVerified, pr: run.pr, next },
+    text: `adopted PR #${run.pr?.number} (merge commit ${run.pr?.mergeCommit}); state=${run.state} mergeVerified=${run.mergeVerified}; next: ${next}`,
+  };
+}
+
 /**
  * `board --watch`: a screen now and one per interval (a terminal cleared first) until `stop` aborts (SIGINT) or `out` fails.
  * Resolves an output failure's errno code, or `undefined` for a stop or a reader that closed the pipe (EPIPE).
@@ -693,6 +702,23 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const updated = runnerFor(c).withdrawCandidate(goalRec, cardOf(c, cardId).card, run, o.cause);
       c.controller.writeBoard(goalRec);
       out(c, { effort: updated.effort, candidate: updated.candidate, pendingRepair: updated.pendingRepair }, () => `withdrew candidate ${updated.candidate?.sha.slice(0, 12)}; the attempt that bound it counts as failed; run \`aidlc card next ${cardId}\``);
+    });
+  card
+    .command('adopt-merge <cardId>')
+    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE-3)')
+    .option('--goal <id>')
+    .requiredOption('--pr <n>', 'the merged PR of the card branch into the base')
+    .action((cardId: string, o: { goal?: string; pr: string }) => {
+      if (!/^[1-9]\d*$/.test(o.pr)) fail(`--pr must be a positive integer, got ${JSON.stringify(o.pr)}`);
+      const c = ctx(g());
+      const goalRec = checkedGoal(c, cardId, o.goal);
+      // The existing run only, as for withdraw: `ensureCardRun` would start the card's deadline for a command that then refuses.
+      const run = c.store.getCardRun(goalRec.id, cardId);
+      if (!run) fail(`no run record for ${cardId} in ${goalRec.id}; start it with aidlc card next ${cardId} --goal ${goalRec.id}`);
+      const updated = runnerFor(c).adoptMerge(goalRec, cardOf(c, cardId).card, run, Number(o.pr));
+      c.controller.writeBoard(goalRec);
+      const report = adoptMergeReport(cardId, goalRec.id, updated);
+      out(c, report.json, () => report.text);
     });
   card
     .command('close <cardId>')

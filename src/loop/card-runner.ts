@@ -816,8 +816,9 @@ export class CardRunner {
     // scaffold's advisory ReviewGate only a Tier-S spec block stops a ship, so any other card could be
     // merged with a known defect before this loop reads the verdict. That is STOP/capability, not a
     // reason to change ReviewGate defaults silently.
+    // A pre-ship check: a run whose merge is verified (an adopted merge, card T0-ADOPT-EXTERNAL-MERGE-3 R9) ships nothing more.
     const capabilityBlocker =
-      this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
+      !run.mergeVerified && this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
         : undefined;
 
@@ -1528,6 +1529,8 @@ export class CardRunner {
 
   /** Why the record re-read before the ship dispatch is not the one the gate admitted; undefined when it still is. */
   private shipDrift(card: Card, armed: CardRun, issued: CardRun): string | undefined {
+    // An adoption committed after this ship read the run (card T0-ADOPT-EXTERNAL-MERGE-3 R10): the merge is done, nothing ships.
+    if (armed.mergeVerified) return 'the merge of the card was verified meanwhile (adopt-merge)';
     if (armed.stop || armed.state === 'STOP') return `the card run was stopped (${armed.stop?.reason ?? 'STOP'})`;
     if ((armed.candidate?.digest ?? 'unknown') !== (issued.candidate?.digest ?? 'unknown')) return `the candidate changed (${(issued.candidate?.digest ?? 'unknown').slice(0, 12)} admitted, ${(armed.candidate?.digest ?? 'none').slice(0, 12)} recorded meanwhile)`;
     if (!armed.dodReceipt || (card.tdd && !armed.redReceipt) || armed.candidate?.dirty) return 'the candidate is no longer ready (a receipt was cleared meanwhile)';
@@ -3284,6 +3287,89 @@ export class CardRunner {
     const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}${checked}` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
+  }
+
+  /**
+   * `aidlc card adopt-merge` (card T0-ADOPT-EXTERNAL-MERGE, issue 358): a merge made outside a ship operation of the loop is
+   * recorded once gh shows PR `pr` as a PR of the card's branch into the base, MERGED there with a head and a merge commit,
+   * and git shows that merge commit on the fetched base with a tree. The run is written once under the card-run lock with
+   * `mergeVerified`, state CLOSE and its stop removed (a final stop too: the verified merge supersedes it), with
+   * `MERGE_ADOPTED` owed in that write and appended after it. Every refusal throws before the write.
+   */
+  adoptMerge(goal: Goal, card: Card, caller: CardRun, pr: number): CardRun {
+    const now = this.clock();
+    const refuse: (why: string) => never = (why) => {
+      throw new Error(`adopt-merge ${card.id} PR #${pr}: ${why}`);
+    };
+    if (!goal.cards.includes(card.id)) refuse(`${card.id} is not listed in goal ${goal.id} (${goal.cards.join(', ')})`);
+    const cardKey = resourceKeys.card(this.repo.key, card.id);
+    const me = currentActor();
+    const verified = `the merge is already verified; run aidlc card next ${card.id} --goal ${goal.id}`;
+    // R2 (b), (c) and (d): checked before gh is asked, and again in the lease section that holds the write.
+    const guard = (current: CardRun, lease: Lease | undefined) => {
+      if (current.mergeVerified) refuse(verified);
+      // Every goal's operations of the card. An `intended` one counts too: `ship` issues it later outside both locks, so only
+      // refusing it keeps an admitted ship from issuing between this check and the write (R3).
+      const open = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+      if (open.length) refuse(`unresolved operation ${open.join(', ')}; reconcile with aidlc ops reconcile first`);
+      if (lease && !lease.released && !(lease.owner.session === me.session && lease.owner.host === me.host) && Date.parse(lease.expiresAt) >= Date.parse(now)) refuse(`the card lease is held by session ${lease.owner.session} (generation ${lease.generation}) until ${lease.expiresAt}`);
+    };
+    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
+    guard(run, this.leases.read(cardKey));
+    const repository = this.config.repository;
+    if (!repository) refuse('no repository is configured (repository in aidlc.config.json), so gh cannot be asked');
+    // A non-empty run branch wins; an absent or empty one falls back to the card's.
+    const branch = run.branch || card.branch;
+    if (!branch) refuse('the run names no branch and the card names no branch');
+    const base = this.config.base.replace(/^origin\//, '');
+    const ask = <T>(what: string, read: () => T): T => {
+      try {
+        return read();
+      } catch (err) {
+        return refuse(`gh ${what} failed: ${oneLine((err as Error).message)}`);
+      }
+    };
+    const listed = ask('pr list', () => this.gh.prsForBranch(repository, branch, base, this.repo.mainRoot));
+    if (!listed.some((p) => p.number === pr)) refuse(`PR #${pr} is not a PR of branch ${branch} into ${base} (gh lists ${listed.map((p) => `#${p.number}`).join(', ') || 'none'})`);
+    const view = ask('pr view', () => this.gh.prView(repository, pr, this.repo.mainRoot));
+    const oid = /^[0-9a-f]{40}$/;
+    if (view.number !== pr) refuse(`gh answered number ${view.number} for it`);
+    if (view.state !== 'MERGED') refuse(`PR #${pr} is ${view.state}, not MERGED`);
+    if (view.baseRefName !== base) refuse(`it targets base ${view.baseRefName ?? '(unreported)'}, not ${base}`);
+    const headSha = view.headRefOid;
+    const mergeSha = view.mergeCommit;
+    if (!headSha || !oid.test(headSha)) refuse(`gh reports head ${JSON.stringify(headSha ?? null)}, not a lowercase 40-character object id`);
+    if (!mergeSha || !oid.test(mergeSha)) refuse(`gh reports merge commit ${JSON.stringify(mergeSha ?? null)}, not a lowercase 40-character object id`);
+    if (this.git.fetchBase(this.repo.mainRoot, base).exitCode !== 0) refuse(`git fetch of ${base} failed`);
+    if (this.git.contains(this.repo.mainRoot, `origin/${base}`, mergeSha) !== true) refuse(`merge commit ${mergeSha} is not on origin/${base}`);
+    const tree = this.git.treeOf(this.repo.mainRoot, mergeSha);
+    if (!tree) refuse(`git cannot read the tree of merge commit ${mergeSha}`);
+    const owed = this.owe(goal, 'MERGE_ADOPTED', { pr, headSha, mergeSha, tree, branch, base });
+    // R3: the record as persisted decides what the adoption supersedes, and the write runs inside the card lease's section
+    // (card-run lock first, then the lease lock), where `ship` records its merge intent and claims and takeovers run, so no
+    // lease or operation is admitted between the re-check and the write.
+    let current: CardRun = run;
+    const written = this.store.updateCardRun(
+      goal.id,
+      card.id,
+      (persisted) => {
+        current = persisted ?? run;
+        const { stop, blocker, ...rest } = current;
+        void blocker;
+        const candidateSha = current.candidate?.sha ?? null;
+        const event = { ...owed, data: { ...owed.data, candidateSha, headMatchesCandidate: candidateSha === headSha, priorState: current.state, priorStop: stop?.reason ?? null } };
+        return { ...rest, state: 'CLOSE', mergeVerified: true, pr: { number: pr, state: 'MERGED', headRefOid: headSha, baseRefName: view.baseRefName, mergeCommit: mergeSha, mergedAt: view.mergedAt, url: view.url }, journalOwed: this.owedWith(goal.id, current, event), updatedAt: now };
+      },
+      (write) => {
+        this.leases.update(cardKey, (lease) => {
+          guard(current, lease);
+          write();
+          return lease;
+        });
+      },
+    );
+    this.deliverOwed(goal, card, written, { keys: [owed.key] });
+    return this.store.getCardRun(goal.id, card.id) ?? written;
   }
 
   /**
