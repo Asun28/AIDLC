@@ -35,8 +35,8 @@ Sync commit: `402a07f3d10eb0e90396a3cc3d9293eb045b4f0a`
 ```
 node --test tests/scenarios/fault-points.test.ts
 ```
-About 11 seconds on Windows at the sync commit (28 tests). `npm test`
-runs it, so CI runs it on every push.
+About 11 seconds on Windows at the sync commit (28 tests). CI runs it
+in `npm test` on every push.
 
 ## Bounds and assumptions
 - One fault per run, at each write index of the command as counted by a
@@ -59,12 +59,13 @@ runs it, so CI runs it on every push.
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's
   `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`),
-  `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
+  `CardRunner.withdrawCandidate` and `CardRunner.adoptMerge` (fault
+  rows: `tests/scenarios/candidate-withdraw.test.ts`, `adopt-merge.test.ts`),
+  `aidlc review repro`
   (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
   `GoalStore.updateCardRun` write of the finding's `repro` after both runs
-  and no journal append, so a failed write throws, exits 1 and leaves the
-  run and the journal as they were), failed and
+  and no journal append, so a failed write exits 1 and changes
+  neither), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
   BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
   and no worktree path, card T0-PREPARE-WORKTREE).
