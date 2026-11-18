@@ -3350,7 +3350,6 @@ export class CardRunner {
       card.id,
       (persisted) => {
         current = persisted ?? run;
-        if (current.mergeVerified) refuse(verified);
         const { stop, blocker, ...rest } = current;
         void blocker;
         const candidateSha = current.candidate?.sha ?? null;

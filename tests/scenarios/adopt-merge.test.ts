@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
+import fs, { writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -155,6 +155,8 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
     { name: '(i) the fetch fails', exec: () => probes(SHIPPED, { fetchExit: 1 }), message: /PR #41.*fetch/ },
     { name: '(i) the merge commit is not on the base', exec: () => probes(SHIPPED, { containsExit: 1 }), message: /PR #41.*not on origin\/main/ },
     { name: '(i) no tree', exec: () => probes(SHIPPED, { noTree: true }), message: /PR #41.*tree/ },
+    // A section another writer holds: the write waits on the card lease's lock and gives up, so it is made inside that section.
+    { name: 'R3 the card lease section is held', arrange: (fx) => void writeFileSync(`${fx.leases.file(resourceKeys.card(fx.repo.key, SHIPPED))}.lock`, `pid=${process.pid} at=${T0} nonce=test`), message: /LOCKED: locked by another writer.*leases/ },
     { name: 'R3 a merge verified while gh and git are asked', mutatesRun: true, exec: (fx, goalId) => probes(SHIPPED, { during: () => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }) }), message: /merge is already verified/ },
   ];
   for (const row of rows) {
