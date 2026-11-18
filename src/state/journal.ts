@@ -11,7 +11,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { z } from 'zod';
 import { ActorIdentity, JournalEvent, JournalEventType, nowIso } from '../core/types.ts';
-import { canonicalJson, updateJson } from './store.ts';
+import { StoreError, canonicalJson, updateJson } from './store.ts';
 import { hostName, resolveStatePaths } from './paths.ts';
 
 export const GENESIS_HASH = '0'.repeat(64);
@@ -104,16 +104,24 @@ export class Journal {
     return existsSync(this.file);
   }
 
+  /** Every event of the journal, each line parsed; a journal file that cannot be read throws READ_FAILED (`readRawLines`). */
   readAll(): JournalEvent[] {
-    if (!existsSync(this.file)) return [];
-    const lines = readFileSync(this.file, 'utf8').split('\n').filter((l) => l.trim().length > 0);
-    return lines.map((line) => JournalEvent.parse(JSON.parse(line)));
+    return this.readRawLines().map((line) => JournalEvent.parse(JSON.parse(line)));
   }
 
-  /** Raw lines for verification (does not throw on malformed lines). */
+  /**
+   * The non-blank lines of the journal file, for verification (does not throw on malformed lines). A file that is not there
+   * (its read fails with the code ENOENT) has none; any other failure to read it throws READ_FAILED naming the file.
+   */
   private readRawLines(): string[] {
-    if (!existsSync(this.file)) return [];
-    return readFileSync(this.file, 'utf8').split('\n').filter((l) => l.trim().length > 0);
+    let text: string;
+    try {
+      text = readFileSync(this.file, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+      throw new StoreError('READ_FAILED', this.file, (err as Error).message);
+    }
+    return text.split('\n').filter((l) => l.trim().length > 0);
   }
 
   head(): { seq: number; hash: string } {

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
-import { actor, cleanup, iso, tmpDir } from './helpers.ts';
+import { StoreError } from '../../src/state/store.ts';
+import { actor, cleanup, failingFs, fsError, iso, tmpDir } from './helpers.ts';
 
 describe('coordination/lease (Q23 shared ownership, generations, fencing)', () => {
   const dir = tmpDir();
@@ -196,5 +197,30 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     assert.equal(resourceKeys.reviewPool('Codex'), 'review-pool:codex');
     assert.equal(resourceKeys.writerCap('host'), 'writers:host');
     assert.match(path.basename(store.file('anything')), /^[a-f0-9]{16}\.json$/);
+  });
+
+  it('T0-JOURNAL-READ-ENOENT acceptance 5 - LeaseStore.list refuses a leases directory it cannot list and lists a missing one as empty', () => {
+    const base = path.join(dir, 'list-enoent');
+    const message = 'EACCES: permission denied, scandir';
+    /** The READ_FAILED store error of `named` with the injected message, field by field. */
+    const isReadFailed = (named: string) => (err: unknown): boolean => {
+      assert.ok(err instanceof StoreError, String(err));
+      assert.deepEqual({ code: err.code, file: err.file, message: err.message }, { code: 'READ_FAILED', file: named, message: `READ_FAILED: ${message} (${named})` });
+      return true;
+    };
+    const missing = new LeaseStore(path.join(base, 'missing'));
+    assert.equal(existsSync(missing.dir), false);
+    assert.deepEqual(missing.list(), []);
+    assert.throws(() => failingFs('readdirSync', missing.dir, fsError('EACCES', message), () => missing.list()), isReadFailed(missing.dir), 'missing, listing failing with EACCES');
+
+    const held = new LeaseStore(path.join(base, 'held'));
+    const key = resourceKeys.card('repo1', 'T1-LIST-ENOENT');
+    held.claim(key, { actor: A, now: t0 });
+    assert.deepEqual(held.list().map((l) => [l.resourceKey, l.generation, l.released]), [[key, 0, false]]);
+    assert.throws(() => failingFs('readdirSync', held.dir, fsError('EACCES', message), () => held.list()), isReadFailed(held.dir), 'one lease, listing failing with EACCES');
+
+    const plain = path.join(base, 'plain');
+    writeFileSync(plain, 'text', 'utf8');
+    assert.throws(() => new LeaseStore(plain).list(), (err: unknown) => err instanceof StoreError && err.code === 'READ_FAILED' && err.file === plain && err.message.includes('ENOTDIR'), 'a regular file at the directory path');
   });
 });
