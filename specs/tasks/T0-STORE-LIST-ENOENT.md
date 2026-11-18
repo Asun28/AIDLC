@@ -2,6 +2,7 @@
 id: T0-STORE-LIST-ENOENT
 title: listJsonFiles and findInterruptedWrites list a state directory as empty only when its listing fails with ENOENT and throw READ_FAILED for any other failure, so the production gate refuses a RELEASE_APPROVAL that matches no authorization when the goals directory cannot be inspected, where it let the command run as if there were no aidlc state (issue 368)
 status: todo
+superseded_by: T0-STORE-LIST-ENOENT-2
 branch: T0-STORE-LIST-ENOENT
 worktree: D:\wt\AIDLC\T0-STORE-LIST-ENOENT
 allow_paths:
