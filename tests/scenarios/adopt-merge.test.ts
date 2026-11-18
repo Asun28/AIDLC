@@ -80,8 +80,9 @@ function setup() {
   return { fx, goalId, run: (id: string) => fx.store.getCardRun(goalId, id)! };
 }
 /** A merge operation of SHIPPED in `status`, its id returned. */
-function openOp(fx: Fixture, goalId: string, status: 'issued' | 'running' | 'UNKNOWN', key: string): string {
+function openOp(fx: Fixture, goalId: string, status: 'intended' | 'issued' | 'running' | 'UNKNOWN', key: string): string {
   const op = fx.ops.recordIntent({ kind: 'merge', goalId, cardId: SHIPPED, target: 'main', candidateDigest: `dg-${key}`, ownerGeneration: 0, timeoutMs: 60_000, effects: ['merge'] }, T0);
+  if (status === 'intended') return op.id;
   fx.ops.markIssued(op.id, undefined, T0);
   if (status === 'running') fx.ops.markRunning(op.id, T0);
   if (status === 'UNKNOWN') fx.ops.markResult(op.id, 'UNKNOWN', {}, T0);
@@ -130,14 +131,19 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 1: issue 358 - a goal in CLOSE reaches 
 
 test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves the run and the journal as they were [R2] [R3]', () => {
   type Row = { name: string; card?: string; noBranch?: boolean; mutatesRun?: boolean; exec?: (fx: Fixture, goalId: string) => SyncRunner; config?: Record<string, unknown>; arrange?: (fx: Fixture, goalId: string) => string[] | void; message: RegExp };
+  /** The run as the concurrent writer of the merge-verified row left it. */
+  let meanwhile: string | undefined;
   const oids = [['short', 'a'.repeat(39)], ['long', 'a'.repeat(41)], ['non-hex', `g${'a'.repeat(39)}`], ['uppercase', 'A'.repeat(40)]] as const;
   const rows: Row[] = [
-    ...(['issued', 'running', 'UNKNOWN'] as const).map((status): Row => ({ name: `(c) an ${status} operation`, arrange: (fx, goalId) => [openOp(fx, goalId, status, status)], message: /unresolved operation op-.*aidlc ops reconcile/ })),
+    ...(['intended', 'issued', 'running', 'UNKNOWN'] as const).map((status): Row => ({ name: `(c) an ${status} operation`, arrange: (fx, goalId) => [openOp(fx, goalId, status, status)], message: /unresolved operation op-.*aidlc ops reconcile/ })),
     { name: '(c) two operations', arrange: (fx, goalId) => [openOp(fx, goalId, 'issued', 'one'), openOp(fx, goalId, 'UNKNOWN', 'two')], message: /unresolved operation op-.*, op-.*aidlc ops reconcile/ },
+    { name: "(c) an operation of the card under another goal", arrange: (fx) => [openOp(fx, 'g-20260910000000-000000', 'running', 'other-goal')], message: /unresolved operation op-.*aidlc ops reconcile/ },
     ...oids.map(([kind, value]): Row => ({ name: `(h) a ${kind} head`, exec: () => probes(SHIPPED, { view: { headRefOid: value } }), message: new RegExp(`PR #41: gh reports head "${value}"`) })),
     ...oids.map(([kind, value]): Row => ({ name: `(h) a ${kind} merge commit`, exec: () => probes(SHIPPED, { view: { mergeCommit: { oid: value } } }), message: new RegExp(`PR #41: gh reports merge commit "${value}"`) })),
     { name: 'R3 a lease claimed while gh and git are asked', exec: (fx) => probes(SHIPPED, { during: () => foreignLease(fx) }), message: /card lease is held by session win-B/ },
     { name: 'R3 an operation recorded while gh and git are asked', exec: (fx, goalId) => probes(SHIPPED, { during: () => void openOp(fx, goalId, 'issued', 'late') }), message: /unresolved operation op-/ },
+    // A ship admitted meanwhile has only its intent recorded; it issues later outside both locks.
+    { name: 'R3 a ship intent recorded while gh and git are asked', exec: (fx, goalId) => probes(SHIPPED, { during: () => void openOp(fx, goalId, 'intended', 'intent') }), message: /unresolved operation op-/ },
     { name: '(a) a card outside the goal', card: 'T0-OUTSIDE', arrange: (fx, goalId) => void fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, cardId: 'T0-OUTSIDE', revision: 0 }), message: /T0-OUTSIDE is not listed in goal/ },
     // gh fails here, so only a refusal made before gh is asked names the verified merge.
     { name: '(b) a merge already verified', exec: () => probes(SHIPPED, { listFails: true }), arrange: (fx, goalId) => void fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }), message: /merge is already verified/ },
@@ -157,7 +163,7 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
     { name: '(i) no tree', exec: () => probes(SHIPPED, { noTree: true }), message: /PR #41.*tree/ },
     // A section another writer holds: the write waits on the card lease's lock and gives up, so it is made inside that section.
     { name: 'R3 the card lease section is held', arrange: (fx) => void writeFileSync(`${fx.leases.file(resourceKeys.card(fx.repo.key, SHIPPED))}.lock`, `pid=${process.pid} at=${T0} nonce=test`), message: /LOCKED: locked by another writer.*leases/ },
-    { name: 'R3 a merge verified while gh and git are asked', mutatesRun: true, exec: (fx, goalId) => probes(SHIPPED, { during: () => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }) }), message: /merge is already verified/ },
+    { name: 'R3 a merge verified while gh and git are asked', mutatesRun: true, exec: (fx, goalId) => probes(SHIPPED, { during: () => void (meanwhile = JSON.stringify(fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }))) }), message: /merge is already verified/ },
   ];
   for (const row of rows) {
     const { fx, goalId } = setup();
@@ -173,8 +179,8 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
       assert.throws(call, (e: unknown) => ((thrown = e as Error), true), row.name);
       assert.match(thrown!.message, row.message, row.name);
       for (const op of ids) assert.ok(thrown!.message.includes(op), `${row.name}: names ${op}`);
-      if (!row.mutatesRun) assert.equal(JSON.stringify(fx.store.getCardRun(goalId, id)), before, `${row.name}: the run is unchanged`);
-      else assert.equal(fx.store.getCardRun(goalId, id)!.state, 'SHIP', `${row.name}: the adoption wrote nothing`);
+      // A row whose concurrent writer changed the run compares with the record as that writer left it.
+      assert.equal(JSON.stringify(fx.store.getCardRun(goalId, id)), row.mutatesRun ? meanwhile : before, `${row.name}: the adoption wrote nothing`);
       assert.equal(fx.events(goalId).length, events, `${row.name}: the journal is unchanged`);
     } finally {
       setActorForTests(actorA);

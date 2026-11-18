@@ -84,7 +84,7 @@ Attempt 1 (Windows, Node 22.23.1) carries 4a446e2e of T0-ADOPT-EXTERNAL-MERGE, w
 | Item | Proof | Result |
 |---|---|---|
 | 1 | tests/scenarios/adopt-merge.test.ts acceptance 1 | pass |
-| 2 | same file acceptance 2 (31 rows: R2 (a) to (i), three operation statuses and two operations, eight object ids, the held lease section and three interleavings) | pass |
+| 2 | same file acceptance 2 (34 rows: R2 (a) to (i), four operation statuses, two operations and another goal's operation, eight object ids, the held lease section and four interleavings) | pass |
 | 3 | same file acceptance 3, with a run seeded off its defaults and a blocker | pass |
 | 4 | same file acceptance 4 | pass |
 | 5 | same file acceptance 5 (spawns `node bin/aidlc.js`; `adoptMergeReport`) | pass |
@@ -96,6 +96,8 @@ Attempt 1 (Windows, Node 22.23.1) carries 4a446e2e of T0-ADOPT-EXTERNAL-MERGE, w
 R3 decision 1 on 4a446e2e, findings and fixes: F1 the merge, operation and lease checks run again inside the card lease's `update` section, which holds the run write (`updateCardRun` with `within`, card-run lock then lease lock, the order src/state/store.ts:179 sets); the row "R3 the card lease section is held" puts a lock file on that lease and the adoption refuses with LOCKED naming the lease file. F2 `run.branch || card.branch`. F3 R9's condition. F4 `adoptMergeReport`. F5 to F8 the rows of acceptance 2, 3 and 8.
 
 Full suite (`npm test`, Windows) at d7c30932: 3860 tests, 3829 passed, 31 skipped, 0 failed.
+
+Attempt 2 (repair after R3 decision 1 on ce86fc23, three findings). F1 the operation check reads the card's operations under every goal (`ops.list({ cardId })`); row "(c) an operation of the card under another goal". F2 the row "R3 a merge verified while gh and git are asked" compares the whole stored run with the record the concurrent writer left. F3 an `intended` operation refuses too: `ship` records its intent under the lease lock and issues it later outside both locks, so R3's "no operation can be admitted between that check and the write" holds only if an admitted intent refuses; R2 (c) names issued, running and UNKNOWN, and `intended` is the status R3 adds. Rows "(c) an intended operation" and "R3 a ship intent recorded while gh and git are asked". Revert checks, each run alone by hand: counting only issued, running and UNKNOWN turns "(c) an intended operation" red; filtering by this goal turns "(c) an operation of the card under another goal" red; dropping the merge check of `guard` turns "(b) a merge already verified" red.
 
 Row (f): `Card.branch` is required and defaults to the id (src/artifacts/card.ts:98), so the test passes a card whose branch is empty to `adoptMerge`.
 

@@ -3306,7 +3306,9 @@ export class CardRunner {
     // R2 (b), (c) and (d): checked before gh is asked, and again in the lease section that holds the write.
     const guard = (current: CardRun, lease: Lease | undefined) => {
       if (current.mergeVerified) refuse(verified);
-      const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+      // Every goal's operations of the card. An `intended` one counts too: `ship` issues it later outside both locks, so only
+      // refusing it keeps an admitted ship from issuing between this check and the write (R3).
+      const open = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
       if (open.length) refuse(`unresolved operation ${open.join(', ')}; reconcile with aidlc ops reconcile first`);
       if (lease && !lease.released && !(lease.owner.session === me.session && lease.owner.host === me.host) && Date.parse(lease.expiresAt) >= Date.parse(now)) refuse(`the card lease is held by session ${lease.owner.session} (generation ${lease.generation}) until ${lease.expiresAt}`);
     };
