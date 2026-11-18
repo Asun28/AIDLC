@@ -6,7 +6,7 @@
  * reported, never silently adopted (plan v5 MS5: "acquire/update it atomically and recover
  * interrupted writes").
  */
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ZodType } from 'zod';
@@ -107,15 +107,22 @@ export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
   return result.data;
 }
 
-/** Seam stub of card T0-STORE-LIST-ENOENT: the listing with no rule yet. */
+/**
+ * The names in a directory. A directory that is not there (its listing fails with the code ENOENT) has none; any other
+ * failure to list it throws READ_FAILED naming the directory.
+ */
 export function readDirNames(dir: string): string[] {
-  return readdirSync(dir);
+  try {
+    return readdirSync(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+    throw new StoreError('READ_FAILED', dir, (err as Error).message);
+  }
 }
 
-/** Detect leftover temporary files from interrupted writes in a directory. */
+/** Detect leftover temporary files from interrupted writes in a directory; a directory that cannot be listed throws READ_FAILED (`readDirNames`). */
 export function findInterruptedWrites(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  return readDirNames(dir)
     .filter((name) => /\.tmp-\d+-[a-f0-9]{8}$/.test(name))
     .map((name) => path.join(dir, name));
 }
@@ -281,9 +288,9 @@ function readLockOwner(lock: string): string | undefined {
   }
 }
 
+/** The `.json` files of a directory, sorted by name; a directory that cannot be listed throws READ_FAILED (`readDirNames`). */
 export function listJsonFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  return readDirNames(dir)
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => path.join(dir, name));
