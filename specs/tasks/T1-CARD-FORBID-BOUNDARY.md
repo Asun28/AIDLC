@@ -1,7 +1,7 @@
 ---
 id: T1-CARD-FORBID-BOUNDARY
 title: Both card templates and both planner agent copies say that forbid holds hard boundaries only and that a card states each behaviour once, and docs/OPERATIONS.md asks the operator for one coordinator session per card
-status: todo
+status: merged
 branch: T1-CARD-FORBID-BOUNDARY
 worktree: D:\wt\AIDLC\T1-CARD-FORBID-BOUNDARY
 plan_ref: plans/card-contract-scope.md#7-task-split-dependencies-and-parallel-windows
