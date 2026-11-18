@@ -80,26 +80,3 @@ npm run typecheck && node --test tests/scenarios/adopt-merge.test.ts tests/core/
 - Assertion: every test above passes; the tests of acceptance 1 to 5, 8 and 9 fail on main.
 
 ## Attempt evidence
-Attempt 1 (Windows, Node 22.23.1) carries 4a446e2e of T0-ADOPT-EXTERNAL-MERGE, whose RED was its seam commit ac211622 (acceptance 1 to 4 failed on a stub `adoptMerge`, acceptance 5 on the unknown command). Against 4a446e2e with a throwing stub `adoptMergeReport`, this card's test file fails acceptance 2 (first at the row "R3 a lease claimed while gh and git are asked"), 5 (`adoptMergeReport`), 8 (the empty run branch) and 9 (the capability stop); acceptance 1, 3 and 4 pass there, since F5 to F8 were test gaps over code that already held.
-
-| Item | Proof | Result |
-|---|---|---|
-| 1 | tests/scenarios/adopt-merge.test.ts acceptance 1 | pass |
-| 2 | same file acceptance 2 (34 rows: R2 (a) to (i), four operation statuses, two operations and another goal's operation, eight object ids, the held lease section and four interleavings) | pass |
-| 3 | same file acceptance 3, with a run seeded off its defaults and a blocker | pass |
-| 4 | same file acceptance 4 | pass |
-| 5 | same file acceptance 5 (spawns `node bin/aidlc.js`; `adoptMergeReport`) | pass |
-| 6 | the eight unchanged files in the DoD | pass, no line changed |
-| 7 | changelog-fragments.test.ts, prose.test.ts; docs, skill and fragment in the diff | pass; reviewer-verified |
-| 8 | same file acceptance 8 | pass |
-| 9 | same file acceptance 9 | pass |
-
-R3 decision 1 on 4a446e2e, findings and fixes: F1 the merge, operation and lease checks run again inside the card lease's `update` section, which holds the run write (`updateCardRun` with `within`, card-run lock then lease lock, the order src/state/store.ts:179 sets); the row "R3 the card lease section is held" puts a lock file on that lease and the adoption refuses with LOCKED naming the lease file. F2 `run.branch || card.branch`. F3 R9's condition. F4 `adoptMergeReport`. F5 to F8 the rows of acceptance 2, 3 and 8.
-
-Full suite (`npm test`, Windows) at d7c30932: 3860 tests, 3829 passed, 31 skipped, 0 failed.
-
-Attempt 2 (repair after R3 decision 1 on ce86fc23, three findings). F1 the operation check reads the card's operations under every goal (`ops.list({ cardId })`); row "(c) an operation of the card under another goal". F2 the row "R3 a merge verified while gh and git are asked" compares the whole stored run with the record the concurrent writer left. F3 an `intended` operation refuses too: `ship` records its intent under the lease lock and issues it later outside both locks, so R3's "no operation can be admitted between that check and the write" holds only if an admitted intent refuses; R2 (c) names issued, running and UNKNOWN, and `intended` is the status R3 adds. Rows "(c) an intended operation" and "R3 a ship intent recorded while gh and git are asked". Revert checks, each run alone by hand: counting only issued, running and UNKNOWN turns "(c) an intended operation" red; filtering by this goal turns "(c) an operation of the card under another goal" red; dropping the merge check of `guard` turns "(b) a merge already verified" red.
-
-Row (f): `Card.branch` is required and defaults to the id (src/artifacts/card.ts:98), so the test passes a card whose branch is empty to `adoptMerge`.
-
-Revert table at d7c30932, each change made alone in a scratch worktree and restored (32 changes): dropping each refusal of R2 (a) to (i), the check before gh, each check of `guard`, the guard inside the lease section, moving the write out of the lease section, naming only the first operation id, `??`, `card.branch` or `run.branch` alone for the branch, a loose object-id pattern, keeping the stop or the blocker, leaving `journalOwed`, a constant `headMatchesCandidate`, dropping R9's condition, the CLI `--pr` check, `next` from the JSON and `mergeVerified` from the text each turned acceptance 1, 2, 3, 4, 5, 8 or 9 red. `ensureCardRun` in the CLI read green in the scripted pass and red (acceptance 5) when run alone by hand.

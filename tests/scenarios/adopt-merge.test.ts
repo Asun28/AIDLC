@@ -7,6 +7,7 @@ import fs, { writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { CardRunner } from '../../src/loop/card-runner.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { CardRun } from '../../src/core/types.ts';
 import { adoptMergeReport } from '../../src/cli/main.ts';
@@ -321,6 +322,49 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 9: an adopted remote scaffold card unde
     runnerWith(fx, probes(SHIPPED), config).adoptMerge(fx.goal(goalId), fx.card(SHIPPED), run(SHIPPED), PR);
     const after = runnerWith(fx, probes(SHIPPED), config).next(fx.goal(goalId), fx.card(SHIPPED), run(SHIPPED));
     assert.equal(after.directive.kind, 'close', after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-ADOPT-EXTERNAL-MERGE acceptance 10: a ship whose gates passed before an adoption dispatches nothing [R10]', () => {
+  const fx = makeFixture({ config: { repository: 'o/r' } });
+  try {
+    writeCard(fx, { id: SHIPPED, title: 'shipped outside the loop' });
+    const goalId = goalForCards(fx, [SHIPPED]).id;
+    const shipPath = new DryRunShipPath(['merged']);
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: probes(SHIPPED), shipPath });
+    let r = runner.next(fx.goal(goalId), fx.card(SHIPPED), fx.controller.ensureCardRun(fx.goal(goalId), SHIPPED));
+    r = runner.next(fx.goal(goalId), fx.card(SHIPPED), r.run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    const built = runner.recordAttempt(fx.goal(goalId), fx.card(SHIPPED), r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: HEAD });
+    // The real adoption runs when this `card next` first opens the card lease's lock: the run is read, no intent is recorded.
+    const lockFile = `${fx.leases.file(resourceKeys.card(fx.repo.key, SHIPPED))}.lock`;
+    const realOpen = fs.openSync;
+    let pending = true;
+    (fs as unknown as Record<string, unknown>)['openSync'] = (...args: Parameters<typeof fs.openSync>) => {
+      if (pending && String(args[0]) === lockFile) {
+        pending = false;
+        adopt(fx, goalId, SHIPPED);
+      }
+      return realOpen(...args);
+    };
+    syncBuiltinESMExports();
+    let out: ReturnType<CardRunner['next']>;
+    try {
+      out = runner.next(fx.goal(goalId), fx.card(SHIPPED), built);
+    } finally {
+      fs.openSync = realOpen;
+      syncBuiltinESMExports();
+    }
+    assert.equal(pending, false, 'the adoption ran inside the card next');
+    assert.equal(out.directive.kind, 'wait', out.directive.narration);
+    assert.equal((out.directive as { on?: string }).on, 'record-changed');
+    assert.equal(shipPath.requests.length, 0, 'the ship path received no request');
+    assert.deepEqual(fx.ops.list({ goalId, cardId: SHIPPED, kind: 'merge' }).map((o) => o.status), ['cancelled']);
+    const stored = fx.store.getCardRun(goalId, SHIPPED)!;
+    assert.equal(stored.state, 'CLOSE');
+    assert.equal(stored.mergeVerified, true);
   } finally {
     fx.cleanup();
   }

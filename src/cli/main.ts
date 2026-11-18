@@ -140,7 +140,7 @@ export function resolvePathArg(value: string, option: string, base: string, flav
   return { ok: true, path: flavour.resolve(base, value) };
 }
 
-/** What `card adopt-merge` prints for an adopted run (card T0-ADOPT-EXTERNAL-MERGE-2 R1): the same facts and next step in both modes. */
+/** What `card adopt-merge` prints for an adopted run (card T0-ADOPT-EXTERNAL-MERGE-3 R1): the same facts and next step in both modes. */
 export function adoptMergeReport(cardId: string, goalId: string, run: CardRun): { json: { state: CardRun['state']; mergeVerified: boolean; pr: CardRun['pr']; next: string }; text: string } {
   const next = `aidlc card next ${cardId} --goal ${goalId}`;
   return {
@@ -705,7 +705,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   card
     .command('adopt-merge <cardId>')
-    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE-2)')
+    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE-3)')
     .option('--goal <id>')
     .requiredOption('--pr <n>', 'the merged PR of the card branch into the base')
     .action((cardId: string, o: { goal?: string; pr: string }) => {

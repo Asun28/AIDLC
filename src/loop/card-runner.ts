@@ -816,7 +816,7 @@ export class CardRunner {
     // scaffold's advisory ReviewGate only a Tier-S spec block stops a ship, so any other card could be
     // merged with a known defect before this loop reads the verdict. That is STOP/capability, not a
     // reason to change ReviewGate defaults silently.
-    // A pre-ship check: a run whose merge is verified (an adopted merge, card T0-ADOPT-EXTERNAL-MERGE-2 R9) ships nothing more.
+    // A pre-ship check: a run whose merge is verified (an adopted merge, card T0-ADOPT-EXTERNAL-MERGE-3 R9) ships nothing more.
     const capabilityBlocker =
       !run.mergeVerified && this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
@@ -1529,6 +1529,8 @@ export class CardRunner {
 
   /** Why the record re-read before the ship dispatch is not the one the gate admitted; undefined when it still is. */
   private shipDrift(card: Card, armed: CardRun, issued: CardRun): string | undefined {
+    // An adoption committed after this ship read the run (card T0-ADOPT-EXTERNAL-MERGE-3 R10): the merge is done, nothing ships.
+    if (armed.mergeVerified) return 'the merge of the card was verified meanwhile (adopt-merge)';
     if (armed.stop || armed.state === 'STOP') return `the card run was stopped (${armed.stop?.reason ?? 'STOP'})`;
     if ((armed.candidate?.digest ?? 'unknown') !== (issued.candidate?.digest ?? 'unknown')) return `the candidate changed (${(issued.candidate?.digest ?? 'unknown').slice(0, 12)} admitted, ${(armed.candidate?.digest ?? 'none').slice(0, 12)} recorded meanwhile)`;
     if (!armed.dodReceipt || (card.tdd && !armed.redReceipt) || armed.candidate?.dirty) return 'the candidate is no longer ready (a receipt was cleared meanwhile)';
