@@ -140,6 +140,15 @@ export function resolvePathArg(value: string, option: string, base: string, flav
   return { ok: true, path: flavour.resolve(base, value) };
 }
 
+/** What `card adopt-merge` prints for an adopted run (card T0-ADOPT-EXTERNAL-MERGE-2 R1): the same facts and next step in both modes. */
+export function adoptMergeReport(cardId: string, goalId: string, run: CardRun): { json: { state: CardRun['state']; mergeVerified: boolean; pr: CardRun['pr']; next: string }; text: string } {
+  const next = `aidlc card next ${cardId} --goal ${goalId}`;
+  return {
+    json: { state: run.state, mergeVerified: run.mergeVerified, pr: run.pr, next },
+    text: `adopted PR #${run.pr?.number} (merge commit ${run.pr?.mergeCommit}); state=${run.state} mergeVerified=${run.mergeVerified}; next: ${next}`,
+  };
+}
+
 /**
  * `board --watch`: a screen now and one per interval (a terminal cleared first) until `stop` aborts (SIGINT) or `out` fails.
  * Resolves an output failure's errno code, or `undefined` for a stop or a reader that closed the pipe (EPIPE).
@@ -696,7 +705,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   card
     .command('adopt-merge <cardId>')
-    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE)')
+    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE-2)')
     .option('--goal <id>')
     .requiredOption('--pr <n>', 'the merged PR of the card branch into the base')
     .action((cardId: string, o: { goal?: string; pr: string }) => {
@@ -708,7 +717,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       if (!run) fail(`no run record for ${cardId} in ${goalRec.id}; start it with aidlc card next ${cardId} --goal ${goalRec.id}`);
       const updated = runnerFor(c).adoptMerge(goalRec, cardOf(c, cardId).card, run, Number(o.pr));
       c.controller.writeBoard(goalRec);
-      out(c, { state: updated.state, mergeVerified: updated.mergeVerified, pr: updated.pr }, () => `adopted PR #${updated.pr?.number} (merge ${updated.pr?.mergeCommit?.slice(0, 12)}); state=${updated.state}; run \`aidlc card next ${cardId}\``);
+      const report = adoptMergeReport(cardId, goalRec.id, updated);
+      out(c, report.json, () => report.text);
     });
   card
     .command('close <cardId>')

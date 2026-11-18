@@ -816,8 +816,9 @@ export class CardRunner {
     // scaffold's advisory ReviewGate only a Tier-S spec block stops a ship, so any other card could be
     // merged with a known defect before this loop reads the verdict. That is STOP/capability, not a
     // reason to change ReviewGate defaults silently.
+    // A pre-ship check: a run whose merge is verified (an adopted merge, card T0-ADOPT-EXTERNAL-MERGE-2 R9) ships nothing more.
     const capabilityBlocker =
-      this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
+      !run.mergeVerified && this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
         : undefined;
 
@@ -3299,17 +3300,22 @@ export class CardRunner {
       throw new Error(`adopt-merge ${card.id} PR #${pr}: ${why}`);
     };
     if (!goal.cards.includes(card.id)) refuse(`${card.id} is not listed in goal ${goal.id} (${goal.cards.join(', ')})`);
-    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
-    const verified = `the merge is already verified; run aidlc card next ${card.id} --goal ${goal.id}`;
-    if (run.mergeVerified) refuse(verified);
-    const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
-    if (open.length) refuse(`unresolved operation ${open.join(', ')}; reconcile it first with aidlc ops reconcile`);
-    const lease = this.leases.read(resourceKeys.card(this.repo.key, card.id));
+    const cardKey = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
-    if (lease && !lease.released && !(lease.owner.session === me.session && lease.owner.host === me.host) && Date.parse(lease.expiresAt) >= Date.parse(now)) refuse(`the card lease is held by session ${lease.owner.session} (generation ${lease.generation}) until ${lease.expiresAt}`);
+    const verified = `the merge is already verified; run aidlc card next ${card.id} --goal ${goal.id}`;
+    // R2 (b), (c) and (d): checked before gh is asked, and again in the lease section that holds the write.
+    const guard = (current: CardRun, lease: Lease | undefined) => {
+      if (current.mergeVerified) refuse(verified);
+      const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+      if (open.length) refuse(`unresolved operation ${open.join(', ')}; reconcile with aidlc ops reconcile first`);
+      if (lease && !lease.released && !(lease.owner.session === me.session && lease.owner.host === me.host) && Date.parse(lease.expiresAt) >= Date.parse(now)) refuse(`the card lease is held by session ${lease.owner.session} (generation ${lease.generation}) until ${lease.expiresAt}`);
+    };
+    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
+    guard(run, this.leases.read(cardKey));
     const repository = this.config.repository;
     if (!repository) refuse('no repository is configured (repository in aidlc.config.json), so gh cannot be asked');
-    const branch = run.branch ?? card.branch;
+    // A non-empty run branch wins; an absent or empty one falls back to the card's.
+    const branch = run.branch || card.branch;
     if (!branch) refuse('the run names no branch and the card names no branch');
     const base = this.config.base.replace(/^origin\//, '');
     const ask = <T>(what: string, read: () => T): T => {
@@ -3335,16 +3341,30 @@ export class CardRunner {
     const tree = this.git.treeOf(this.repo.mainRoot, mergeSha);
     if (!tree) refuse(`git cannot read the tree of merge commit ${mergeSha}`);
     const owed = this.owe(goal, 'MERGE_ADOPTED', { pr, headSha, mergeSha, tree, branch, base });
-    // The record as persisted decides what the adoption supersedes: a stop or a candidate written since the first read counts.
-    const written = this.store.updateCardRun(goal.id, card.id, (persisted) => {
-      const current = persisted ?? run;
-      if (current.mergeVerified) refuse(verified);
-      const { stop, blocker, ...rest } = current;
-      void blocker;
-      const candidateSha = current.candidate?.sha ?? null;
-      const event = { ...owed, data: { ...owed.data, candidateSha, headMatchesCandidate: candidateSha === headSha, priorState: current.state, priorStop: stop?.reason ?? null } };
-      return { ...rest, state: 'CLOSE', mergeVerified: true, pr: { number: pr, state: 'MERGED', headRefOid: headSha, baseRefName: view.baseRefName, mergeCommit: mergeSha, mergedAt: view.mergedAt, url: view.url }, journalOwed: this.owedWith(goal.id, current, event), updatedAt: now };
-    });
+    // R3: the record as persisted decides what the adoption supersedes, and the write runs inside the card lease's section
+    // (card-run lock first, then the lease lock), where `ship` records its merge intent and claims and takeovers run, so no
+    // lease or operation is admitted between the re-check and the write.
+    let current: CardRun = run;
+    const written = this.store.updateCardRun(
+      goal.id,
+      card.id,
+      (persisted) => {
+        current = persisted ?? run;
+        if (current.mergeVerified) refuse(verified);
+        const { stop, blocker, ...rest } = current;
+        void blocker;
+        const candidateSha = current.candidate?.sha ?? null;
+        const event = { ...owed, data: { ...owed.data, candidateSha, headMatchesCandidate: candidateSha === headSha, priorState: current.state, priorStop: stop?.reason ?? null } };
+        return { ...rest, state: 'CLOSE', mergeVerified: true, pr: { number: pr, state: 'MERGED', headRefOid: headSha, baseRefName: view.baseRefName, mergeCommit: mergeSha, mergedAt: view.mergedAt, url: view.url }, journalOwed: this.owedWith(goal.id, current, event), updatedAt: now };
+      },
+      (write) => {
+        this.leases.update(cardKey, (lease) => {
+          guard(current, lease);
+          write();
+          return lease;
+        });
+      },
+    );
     this.deliverOwed(goal, card, written, { keys: [owed.key] });
     return this.store.getCardRun(goal.id, card.id) ?? written;
   }
