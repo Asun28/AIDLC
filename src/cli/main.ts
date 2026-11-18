@@ -162,7 +162,7 @@ function doctorWorkingTree(c: Ctx): ReturnType<typeof workingTreeReport> {
     isGit: c.repo.isGit,
     status: () => new GitProbe().status(c.repo.mainRoot),
     dirs: c.config,
-    goals: () => (existsSync(c.paths.goals) ? c.store.listGoals() : []),
+    goals: () => c.store.listGoals(),
     readPlan: (ref) => {
       const file = path.join(c.root, ref);
       return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
