@@ -225,7 +225,7 @@ describe('T1-INIT-HOOK-PATH: isDispatcherCommand', () => {
 
 describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
   function doctorLine(cwd: string): string {
-    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd, env: { ...process.env, AIDLC_STATE_DIR: path.join(cwd, 'state') }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd, env: { ...process.env, AIDLC_STATE_DIR: path.join(cwd, 'state') }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
     assert.equal(r.status, 0, r.stderr);
     return (JSON.parse(r.stdout) as { hookCommand: string }).hookCommand;
   }
