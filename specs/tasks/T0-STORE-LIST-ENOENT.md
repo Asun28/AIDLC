@@ -177,3 +177,43 @@ changelog.d/T0-STORE-LIST-ENOENT.md, one line and a line feed:
 ```
 - T0-STORE-LIST-ENOENT (bugfix, issue 368): a state directory is listed as empty only when listing it fails with `ENOENT`. Any other failure, such as a parent directory that cannot be searched (`EACCES`) or a parent that is a regular file on POSIX (`ENOTDIR`), is `READ_FAILED` naming the directory, where `listJsonFiles` and `findInterruptedWrites` answered an empty list because `existsSync` could not see it. So the production gate refuses an approval that matches no recorded production authorization when the goals directory cannot be listed, where it let the command run as if there were no aidlc state; `aidlc doctor` reports an uncommitted planning file as `claim unknown (goal records unreadable: READ_FAILED)` in that case, where it said `unclaimed`; and every command that lists goals, card runs, release attempts, operations or review requests refuses such a directory. On Windows a directory under a regular file reports no entry and still lists as empty.
 ```
+
+## Attempt evidence
+
+### T0-STORE-LIST-ENOENT attempt 1
+Build attempt 1, on base main 17ee30bd. RED receipt `9852d6aa:tests/infra/store.test.ts` (seam commit: the listings, `GoalStore.recover` and the doctor line as on main, `readDirNames` exported as a stub that calls `readdirSync` with no catch). On Windows acceptance 1, the regular-file row of acceptance 2, acceptance 4, the injected row of acceptance 5 and acceptance 6 failed for the reported reason (a raw `ENOENT` from the stub, a raw `ENOTDIR` error where a `StoreError` was due, `Missing expected exception: store.listGoals()`, gate exit 0 where 2 was due, `"intent/a.md": unclaimed`); acceptance 3 and the POSIX row of acceptance 5 were skipped with their reasons; the three changed files gave tests 57, pass 48, fail 6 (with parents), skipped 3. On Linux at the same commit all six acceptance tests failed (tests 57, pass 49, fail 8 with parents, skipped 0), acceptance 3 at `Missing expected exception: store.listGoals()` and the POSIX row of acceptance 5 at exit 0 where 2 was due. Fix commit 0bf766d3; diff against main 223 insertions and 12 deletions over seven of the allow_paths.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/infra/store.test.ts "T0-STORE-LIST-ENOENT acceptance 1 - ..." | pass on Windows and Linux (failed at RED) |
+| 2 | same file "T0-STORE-LIST-ENOENT acceptance 2 - ..." | pass on Windows (Windows branch) and Linux (POSIX branch); the regular-file row failed at RED on both, the POSIX branch failed at RED on Linux |
+| 3 | same file "T0-STORE-LIST-ENOENT acceptance 3 - ..." | skipped on Windows with `Windows has no POSIX mode bits, so a directory mode cannot hide a directory`; pass on Linux (uid 1000; failed at RED) |
+| 4 | same file "T0-STORE-LIST-ENOENT acceptance 4 - ..." | pass on Windows and Linux (failed at RED) |
+| 5 | tests/scenarios/prod-gate-generation.test.ts "T0-STORE-LIST-ENOENT acceptance 5 - ...", subtests "injected, every platform" and "real file system, POSIX" | injected row pass on Windows and Linux (failed at RED: exit 0); POSIX row skipped on Windows with its reason, pass on Linux (failed at RED: exit 0) |
+| 6 | tests/surface/doctor-interrupted-writes.test.ts "T0-STORE-LIST-ENOENT acceptance 6 - ..." | pass on Windows and Linux (failed at RED: `"intent/a.md": unclaimed`) |
+| 7 | the doc comments of `readDirNames`, `findInterruptedWrites` and `listJsonFiles`; changelog.d/T0-STORE-LIST-ENOENT.md (one line, one LF); changelog-fragments and prose tests; `git diff main -- CHANGELOG.md docs README.md` | pass; diff empty |
+| 8 | every other test of the three changed files and the unchanged DoD files, no line changed | pass (DoD) |
+
+DoD (Windows, the command of the card run from a script file, since its line matches the production pattern): typecheck exit 0; tests 313, suites 30, pass 303, fail 0, cancelled 0, skipped 10; 45 s. On main at 2f4b2a26 the same list gave tests 305, pass 297, skipped 8, in 44 s.
+
+Revert table (Windows, each a scratch change on a copy of 0bf766d3 outside the repository, run alone and restored; the copy was removed after):
+
+| Scratch change | Run | Failed |
+|---|---|---|
+| the `existsSync` line put back in `listJsonFiles` | store, prod-gate-generation, doctor-interrupted-writes | acceptance 1, 4, 5 (injected row), 6 |
+| the `existsSync` line put back in `findInterruptedWrites` | store | acceptance 1, 4 (the `recover` goals row) |
+| the `existsSync` of the cards directory put back in `recover` | store | acceptance 4 (the `recover` cards row) |
+| the doctor guard put back (`existsSync(c.paths.goals) ? ... : []`) | doctor-interrupted-writes | acceptance 6 |
+| the code comparison replaced by `message.includes('ENOENT')` | store | acceptance 1 |
+| the comparison made case-insensitive (`code.toUpperCase()`) | store | acceptance 1 |
+| every listing error read as empty | store | acceptance 1, 2, 4 |
+| ENOENT thrown as READ_FAILED | store, goal-store | `findInterruptedWrites on a missing directory is empty`, `listJsonFiles returns sorted .json paths only`, acceptance 1, 2, 4 |
+| the directory left out of the StoreError (`''`) | store | acceptance 1, 2, 4 |
+
+Guard sweep: the one guard the change adds is `code === 'ENOENT'` in the catch of `readDirNames`. Loosened forms and the test that failed are rows 5 to 8 of the revert table; no `equivalent:` entry.
+
+Linux run (WSL Ubuntu, Node v22.23.1 from ~/node22/bin, uid 1000, an ext4 copy of the commit under /tmp with node_modules linked to the main checkout): `node --test tests/infra/store.test.ts tests/scenarios/prod-gate-generation.test.ts tests/surface/doctor-interrupted-writes.test.ts` at 0bf766d3 - tests 57, pass 57, fail 0, skipped 0, exit 0; acceptance 2 (POSIX branch), 3 and the POSIX row of acceptance 5 ran and passed.
+
+Write protocol: .claude/skills/verify-card-run-writes/SKILL.md names src/state/store.ts for `atomicWriteJson` and `atomicWriteText` and src/state/goal-store.ts for `saveCardRun` and `updateCardRun`; this card changes listings and no write or its order, so the skill's outcome stays in sync and the skill file is unchanged; tests/scenarios/fault-points.test.ts is in the DoD and passed.
+
+npm test on Windows (once, at 0bf766d3): tests 3853, pass 3822, fail 0, cancelled 0, skipped 31, exit 0, 748 s.
