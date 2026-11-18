@@ -107,6 +107,11 @@ export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
   return result.data;
 }
 
+/** Seam stub of card T0-STORE-LIST-ENOENT: the listing with no rule yet. */
+export function readDirNames(dir: string): string[] {
+  return readdirSync(dir);
+}
+
 /** Detect leftover temporary files from interrupted writes in a directory. */
 export function findInterruptedWrites(dir: string): string[] {
   if (!existsSync(dir)) return [];
