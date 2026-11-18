@@ -173,5 +173,35 @@ changelog.d/T0-JOURNAL-READ-ENOENT.md, one line and a line feed:
 ```
 
 ## Attempt evidence
-</content>
-</invoke>
+
+### T0-JOURNAL-READ-ENOENT attempt 1
+Build attempt 1, on base main 62dc0a50. RED receipt `cf211285:tests/infra/journal.test.ts` (seam commit: `failingFs` and `fsError` in tests/infra/helpers.ts and the tests of acceptance 1 to 5, src/ as on main). On Windows acceptance 1, 2, 4 and 5 failed for the reported reason (`Missing expected exception: readAll EACCES: EACCES: permission denied, open`, the directory row `readAll a directory` with a raw EISDIR where a `StoreError` was due, `Missing expected exception.` from `verifyAudit`, `Missing expected exception: missing, listing failing with EACCES`); acceptance 3 was skipped with its reason; the three changed files gave tests 44, pass 39, fail 4, skipped 1. On Linux (WSL Ubuntu, Node 22.23.1, uid 1000) at the same commit acceptance 1 to 5 failed (tests 44, pass 39, fail 5, skipped 0), acceptance 3 at `Missing expected exception: readAll`; acceptance 2 stops at its directory row there, and the POSIX branch of its second row answering `[]` on main was shown by the harness of the sweep. Fix commit 04afe056; diff against main 175 insertions and 26 deletions over seven of the allow_paths. The card file also loses two stray lines (`</content>`, `</invoke>`) that ended it on main at 62dc0a50, an editing error of the card commit.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/infra/journal.test.ts "T0-JOURNAL-READ-ENOENT acceptance 1 - ..." | pass on Windows and Linux (failed at RED) |
+| 2 | same file "T0-JOURNAL-READ-ENOENT acceptance 2 - ..." | pass on Windows (Windows branch) and Linux (POSIX branch); the directory row failed at RED on both |
+| 3 | same file "T0-JOURNAL-READ-ENOENT acceptance 3 - ..." | skipped on Windows with `Windows has no POSIX mode bits, so a directory mode cannot hide a journal`; pass on Linux (uid 1000; failed at RED) |
+| 4 | tests/surface/verifier.test.ts "T0-JOURNAL-READ-ENOENT acceptance 4 - ..." | pass on Windows and Linux (failed at RED) |
+| 5 | tests/infra/lease.test.ts "T0-JOURNAL-READ-ENOENT acceptance 5 - ..." | pass on Windows and Linux (failed at RED) |
+| 6 | the doc comments of `readAll`, `readRawLines` and `LeaseStore.list`; changelog.d/T0-JOURNAL-READ-ENOENT.md (one line, one LF, the text of detail 6 byte for byte); changelog-fragments and prose tests; `git diff origin/main -- CHANGELOG.md docs README.md` | pass; diff empty |
+| 7 | every other test of the three changed files and the unchanged DoD files, no line changed; review-release.test.ts and review-resolve.test.ts in `npm test` | pass (DoD); `npm test` below |
+
+DoD (Windows, at 04afe056): typecheck exit 0; tests 178, suites 18, pass 175, fail 0, cancelled 0, skipped 3; 37 s. The three changed files on Linux at 04afe056: tests 44, pass 44, fail 0, skipped 0.
+
+`npm test` (Windows, at 04afe056, the machine at 100% CPU from other sessions): exit 0 in 750 s, so every test of the suite passed or was skipped, review-release.test.ts and review-resolve.test.ts among them. Its counts were not captured: the run script filtered for the `# tests` summary lines of the TAP reporter and `npm test` prints the spec reporter's summary; CI runs the full suite on this candidate.
+
+Revert table (Windows, each a scratch change on a detached worktree of 04afe056 outside the card worktree, run alone and restored; the scratch worktree was removed after):
+
+| Scratch change | Run | Failed |
+|---|---|---|
+| the `existsSync` line put back in `readRawLines` | journal, verifier | acceptance 1 (every reader, since `readAll` reads through `readRawLines`), acceptance 4 |
+| the `existsSync` line put back in `readAll`, with `readAll` reading the file itself | journal, verifier | acceptance 1 (the `readAll` and `filter` rows), acceptance 2 (the directory row through `readAll`) |
+| `readdirSyncSafe` put back in `LeaseStore.list` | lease | acceptance 5 |
+| the code comparison replaced by a search of the message for ENOENT | journal | acceptance 1 |
+| the comparison made case-insensitive | journal | acceptance 1 |
+| every read error read as empty | journal, verifier | acceptance 1, 2, 4 |
+| ENOENT thrown as READ_FAILED | journal, verifier | 27 tests, among them `head() on an empty journal is the genesis hash`, `append builds a hash chain and verify() passes` and acceptance 1, 2 |
+| the file left out of the StoreError | journal | acceptance 1, 2 |
+
+Write protocol (.claude/skills/verify-card-run-writes/SKILL.md): `git diff --name-only 402a07f3d10eb0e90396a3cc3d9293eb045b4f0a -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts` names src/loop/card-runner.ts, src/state/goal-store.ts, src/state/journal.ts and src/state/store.ts as changed since the sync commit (src/state/journal.ts by this card alone, the other three by earlier cards that kept the sync commit); this card changes the head read of `Journal.append` and no write or its order, and tests/scenarios/fault-points.test.ts passes in the DoD, so the outcome is in sync; the skill file and its sync commit stay as they are.
