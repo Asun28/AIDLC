@@ -1,9 +1,11 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { GENESIS_HASH, Journal, currentActor, resolveSessionId, setActorForTests, sha256 } from '../../src/state/journal.ts';
-import { actor, cleanup, tmpDir } from './helpers.ts';
+import { StoreError } from '../../src/state/store.ts';
+import { verifyAudit } from '../../src/audit/verifier.ts';
+import { actor, cleanup, failingFs, fsError, tmpDir } from './helpers.ts';
 
 describe('state/journal (Q12 evidence chain)', () => {
   const dir = tmpDir();
@@ -136,5 +138,88 @@ describe('state/journal session identity (T0-SESSION-IDENTITY)', () => {
     setActorForTests(undefined);
     assert.equal(currentActor({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1' }).session, 'cc-1');
     setActorForTests(undefined);
+  });
+});
+
+describe('state/journal reads a journal as empty only on ENOENT (T0-JOURNAL-READ-ENOENT)', () => {
+  const dir = tmpDir();
+  after(() => cleanup(dir));
+  /** The four public readers of `j`, each with what it answers for a journal file that is not there. */
+  const readers = (j: Journal): Array<[string, () => unknown, unknown]> => [
+    ['readAll', () => j.readAll(), []],
+    ['head', () => j.head(), { seq: -1, hash: GENESIS_HASH }],
+    ['verify', () => j.verify(), { ok: true, events: 0, head: GENESIS_HASH, problems: [] }],
+    ['filter', () => j.filter(() => true), []],
+  ];
+  /** Asserts that `err` is the READ_FAILED store error of `file` with the message of `message`, field by field. */
+  const isReadFailed = (err: unknown, file: string, message: string): boolean => {
+    assert.ok(err instanceof StoreError, String(err));
+    assert.deepEqual({ code: err.code, file: err.file, message: err.message }, { code: 'READ_FAILED', file, message: `READ_FAILED: ${message} (${file})` });
+    return true;
+  };
+  /** The READ_FAILED store error of `file` whose message carries `code`. */
+  const refusedWith = (file: string, code: string) => (err: unknown): boolean => err instanceof StoreError && err.code === 'READ_FAILED' && err.file === file && err.message.includes(code);
+
+  it('T0-JOURNAL-READ-ENOENT acceptance 1 - only a read error with the code ENOENT is an empty journal', () => {
+    const j = Journal.forGoal(path.join(dir, 'unseen'), 'g-1');
+    assert.equal(existsSync(j.file), false);
+    const empty: Array<[string, string]> = [
+      ['ENOENT', 'ENOENT: no such file or directory, open'],
+      ['ENOENT', 'a message that names no code'],
+    ];
+    const refused: Array<[string | undefined, string]> = [
+      ['EACCES', 'EACCES: permission denied, open'],
+      ['ENOTDIR', 'ENOTDIR: not a directory, open'],
+      ['ELOOP', 'ELOOP: too many symbolic links encountered, open'],
+      ['EPERM', 'EPERM: operation not permitted, open'],
+      ['EISDIR', 'EISDIR: illegal operation on a directory, read'],
+      ['EIO', 'EIO: i/o error, read'],
+      ['EACCES', 'a denied read of ENOENT.jsonl'],
+      ['enoent', 'a code in another letter case'],
+      [undefined, 'an error with no code'],
+    ];
+    for (const [name, read, missing] of readers(j)) {
+      for (const [code, message] of empty) {
+        assert.deepEqual(failingFs('readFileSync', j.file, fsError(code, message), read), missing, `${name} ${code}: ${message}`);
+      }
+      for (const [code, message] of refused) {
+        assert.throws(() => failingFs('readFileSync', j.file, fsError(code, message), read), (err: unknown) => isReadFailed(err, j.file, message), `${name} ${code}: ${message}`);
+      }
+    }
+  });
+
+  it('T0-JOURNAL-READ-ENOENT acceptance 2 - a directory at the journal path is READ_FAILED, and a journal under a regular file is READ_FAILED on POSIX and empty on Windows', () => {
+    const real = path.join(dir, 'real');
+    const directory = path.join(real, 'g-dir.jsonl');
+    mkdirSync(directory, { recursive: true });
+    for (const [name, read] of readers(new Journal(directory))) assert.throws(read, refusedWith(directory, 'EISDIR'), `${name} a directory`);
+
+    const plain = path.join(real, 'plain');
+    writeFileSync(plain, 'text', 'utf8');
+    const under = new Journal(path.join(plain, 'g.jsonl'));
+    // Under a regular file POSIX answers ENOTDIR and Windows answers that there is no entry, which no reader can tell from a missing file.
+    for (const [name, read, missing] of readers(under)) {
+      if (process.platform === 'win32') assert.deepEqual(read(), missing, `${name} under a regular file`);
+      else assert.throws(read, refusedWith(under.file, 'ENOTDIR'), `${name} under a regular file`);
+    }
+    for (const [name, read, missing] of readers(new Journal(path.join(real, 'none', 'g.jsonl')))) assert.deepEqual(read(), missing, `${name} missing`);
+  });
+
+  const noModes = process.platform === 'win32' ? 'Windows has no POSIX mode bits, so a directory mode cannot hide a journal' : process.getuid?.() === 0 ? 'root reads through any directory mode' : false;
+  it('T0-JOURNAL-READ-ENOENT acceptance 3 - a journal in a directory without search permission is READ_FAILED (EACCES), read directly or through verifyAudit', { skip: noModes }, () => {
+    const journalDir = path.join(dir, 'locked', 'journal');
+    const j = Journal.forGoal(journalDir, 'g-locked');
+    const a = actor('session-locked', 21);
+    j.append({ type: 'GOAL_CREATED', goalId: 'g-locked', actor: a, ts: '2026-09-11T10:00:00.000Z' });
+    j.append({ type: 'NOTE', goalId: 'g-locked', actor: a, ts: '2026-09-11T10:00:01.000Z' });
+    const denied = refusedWith(j.file, 'EACCES');
+    try {
+      chmodSync(journalDir, 0o600);
+      for (const [name, read] of readers(j)) assert.throws(read, denied, name);
+      assert.throws(() => verifyAudit({ goalId: 'g-locked', journal: j, now: '2026-09-11T10:00:02.000Z' }), denied, 'verifyAudit');
+    } finally {
+      chmodSync(journalDir, 0o755);
+    }
+    assert.equal(j.readAll().length, 2);
   });
 });

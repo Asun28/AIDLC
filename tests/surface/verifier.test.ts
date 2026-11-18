@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { tmpDir } from '../infra/helpers.ts';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { failingFs, fsError, tmpDir } from '../infra/helpers.ts';
 import path from 'node:path';
-import { Journal } from '../../src/state/journal.ts';
+import { GENESIS_HASH, Journal } from '../../src/state/journal.ts';
+import { StoreError } from '../../src/state/store.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 import { OperationLedger } from '../../src/coordination/reconcile.ts';
@@ -477,4 +478,17 @@ test('T1-AUDIT-FACTS acceptance 8: docs/OPERATIONS.md (Audit), docs/ARCHITECTURE
     const text = section(file, heading);
     for (const sentence of sentences) assert.ok(text.includes(sentence), `${file.join('/')} (${heading}) states: ${sentence}`);
   }
+});
+
+test('T0-JOURNAL-READ-ENOENT acceptance 4 - verifyAudit refuses a goal journal it cannot read and reports a missing one as level none', () => {
+  const f = fixture();
+  assert.equal(existsSync(f.journal.file), false);
+  const audit = () => verifyAudit({ goalId: f.goalId, journal: f.journal, operations: f.operations, now });
+  const report = audit();
+  assert.deepEqual({ level: report.level, journal: report.journal, findings: report.findings }, { level: 'none', journal: { events: 0, head: GENESIS_HASH, ok: true }, findings: [] });
+  const message = 'EACCES: permission denied, open';
+  assert.throws(
+    () => failingFs('readFileSync', f.journal.file, fsError('EACCES', message), audit),
+    (err: unknown) => err instanceof StoreError && err.code === 'READ_FAILED' && err.file === f.journal.file && err.message === `READ_FAILED: ${message} (${f.journal.file})`,
+  );
 });
