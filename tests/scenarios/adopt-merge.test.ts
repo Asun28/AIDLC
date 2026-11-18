@@ -114,7 +114,8 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
   type Row = { name: string; card?: string; noBranch?: boolean; exec?: (fx: Fixture, goalId: string) => SyncRunner; config?: Record<string, unknown>; arrange?: (fx: Fixture, goalId: string) => void; message: RegExp };
   const rows: Row[] = [
     { name: '(a) a card outside the goal', card: 'T0-OUTSIDE', arrange: (fx, goalId) => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, cardId: 'T0-OUTSIDE', revision: 0 }), message: /T0-OUTSIDE is not listed in goal/ },
-    { name: '(b) a merge already verified', arrange: (fx, goalId) => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }), message: /merge is already verified/ },
+    // gh fails here, so only a refusal made before gh is asked names the verified merge.
+    { name: '(b) a merge already verified', exec: () => probes(SHIPPED, { listFails: true }), arrange: (fx, goalId) => fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, SHIPPED)!, mergeVerified: true }), message: /merge is already verified/ },
     { name: '(c) an unresolved operation', arrange: (fx, goalId) => {
       const op = fx.ops.recordIntent({ kind: 'merge', goalId, cardId: SHIPPED, target: 'main', candidateDigest: 'dg-shipped', ownerGeneration: 0, timeoutMs: 60_000, effects: ['merge'] }, T0);
       fx.ops.markResult(op.id, 'UNKNOWN', {}, T0);
@@ -133,8 +134,8 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 2: every refusal of adopt-merge leaves 
     { name: '(h) another number', exec: () => probes(SHIPPED, { view: { number: 42 } }), message: /PR #41.*number/ },
     { name: '(h) open', exec: () => probes(SHIPPED, { view: { state: 'OPEN' } }), message: /PR #41 is OPEN, not MERGED/ },
     { name: '(h) another base', exec: () => probes(SHIPPED, { view: { baseRefName: 'develop' } }), message: /PR #41.*base develop/ },
-    { name: '(h) a head that is no object id', exec: () => probes(SHIPPED, { view: { headRefOid: 'A'.repeat(40) } }), message: /PR #41.*head/ },
-    { name: '(h) no merge commit', exec: () => probes(SHIPPED, { view: { mergeCommit: null } }), message: /PR #41.*merge commit/ },
+    { name: '(h) a head that is no object id', exec: () => probes(SHIPPED, { view: { headRefOid: 'A'.repeat(40) } }), message: /PR #41: gh reports head "A{40}"/ },
+    { name: '(h) no merge commit', exec: () => probes(SHIPPED, { view: { mergeCommit: null } }), message: /PR #41: gh reports merge commit null/ },
     { name: '(i) the fetch fails', exec: () => probes(SHIPPED, { fetchExit: 1 }), message: /PR #41.*fetch/ },
     { name: '(i) the merge commit is not on the base', exec: () => probes(SHIPPED, { containsExit: 1 }), message: /PR #41.*not on origin\/main/ },
     { name: '(i) no tree', exec: () => probes(SHIPPED, { noTree: true }), message: /PR #41.*tree/ },

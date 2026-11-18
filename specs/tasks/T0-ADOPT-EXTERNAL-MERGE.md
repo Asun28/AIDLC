@@ -75,3 +75,20 @@ npm run typecheck && node --test tests/scenarios/adopt-merge.test.ts tests/core/
 - Assertion: every test above passes; the tests of acceptance 1 to 5 fail on main.
 
 ## Attempt evidence
+Attempt 1 (Windows, Node 22.23.1). RED at seam commit ac211622: acceptance 1 to 4 failed on the stub (`not implemented`), acceptance 5 on `unknown command 'adopt-merge'`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/scenarios/adopt-merge.test.ts acceptance 1 | pass |
+| 2 | same file acceptance 2 (18 rows: R2 (a) to (i), the in-lock re-read) | pass |
+| 3 | same file acceptance 3 | pass |
+| 4 | same file acceptance 4 | pass |
+| 5 | same file acceptance 5 (spawns `node bin/aidlc.js`) | pass |
+| 6 | the seven unchanged files in the DoD | pass, no line changed |
+| 7 | changelog-fragments.test.ts, prose.test.ts; docs, skill and fragment in the diff | pass; reviewer-verified |
+
+Full suite (`npm test`, Windows) at 1fcf1df3: 3858 tests, 3826 passed, 31 skipped, 1 failed - tests/surface/templates.test.ts:386 caps .claude/skills/verify-card-run-writes/SKILL.md at 8000 bytes, which main already filled (8000) and the new Not covered entry took to 8166. Fixed in the skill file alone: the entry joins the `withdrawCandidate` entry, and two sentences are shortened with no fact dropped (7994 bytes); templates.test.ts and prose.test.ts then pass (61 of 61).
+
+Row (f): `Card.branch` is required and defaults to the id (src/artifacts/card.ts:98), so the test passes a card whose branch is empty to `adoptMerge`; no card file can reach that row.
+
+Revert table, each change made alone in a scratch worktree and restored: dropping each refusal of R2 (a) to (i) (15 changes), dropping the in-lock re-read, keeping the stop, leaving `journalOwed` unchanged, a constant `headMatchesCandidate`, dropping the CLI `--pr` check and calling `ensureCardRun` in the CLI each turned acceptance 1, 2, 3, 4 or 5 red. A first pass left two mutants green, fixed in the tests: row (b) now has gh fail, so only the refusal made before gh names it, and the head and merge commit rows match their own messages.
