@@ -1,7 +1,7 @@
 ---
 slug: review-panel
 title: Score Fable 5.2 as a formal reviewer against the saved Codex pair, a larger clean set, the panel report, then an opt-in R3 panel and a pinned review policy
-spec: (pending; intent/review-panel.md accepted 2026-11-19)
+spec: specs/review-panel.md
 size: T1
 status: draft
 created: 2026-11-18T23:10:00Z
