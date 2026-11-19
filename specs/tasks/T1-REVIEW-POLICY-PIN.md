@@ -27,7 +27,7 @@ acceptance:
   - 4. second-pass.test.ts and r3-fallback.test.ts pass with no line changed. [R2] [dod arm 1]
   - 5. The OPERATIONS.md and changelog text are as R4 states (reviewer-verified against the diff). [R4]
 depends_on: [T1-BENCH-FORMAL-COMMAND]
-parallelizable_with: [T1-BENCH-CLEAN-40]
+parallelizable_with: [T1-BENCH-CLEAN-40-2]
 budget: 120
 tdd: true
 sweep: "Main at ff925160. reviewPolicy src/loop/card-runner.ts:424-430 (reads <mainRoot>/REVIEW.md), callers :1527, :2031, :2670; run.base?.oid used at :2838. GitProbe src/probes/git.ts:47-264 (objectType :155 and treeOf :160 show the cat-file pattern). The candidate worktree's REVIEW.md was never read; this card closes the main-checkout working-tree gap (Codex gpt-6-astra, panel of 2026-11-19; Anthropic Code Review reads REVIEW.md from the base branch only)."

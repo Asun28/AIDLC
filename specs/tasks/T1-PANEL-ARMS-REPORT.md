@@ -28,7 +28,7 @@ acceptance:
   - 4. Same file, "T1-PANEL-ARMS-REPORT acceptance 4: panel.md has its title, sections and the banned-character rule, and every table value equals its source". Fails on main. [R5] [dod arm 1]
   - 5. outcome-arms.test.ts and prose.test.ts pass with no line changed. [R6] [dod arm 1]
   - 6. The limits of R5 and the README line are as stated (reviewer-verified against the diff). [R5] [R6]
-depends_on: [T1-ARMS-REPORT, T1-BENCH-FORMAL-COMMAND, T1-BENCH-CLEAN-40]
+depends_on: [T1-ARMS-REPORT, T1-BENCH-FORMAL-COMMAND, T1-BENCH-CLEAN-40-2]
 budget: 300
 tdd: true
 sweep: "Saved Codex pair, policy aa7f80bac1a3: _local/arms/rounds-miss.json (`rounds[0]` per case is round 1, 33 hits), order-miss.json (35), rounds-clean.json and order-clean.json (1 of 15 each, the same case). Earlier unions computed by hand: _local/bench-step4/scripts (2026-11-07) and the arms of 2026-11-16. Pattern for assemble and the table-row rule: bench/outcome/arms.ts of T1-ARMS-REPORT."
@@ -47,8 +47,8 @@ hygiene: "If the stage 1 Fable reports are missing, the Fable run's policy hash 
 The owner reads in one page whether a second R3 reviewer finds enough more defects to run, and whether it should be Fable 5.2 or a second Codex run.
 
 ## Inputs
-- Stage 1 (coordinator, from a worktree of main after T1-BENCH-FORMAL-COMMAND merges, while REVIEW.md still hashes to aa7f80bac1a3, the policy of the 2026-11-16 arms; it does at ff925160): `_local/panel-arms/fable-miss.json` and `fable-clean.json`, `aidlc review bench run --stage formal --formal-command bench/outcome/fable-r3.json --json` on `_local/arms/miss25` and on the 15 clean cases of main. The Codex side is the saved pair under `_local/arms/`.
-- Stage 2 (only when `keep.stage2` of a stage-1 assembly is `run`): `codex-replay.json`, `codex-clean.json`, `fable-replay.json`, `fable-clean.json`, `--trials 3` on `evals/review/replay` and `evals/review/clean` (40 cases after T1-BENCH-CLEAN-40).
+- Stage 1 (coordinator, from a worktree of main after T1-BENCH-FORMAL-COMMAND merges, while REVIEW.md still hashes to aa7f80bac1a3, the policy of the 2026-11-16 arms; it does at ff925160): `_local/panel-arms/fable-miss.json` and `fable-clean.json`, `aidlc review bench run --stage formal --formal-command bench/outcome/fable-r3.json --json` on `_local/arms/miss25` and on the 15 clean case files of main at 1def7f99, copied to `_local/panel-arms/clean15/` before T1-BENCH-CLEAN-40-2 merges (that card marks one of them unconfirmed; pass `--include-unconfirmed` so all 15 pair with the Codex runs). The Codex side is the saved pair under `_local/arms/`.
+- Stage 2 (only when `keep.stage2` of a stage-1 assembly is `run`): `codex-replay.json`, `codex-clean.json`, `fable-replay.json`, `fable-clean.json`, `--trials 3` on `evals/review/replay` and `evals/review/clean` (40 confirmed cases after T1-BENCH-CLEAN-40-2).
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell

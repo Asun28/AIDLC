@@ -2,6 +2,7 @@
 id: T1-BENCH-CLEAN-40
 title: The reviewer bench holds at least 40 confirmed clean cases, the 15 of T1-REPLAY-CLEAN kept and 25 or more added by the same seeded rule, and the clean case both arms false-blocked is checked and its label recorded
 status: todo
+superseded_by: T1-BENCH-CLEAN-40-2
 branch: T1-BENCH-CLEAN-40
 worktree: D:\wt\AIDLC\T1-BENCH-CLEAN-40
 plan_ref: plans/review-panel.md#order-of-work
