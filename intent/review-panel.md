@@ -139,6 +139,8 @@ On all 124 bug cases and every clean case, 3 trials, scored by triple:
 - The keep rule above is accepted as written.
 - Fable 5.2 quota: confirmed that the subscription can carry one Fable R3
   review per decision.
+- Stage 1 result (2026-11-19, 17:28 NZDT): on 61 scored bug cases Codex round 1 hit 33, the second Codex run 34, Fable 5.2 20; Codex+Codex 40, Codex+Fable 38. Fable added 5 hits over Codex round 1, the second Codex run 7: the stage 2 gate fails. Fable hit its usage limit after about 23 reviews (no clean-case data; issue 385).
+- Owner, 2026-11-19, on that result: report stage 1 (T1-PANEL-ARMS-REPORT), then stop. T1-R3-PANEL, T1-R3-PANEL-FOLD and T1-R3-PANEL-ON leave this goal and wait in issue 386 for a Codex-only stage 2. T1-REVIEW-POLICY-PIN left earlier (issue 383).
 
 ## Open questions
 - (none)
