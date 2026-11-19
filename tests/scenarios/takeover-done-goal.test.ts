@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { resourceKeys } from '../../src/coordination/lease.ts';
+import { doneGoalTakeover } from '../../src/core/card-goal.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -22,26 +23,38 @@ function setup(state: 'DONE' | 'RUN') {
   const goal = goalForCards(fx, [CARD]);
   fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
   if (state === 'DONE') fx.store.saveGoal({ ...fx.goal(goal.id), state: 'DONE', terminal: true });
-  const cli = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-Z' }, encoding: 'utf8', timeout: 60_000 });
+  const run = (format: '--json' | '--no-json', args: string[]) => spawnSync(process.execPath, [MAIN, ...args, format], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-Z' }, encoding: 'utf8', timeout: 60_000 });
+  const cli = (...args: string[]) => run('--json', args);
+  const human = (...args: string[]) => run('--no-json', args);
   const goalLease = fx.leases.file(resourceKeys.goal(fx.repo.key, goal.id));
   const cardLease = fx.leases.file(resourceKeys.card(fx.repo.key, CARD));
   /** Every lease file, the card run file and every goal journal, by path. */
   const snapshot = () => {
-    const files = [fx.store.cardFile(goal.id, CARD), ...readdirSync(fx.paths.leases).map((f) => path.join(fx.paths.leases, f)), ...readdirSync(fx.paths.journal).map((f) => path.join(fx.paths.journal, f))];
+    const files = [fx.store.cardFile(goal.id, CARD), fx.store.cardFile(goal.id, 'T1-GONE'), ...readdirSync(fx.paths.leases).map((f) => path.join(fx.paths.leases, f)), ...readdirSync(fx.paths.journal).map((f) => path.join(fx.paths.journal, f))];
     return Object.fromEntries(files.filter((f) => existsSync(f)).map((f) => [f, readFileSync(f, 'utf8')]));
   };
   const generation = (file: string) => (JSON.parse(readFileSync(file, 'utf8')) as { generation: number }).generation;
-  return { fx, goalId: goal.id, cli, goalLease, cardLease, snapshot, generation };
+  return { fx, goalId: goal.id, cli, human, goalLease, cardLease, snapshot, generation };
+}
+
+/** Any read of the file fails to parse, so a command that reads it before the DONE check exits with a store error. */
+function unreadable(file: string): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, '{', 'utf8');
 }
 
 test('T0-TAKEOVER-DONE-GOAL acceptance 2: goal takeover on a DONE goal takes no lease, appends no event, reports DONE and exits 0 [R1]', () => {
-  const { fx, goalId, cli, goalLease, snapshot } = setup('DONE');
+  const { fx, goalId, cli, human, goalLease, snapshot } = setup('DONE');
   try {
     assert.ok(existsSync(goalLease), 'setup: the goal lease exists');
+    const text = doneGoalTakeover({ id: goalId, state: 'DONE' })!;
     const before = snapshot();
     const r = cli('goal', 'takeover', goalId);
     assert.equal(r.status, 0, `exits 0: ${r.stderr}`);
-    assert.ok(r.stdout.includes(goalId) && r.stdout.includes('DONE'), `names the goal and DONE: ${r.stdout}`);
+    assert.deepEqual(JSON.parse(r.stdout), { goalId, state: 'DONE', takenOver: false, detail: text }, 'the JSON report carries the text of R3');
+    const h = human('goal', 'takeover', goalId);
+    assert.equal(h.status, 0, `human output exits 0: ${h.stderr}`);
+    assert.equal(h.stdout.trim(), text, 'the human line is the text of R3');
     assert.deepEqual(snapshot(), before, 'leases and journals are byte-identical');
   } finally {
     fx.cleanup();
@@ -49,17 +62,30 @@ test('T0-TAKEOVER-DONE-GOAL acceptance 2: goal takeover on a DONE goal takes no 
 });
 
 test('T0-TAKEOVER-DONE-GOAL acceptance 3: card takeover on a card of a DONE goal, with and without --goal, takes no lease, writes nothing, reports DONE and exits 0 [R2]', () => {
-  const { fx, goalId, cli, cardLease, snapshot } = setup('DONE');
+  const { fx, goalId, cli, human, cardLease, snapshot } = setup('DONE');
   try {
     assert.ok(existsSync(cardLease), 'setup: the card lease exists');
-    for (const args of [['card', 'takeover', CARD, '--goal', goalId], ['card', 'takeover', CARD]]) {
+    const text = doneGoalTakeover({ id: goalId, state: 'DONE' })!;
+    // The card run and the card lease are unreadable: a read of either before the DONE check fails the command.
+    unreadable(fx.store.cardFile(goalId, CARD));
+    unreadable(cardLease);
+    // A run of a card the goal does not project: only `--goal` resolves it, through `holdsRun`, which reads that run.
+    writeCard(fx, { id: 'T1-GONE', title: 'a card the goal does not project' });
+    unreadable(fx.store.cardFile(goalId, 'T1-GONE'));
+    unreadable(fx.leases.file(resourceKeys.card(fx.repo.key, 'T1-GONE')));
+    const cases: Array<[string, string[]]> = [[CARD, ['--goal', goalId]], [CARD, []], ['T1-GONE', ['--goal', goalId]]];
+    for (const [cardId, extra] of cases) {
+      const args = ['card', 'takeover', cardId, ...extra];
+      const label = args.join(' ');
       const before = snapshot();
       const r = cli(...args);
-      const label = args.join(' ');
       assert.equal(r.status, 0, `${label} exits 0: ${r.stderr}`);
-      for (const part of [CARD, goalId, 'DONE']) assert.ok(r.stdout.includes(part), `${label} names ${part}: ${r.stdout}`);
-      assert.ok(!r.stdout.includes('next:'), `${label} prints no next hint: ${r.stdout}`);
-      assert.deepEqual(snapshot(), before, `${label}: leases, the card run and journals are byte-identical`);
+      assert.deepEqual(JSON.parse(r.stdout), { cardId, goalId, state: 'DONE', takenOver: false, detail: text }, `${label}: the JSON report carries the card and the text of R3`);
+      const h = human(...args);
+      assert.equal(h.status, 0, `${label} human output exits 0: ${h.stderr}`);
+      assert.equal(h.stdout.trim(), `${cardId}: ${text}`, `${label}: the human line names the card and the text of R3`);
+      assert.ok(!h.stdout.includes('next:'), `${label} prints no next hint: ${h.stdout}`);
+      assert.deepEqual(snapshot(), before, `${label}: leases, the card runs and journals are byte-identical`);
     }
   } finally {
     fx.cleanup();

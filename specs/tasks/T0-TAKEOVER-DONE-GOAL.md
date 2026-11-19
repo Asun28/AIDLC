@@ -34,7 +34,7 @@ diagnosis:
   same_class: "Other lease-taking commands on a DONE goal: `card next` and `card close` go through `checkedGoal`, which refuses DONE (T0-CARD-TERMINAL-GOAL-2); `goal resume` re-admits a terminal goal on purpose; the close path's own takeover (card-runner.ts:3363) runs only for a goal `markClosure` admits."
 sweep: "grep -n \"leases.takeover\\|\\.takeover(\\|cardGoalId\\|checkedGoal\" src/cli/main.ts src/loop/card-runner.ts at c7a7ce14."
 forbid: [weakening or skipping a test to go green, editing .aidlc state by hand, refusing either takeover on a goal in STOP, changing `terminalGoalRefusal` or `resolveCardGoal`, changing `LeaseStore.takeover` or `CardRunner.takeover`, changing the verifier]
-non_goals: ["acceptance 3 of issue 379, `aidlc audit verify` flagging a GOAL_TAKEOVER or LEASE_ACQUIRED after GOAL_DONE: a change to the verifier's terminal accounting, left for a follow-up issue", "takeover on a goal in STOP: T0-CARD-TERMINAL-GOAL-2 R4 keeps card takeover a recovery command there, and a goal stopped for time is re-admitted by goal extend", "a guard inside CardRunner.takeover for library callers", "the journal of goal g-20261118102948-c1d226", "a goal saved DONE by another process after the command's one goal read: the takeover then proceeds as before"]
+non_goals: ["acceptance 3 of issue 379, `aidlc audit verify` flagging a GOAL_TAKEOVER or LEASE_ACQUIRED after GOAL_DONE: a change to the verifier's terminal accounting, left for a follow-up issue", "takeover on a goal in STOP: T0-CARD-TERMINAL-GOAL-2 R4 keeps card takeover a recovery command there, and a goal stopped for time is re-admitted by goal extend", "a guard inside CardRunner.takeover for library callers", "the journal of goal g-20261118102948-c1d226"]
 hygiene: "Issue 379. RED first: commit acceptance 1 to 3 against src/ as on main, then the fix. Pass --goal on every card and review command."
 doc_sync: docs/OPERATIONS.md, changelog.d/T0-TAKEOVER-DONE-GOAL.md
 ---
@@ -58,8 +58,10 @@ RED at ff84f3e6: `node --test tests/core/card-goal.test.ts tests/scenarios/takeo
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/core/card-goal.test.ts`, `doneGoalTakeover (T0-TAKEOVER-DONE-GOAL)` (two tests) | pass |
-| 2 | `tests/scenarios/takeover-done-goal.test.ts`, acceptance 2 | pass (failed at RED) |
-| 3 | same file, acceptance 3 | pass (failed at RED) |
+| 2 | `tests/scenarios/takeover-done-goal.test.ts`, acceptance 2: JSON report equals the text of R3, human line equals it | pass (failed at RED) |
+| 3 | same file, acceptance 3: card run and card lease files unreadable, three cases (with and without `--goal`, and `--goal` naming the DONE goal for a run of a card it does not project); JSON and human report, no `next:` | pass (failed at RED; fails with the explicit-goal precheck removed) |
 | 4 | same file, acceptance 4 | pass |
 | 5 | `tests/scenarios/card-terminal-goal.test.ts`, unchanged | pass |
 | 6 | `docs/OPERATIONS.md` (the terminal-goal paragraph after the STOP reasons table), `changelog.d/T0-TAKEOVER-DONE-GOAL.md` | reviewer-verified |
+
+R3 decision 1 (verdict .review/T0-TAKEOVER-DONE-GOAL.r3.1.cdbb2183.json) blocked on four findings: F1 a non-goal added after the run started (removed; the card's requirements are as committed on main), F2 no assertion that nothing is read before the DONE check, F3 and F4 the text of R3 not asserted in JSON and human output (acceptance 2 and 3 now assert both).
