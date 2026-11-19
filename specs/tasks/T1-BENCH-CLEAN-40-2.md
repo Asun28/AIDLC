@@ -1,7 +1,7 @@
 ---
 id: T1-BENCH-CLEAN-40-2
 title: The reviewer bench holds 40 confirmed clean cases, the 15 files of main kept and the rest added by the same seeded rule, and the clean case both arms blocked is marked unconfirmed with the two defects a hand check reproduced
-status: todo
+status: merged
 branch: T1-BENCH-CLEAN-40-2
 worktree: D:\wt\AIDLC\T1-BENCH-CLEAN-40-2
 plan_ref: plans/review-panel.md#order-of-work
