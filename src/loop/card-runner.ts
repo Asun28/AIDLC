@@ -213,6 +213,33 @@ function foreignLive(lease: Lease, now: string): boolean {
   return !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now) && !(lease.owner.session === me.session && lease.owner.host === me.host);
 }
 
+/**
+ * A dispatch write refused because the card lease is, at the moment of the write, a live lease of another session or host.
+ * `is` tells one by identity, so a thrown value of any kind (a revoked proxy included) passes through untouched.
+ */
+class ForeignLeaseError extends Error {
+  private static readonly raised = new WeakSet<object>();
+  readonly lease: Lease;
+  constructor(lease: Lease) {
+    super(`the card lease is held by session ${lease.owner.session} at generation ${lease.generation}`);
+    this.lease = lease;
+    ForeignLeaseError.raised.add(this);
+  }
+  static is(value: unknown): value is ForeignLeaseError {
+    return typeof value === 'object' && value !== null && ForeignLeaseError.raised.has(value);
+  }
+}
+
+/**
+ * The run saves and journal appends of a `card next` dispatch, each admitted under the card lease's lock until the dispatch
+ * holds a live lease of its own (`own`, after its renewal or claim), which no other session can take while it is live.
+ */
+interface DispatchWriter {
+  save: (run: CardRun) => CardRun;
+  append: (event: Parameters<Journal['append']>[0]) => void;
+  own: () => void;
+}
+
 /** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
 function discardedDecision(status: CommitReviewStatus): string | undefined {
   switch (status) {
@@ -760,11 +787,13 @@ export class CardRunner {
    * `read` hands in the lease `next` read, so the dispatch decides on one read; `dry` makes no save and no journal
    * append and only selects the state (`next` runs it only on a lease this session does not hold, so no renewal).
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     const dry = read?.dry ?? false;
     if (dry) save = (run) => run;
     const append = (event: Parameters<Journal['append']>[0]): void => {
-      if (!dry) this.journal(goal.id).append(event);
+      if (dry) return;
+      if (read?.writer) read.writer.append(event);
+      else this.journal(goal.id).append(event);
     };
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
     // takeover, a blocking stop or a review decision landed) writes nothing back, and a stop already persisted there
@@ -794,10 +823,14 @@ export class CardRunner {
       const wasExpired = Date.parse(lease.expiresAt) < Date.parse(now);
       const renewal = this.leases.claim(key, { operation: lease.operation, now });
       if (renewal.status === 'renewed') {
+        read?.writer?.own();
         lease = renewal.lease;
         revalidatedStop = run.stop?.reason === 'ownership';
         if (wasExpired || revalidatedStop) append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated: revalidatedStop } });
         if (revalidatedStop) run = { ...run, stop: undefined, blocker: undefined };
+      } else if (read && renewal.status === 'held') {
+        // Another session took this session's expired lease before the renewal: the dispatch writes nothing.
+        throw new ForeignLeaseError(renewal.lease);
       }
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
@@ -879,9 +912,42 @@ export class CardRunner {
     return { run, next, decision, lease };
   }
 
-  /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
+  /**
+   * Gather evidence and select the next card directive. Performs only the bounded action of the selected state. A write
+   * refused because another session holds a live card lease at that moment ends the dispatch with the holder's stop, and
+   * nothing more is written (card T0-FOREIGN-DISPATCH-NO-WRITE-2).
+   */
   next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
+    try {
+      return this.dispatch(goal, card, caller, options);
+    } catch (err) {
+      if (!ForeignLeaseError.is(err)) throw err;
+      return this.foreignDispatch(goal, card, this.store.getCardRun(goal.id, card.id) ?? caller, err.lease, this.clock());
+    }
+  }
+
+  /**
+   * The writer of a dispatch: until the dispatch holds a live lease of its own, each run save and journal append is made
+   * under the card lease's lock after a read of the lease there, and a live lease of another session or host refuses it
+   * with `ForeignLeaseError`.
+   */
+  private dispatchWriter(goal: Goal, card: Card, now: string): DispatchWriter {
+    const key = resourceKeys.card(this.repo.key, card.id);
+    let owned = false;
+    const admit = (write: () => void): void => {
+      if (owned) return write();
+      this.leases.update(key, (held) => {
+        if (held && foreignLive(held, now)) throw new ForeignLeaseError(held);
+        write();
+        return held;
+      });
+    };
+    return { save: (run) => this.store.saveCardRun(run, admit), append: (event) => admit(() => this.journal(goal.id).append(event)), own: () => (owned = true) };
+  }
+
+  private dispatch(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel }): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    const write = this.dispatchWriter(goal, card, now);
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
@@ -906,9 +972,10 @@ export class CardRunner {
       if (selected.decision.state === 'PREPARE' && !checkpointMissing(selected.run)) {
         claimed = this.leases.claim(key, { operation: `card:${card.id}`, now });
         if (claimed.status === 'held') return this.foreignDispatch(goal, card, run, claimed.lease, now);
+        if (claimed.status !== 'expired') write.own();
       }
     }
-    const assessed = this.assess(goal, card, run, now, undefined, { lease });
+    const assessed = this.assess(goal, card, run, now, write.save, { lease, writer: write });
     run = assessed.run;
     // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
     // run as it stands now, before any action.
@@ -918,9 +985,9 @@ export class CardRunner {
 
     switch (decision.state) {
       case 'PREPARE':
-        return this.prepare(goal, card, next, claimed);
+        return this.prepare(goal, card, next, claimed, write);
       case 'BUILD':
-        return this.build(goal, card, next, options.effort);
+        return this.build(goal, card, next, options.effort, write.save);
       case 'SHIP':
         return this.ship(goal, card, next);
       case 'REVIEW_FIX': {
@@ -935,7 +1002,7 @@ export class CardRunner {
           const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
           if (action.action === 'stop') {
             const stop = makeStop('card', `${action.reason}: ${action.detail}`, 'record cause, evidence and the next needed action; no counter reset via another session', { at: now, global: false });
-            const stopped = this.save({ ...next, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
+            const stopped = write.save({ ...next, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
             return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: action.detail } };
           }
           if (action.action === 'attempt') {
@@ -945,7 +1012,7 @@ export class CardRunner {
           }
         }
         // The attempt and its owed ATTEMPT_STARTED land in one write; the event is appended after it (card T0-JOURNAL-FAULT-EVENTS).
-        next = this.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
+        next = write.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
         if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
         // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
         const running = episode?.attempts.find((a) => a.outcome === 'running');
@@ -974,18 +1041,18 @@ export class CardRunner {
         };
       }
       case 'WAIT': {
-        next = this.save(next);
+        next = write.save(next);
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: decision.reason, pollSeconds: 60, narration: decision.reason } };
       }
       case 'CLOSE':
-        return this.close(goal, card, next);
+        return this.close(goal, card, next, write.save);
       case 'DONE': {
-        next = this.save(next);
+        next = write.save(next);
         return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Card DONE (child result). The parent still verifies and delivers the goal.' } };
       }
       case 'STOP':
       default: {
-        next = this.save(next);
+        next = write.save(next);
         return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop ?? makeStop('card', decision.reason, 'inspect the card run record', { at: now, global: false }), narration: decision.reason } };
       }
     }
@@ -1098,18 +1165,19 @@ export class CardRunner {
     return { run: { ...run, state: 'STOP', stop, blocker: stop.detail }, directive: { kind: 'stop', cardId: card.id, stop, narration: held.detail } };
   }
 
-  private prepare(goal: Goal, card: Card, run: CardRun, claimed?: ClaimResult): { run: CardRun; directive: CardDirective } {
+  private prepare(goal: Goal, card: Card, run: CardRun, claimed: ClaimResult | undefined, write: DispatchWriter): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const key = resourceKeys.card(this.repo.key, card.id);
     const claim = claimed ?? this.leases.claim(key, { operation: `card:${card.id}`, now });
+    if (claim.status === 'acquired' || claim.status === 'renewed') write.own();
     // A lease another session took after the assessment read it: the same stop as a foreign dispatch, and no write.
     if (claim.status === 'held') return this.foreignDispatch(goal, card, run, claim.lease, now);
     if (claim.status === 'expired') {
       const stop = makeStop('ownership', `card ${card.id} has an expired lease from session ${claim.lease.owner.session}`, `reconcile the old owner's in-flight operations (aidlc ops list --goal ${goal.id}), then \`aidlc card takeover ${card.id} --goal ${goal.id}\``, { at: now, global: false });
-      const stopped = this.save({ ...run, state: 'STOP', stop });
+      const stopped = write.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
-    this.journal(goal.id).append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
+    write.append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
     const worktreeRoot = resolveWorktreeRoot(this.config, this.repo.mainRoot);
     let decision: ReturnType<typeof decideWorktree>;
     if (this.config.shipPath === 'dry-run') {
@@ -1127,7 +1195,7 @@ export class CardRunner {
       // A failed probe is a tool stop nothing lifts (issue 111); an ownership stop is lifted by the owner's `card next`.
       const tool = decision.stopReason === 'tool';
       const stop = makeStop(decision.stopReason, decision.reason, tool ? 'inspect the git error in the detail' : 'resolve the worktree/ownership conflict before starting', { at: now, global: false, ...(tool ? { finalFor: { goalId: goal.id, cardId: card.id, candidate: Boolean(run.candidate) } } : {}) });
-      const stopped = this.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
+      const stopped = write.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }
     const lessons = readLessons(this.lessonsFile());
@@ -1135,7 +1203,7 @@ export class CardRunner {
     // the next `card next` decides again (card T0-PREPARE-WORKTREE R1). An attach, and either decision of the dry-run ship
     // path, which makes no worktree (R3), records the path and opens BUILD.
     const start = decision.action === 'start' && this.config.shipPath !== 'dry-run';
-    const next = this.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
+    const next = write.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
       directive: {
@@ -1178,7 +1246,7 @@ export class CardRunner {
     return bugfix ? ['tdd', 'diagnose'] : ['tdd'];
   }
 
-  private build(goal: Goal, card: Card, run: CardRun, effortOverride?: EffortLevel): { run: CardRun; directive: CardDirective } {
+  private build(goal: Goal, card: Card, run: CardRun, effortOverride?: EffortLevel, save: (run: CardRun) => CardRun = (r) => this.save(r)): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const profile = goal.roleProfiles.find((p) => p.role === 'implementer');
     const ladder = profile?.supportedEfforts ?? ['low', 'medium', 'high'];
@@ -1192,7 +1260,7 @@ export class CardRunner {
       const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
       if (action.action === 'stop') {
         const stop = makeStop('card', `${action.reason}: ${action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
-        const stopped = this.save({ ...run, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
+        const stopped = save({ ...run, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: action.detail } };
       }
       if (action.action === 'attempt') {
@@ -1211,7 +1279,7 @@ export class CardRunner {
       if (id && id !== run.pendingRepair?.rejectedReceipt) redReceipt = id;
     }
     const repairPrefix = run.pendingRepair ? `Pending ${run.pendingRepair.kind} repair: ${JSON.stringify(run.pendingRepair.detail)} ` : '';
-    const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt, ...(started ? { journalOwed: this.owedWith(goal.id, run, started) } : {}) });
+    const next = save({ ...run, state: 'BUILD', effort: episode, redReceipt, ...(started ? { journalOwed: this.owedWith(goal.id, run, started) } : {}) });
     if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
     return {
       run: next,
@@ -3273,7 +3341,7 @@ export class CardRunner {
     return this.save({ ...run, ci, state: outcome === 'success' ? 'SHIP' : outcome === 'failure' ? 'BUILD' : 'WAIT' });
   }
 
-  private close(goal: Goal, card: Card, caller: CardRun): { run: CardRun; directive: CardDirective } {
+  private close(goal: Goal, card: Card, caller: CardRun, save: (run: CardRun) => CardRun = (r) => this.save(r)): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     // The stored run is the truth: a card next that read before a concurrent card close never undoes a recorded disposition.
     const run = this.store.getCardRun(goal.id, card.id) ?? caller;
@@ -3286,7 +3354,7 @@ export class CardRunner {
       const claim = this.leases.claim(key, { operation: `card:${card.id}:close`, now });
       if (claim.status === 'held') {
         const stop = makeStop('ownership', `card ${card.id} is owned by session ${claim.lease.owner.session} (generation ${claim.lease.generation}) while it closes`, 'let the owner close it, or take over after its lease expires and its operations are reconciled', { at: now, global: false });
-        const stopped = this.save({ ...run, state: 'STOP', stop });
+        const stopped = save({ ...run, state: 'STOP', stop });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
       }
       if (claim.status === 'expired') {
@@ -3297,7 +3365,7 @@ export class CardRunner {
           this.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: taken.lease.generation, takeover: true, previousOwner: claim.lease.owner.session } });
         } catch (err) {
           const stop = makeStop('ownership', `card ${card.id}: ${(err as Error).message}`, 'reconcile the unresolved operations, then close the card again', { at: now, global: false });
-          const stopped = this.save({ ...run, state: 'STOP', stop });
+          const stopped = save({ ...run, state: 'STOP', stop });
           return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         }
       } else {
@@ -3305,7 +3373,7 @@ export class CardRunner {
         this.journal(goal.id).append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
       }
     }
-    const next = this.save({ ...run, state: missing.length ? 'CLOSE' : 'DONE', ownerGeneration });
+    const next = save({ ...run, state: missing.length ? 'CLOSE' : 'DONE', ownerGeneration });
     if (!missing.length) {
       const key = resourceKeys.card(this.repo.key, card.id);
       try {
