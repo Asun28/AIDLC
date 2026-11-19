@@ -21,6 +21,15 @@ import { changelogSince010 } from '../infra/changelog.ts';
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 
+/**
+ * Fixture: the ownership stop a dispatch under another session's live card lease saved on the run before card
+ * T0-FOREIGN-DISPATCH-NO-WRITE; that dispatch now writes nothing.
+ */
+function saveOwnershipStop(fx: Fixture, goalId: string, cardId: string): void {
+  const run = fx.store.getCardRun(goalId, cardId)!;
+  fx.store.saveCardRun({ ...run, state: 'STOP', blocker: 'stale ownership generation', stop: makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate against the current lease before any further mutation', { at: fx.now() }) });
+}
+
 test('Q23: a second window attaches read-only to a coordinated goal and cannot take an owned card', () => {
   const fx = makeFixture({ actor: actorA });
   try {
@@ -215,11 +224,12 @@ test('T0-SESSION-IDENTITY-3, unprepared: a run without a recorded ownership gene
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO');
     assert.equal(run.ownerGeneration, undefined);
     assert.equal(fx.leases.claim(cardKey, { actor: actorA, now: fx.now(), operation: 'card:T1-HELLO' }).status, 'acquired');
-    // window B records the ownership stop
+    // window B is stopped for ownership; the stop its dispatch saved before T0-FOREIGN-DISPATCH-NO-WRITE is a fixture
     setActorForTests(actorB);
     const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(stopped.directive.kind, 'stop');
     assert.equal(stopped.run.stop?.reason, 'ownership');
+    saveOwnershipStop(fx, goal.id, 'T1-HELLO');
     // the owner identity does not continue it: the renewal requires the run's generation to equal the lease's, and
     // the run has none. The card takeover owns that run (T0-CARD-TAKEOVER, unprepared, below).
     setActorForTests(actorA);
@@ -251,10 +261,12 @@ test('T0-CARD-TAKEOVER, prepared: the takeover refuses a live or unreconciled le
     const prepared = fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
     assert.equal(prepared.directive.kind, 'prepare');
     assert.equal(prepared.run.ownerGeneration, 0);
-    // window B, the session after a /clear, reads the run: stopped for ownership
+    // window B, the session after a /clear, reads the run: stopped for ownership; the stop its dispatch saved before
+    // T0-FOREIGN-DISPATCH-NO-WRITE is a fixture
     setActorForTests(actorB);
     const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(stopped.run.stop?.reason, 'ownership');
+    saveOwnershipStop(fx, goal.id, 'T1-HELLO');
     // live: refused with the owner and the expiry, nothing written
     const live = records();
     assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, live.run!), /still held by win-A until .*expiry alone does not prove the owner stopped/);
@@ -398,10 +410,12 @@ test('T0-CARD-TAKEOVER, refusals: a missing, released or own lease refuses the t
     // no lease record at all; every hint names this goal, since a later command's default goal may be another one
     refused('T1-FREE', new RegExp(`card T1-FREE has no lease record; run \`aidlc card next T1-FREE --goal ${goal.id}\``));
     // a released lease: another session held it and stopped this session's dispatch for ownership, then let the card go; the
-    // takeover refuses (a claim takes a released lease) and the hint holds, since next lifts an ownership stop whose lease is gone
+    // takeover refuses (a claim takes a released lease) and the hint holds, since next lifts an ownership stop whose lease is gone.
+    // The stop that dispatch saved before T0-FOREIGN-DISPATCH-NO-WRITE is a fixture.
     const releasedKey = resourceKeys.card(fx.repo.key, 'T1-RELEASED');
     assert.equal(fx.leases.claim(releasedKey, { actor: actorB, now: fx.now(), operation: 'card:T1-RELEASED' }).status, 'acquired');
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-RELEASED'), fx.store.getCardRun(goal.id, 'T1-RELEASED')!).run.stop?.reason, 'ownership');
+    saveOwnershipStop(fx, goal.id, 'T1-RELEASED');
     fx.leases.release(releasedKey, 0, actorB);
     refused('T1-RELEASED', new RegExp(`lease of card T1-RELEASED is released \\(generation 0\\); run \`aidlc card next T1-RELEASED --goal ${goal.id}\``));
     const reclaimed = fx.runner().next(fx.goal(goal.id), fx.card('T1-RELEASED'), fx.store.getCardRun(goal.id, 'T1-RELEASED')!);
@@ -1490,6 +1504,7 @@ test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the ass
       assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
       setActorForTests(actorB);
       assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.store.getCardRun(goal.id, id)!).run.stop?.reason, 'ownership');
+      saveOwnershipStop(fx, goal.id, id);
       const run = fx.store.getCardRun(goal.id, id)!;
       if (variant === 'merged') fx.store.saveCardRun({ ...run, mergeVerified: true });
       if (variant === 'receipt') {

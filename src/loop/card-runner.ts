@@ -207,6 +207,12 @@ function journalHolds(owed: OwedEvent, events: JournalEvent[]): boolean {
   return events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === owed.data['operationId']);
 }
 
+/** A card lease that is unreleased, not past `expiresAt` and owned by a session or host other than the acting one. */
+function foreignLive(lease: Lease, now: string): boolean {
+  const me = currentActor();
+  return !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now) && !(lease.owner.session === me.session && lease.owner.host === me.host);
+}
+
 /** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
 function discardedDecision(status: CommitReviewStatus): string | undefined {
   switch (status) {
@@ -749,13 +755,13 @@ export class CardRunner {
    * Evidence from the persisted facts alone (lease record, operation ledger, run record; no probe), the owner's lease
    * renewal and the state selection, shared by `next`, which then performs the selected state's action, and by
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
-   * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
+   * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it. A dispatch
+   * under another session's live card lease never reaches it: `next` returns that stop first and writes nothing.
    */
   private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
-    // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
-    // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
-    // when no record exists yet.
+    // takeover, a blocking stop or a review decision landed) writes nothing back, and a stop already persisted there
+    // stays. The caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
@@ -879,6 +885,9 @@ export class CardRunner {
     const checkpointMissing = (r: CardRun): boolean => goal.state === 'CARDS' && goal.routing.size === 'T2' && !r.stop && r.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing';
     const checkpointWait = (r: CardRun): { run: CardRun; directive: CardDirective } => ({ run: r, directive: { kind: 'wait', cardId: card.id, on: `goal:${goal.state}:plan-checkpoint`, pollSeconds: 60, narration: `goal ${goal.id} is in CARDS without a plan checkpoint for revision ${goal.revision}: run \`aidlc next --goal ${goal.id}\` and record the approval before this card continues` } });
     if (checkpointMissing(run)) return checkpointWait(run);
+    // Under a live card lease of another session or host this session only reads the card (card T0-FOREIGN-DISPATCH-NO-WRITE).
+    const lease = this.leases.read(resourceKeys.card(this.repo.key, card.id));
+    if (lease && foreignLive(lease, now)) return this.foreignDispatch(goal, card, run, lease, now);
     const assessed = this.assess(goal, card, run, now);
     run = assessed.run;
     // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
@@ -1058,15 +1067,23 @@ export class CardRunner {
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 
+  /**
+   * The answer to a dispatch under another session's live card lease (card T0-FOREIGN-DISPATCH-NO-WRITE): a stop that names
+   * the holder, and no write to the run record, the goal journal or the lease, which belong to the holder. The returned run
+   * is this session's view, not persisted; a stop other than ownership already on the stored run stays its stop.
+   */
+  private foreignDispatch(goal: Goal, card: Card, run: CardRun, lease: Lease, now: string): { run: CardRun; directive: CardDirective } {
+    const held = makeStop('ownership', `card ${card.id} is held by session ${lease.owner.session} on host ${lease.owner.host} at lease generation ${lease.generation} until ${lease.expiresAt}`, `the holder continues the card; \`aidlc card takeover ${card.id} --goal ${goal.id}\` applies only once the lease has expired and the card's operations are reconciled`, { at: now, global: false });
+    const stop = run.stop && run.stop.reason !== 'ownership' ? run.stop : held;
+    return { run: { ...run, state: 'STOP', stop, blocker: stop.detail }, directive: { kind: 'stop', cardId: card.id, stop, narration: held.detail } };
+  }
+
   private prepare(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const key = resourceKeys.card(this.repo.key, card.id);
     const claim = this.leases.claim(key, { operation: `card:${card.id}`, now });
-    if (claim.status === 'held') {
-      const stop = makeStop('ownership', `card ${card.id} is owned by session ${claim.lease.owner.session} (generation ${claim.lease.generation})`, `attach read-only, or \`aidlc card takeover ${card.id} --goal ${goal.id}\` once the lease has expired and the old owner's operations are reconciled`, { at: now, global: false });
-      const stopped = this.save({ ...run, state: 'STOP', stop });
-      return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
-    }
+    // A lease another session took after the assessment read it: the same stop as a foreign dispatch, and no write.
+    if (claim.status === 'held') return this.foreignDispatch(goal, card, run, claim.lease, now);
     if (claim.status === 'expired') {
       const stop = makeStop('ownership', `card ${card.id} has an expired lease from session ${claim.lease.owner.session}`, `reconcile the old owner's in-flight operations (aidlc ops list --goal ${goal.id}), then \`aidlc card takeover ${card.id} --goal ${goal.id}\``, { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });

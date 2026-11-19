@@ -9,6 +9,7 @@ import { LeaseStore, resourceKeys, type ClaimResult } from '../../src/coordinati
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import type { Goal } from '../../src/core/types.ts';
+import { makeStop } from '../../src/core/stop.ts';
 
 const CARD = 'T1-HELLO';
 
@@ -54,6 +55,21 @@ test('T0-FOREIGN-DISPATCH-NO-WRITE acceptance 1 - card next under another sessio
     const foreign = fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD)!);
     assert.deepEqual(written(fx, goal), before, 'the run file, the journal and the lease file are as before the call');
     assertNamesHolder(fx, goal, foreign.directive);
+    // B's session on another host is not the holder either [R1]
+    setActorForTests({ ...actorB, host: 'other-host' });
+    assertNamesHolder(fx, goal, fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD)!).directive);
+    assert.deepEqual(written(fx, goal), before, 'same session, other host: nothing written');
+    // an ownership stop already on the stored run (saved by an earlier version) gives way to the stop that names the holder [R2]
+    setActorForTests(actorA);
+    const run = fx.store.getCardRun(goal.id, CARD)!;
+    fx.store.saveCardRun({ ...run, state: 'STOP', stop: makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate', { at: fx.now() }) });
+    const stored = written(fx, goal);
+    assertNamesHolder(fx, goal, fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD)!).directive);
+    assert.deepEqual(written(fx, goal), stored, 'a stored ownership stop: nothing written');
+    // at the instant the lease expires it is still live [R1]
+    fx.clock.now = fx.leases.read(resourceKeys.card(fx.repo.key, CARD))!.expiresAt;
+    assertNamesHolder(fx, goal, fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD)!).directive);
+    assert.deepEqual(written(fx, goal), stored, 'at expiresAt: nothing written');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
