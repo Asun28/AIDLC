@@ -13,8 +13,9 @@ allow_paths:
   - tests/scenarios/r3-panel.test.ts
   - docs/OPERATIONS.md
   - changelog.d/T1-R3-PANEL-FOLD.md
+  - .claude/skills/verify-card-run-writes/SKILL.md
   - specs/tasks/T1-R3-PANEL-FOLD.md
-dod_command: npm run typecheck && node --test tests/core/panel-fold.test.ts tests/scenarios/r3-panel.test.ts tests/core/review-policy.test.ts
+dod_command: npm run typecheck && node --test tests/core/panel-fold.test.ts tests/scenarios/r3-panel.test.ts tests/core/review-policy.test.ts tests/scenarios/fault-points.test.ts
 dod_exit: 0
 requirements:
   - R1. `foldPanelReasons(reasons)` (new, exported from src/core/review-policy.ts, pure) shall take the cited block reasons of one panel decision with their member and return groups: two reasons of different members join one group when `findingLocation` names the same file, their cited line ranges overlap (a reason with no line joins none), and their class (`findingClass`, else the dimension number) is equal. A reason joins at most one group; the group keeps the first member's reason as its text, in member order primary first.
@@ -24,7 +25,7 @@ requirements:
 acceptance:
   - 1. `tests/core/panel-fold.test.ts` (new), "T1-R3-PANEL-FOLD acceptance 1: folds on same file, overlapping lines and class; keeps apart on another class, disjoint lines, a reason with no line, or the same member". Fails on main (no export). [R1] [dod arm 1]
   - 2. tests/scenarios/r3-panel.test.ts, new test "T1-R3-PANEL-FOLD acceptance 2: one defect cited by both members is one finding with alsoRaisedBy; a re:F<n> is not folded". Fails on main. [R2] [R3] [dod arm 1]
-  - 3. tests/core/review-policy.test.ts and the tests of T1-R3-PANEL pass with no line changed. [R1] [dod arm 1]
+  - 3. tests/core/review-policy.test.ts, the tests of T1-R3-PANEL and fault-points.test.ts pass with no line changed; the record of .claude/skills/verify-card-run-writes/SKILL.md describes the code after the change within the byte cap of tests/surface/templates.test.ts. [R1] [dod arm 1]
   - 4. The OPERATIONS.md and changelog text are as R4 states (reviewer-verified against the diff). [R4]
 depends_on: [T1-R3-PANEL]
 budget: 160
@@ -43,7 +44,7 @@ The author repairs one finding per defect, not one per member, and the stats do 
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/core/panel-fold.test.ts tests/scenarios/r3-panel.test.ts tests/core/review-policy.test.ts
+npm run typecheck && node --test tests/core/panel-fold.test.ts tests/scenarios/r3-panel.test.ts tests/core/review-policy.test.ts tests/scenarios/fault-points.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the two new tests pass and the existing tests pass unchanged.
