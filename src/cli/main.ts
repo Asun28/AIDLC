@@ -775,9 +775,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = cardGoalId(c, cardId, o.goal);
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}`);
-      // The card lease next to the run: a run stopped for ownership before PREPARE names no owner in its stop, and
-      // the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md, Sessions). An
-      // unreadable record is named by its store error code only, never by its contents.
+      // The card lease next to the run: the stop of a dispatch under another session's live lease names the holder and
+      // is not saved, and the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md,
+      // Sessions). An unreadable record is named by its store error code only, never by its contents.
       const me = currentActor();
       let lease: { owner: { session: string; host: string; pid: number }; generation: number; expiresAt: string; released: boolean; ownedByThisSession: boolean } | { unreadable: string } | null = null;
       let leaseLine = '-';

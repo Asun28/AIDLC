@@ -140,12 +140,12 @@ test('T0-SESSION-IDENTITY-2, live to expired: a run whose lease belongs to an en
     assert.equal(prepared.directive.kind, 'prepare');
     assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-A');
     // window B, the new session after a /clear, reads the same run: stopped for ownership before PREPARE, and the
-    // stop names no owner
+    // stop names the holder, its lease generation and expiry (T0-FOREIGN-DISPATCH-NO-WRITE-2)
     setActorForTests(actorB);
     const stoppedLive = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(stoppedLive.directive.kind, 'stop');
     assert.equal(stoppedLive.run.stop?.reason, 'ownership');
-    assert.ok(!stoppedLive.run.stop?.detail.includes('win-A'), `the generic stop names no owner: ${stoppedLive.run.stop?.detail}`);
+    for (const part of ['win-A', 'generation 0', fx.leases.read(cardKey)!.expiresAt]) assert.ok(stoppedLive.run.stop?.detail.includes(part), `the stop names ${part}: ${stoppedLive.run.stop?.detail}`);
     // the owner session is readable from the lease record while the lease is live: what card status prints
     assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-A');
     // expiry alone clears nothing: the stop persists and the record still names the owner
