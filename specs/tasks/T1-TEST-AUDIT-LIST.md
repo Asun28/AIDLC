@@ -63,3 +63,30 @@ Guard sweep of `tests/surface/test-audit.test.ts` (each guard loosened in turn, 
 | empty covered by is a problem | not checked | acceptance 1 fails |
 | remove without cover: `covered by` is `none` | any row with remove | acceptance 2 fails |
 | remove without cover: action is not update | any row with none | acceptance 2 fails |
+
+Repair after R3 decision 1 (candidate 20f59f6c, findings F1 to F4). F1: the two uncovered rows carry exactly `none`, and a `covered by` that starts with the word `none` in any letter case but is not exactly `none` is refused (before the repair the test failed on those two rows). F2: the plan.test.ts row is `update` with `none`, the skeleton assertions named in its evidence. F3: test names are read from `it`/`test` call expressions of the TypeScript AST, so text in comments, strings and fixture objects is not a name. F4: the header must be followed by a six-cell separator line. Sweep of the guards after the repair (each loosened in turn, the file run, then restored; all 22 fail a test):
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| header row equals the six columns in order | any table line | acceptance 1 fails |
+| separator line required after the header | not checked | acceptance 1 fails |
+| separator line starts with a pipe | any line | acceptance 1 fails |
+| separator has six cells | any count | acceptance 1 fails |
+| separator cells are dashes | anything | acceptance 1 fails |
+| separator cells may carry alignment colons | dashes only | acceptance 1 fails |
+| rows end at the first non-table line | skip non-table lines | acceptance 1 fails |
+| split only at an unescaped pipe | split at every pipe | acceptance 1 fails |
+| callee is an identifier | last name of any callee (`t.test`) | acceptance 1 fails |
+| callee is `it` or `test` | any identifier | acceptance 1 fails |
+| first argument is a string literal | source text includes the name | acceptance 1 fails |
+| name equals the literal value | literal starts with the name | acceptance 1 fails |
+| a missing file is a problem | no problem | acceptance 1 fails |
+| class in the four values | any class | acceptance 1 fails |
+| action in the two values | any action | acceptance 1 fails |
+| empty evidence is a problem | not checked | acceptance 1 fails |
+| empty covered by is a problem | not checked | acceptance 1 fails |
+| covered by starting with none must be exactly none | not checked | acceptance 1 fails |
+| that check stops at a word boundary | any prefix `none` | acceptance 1 fails |
+| that check ignores letter case | case-sensitive | acceptance 1 fails |
+| remove without cover: `covered by` is `none` | any row with remove | acceptance 2 fails |
+| remove without cover: action is not update | any row with none | acceptance 2 fails |
