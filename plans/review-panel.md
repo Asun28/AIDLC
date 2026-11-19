@@ -32,7 +32,7 @@ Measure first, and reuse what is measured. The 2026-11-16 arms left a matched Co
 
 ## Order of work
 1. T1-BENCH-FORMAL-COMMAND, then T1-REVIEW-POLICY-PIN (both touch `docs/OPERATIONS.md`); T1-BENCH-CLEAN-40-2 in parallel with each.
-2. Stage 1 (coordinator, after T1-BENCH-FORMAL-COMMAND merges): Fable 5.2 once on `_local/arms/miss25` and the 15 clean cases, reports under `_local/panel-arms/`, compared with the saved Codex pair. Stage 2 only when the gate holds: Codex and Fable at `--trials 3` on `evals/review/replay` and `evals/review/clean` (after T1-BENCH-CLEAN-40-2 and T1-ARMS-REPORT merge). Spend as the owner approves in the intent.
+2. Stage 1 (coordinator, after T1-BENCH-FORMAL-COMMAND merges): Fable 5.2 once on `_local/arms/miss25` and the 15 clean cases, reports under `_local/panel-arms/`, compared with the saved Codex pair. Stage 2 only when the gate holds: Codex and Fable at `--trials 3` on `evals/review/replay` and `evals/review/clean` (after T1-BENCH-CLEAN-40-2 merges). Spend as the owner approves in the intent.
 3. T1-PANEL-ARMS-REPORT.
 4. T1-R3-PANEL, then T1-R3-PANEL-FOLD.
 5. T1-R3-PANEL-ON, only with a keep verdict in `bench/outcome/panel.json`; with a drop verdict the card is closed unmerged with the verdict as its reason.

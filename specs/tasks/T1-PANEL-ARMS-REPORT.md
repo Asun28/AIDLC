@@ -28,10 +28,10 @@ acceptance:
   - 4. Same file, "T1-PANEL-ARMS-REPORT acceptance 4: panel.md has its title, sections and the banned-character rule, and every table value equals its source". Fails on main. [R5] [dod arm 1]
   - 5. outcome-arms.test.ts and prose.test.ts pass with no line changed. [R6] [dod arm 1]
   - 6. The limits of R5 and the README line are as stated (reviewer-verified against the diff). [R5] [R6]
-depends_on: [T1-ARMS-REPORT, T1-BENCH-FORMAL-COMMAND, T1-BENCH-CLEAN-40-2]
+depends_on: [T1-BENCH-FORMAL-COMMAND, T1-BENCH-CLEAN-40-2]
 budget: 300
 tdd: true
-sweep: "Saved Codex pair, policy aa7f80bac1a3: _local/arms/rounds-miss.json (`rounds[0]` per case is round 1, 33 hits), order-miss.json (35), rounds-clean.json and order-clean.json (1 of 15 each, the same case). Earlier unions computed by hand: _local/bench-step4/scripts (2026-11-07) and the arms of 2026-11-16. Pattern for assemble and the table-row rule: bench/outcome/arms.ts of T1-ARMS-REPORT."
+sweep: "Saved Codex pair, policy aa7f80bac1a3: _local/arms/rounds-miss.json (`rounds[0]` per case is round 1, 33 hits), order-miss.json (35), rounds-clean.json and order-clean.json (1 of 15 each, the same case). Earlier unions computed by hand: _local/bench-step4/scripts (2026-11-07) and the arms of 2026-11-16. Pattern for assemble and the table-row rule: bench/outcome/replay.ts (assembleReplay, reduce) and, if merged by then, bench/outcome/arms.ts of T1-ARMS-REPORT (a card of goal review-recall, not of this goal)."
 forbid:
   - weakening, skipping or deleting a test to go green, or changing a line of an existing test
   - a new bench run, or a rerun of an arm, inside this card
