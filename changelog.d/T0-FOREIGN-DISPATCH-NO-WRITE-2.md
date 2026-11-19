@@ -1,1 +1,0 @@
-- T0-FOREIGN-DISPATCH-NO-WRITE-2: `aidlc card next` from a session that is not the holder of a live card lease returns a stop for ownership naming the holder session, host, lease generation and expiry, and writes nothing to the run record, the goal journal or the lease; before, it saved an ownership STOP onto the holder's run and journaled a CARD_STATE (issue 378).
