@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-STORE-LIST-ENOENT-2.g-20261118075533-e3c60b.clean",
+  "candidate": "422c9fe122b6c28967b7040d628ef6ceba7001f4",
+  "base": "8486243f4ca84de3f42a90aa891293b62614256f",
+  "card": {
+    "id": "T0-STORE-LIST-ENOENT-2",
+    "path": "specs/tasks/T0-STORE-LIST-ENOENT-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-STORE-LIST-ENOENT-2 clean (goal g-20261118075533-e3c60b)",
+  "note": "R3 decision 1 passed (codex)"
+}

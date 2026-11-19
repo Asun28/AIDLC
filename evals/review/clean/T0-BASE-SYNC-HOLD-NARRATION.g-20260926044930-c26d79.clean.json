@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-BASE-SYNC-HOLD-NARRATION.g-20260926044930-c26d79.clean",
+  "candidate": "4fcf27cef929360fc474702c95ac580e0ca6d6f4",
+  "base": "ceb051540e9bf82b3f309f5a7dedc73344022915",
+  "card": {
+    "id": "T0-BASE-SYNC-HOLD-NARRATION",
+    "path": "specs/tasks/T0-BASE-SYNC-HOLD-NARRATION.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-BASE-SYNC-HOLD-NARRATION clean (goal g-20260926044930-c26d79)",
+  "note": "R3 decision 1 passed (codex)"
+}

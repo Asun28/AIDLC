@@ -1222,7 +1222,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--rounds <n>', 'formal stage: review a blocked candidate again inside one decision while a round adds a new P0 or P1 reason (1 to 3)', '1')
     .option('--order <order>', 'where the verdict stands in the schema and the contract line: verdict-first or analysis-first (reasons and axes before the verdict)', 'verdict-first')
     .option('--pre-command <file>', 'pre stage: a JSON file whose command, reviewer and optional answerMarker, timeoutMs and maxDiffBytes replace those of preReview for this run (no configuration is written)')
-    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string; rounds: string; order: string; preCommand?: string }) => {
+    .option('--formal-command <file>', 'formal stage: a JSON file whose command, reviewer and optional timeoutMs, maxDiffBytes and effort replace those of formalReview for this run, with no fallback or base-sync reviewer (no configuration is written)')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string; rounds: string; order: string; preCommand?: string; formalCommand?: string }) => {
       if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
       if (o.order !== 'verdict-first' && o.order !== 'analysis-first') fail(`--order must be verdict-first or analysis-first, not ${o.order}`);
       if (o.rules !== 'newest' && o.rules !== 'matched') fail(`--rules must be newest or matched, not ${o.rules}`);
@@ -1231,7 +1232,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
       // No ctx(): the bench reads no goal state and writes nothing under the state directory.
       const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
-      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials), rounds: Number(o.rounds), order: o.order, preCommand: o.preCommand });
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials), rounds: Number(o.rounds), order: o.order, preCommand: o.preCommand, formalCommand: o.formalCommand });
       out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
       if (report.leftCheckouts.length) process.exitCode = 1;
     });

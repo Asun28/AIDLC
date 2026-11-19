@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-PS-GUARD-READ.g-20261104102629-2d3902.clean",
+  "candidate": "f4b1dca46da7fe3521a54decbc55aa38f14275e4",
+  "base": "3c7082a218c84ca170e6e5053aae09f78990279a",
+  "card": {
+    "id": "T1-PS-GUARD-READ",
+    "path": "specs/tasks/T1-PS-GUARD-READ.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-PS-GUARD-READ clean (goal g-20261104102629-2d3902)",
+  "note": "R3 decision 1 passed (codex)"
+}

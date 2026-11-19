@@ -15,8 +15,9 @@ allow_paths:
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - changelog.d/T1-R3-PANEL.md
+  - .claude/skills/verify-card-run-writes/SKILL.md
   - specs/tasks/T1-R3-PANEL.md
-dod_command: npm run typecheck && node --test tests/scenarios/r3-panel.test.ts tests/surface/config.test.ts tests/surface/pre-review.test.ts tests/scenarios/second-pass.test.ts tests/scenarios/r3-fallback.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/r3-panel.test.ts tests/surface/config.test.ts tests/surface/pre-review.test.ts tests/scenarios/second-pass.test.ts tests/scenarios/r3-fallback.test.ts tests/scenarios/fault-points.test.ts
 dod_exit: 0
 requirements:
   - R1. `formalReview.panel` (optional, src/config.ts) shall be an object `{ reviewer, command, timeoutMs?, shell?, maxDiffBytes?, effort? }` validated as `formalReview.fallback` is (non-empty argv, no blank argument), with `reviewer` differing after trimming and case folding from `formalReview.reviewer`, the fallback's and the base-sync reviewer's. `secondPass: true` together with `panel` is refused naming both keys. Absent, every dispatch is as on main.
@@ -29,7 +30,7 @@ acceptance:
   - 2. Same file, "T1-R3-PANEL acceptance 2: aggregate outcomes". Cases: block+pass is block; pass+pass is pass; block+hold is block; pass+hold reruns the held member once on the other command, then pass+pass passes and pass+block blocks; pass+malformed is no-verdict. Fails on main. [R3] [dod arm 1]
   - 3. Same file, "T1-R3-PANEL acceptance 3: findings carry their member; a re:F<n> by either member re-raises; a finding one member drops and the other re-raises stays open; two members re-raising one dispute count once". Fails on main. [R4] [dod arm 1]
   - 4. tests/surface/config.test.ts, new test "T1-R3-PANEL acceptance 4: panel validation and the secondPass refusal". Fails on main. [R1] [dod arm 1]
-  - 5. pre-review.test.ts, second-pass.test.ts and r3-fallback.test.ts pass with no line changed. [R1] [R3] [dod arm 1]
+  - 5. pre-review.test.ts, second-pass.test.ts, r3-fallback.test.ts and fault-points.test.ts pass with no line changed; the record of .claude/skills/verify-card-run-writes/SKILL.md (coverage and sync commit) describes the code after the change and the file stays within the byte cap of tests/surface/templates.test.ts. [R1] [R3] [dod arm 1]
   - 6. The docs and changelog text are as R5 states (reviewer-verified against the diff). [R5]
 depends_on: [T1-PANEL-ARMS-REPORT]
 budget: 250
@@ -51,7 +52,7 @@ A repository can run two formal reviewers on every R3 decision, off by default, 
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/r3-panel.test.ts tests/surface/config.test.ts tests/surface/pre-review.test.ts tests/scenarios/second-pass.test.ts tests/scenarios/r3-fallback.test.ts
+npm run typecheck && node --test tests/scenarios/r3-panel.test.ts tests/surface/config.test.ts tests/surface/pre-review.test.ts tests/scenarios/second-pass.test.ts tests/scenarios/r3-fallback.test.ts tests/scenarios/fault-points.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the four new tests pass and the existing tests pass unchanged.

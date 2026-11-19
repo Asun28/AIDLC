@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-DOCTOR-CHILD-TIMEOUT.g-20261118090512-7153a2.clean",
+  "candidate": "2777f15b1a842b26045bdd7b2446f3b579515593",
+  "base": "177b94a18b8c4c4b002d6600873af24eff5b47d6",
+  "card": {
+    "id": "T0-DOCTOR-CHILD-TIMEOUT",
+    "path": "specs/tasks/T0-DOCTOR-CHILD-TIMEOUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-DOCTOR-CHILD-TIMEOUT clean (goal g-20261118090512-7153a2)",
+  "note": "R3 decision 1 passed (codex)"
+}

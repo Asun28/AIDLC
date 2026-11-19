@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-DOD-SCAFFOLD-SHELL-4.g-20261117020126-c6d7ce.clean",
+  "candidate": "1c121fbc13f8029b1514895da830862ab1efda2e",
+  "base": "1925da0b4e7e56c878292d66c19b5fbbaa18b057",
+  "card": {
+    "id": "T0-DOD-SCAFFOLD-SHELL-4",
+    "path": "specs/tasks/T0-DOD-SCAFFOLD-SHELL-4.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-DOD-SCAFFOLD-SHELL-4 clean (goal g-20261117020126-c6d7ce)",
+  "note": "R3 decision 1 passed (codex)"
+}
