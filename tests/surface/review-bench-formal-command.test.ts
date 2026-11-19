@@ -165,6 +165,13 @@ test('T1-BENCH-FORMAL-COMMAND acceptance 3: each refusal of R1 and R2 happens be
       'bad-diff.json': JSON.stringify({ command: ['fable'], reviewer: 'f', maxDiffBytes: 1.5 }),
       'bad-effort.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { default: 'extreme' } }),
       'unknown-key.json': JSON.stringify({ command: ['fable'], reviewer: 'f', fallback: { command: ['opus'], reviewer: 'opus' } }),
+      // Unknown keys inside effort and inside each of its rules are refused too (R3 finding F1).
+      'effort-typo.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { defualt: 'high' } }),
+      'effort-extra.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { default: 'high', low: { minChangedLines: 1 } } }),
+      'high-typo.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { default: 'medium', high: { minChangedLine: 500 } } }),
+      'high-extra.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { default: 'medium', high: { minChangedLines: 500, path: ['src/**'] } } }),
+      'xhigh-extra.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { default: 'medium', xhigh: { minChangedLines: 500, globs: ['src/**'] } } }),
+      'effort-lowers.json': JSON.stringify({ command: ['fable'], reviewer: 'f', effort: { default: 'max', high: { minChangedLines: 1 } } }),
     };
     for (const [name, text] of Object.entries(malformed)) writeFileSync(path.join(fx.root, 'bench', name), text);
 

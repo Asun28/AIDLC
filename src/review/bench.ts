@@ -246,14 +246,21 @@ function readPreCommand(file: string): z.infer<typeof PreCommandFile> {
   return parsed.data;
 }
 
-/** The `--formal-command` file (card T1-BENCH-FORMAL-COMMAND): the `formalReview` keys a reviewer needs; an unknown key, `fallback` and `baseSync` included, is refused. */
+/**
+ * The keys `ReviewEffortPolicy` knows, at every level, with each object strict: that schema strips an unknown key, so a
+ * misspelt `default` or rule field would select another level in silence. The values are checked by `ReviewEffortPolicy`.
+ */
+const EffortRuleKeys = z.object({ minChangedLines: z.unknown(), paths: z.unknown().optional() }).strict();
+const StrictEffortPolicy = z.object({ default: z.unknown().optional(), high: EffortRuleKeys.optional(), xhigh: EffortRuleKeys.optional() }).strict().pipe(ReviewEffortPolicy);
+
+/** The `--formal-command` file (card T1-BENCH-FORMAL-COMMAND): the `formalReview` keys a reviewer needs; an unknown key at any level, `fallback` and `baseSync` included, is refused. */
 const FormalCommandFile = z
   .object({
     command: z.array(z.string().regex(/\S/, 'must not be blank')).min(1),
     reviewer: z.string().regex(/\S/, 'must not be blank'),
     timeoutMs: z.number().int().positive().optional(),
     maxDiffBytes: z.number().int().positive().optional(),
-    effort: ReviewEffortPolicy.optional(),
+    effort: StrictEffortPolicy.optional(),
   })
   .strict();
 
