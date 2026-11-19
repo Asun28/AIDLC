@@ -43,3 +43,31 @@ npm run typecheck && node --test tests/infra/cli-inprocess.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the four acceptance tests pass; they fail on main because the helper does not exist.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/cli-inprocess.test.ts` acceptance 1: six calls compared whole with `bin/aidlc.js` (`--help`, unknown command, `cards validate`, `-C` refusal, `ops intent` throw, `next` throw with a multi-line message), plus the `doctor` session line with env keys given as undefined. RED on 07a56be7: ERR_MODULE_NOT_FOUND for `tests/infra/cli-inprocess.ts` | pass |
+| 2 | acceptance 2: state before the calls equals the state at file load; after each of a passing, an exitCode 2, an exiting and a throwing call, cwd, env, exitCode, `process.exit`, both writers, stdout `isTTY` and the `process.stdin` descriptor equal it | pass |
+| 3 | acceptance 3: a second call while the first runs rejects matching `/runCliInProcess/`; the first returns 0 and the state is restored | pass |
+| 4 | acceptance 4: R4 fed in-process. `main` reads stdin only in `hook` (`readStdin`, `src/hooks/entry.ts`, listeners on `process.stdin`), so the helper puts a Readable of `input` in its place; `hook auto` with a UserPromptSubmit event equals the child, whose stdout holds `[route]` | pass |
+
+Guard sweep (each guard loosened, the test file run, then restored):
+
+| Guard | Loosened form | Failed |
+|---|---|---|
+| nested-call refusal `if (running)` | `if (false)` | acceptance 3 |
+| status from the exit code | exitCode only | acceptance 1, 2 |
+| status after `exit` falls back to exitCode | `error.code ?? 0` | equivalent: every `process.exit` in `main` (fail, watch, phase, hook) and in commander's `_exit` passes a code |
+| status after resolve from exitCode | `status = 0` | acceptance 2 |
+| `instanceof ExitSignal` | `false` | acceptance 1, 4 |
+| rejection line: blank-line filter / trim | dropped | acceptance 1 (each) |
+| env: delete keys absent or undefined | delete only absent keys | acceptance 1 |
+| env: skip undefined values | assign them | acceptance 1 |
+| `if (options.input)` | `if (false)` | acceptance 4 |
+| collector passes writes from outside the call | captures all | acceptance 4 (the runner's report of acceptance 1 lands in the call) |
+| stdout `isTTY` pinned false | not pinned | equivalent under `node --test`: a test file's stdout is a pipe, `isTTY` is already undefined |
+| restore deletes the pinned `isTTY` | not deleted | acceptance 2 |
+| `asStatus` null/undefined check | `Number(code)` | acceptance 1, 2, 3 |
+| stdin descriptor restored | not restored | acceptance 2, 3 |

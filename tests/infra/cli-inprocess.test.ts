@@ -23,8 +23,11 @@ function child(argv: string[], options: { cwd: string; env: NodeJS.ProcessEnv; i
 }
 
 function processState(): unknown[] {
-  return [process.cwd(), JSON.stringify(Object.entries(process.env).sort(([a], [b]) => (a < b ? -1 : 1))), process.exitCode, process.exit, process.stdout.write, process.stderr.write];
+  return [process.cwd(), JSON.stringify(Object.entries(process.env).sort(([a], [b]) => (a < b ? -1 : 1))), process.exitCode, process.exit, process.stdout.write, process.stderr.write, Object.getOwnPropertyDescriptor(process.stdout, 'isTTY'), Object.getOwnPropertyDescriptor(process, 'stdin')];
 }
+
+// Before any call: acceptance 2 also checks that the calls of acceptance 1 left nothing behind.
+const atLoad = processState();
 
 describe('runCliInProcess', () => {
   it('T1-TEST-CLI-INPROC acceptance 1: in-process and bin/aidlc.js give the same status, stdout and stderr', async () => {
@@ -35,6 +38,7 @@ describe('runCliInProcess', () => {
       { argv: ['cards', 'validate'], status: 0 },
       { argv: ['-C', 'nowhere', 'cards', 'validate'], status: 1 },
       { argv: ['ops', 'intent', '--goal', 'g-x', '--kind', 'bogus', '--target', 't'], status: 1 },
+      { argv: ['next', '--goal', 'g-nope\n\n  second  '], status: 1 },
     ];
     for (const { argv, status } of calls) {
       const expected = child(argv, { cwd: repo, env });
@@ -42,11 +46,18 @@ describe('runCliInProcess', () => {
       const actual = await runCliInProcess(argv, { cwd: repo, env });
       assert.deepEqual(actual, expected, argv.join(' '));
     }
+    // A key given as undefined is left out of the call's environment, as spawnSync leaves it out of the child's.
+    const unset = { ...env, AIDLC_SESSION: undefined, CLAUDE_CODE_SESSION_ID: undefined };
+    const sessionLine = (stdout: string): string | undefined => stdout.split('\n').find((l) => l.startsWith('session '));
+    const expected = child(['doctor', '--no-json'], { cwd: repo, env: unset });
+    assert.match(sessionLine(expected.stdout) ?? '', /^session +default-/);
+    assert.equal(sessionLine((await runCliInProcess(['doctor', '--no-json'], { cwd: repo, env: unset })).stdout), sessionLine(expected.stdout));
   });
 
   it('T1-TEST-CLI-INPROC acceptance 2: cwd, env, exitCode, exit and the streams are restored after a passing, an exiting and a throwing call', async () => {
     const { repo, env } = fixture();
     const before = processState();
+    assert.deepEqual(before, atLoad);
     const calls: Array<{ argv: string[]; status: number }> = [
       { argv: ['cards', 'validate'], status: 0 },
       { argv: ['security', 'check'], status: 2 },
