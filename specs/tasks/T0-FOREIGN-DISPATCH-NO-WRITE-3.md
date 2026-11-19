@@ -1,7 +1,7 @@
 ---
 id: T0-FOREIGN-DISPATCH-NO-WRITE-3
 title: (replaces T0-FOREIGN-DISPATCH-NO-WRITE-2 and carries its candidate; R1 scoped to the lease read of the dispatch) aidlc card next from a session that is not the holder of a live card lease writes nothing to the run record or the journal and returns a stop that names the holder, where it saved an ownership STOP onto the holder's run (issue 378)
-status: todo
+status: merged
 branch: T0-FOREIGN-DISPATCH-NO-WRITE-3
 allow_paths:
   - src/loop/card-runner.ts
