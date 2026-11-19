@@ -80,3 +80,58 @@ Guard sweep (each loosened form, then `foreign-dispatch`, `two-windows`, `owners
 | `expiresAt >= now` | `>` | acceptance 1 (at `expiresAt`) |
 | session and host compared | session only | acceptance 1 (same session, other host) |
 | stored stop kept unless `ownership` | any stored stop kept | acceptance 1 (stored ownership stop) |
+
+Attempt 2 (this card, on 7a50d53b):
+
+| Item | Proof | Result |
+|---|---|---|
+| 4 | `tests/scenarios/two-windows.test.ts` "T0-SESSION-IDENTITY-2, live to expired", line 148: the stop of B's dispatch under A's live lease names `win-A`, `generation 0` and the lease `expiresAt`; the test's other lines unchanged | pass |
+| R4 | `src/cli/main.ts` `card status` comment: the stop of a dispatch under another session's live lease names the holder and is not saved; comment only. `changelog.d/T0-FOREIGN-DISPATCH-NO-WRITE-2.md` moved from the first card's fragment | done |
+| 6 | DoD: exit 0, 230 of 230; fault-points 28 of 28 inside it | pass |
+
+Attempt 3 (repair of R3 decision 1, F1 to F4; RED is each test run against the src of c81ccb51):
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `foreign-dispatch.test.ts` acceptance 1 (also same session on another host, a stored ownership stop, the instant of `expiresAt`) | pass |
+| 2 | same file, acceptance 2 | pass |
+| 3 | same file, acceptance 3: baseline read before `runner.next`; a fresh run at PREPARE and a BUILD run under B's expired lease taken to PREPARE, B acting before A's claim. RED on c81ccb51: journal 8 lines, expected 7 (CARD_STATE BUILD to PREPARE) | pass |
+| 4 | `two-windows.test.ts` "T0-CARD-TAKEOVER, prepared" and "T0-SESSION-IDENTITY-2, live to expired" line 148 | pass |
+| 5 | `saveOwnershipStop` fixtures as in attempt 1 | pass |
+| 6 | DoD exit 0; fault-points inside it | pass |
+
+Input forms and failure paths the repair handles, each with its covering test (`foreign-dispatch.test.ts`):
+- A lease another session takes after the dispatch's lease read (one read now decides the dispatch; `assess` takes it from `next`): "R3 F2 - a lease another session takes right after the dispatch reads it writes nothing", a fresh run and a BUILD run whose own lease was released. RED on c81ccb51: run saved STOP `stale ownership generation`, journal 6 lines, expected 5.
+- A lease another session takes or renews between the assessment and PREPARE's claim (the claim now precedes every assessment write, chosen by a selection that writes nothing): acceptance 3. RED as above.
+- A foreign live lease with the plan checkpoint missing (the lease check now precedes the checkpoint guard): "R3 F4 - with the plan checkpoint missing, a foreign live lease still returns the stop naming the holder". RED on c81ccb51: `wait`, expected `stop`.
+- The claim ahead only for PREPARE: "the claim ahead of the assessment is taken only for PREPARE: a stopped run claims no lease".
+- The selection writes nothing: "the selection ahead of the claim saves nothing: a merged card stopped for ownership with no lease is reconciled to CLOSE once, journaled".
+- PREPARE uses that claim: "PREPARE uses the claim taken ahead of the assessment: a fresh dispatch journals one LEASE_ACQUIRED and no LEASE_RENEWED".
+- The holder's own lease skips the selection ahead, so its path is as on main: `t0-flow.test.ts` "T1-REVIEW-FINDINGS-4 R3 decision 1" (fails when the selection also runs for the holder) and the released-lease case of "R3 F2" (fails when a released own lease counts as held).
+- The plan checkpoint still holds for a dispatch that may continue, with no claim: `two-windows.test.ts` "T0-CARD-TAKEOVER-2, checkpoint".
+
+Guard sweep of attempt 3 (each loosened form, then `foreign-dispatch`, `two-windows`, `ownership-wait`, `t0-flow`): holder condition dropped, T1-REVIEW-FINDINGS-4 and T1-STORE-CAS-2 duplicate check fail; `!lease.released` in it dropped, R3 F2 fails; claim for any selection, the stopped-run test fails; checkpoint test dropped, T0-CARD-TAKEOVER-2 checkpoint fails; held early return dropped, acceptance 3 and R3 F2 fail; dry save kept, the merged-reconcile test fails; dry append kept, acceptance 3 and R3 F2 fail; `assess` reading the lease again, R3 F2 and the refusals test fail; the claim not handed to PREPARE, the LEASE_ACQUIRED test fails; the lease check after the checkpoint guard, R3 F4 fails. A dry-mode guard on the renewal was removed: the selection runs only on a lease this session does not hold, which the renewal requires, so no input reached it.
+
+Attempt 4 (repair of R3 decision 2, the re-raised F2 and F3 classes; RED is each test run against the src of 0618473a):
+
+Design: every run save and journal append of a `card next` dispatch goes through one writer that, until the dispatch holds a live lease of its own (its renewal or its claim succeeded), makes the write under the card lease's lock after reading the lease there; a live lease of another session or host refuses it with `ForeignLeaseError`, which `next` answers with the holder's stop. A held renewal of this session's lease raises the same error before any write. The holder's path after its renewal takes no extra lease section, as on main.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `foreign-dispatch.test.ts` acceptance 1 | pass |
+| 2 | same file, acceptance 2 | pass |
+| 3 | same file, acceptance 3 (both cases) | pass |
+| 4 | `two-windows.test.ts` "T0-CARD-TAKEOVER, prepared" and "T0-SESSION-IDENTITY-2, live to expired" | pass |
+| 5 | `saveOwnershipStop` fixtures | pass |
+| 6 | DoD exit 0, 239 of 239; fault-points inside it; `npm test` 3878 tests, 3846 pass, 0 fail, 32 skipped | pass |
+
+Write points the writer admits, with the covering test (`foreign-dispatch.test.ts`; "loop" is "R3 decision 2 - a lease another session takes right before any lease section of the dispatch stops it there with nothing more written", which injects B's lease before each of A's lease sections in turn and pins the number of sections per dispatch):
+- `assess`: CARD_STATE of the selected state (loop: WAIT, PREPARE, DONE scenarios); CARD_STATE and save of a merged card's ownership-stop reconciliation (loop: merged scenario); the `ownership-stop-reconciled` NOTE, the kept-receipt save and its ATTEMPT_FINISHED (same `save`/`append` parameters; their dispatches claim ahead or select after them, no dedicated scenario); a held renewal (raised before any write): "R3 decision 2 F3 - B takes over this session's expired lease before its renewal: a BUILD run needing PREPARE writes nothing" and "... a run at SHIP writes nothing".
+- `next`: the WAIT save (loop, WAIT; "R3 decision 2 F2 - B renews its expired lease right after the dispatch reads it, while an operation runs: the WAIT path writes nothing"), the DONE save (loop, DONE), the STOP save (loop, stored risk stop), the REVIEW_FIX saves (same writer; reached only by a holder after its renewal or a held-renewal stop).
+- `prepare`: the claim taken ahead (loop, PREPARE section 1), the expired-lease STOP save (loop, PREPARE), the worktree-stop save, LEASE_ACQUIRED/LEASE_RENEWED and the PREPARE/BUILD save (after its own claim: owned).
+- `build`: its two saves (same writer; reached after a renewal, a held-renewal stop, or gated when no renewal applies).
+- `close` (from `card next`): the held-claim and takeover-refusal STOP saves (loop, merged scenario sections 3 and 4) and the CLOSE/DONE save (loop, merged section 5, after A's own takeover, where B cannot take the lease).
+
+RED on 0618473a: the loop fails at the merged scenario, section 1 (the CLOSE claim): run saved `STOP` where it was `CLOSE`; "R3 decision 2 F2" journal 8 lines, expected 7; "R3 decision 2 F3 ... PREPARE" journal 7 lines, expected 6; "R3 decision 2 F3 ... SHIP" run saved `STOP` (fenced: stale generation).
+
+Guard sweep of attempt 4 (each loosened form, then `foreign-dispatch`, `two-windows`, `ownership-wait`, `t0-flow`): the refusal in the writer dropped, the loop and R3 decision 2 F2 fail; the owned short-cut dropped (a lease section for every holder write), T1-STORE-CAS-2 acceptance 4 fails; owned from the start, the loop and F2 fail; the held-renewal error dropped, "F3 ... a run at SHIP" fails; ownership after an expired claim ahead, or after any claim in `prepare`, the loop fails; any error caught as a foreign lease, T1-STORE-CAS-2 acceptance 4 fails; the refusal told by `instanceof` instead of identity, `ship-throw.test.ts` "T0-SHIP-THROW-SLOT-2 acceptance 5" fails (a thrown revoked proxy makes `instanceof` throw); the WAIT save, the assessment's save, prepare's expired-lease STOP save or close's state save made without the writer, the loop fails. `read &&` on the held-renewal error keeps `takeover`'s assessment as on main (forbid list); a held renewal inside a takeover needs its own new lease to expire within the call, which no test reaches. close's held-claim branch is main's code with its save through the writer: an early return there was tried and its loosened form was still caught by the writer, so it was removed.
