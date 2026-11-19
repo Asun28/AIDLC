@@ -50,3 +50,40 @@ npm run typecheck && node --test tests/surface/review-bench-formal-command.test.
 ```
 - Expected exit code: 0
 - Assertion: the three new tests pass and the existing bench tests pass unchanged.
+
+## Attempt evidence
+
+Attempt 2 repairs R3 decision 1, finding F1 (class nested-effort-keys-accepted): `ReviewEffortPolicy` strips unknown keys in `effort` and in its `high` and `xhigh` rules, so the `--formal-command` file now checks those keys with strict objects before `ReviewEffortPolicy` checks the values. `effort` is the only nested object of the file schema; `command` holds strings only. RED on 0ba60882: acceptance 3 failed with `Missing expected rejection: bench/effort-typo.json`.
+
+| Acceptance | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/review-bench-formal-command.test.ts` "acceptance 1" (library run and CLI `--formal-command`; argv, effort `high`, timeout, `reviewer`, `options.formalCommand` {path, sha256}, config bytes unchanged, no `formalCommand` without the option) | pass; failed on main (configured `cfg-codex` ran) |
+| 2 | same file, "acceptance 2" (quota hold, 2 trials: one call, by `fable`; every case `no-verdict`) | pass; failed on main |
+| 3 | same file, "acceptance 3" (`--stage pre`, `--pre-command` with formal, absent file, 17 malformed files, 6 of them unknown or misspelt keys inside `effort` and its `high`/`xhigh` rules or a rule that lowers the level (attempt 2, R3 F1); library and CLI; zero reviewer calls) | pass; failed on main (no rejection) |
+| 4 | DoD: review-bench.test.ts, review-bench-rounds.test.ts, prose.test.ts, no line changed | pass (DoD exit 0, 56 tests, 0 fail) |
+| 5 | `bench/outcome/fable-r3.json`; docs/OPERATIONS.md `### Reviewer bench: another formal reviewer` | reviewer-verified against the diff |
+
+`npm run check` (attempt 1): exit 0; 3869 tests, 3837 pass, 0 fail, 32 skipped.
+`npm run check` (attempt 2): exit 0; 3869 tests, 3837 pass, 0 fail, 32 skipped.
+
+The R6 text is a new subsection placed directly before `### Reviewer bench`: tests/surface/review-bench.test.ts (acceptance 9) pins every paragraph between `### Reviewer bench` and `## Evals`, so text inside that section fails acceptance 4 unless that test changes, and this card forbids changing it.
+
+Guard sweep (each loosened in turn, test file run, restored):
+
+| Guard | Loosened form | Failing test |
+|---|---|---|
+| `--formal-command` needs `--stage formal` | check removed | acceptance 3 |
+| `.strict()` on the file schema | `.passthrough()` | acceptance 3 |
+| `command` `.min(1)` | `.min(0)` | acceptance 3 |
+| argument `/\S/` | no regex | acceptance 3 |
+| `reviewer` `/\S/` | no regex | acceptance 3 |
+| `timeoutMs` positive | not positive | acceptance 3 |
+| `maxDiffBytes` int | not int | acceptance 3 |
+| `effort` schema | `z.unknown()` | acceptance 3 |
+| `effort` object strict (attempt 2) | not strict | acceptance 3 (`effort-typo.json` accepted) |
+| `effort.high`/`xhigh` rule objects strict (attempt 2) | not strict | acceptance 3 (`high-extra.json` accepted) |
+| `effort` values piped to `ReviewEffortPolicy` (attempt 2) | no pipe | acceptance 3 (`bad-effort.json` accepted) |
+| missing-file refusal | check removed | acceptance 3 |
+| not-JSON message names the option | message without it | acceptance 3 |
+| `formalCommand` only with the option | always present (`undefined`) | acceptance 1 |
+| `fallback`/`baseSync` dropped | kept | equivalent: src/review/bench.ts never reads `formalReview.fallback` or `baseSync` (no dispatch path), so no input can tell them apart; the drop keeps the run's config as R3 states it |
