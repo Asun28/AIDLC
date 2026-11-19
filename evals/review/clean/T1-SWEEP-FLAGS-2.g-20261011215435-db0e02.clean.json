@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-SWEEP-FLAGS-2.g-20261011215435-db0e02.clean",
+  "candidate": "9507b8cc4623e28b2987c1b58d226abc516a2e0c",
+  "base": "041a7b66a4f40308b758e5890652b5d22f02ea1d",
+  "card": {
+    "id": "T1-SWEEP-FLAGS-2",
+    "path": "specs/tasks/T1-SWEEP-FLAGS-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-SWEEP-FLAGS-2 clean (goal g-20261011215435-db0e02)",
+  "note": "R3 decision 1 passed (codex)"
+}

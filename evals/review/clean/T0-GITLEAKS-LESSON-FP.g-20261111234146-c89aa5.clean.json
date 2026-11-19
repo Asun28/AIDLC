@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-GITLEAKS-LESSON-FP.g-20261111234146-c89aa5.clean",
+  "candidate": "23abd2f280c2863b5ddc7989a2fe910607cb6076",
+  "base": "1c8a879dd11443bfa72646d9ce74c433c2c2c8e9",
+  "card": {
+    "id": "T0-GITLEAKS-LESSON-FP",
+    "path": "specs/tasks/T0-GITLEAKS-LESSON-FP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-GITLEAKS-LESSON-FP clean (goal g-20261111234146-c89aa5)",
+  "note": "R3 decision 1 passed (codex)"
+}

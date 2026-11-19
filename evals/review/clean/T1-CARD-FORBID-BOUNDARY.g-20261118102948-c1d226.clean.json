@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-CARD-FORBID-BOUNDARY.g-20261118102948-c1d226.clean",
+  "candidate": "4b8750023fd339754009f1f41a917eed915e8e37",
+  "base": "c663a2b477c6b7b5b7c0eaa01034547324664b38",
+  "card": {
+    "id": "T1-CARD-FORBID-BOUNDARY",
+    "path": "specs/tasks/T1-CARD-FORBID-BOUNDARY.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-CARD-FORBID-BOUNDARY clean (goal g-20261118102948-c1d226)",
+  "note": "R3 decision 1 passed (codex)"
+}

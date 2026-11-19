@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-R2-ANSWER-MARKER.g-20260925114648-16a61c.clean",
+  "candidate": "ea8cec38d652ef5622080b4f9bba8bb95a1e14a2",
+  "base": "fb0664a7942e3ef594b816c00a07a291b91df0b9",
+  "card": {
+    "id": "T0-R2-ANSWER-MARKER",
+    "path": "specs/tasks/T0-R2-ANSWER-MARKER.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-R2-ANSWER-MARKER clean (goal g-20260925114648-16a61c)",
+  "note": "R3 decision 1 passed (claude-opus-5-5)"
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-HOOK-CONFIG-DISCOVERY.g-20260927192704-d30da0.clean",
+  "candidate": "a85dc61a791ef58237aefd68744eab0dc1e6fcbd",
+  "base": "a9d34361c0c03c2584d70436740013b0f43e6ffa",
+  "card": {
+    "id": "T0-HOOK-CONFIG-DISCOVERY",
+    "path": "specs/tasks/T0-HOOK-CONFIG-DISCOVERY.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-HOOK-CONFIG-DISCOVERY clean (goal g-20260927192704-d30da0)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-EXEC-READY-MARGIN.g-20261117122249-80b9da.clean",
+  "candidate": "bfc1206f4d44ee009a2fa21f5103ffaffeb4622a",
+  "base": "44d859a2c2adc8d70480de07490bb37ba43765e3",
+  "card": {
+    "id": "T0-EXEC-READY-MARGIN",
+    "path": "specs/tasks/T0-EXEC-READY-MARGIN.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-EXEC-READY-MARGIN clean (goal g-20261117122249-80b9da)",
+  "note": "R3 decision 1 passed (codex)"
+}
