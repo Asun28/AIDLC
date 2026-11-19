@@ -55,3 +55,24 @@ the holder's run. The holder's next `card next` clears that stop, but if
 the holder is idle until its lease expires, `aidlc next` stops the goal
 on it. With this card the foreign dispatch is read-only: it returns the
 stop, naming the holder, and writes nothing.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/foreign-dispatch.test.ts` acceptance 1. RED on 6e563600: failed on the write (journal 8 lines, expected 7; run saved with `blocker: stale ownership generation`) | pass |
+| 2 | same file, acceptance 2. RED on 6e563600: one `LEASE_RENEWED` with `revalidated`, expected 0 | pass |
+| 3 | same file, acceptance 3, the lease taken through a `LeaseStore` subclass between the assessment and the claim. RED on 6e563600: run saved at revision 1 with the stop | pass |
+| 4 | `tests/scenarios/two-windows.test.ts`, "T0-CARD-TAKEOVER, prepared". RED on 6e563600: stored state `STOP`, expected `BUILD` | pass |
+| 5 | `saveOwnershipStop` fixtures: `ownership-wait.test.ts` (`stoppedForOwnership`, the acceptance 5 test of T0-CARD-LEASE-HEARTBEAT) and `two-windows.test.ts` (T0-SESSION-IDENTITY-3 unprepared, T0-CARD-TAKEOVER prepared, refusals, T1-STORE-CAS-2 `stoppedCard`); the dispatch and its assertions stay, the stop it used to save is written after it | pass |
+| 6 | DoD: 229 of 230. `two-windows.test.ts:148` (T0-SESSION-IDENTITY-2) asserts the stop of a foreign live-lease dispatch names no owner, which R2 reverses; not changed, reported for a ruling. fault-points 28 of 28 | fail (1) |
+
+Guard sweep (each loosened form, then `foreign-dispatch`, `two-windows`, `ownership-wait`):
+
+| Guard | Loosened form | Failed |
+|---|---|---|
+| `lease &&` in `next` | `foreignLive(lease!, now)` | acceptance 1 to 3 and 37 others (no lease record) |
+| `!lease.released` | dropped | two-windows refusals, T0-CARD-TAKEOVER-2 checkpoint |
+| `expiresAt >= now` | `>` | acceptance 1 (at `expiresAt`) |
+| session and host compared | session only | acceptance 1 (same session, other host) |
+| stored stop kept unless `ownership` | any stored stop kept | acceptance 1 (stored ownership stop) |

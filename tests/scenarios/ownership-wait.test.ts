@@ -16,6 +16,8 @@ import { verifyAudit } from '../../src/audit/verifier.ts';
 /**
  * Session B prepares the card (B holds its lease); `elapsed` later session A, which coordinates the goal, reads the run
  * and stops it for ownership: under B's live lease, or, once that lease has expired, at PREPARE's claim as in the incident.
+ * A's dispatch under B's live lease writes nothing since card T0-FOREIGN-DISPATCH-NO-WRITE: the stop it saved before is
+ * written as a fixture, with `saveOwnershipStop`.
  */
 function stoppedForOwnership(elapsed: number): { fx: Fixture; goal: Goal } {
   const fx = makeFixture({ actor: actorA });
@@ -29,7 +31,14 @@ function stoppedForOwnership(elapsed: number): { fx: Fixture; goal: Goal } {
   setActorForTests(actorA);
   const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
   assert.equal(stopped.run.stop?.reason, 'ownership');
+  if (elapsed <= DEFAULT_LEASE_TTL_MS) saveOwnershipStop(fx, goal.id);
   return { fx, goal };
+}
+
+/** Fixture: the ownership stop a dispatch under another session's live card lease saved on the run before T0-FOREIGN-DISPATCH-NO-WRITE. */
+function saveOwnershipStop(fx: Fixture, goalId: string): void {
+  const run = fx.store.getCardRun(goalId, 'T1-HELLO')!;
+  fx.store.saveCardRun({ ...run, state: 'STOP', blocker: 'stale ownership generation', stop: makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate against the current lease before any further mutation', { at: fx.now() }) });
 }
 
 test('T0-CARD-LEASE-HEARTBEAT acceptance 4: a card run stopped for ownership under a live lease of another session makes the goal wait; with that lease expired the goal stops for ownership naming card takeover [R4]', () => {
@@ -94,11 +103,13 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 5: the owner keeps its lease through a 
     const hook = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' }, session_id: 'win-A', cwd: fx.tmp }, { cwd: fx.tmp, env: { PATH: process.env['PATH'], AIDLC_STATE_DIR: fx.paths.root }, now: fx.now() });
     assert.deepEqual(hook, { exitCode: 0 });
     assert.equal(fx.leases.read(cardKey)?.expiresAt, addMs(fx.now(), DEFAULT_LEASE_TTL_MS), 'the tool call renewed the lease');
-    // past the original expiry, session B's card next saves an ownership stop on the run, and B's next waits
+    // past the original expiry, session B's card next is stopped for ownership (the stop it saved on the run before
+    // T0-FOREIGN-DISPATCH-NO-WRITE is a fixture), and B's next waits
     fx.advance(5 * MINUTE_MS);
     setActorForTests(B);
     const rB = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(rB.run.stop?.reason, 'ownership');
+    saveOwnershipStop(fx, goal.id);
     const dB = fx.controller.next(goal.id);
     assert.equal(dB.kind, 'wait', dB.narration);
     assert.notEqual(fx.goal(goal.id).state, 'STOP');
