@@ -33,7 +33,7 @@ import { parseSpec } from '../artifacts/spec.ts';
 import { evaluatePlanReadiness, parsePlanCards } from '../artifacts/plan.ts';
 import { formatRouting } from '../core/router.ts';
 import { formatStop } from '../core/stop.ts';
-import { resolveCardGoal, terminalGoalRefusal } from '../core/card-goal.ts';
+import { doneGoalTakeover, resolveCardGoal, terminalGoalRefusal } from '../core/card-goal.ts';
 import { classifyCiFailure } from '../core/ci-policy.ts';
 import { detectDataImpact, buildMigrationPlan, checkMigrationOrdering, assessRecovery } from '../core/migrate.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -472,6 +472,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('take over an expired goal lease after reconciling the previous owner\'s operations')
     .action((id: string) => {
       const c = ctx(g());
+      // A DONE goal has nothing to take over (card T0-TAKEOVER-DONE-GOAL): no lease, no event, exit 0.
+      const goalRec = c.controller.mustGoal(id);
+      const done = doneGoalTakeover(goalRec);
+      if (done) return out(c, { goalId: id, state: goalRec.state, takenOver: false, detail: done }, () => done);
       const leases = new LeaseStore(c.paths.leases);
       const ops = new OperationLedger(c.paths.operations);
       const key = resourceKeys.goal(c.repo.key, id);
@@ -800,8 +804,17 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action((cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
+      // A card of a DONE goal has nothing to take over (card T0-TAKEOVER-DONE-GOAL): no lease, no event, exit 0. A named DONE goal
+      // is reported before the resolution's `holdsRun` reads a card run, the resolved one before the stored run is read.
+      const doneReport = (goalRec: Goal | undefined): boolean => {
+        const done = goalRec ? doneGoalTakeover(goalRec) : undefined;
+        if (done) out(c, { cardId, goalId: goalRec!.id, state: goalRec!.state, takenOver: false, detail: done }, () => `${cardId}: ${done}`);
+        return done !== undefined;
+      };
+      if (o.goal !== undefined && doneReport(c.store.listGoals().find((x) => x.id === o.goal))) return;
       const id = cardGoalId(c, cardId, o.goal);
       const goalRec = c.controller.mustGoal(id);
+      if (doneReport(goalRec)) return;
       // The stored run only: a takeover owns an existing run, it never creates one.
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
