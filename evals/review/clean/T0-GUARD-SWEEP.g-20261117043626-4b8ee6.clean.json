@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-GUARD-SWEEP.g-20261117043626-4b8ee6.clean",
+  "candidate": "49e53134dedaf5e389791657ac9a561467dd7fad",
+  "base": "1eae9fe19442b6264f06db03cc5c18165b80c02d",
+  "card": {
+    "id": "T0-GUARD-SWEEP",
+    "path": "specs/tasks/T0-GUARD-SWEEP.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-GUARD-SWEEP clean (goal g-20261117043626-4b8ee6)",
+  "note": "R3 decision 1 passed (codex)"
+}

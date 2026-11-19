@@ -50,3 +50,44 @@ npm run typecheck && node --test tests/surface/outcome-clean.test.ts tests/surfa
 ```
 - Expected exit code: 0
 - Assertion: the three new tests pass and the existing tests pass with only the lines acceptance 4 names changed.
+
+## Attempt evidence
+
+Attempt 1, base origin/main 3b451874.
+
+| Acceptance | Proof | Result |
+|---|---|---|
+| 1 | outcome-clean.test.ts "T1-BENCH-CLEAN-40-2 acceptance 1". RED: with only `WANT = 40` set on main, `result.cases.slice(0, 4)` is not the existing cases (main ignores them). | pass |
+| 2 | outcome-clean.test.ts "T1-BENCH-CLEAN-40-2 acceptance 2". RED: `writeClean is not a function`. Run by hand: `node bench/outcome/clean.ts` exit 2, "clean: evals\review\clean already holds a file; nothing written (--extend keeps its cases and adds to them)"; `node bench/outcome/clean.ts --extend` exit 0, "drafts 162, eligible drafts 151, kept cases 15, written cases 26". | pass |
+| 3 | outcome-clean.test.ts "T1-BENCH-CLEAN-40-2 acceptance 3": 41 files, 40 confirmed by `CLEAN_RULE`, 41 distinct candidates, the R3 case unconfirmed with the R3 note, the other 14 files equal to the sha256 of their bytes at main. RED: 15 files. | pass |
+| 4 | Existing tests pass; changed existing lines below. prose.test.ts unchanged. | pass |
+| 5 | The R3 case diff: `confirmed` true to false, `note` set to the R3 text, `confirmedBy` kept. evals/review/README.md: the clean paragraph gives 40, `--extend` and the 26 added; a new paragraph names the R3 case. | for the reviewer |
+
+Changed existing test lines (acceptance 4):
+- outcome-clean.test.ts:42 `.slice(0, 15)` to `.slice(0, 40)` [R1, WANT 40].
+- :45 distinct candidates 15 to 20 and :46 `shortBy` undefined to 20 [R1: 20 eligible on 20 candidates is 20 short of 40].
+- :57 `15 - want.length` to `40 - want.length` [R1].
+- :66 shortfall 4 to 29 [R1: 11 eligible].
+- :71, :74, :76 the counts 15 to 41 [R1, R2, R3: 40 confirmed plus the R3 case].
+- :79 `c.confirmed` true to `c.id !== R3_CASE` (the all-confirmed check) [R3].
+- Test names that say 15 are left unchanged.
+- review-bench.test.ts `CASES_README`: the `evals/review/clean/` entry replaced by the new clean paragraph and the R3-case paragraph [R4].
+- outcome-clean.test.ts:6-7 add imports for the new tests (`writeFileSync`, and `tmpDir`/`cleanup` from tests/infra/helpers.ts); no existing import line changed.
+
+Guard sweep (each loosened in turn, outcome-clean.test.ts run, restored):
+- held card skip `!heldCards.has(d.card.id)` removed: acceptance 1 fails.
+- held candidates seed `new Set(existing.map(candidate))` to empty set: acceptance 1 and 2 fail.
+- `kept` counting confirmed only, loosened to `existing.length`: acceptance 1 fails.
+- `Math.max(0, WANT - kept)` to `WANT - kept`: acceptance 1 fails (41 held confirmed cases).
+- `shortBy: WANT - confirmed` to `WANT - cases.length`: acceptance 1 fails.
+- refusal `!extend &&` removed: acceptance 2 fails.
+- refusal `readdirSync(out).length > 0` removed: acceptance 2 fails.
+- `existsSync(out) ?` before loading existing removed: acceptance 2 fails.
+- write filter `!held.has(x.id)` removed: acceptance 2 fails.
+- `{ flag: 'wx' }` removed: equivalent: the held-id filter runs first, so a write reaches an existing file only if one appears between the load and the write; no test input can make that.
+- main() (drafts check inside `select`, `--extend` from argv) is the CLI entry, not a card seam; proved by the two hand runs in row 2.
+
+DoD: `npm run typecheck && node --test tests/surface/outcome-clean.test.ts tests/surface/review-bench.test.ts tests/surface/prose.test.ts` exit 0; tests 55, suites 6, pass 55, fail 0, cancelled 0, skipped 0, todo 0.
+
+`npm run check`, first run: exit 1; tests 3869, pass 3836, fail 1: tests/surface/test-temp.test.ts "T0-TEST-TEMP-SWEEP acceptance 1" named the new acceptance 2 test's `mkdtempSync` calls. The test now uses the `tmpDir` and `cleanup` helpers; the DoD was rerun (exit 0, 55 of 55 pass) and the check run again.
+`npm run check`, second run: exit 0; tests 3869, suites 279, pass 3837, fail 0, cancelled 0, skipped 32, todo 0.
