@@ -77,6 +77,7 @@ test('T1-TEST-AUDIT-LIST acceptance 1: every row names an existing test with a v
   assert.equal(rowProblems([row({ class: 'obsolete' })], read).length, 1, 'an unknown class');
   assert.equal(rowProblems([row({ action: 'skip' })], read).length, 1, 'an unknown action');
   assert.equal(rowProblems([row({ evidence: '' })], read).length, 1, 'an empty evidence');
+  assert.equal(rowProblems([row({ 'covered by': '' })], read).length, 1, 'an empty covered by');
   assert.equal(auditRows('| file | test | class | evidence | action |\n| - |'), undefined, 'a table without the six columns');
   assert.deepEqual(auditRows(`${'| ' + HEADER.join(' | ') + ' |'}\n|---|---|---|---|---|---|\n| f | a \\| b | duplicate | e | none | update |\n\n| x |`)?.map((r) => r.test), ['a | b']);
 });

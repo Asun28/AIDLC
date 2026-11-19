@@ -42,3 +42,24 @@ npm run typecheck && node --test tests/surface/test-audit.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the two acceptance tests pass; they fail on main because the document does not exist.
+
+## Attempt evidence
+RED: `3df0bd16:tests/surface/test-audit.test.ts` acceptance 1 and 2 fail with ENOENT on `docs/reliability/test-audit.md` (pass 0, fail 2).
+
+Guard sweep of `tests/surface/test-audit.test.ts` (each guard loosened in turn, the file run, then restored):
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| header row equals the six columns in order | any table line | acceptance 1 fails |
+| rows end at the first non-table line | skip non-table lines | acceptance 1 fails |
+| split only at an unescaped pipe | split at every pipe | acceptance 1 fails |
+| `it(`/`test(` not preceded by a word character, `$` or `.` | no lookbehind | acceptance 1 fails |
+| the name is the whole literal (closing quote) | no closing quote | acceptance 1 fails |
+| quotes inside the name are escaped | no escaping | acceptance 1 fails |
+| a missing file is a problem | no problem | acceptance 1 fails |
+| class in the four values | any class | acceptance 1 fails |
+| action in the two values | any action | acceptance 1 fails |
+| empty evidence is a problem | not checked | acceptance 1 fails |
+| empty covered by is a problem | not checked | acceptance 1 fails |
+| remove without cover: `covered by` is `none` | any row with remove | acceptance 2 fails |
+| remove without cover: action is not update | any row with none | acceptance 2 fails |
