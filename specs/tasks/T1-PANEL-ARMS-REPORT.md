@@ -56,3 +56,21 @@ npm run typecheck && node --test tests/surface/outcome-panel.test.ts tests/surfa
 ```
 - Expected exit code: 0
 - Assertion: the four new tests pass and the existing tests pass unchanged.
+
+## Attempt evidence
+Build attempt 1. RED receipt `c7a7ce14:outcome-panel acceptance 1-4` (with a stub `bench/outcome/panel.ts` exporting the signatures: acceptance 1 threw `not implemented`, acceptance 2 had no refusal for `missing file`, acceptance 3 had no document, acceptance 4 had no `docs/reliability/panel.md`; on main the module is missing).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `acceptance 1` in `tests/surface/outcome-panel.test.ts` (33 and 35 of 64, 27 shared: union 41, intersection 27, unique 6 and 8; shared clean block is one union false block; no-verdict and error cases excluded) | pass (failed at RED) |
+| 2 | `acceptance 2`: missing, unparsable, stage, Fable without and Codex with `formalCommand`, policy hash, case ids (stage 1 and 2), stage 2 not three trials, `--commit`; nothing written, and the CLI exits 1 with no `panel.json` | pass (failed at RED) |
+| 3 | `acceptance 3`: Fable unique 8 and 7, gains 7 and 6, false blocks +1 and +2, ratio 1.5 and 1.51, Fable over Codex+Codex 5 and 4, stage-1-only inputs, stage 2 worked by hand, committed `panel.json` (61 bug cases; 33, 34, 20; unions 40 and 38; unique 5 and 7; 18 excluded; `keep` equals `keep(measures)`) | pass (failed at RED) |
+| 4 | `acceptance 4`: title, six sections, no banned character, every table value equals its JSON pointer or appears in its intent/review-panel.md record | pass (failed at RED) |
+| 5 | `outcome-baseline.test.ts` and `prose.test.ts`, no line changed | pass, DoD 29 of 29 |
+| 6 | R5 limits in `docs/reliability/panel.md`, What these numbers do not show; README section `Review panel (panel.ts)` | present (reviewer to verify) |
+| DoD | `npm run typecheck && node --test tests/surface/outcome-panel.test.ts tests/surface/outcome-baseline.test.ts tests/surface/prose.test.ts` | exit 0, tests 29, pass 29, fail 0 |
+| Full suite | `npm run check` | exit 0, tests 3888, pass 3856, fail 0, skipped 32 |
+
+Guard sweep (each guard loosened in turn, `outcome-panel.test.ts` run, restored): member count `< 2` to `< 1` (acc 1); ids held by every member to any member (acc 1); excluded no-verdict or error to no-verdict only (acc 1); excluded when some member to every member (acc 1, 3); blocked hit or false-block to hit (acc 1, 3); union some to every and intersection every to some (acc 1, 3); unique hit no other member to true (acc 1, 3); common scope of the three compositions removed (acc 3); median even branch to `s[h]` (acc 3); wall time per triple to per case (acc 3); slowest member to first member and to min (acc 3); gate `<` to `<=` (acc 2, 3); fable gain, panel gain `>=` to `>`, false blocks `<= 1` to `<= 2` in both rules, ratio `<= 1.5` to `<= 1.51` (acc 3); better composition fixed to Codex+Fable (acc 3); stage, both `formalCommand` checks, policy hash, case ids, `--commit`, three trials removed (acc 2); round 1 from `rounds[0]` removed (acc 2, 3); stage 2 read only on `run` removed (acc 3); Codex+Codex trial t with t+1 to t with t (acc 3). equivalent: `?.durationMs ?? 0` in the wall time, because `load` refuses pairs whose case ids differ in any trial, so every member holds every case.
+
+Design points: stage 1 compares the compositions on the cases every one of the three reviews scored (61 bug, 0 clean; 18 excluded), which reproduces the coordinator's count; the gate threshold is the constant 8 of the Decisions, and the field-order run's unique hits on those cases (7) are recorded beside it; stage 2 inputs are read from `_local/panel-arms/stage2/`; a triple with a no-verdict case keeps its wall time. Diff size is over the budget of 300 lines (about 480 hand-written lines plus the 131-line generated `panel.json`), all in files the card names.

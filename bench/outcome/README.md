@@ -172,7 +172,13 @@ The file first defines each GitHub table as a view over its JSONL file with expl
 
 Every boolean is computed from the tables as read: when `github_errors` has rows, the pull requests, commits or checks they name are missing from the views, which makes `checksGreen` false and `noHumanCommit` null, and can leave `notReverted` true.
 
+## Review panel (`panel.ts`)
+
+`node bench/outcome/panel.ts assemble --commit <sha> [--in <dir>] [--out <file>]` reads saved bench reports under `--in` (default `_local` under the checkout: the 2026-11-16 Codex pair in `arms/`, the Fable runs in `panel-arms/`, and stage 2 reports in `panel-arms/stage2/` when the stage gate is met), scores single Codex, Codex+Codex and Codex+Fable with `unionOf` (union, intersection, unique hits, excluded cases) and applies the keep rule of intent/review-panel.md. It writes `bench/outcome/panel.json` (default `--out`), or refuses and writes nothing. `docs/reliability/panel.md` reports it (card T1-PANEL-ARMS-REPORT).
+
 ## Tests
+
+`tests/surface/outcome-panel.test.ts` covers `unionOf`, the refusals of `panel.ts assemble`, the measures and keep verdicts over hand-written reports in temporary directories, the committed `bench/outcome/panel.json`, and that every table value of `docs/reliability/panel.md` equals its source.
 
 `tests/surface/outcome-summary.test.ts` checks the shape of `bench/outcome/summary.json` everywhere, and that `run.ts --summary` writes the document only after every view has run (skipped with the reason `no duckdb binary` as below), leaves an existing file as it was when DuckDB cannot be started, and writes neither the file nor a table on either refusal.
 
