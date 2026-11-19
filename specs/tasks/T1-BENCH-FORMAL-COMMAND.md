@@ -1,7 +1,7 @@
 ---
 id: T1-BENCH-FORMAL-COMMAND
 title: aidlc review bench run --formal-command <file> scores another formal reviewer, such as Claude Fable 5.2, for one run without editing aidlc.config.json
-status: todo
+status: merged
 branch: T1-BENCH-FORMAL-COMMAND
 worktree: D:\wt\AIDLC\T1-BENCH-FORMAL-COMMAND
 plan_ref: plans/review-panel.md#order-of-work
