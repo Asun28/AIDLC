@@ -14,6 +14,7 @@
  * which fetches an object.
  */
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -24,7 +25,7 @@ import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingIdentity, findingLocation, findingSeverity } from '../core/review-policy.ts';
 import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
-import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
+import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, ReviewEffortPolicy, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, VERDICT_ORDERS, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult, type VerdictOrder } from './pre-review.ts';
@@ -74,8 +75,8 @@ export interface ReviewBenchReport {
   reviewer: string;
   /** How the learned rules were chosen. */
   rules: BenchRules;
-  /** The options the run used (cards T1-BENCH-ROUNDS and T1-BENCH-ORDER-PRE): `preCommand` is the `--pre-command` file's `command`, else null. */
-  options: { rounds: number; order: VerdictOrder; preCommand: string[] | null };
+  /** The options the run used (cards T1-BENCH-ROUNDS and T1-BENCH-ORDER-PRE): `preCommand` is the `--pre-command` file's `command`, else null; `formalCommand` (card T1-BENCH-FORMAL-COMMAND), present only with `--formal-command`, is the file path as given and the sha256 of its bytes. */
+  options: { rounds: number; order: VerdictOrder; preCommand: string[] | null; formalCommand?: { path: string; sha256: string } };
   policyHash: string;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
@@ -109,6 +110,8 @@ export interface ReviewBenchOptions {
   order?: VerdictOrder;
   /** `--stage pre` only: a JSON file, resolved against `root`, whose `command`, `reviewer` and optional `answerMarker`, `timeoutMs` and `maxDiffBytes` replace those of `preReview` for this run. */
   preCommand?: string;
+  /** `--stage formal` only: a JSON file, resolved against `root`, whose `command`, `reviewer` and optional `timeoutMs`, `maxDiffBytes` and `effort` replace those of `formalReview` for this run, with no fallback or base-sync reviewer. */
+  formalCommand?: string;
   /** The reviewer runner; default `run`. */
   runner?: Runner;
   /** The git runner; default `runSync`. */
@@ -170,10 +173,14 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const order = o.order ?? 'verdict-first';
   if (!VERDICT_ORDERS.includes(order)) throw new Error(`--order must be verdict-first or analysis-first, not ${order}`);
   if (o.preCommand !== undefined && o.stage !== 'pre') throw new Error('--pre-command needs --stage pre, not --stage formal');
+  if (o.formalCommand !== undefined && o.stage !== 'formal') throw new Error('--formal-command needs --stage formal, not --stage pre');
   const preCommand = o.preCommand === undefined ? undefined : readPreCommand(path.resolve(o.root, o.preCommand));
+  const formalCommand = o.formalCommand === undefined ? undefined : readFormalCommand(path.resolve(o.root, o.formalCommand));
   const loaded = loadProjectConfig(o.root).config;
-  // The file's keys replace preReview's for this run alone; nothing is written back.
-  const config = preCommand ? { ...loaded, preReview: { ...loaded.preReview, ...preCommand } } : loaded;
+  // The file's keys replace preReview's or formalReview's for this run alone; nothing is written back. Under
+  // --formal-command no other reviewer may review a case, so the fallback and the base-sync reviewer are dropped.
+  const withPre = preCommand ? { ...loaded, preReview: { ...loaded.preReview, ...preCommand } } : loaded;
+  const config = formalCommand ? { ...withPre, formalReview: { ...withPre.formalReview, ...formalCommand.settings, fallback: undefined, baseSync: undefined } } : withPre;
   const reviewer = o.stage === 'pre' ? config.preReview : config.formalReview;
   if (!reviewer.command.length) throw new Error(`${o.stage === 'pre' ? 'preReview' : 'formalReview'}.command is not configured (aidlc.config.json): there is no reviewer to score`);
   const dir = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
@@ -212,7 +219,7 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const after = (r: number) => trialResults[0]!.cases.map((c) => (c.rounds?.length ? { ...c, outcome: c.rounds[Math.min(r, c.rounds.length) - 1]!.outcome } : c));
   const roundTotals = rounds > 1 ? Array.from({ length: rounds }, (_, i) => totalsOf(after(i + 1), skipped)) : undefined;
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds, order, preCommand: preCommand?.command ?? null }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds, order, preCommand: preCommand?.command ?? null, ...(formalCommand ? { formalCommand: { path: o.formalCommand!, sha256: formalCommand.sha256 } } : {}) }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
 }
 
 /** The `--pre-command` file (card T1-BENCH-ORDER-PRE): an unknown key is refused, so a key meant for `preReview` never goes unused in silence. */
@@ -237,6 +244,31 @@ function readPreCommand(file: string): z.infer<typeof PreCommandFile> {
   const parsed = PreCommandFile.safeParse(raw);
   if (!parsed.success) throw new Error(`--pre-command ${file}: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'file'}: ${i.message}`).join('; ')}`);
   return parsed.data;
+}
+
+/** The `--formal-command` file (card T1-BENCH-FORMAL-COMMAND): the `formalReview` keys a reviewer needs; an unknown key, `fallback` and `baseSync` included, is refused. */
+const FormalCommandFile = z
+  .object({
+    command: z.array(z.string().regex(/\S/, 'must not be blank')).min(1),
+    reviewer: z.string().regex(/\S/, 'must not be blank'),
+    timeoutMs: z.number().int().positive().optional(),
+    maxDiffBytes: z.number().int().positive().optional(),
+    effort: ReviewEffortPolicy.optional(),
+  })
+  .strict();
+
+function readFormalCommand(file: string): { settings: z.infer<typeof FormalCommandFile>; sha256: string } {
+  if (!existsSync(file)) throw new Error(`--formal-command ${file}: no such file`);
+  const bytes = readFileSync(file);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(bytes.toString('utf8'));
+  } catch (err) {
+    throw new Error(`--formal-command ${file}: not JSON (${(err as Error).message})`);
+  }
+  const parsed = FormalCommandFile.safeParse(raw);
+  if (!parsed.success) throw new Error(`--formal-command ${file}: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'file'}: ${i.message}`).join('; ')}`);
+  return { settings: parsed.data, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
 /** The summary over the totals of every trial; `aidlc review bench compare` checks a saved report against it. */

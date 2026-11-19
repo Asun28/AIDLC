@@ -50,3 +50,34 @@ npm run typecheck && node --test tests/surface/review-bench-formal-command.test.
 ```
 - Expected exit code: 0
 - Assertion: the three new tests pass and the existing bench tests pass unchanged.
+
+## Attempt evidence
+
+| Acceptance | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/review-bench-formal-command.test.ts` "acceptance 1" (library run and CLI `--formal-command`; argv, effort `high`, timeout, `reviewer`, `options.formalCommand` {path, sha256}, config bytes unchanged, no `formalCommand` without the option) | pass; failed on main (configured `cfg-codex` ran) |
+| 2 | same file, "acceptance 2" (quota hold, 2 trials: one call, by `fable`; every case `no-verdict`) | pass; failed on main |
+| 3 | same file, "acceptance 3" (`--stage pre`, `--pre-command` with formal, absent file, 11 malformed files; library and CLI; zero reviewer calls) | pass; failed on main (no rejection) |
+| 4 | DoD: review-bench.test.ts, review-bench-rounds.test.ts, prose.test.ts, no line changed | pass (DoD exit 0, 56 tests, 0 fail) |
+| 5 | `bench/outcome/fable-r3.json`; docs/OPERATIONS.md `### Reviewer bench: another formal reviewer` | reviewer-verified against the diff |
+
+`npm run check` (once): exit 0; 3869 tests, 3837 pass, 0 fail, 32 skipped.
+
+The R6 text is a new subsection placed directly before `### Reviewer bench`: tests/surface/review-bench.test.ts (acceptance 9) pins every paragraph between `### Reviewer bench` and `## Evals`, so text inside that section fails acceptance 4 unless that test changes, and this card forbids changing it.
+
+Guard sweep (each loosened in turn, test file run, restored):
+
+| Guard | Loosened form | Failing test |
+|---|---|---|
+| `--formal-command` needs `--stage formal` | check removed | acceptance 3 |
+| `.strict()` on the file schema | `.passthrough()` | acceptance 3 |
+| `command` `.min(1)` | `.min(0)` | acceptance 3 |
+| argument `/\S/` | no regex | acceptance 3 |
+| `reviewer` `/\S/` | no regex | acceptance 3 |
+| `timeoutMs` positive | not positive | acceptance 3 |
+| `maxDiffBytes` int | not int | acceptance 3 |
+| `effort` schema | `z.unknown()` | acceptance 3 |
+| missing-file refusal | check removed | acceptance 3 |
+| not-JSON message names the option | message without it | acceptance 3 |
+| `formalCommand` only with the option | always present (`undefined`) | acceptance 1 |
+| `fallback`/`baseSync` dropped | kept | equivalent: src/review/bench.ts never reads `formalReview.fallback` or `baseSync` (no dispatch path), so no input can tell them apart; the drop keeps the run's config as R3 states it |

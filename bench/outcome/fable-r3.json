@@ -1,0 +1,19 @@
+{
+  "command": [
+    "claude",
+    "-p",
+    "--model",
+    "claude-fable-5-2",
+    "--effort",
+    "{effort}",
+    "--tools",
+    "Read,Grep,Glob",
+    "--setting-sources=",
+    "--strict-mcp-config",
+    "--no-session-persistence"
+  ],
+  "reviewer": "claude-fable-5-2",
+  "effort": {
+    "default": "high"
+  }
+}
