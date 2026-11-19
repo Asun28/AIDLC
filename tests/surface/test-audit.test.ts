@@ -6,11 +6,11 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 const DOC = 'docs/reliability/test-audit.md';
-const HEADER = ['file', 'test', 'class', 'evidence', 'covered by', 'action'];
+const HEADER = ['file', 'test', 'class', 'evidence', 'covered by', 'action'] as const;
 const CLASSES = ['removed-behaviour', 'duplicate', 'removed-path', 'superseded-card'];
 const ACTIONS = ['update', 'remove'];
 
-type Row = Record<(typeof HEADER)[number], string>;
+type Row = { [K in (typeof HEADER)[number]]: string };
 
 /** The cells of a table line, split at each pipe not escaped by a backslash; an escaped pipe becomes a pipe. */
 const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
