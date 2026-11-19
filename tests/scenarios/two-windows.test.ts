@@ -317,18 +317,20 @@ test('T0-CARD-TAKEOVER, prepared: the takeover refuses a live or unreconciled le
     assert.deepEqual(kept.closure, owned.run!.closure, 'nor closure steps it never performed');
     setActorForTests(actorB);
     assert.equal(fx.runner().next(fx.goal(goal.id), card, records().run!).run.stop?.reason, 'risk', 'a renewal clears an ownership stop only');
-    // the risk is dispositioned (the stop lifted on the stored run); A's stale dispatch then records its ownership stop
-    // on the stored run, the lease stays with B
+    // the risk is dispositioned (the stop lifted on the stored run); A's stale dispatch then returns an ownership stop
+    // and writes nothing: the stored run keeps BUILD with no stop, the lease stays with B (T0-FOREIGN-DISPATCH-NO-WRITE)
     fx.store.saveCardRun({ ...records().run!, state: 'BUILD', stop: undefined });
     setActorForTests(actorA);
     const stale = fx.runner().next(fx.goal(goal.id), card, snapshot);
     assert.equal(stale.directive.kind, 'stop');
+    if (stale.directive.kind === 'stop') assert.equal(stale.directive.stop.reason, 'ownership');
     assert.equal(stale.run.stop?.reason, 'ownership');
-    assert.equal(records().run?.stop?.reason, 'ownership');
+    assert.equal(records().run?.state, 'BUILD');
+    assert.equal(records().run?.stop, undefined);
     assert.equal(records().run?.ownerGeneration, 1);
     assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-B');
     assert.equal(fx.leases.read(cardKey)?.generation, 1);
-    // the stop A's stale dispatch recorded is revalidated by B's next call, as any owner stop caused by expiry is
+    // B's next call continues the card: A's stale dispatch left no stop to revalidate
     setActorForTests(actorB);
     const again = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(again.directive.kind, 'build');
