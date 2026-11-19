@@ -10,7 +10,7 @@ Does a second R3 reviewer find enough more defects to run, and should it be Clau
 - The field-order run: `_local/arms/order-miss.json` and `_local/arms/order-clean.json` (2026-11-16, one round, analysis first). It is the second Codex member.
 - Fable: `_local/panel-arms/fable-miss.json` and `_local/panel-arms/fable-clean.json` (2026-11-19, `--formal-command bench/outcome/fable-r3.json`) on the same bug and clean cases.
 
-The command refuses, writing nothing, when an input is missing or unparsable, a report is not of the formal stage, a Fable report has no `options.formalCommand` or a Codex report has one, the policy hashes differ, or the case ids of the three reports of a kind differ. `panel.json` holds the SHA-256 of each input.
+The command refuses, writing nothing, when an input is missing or unparsable, a case result is not one the bench writes (kind, outcome for its kind, duration, rounds) or repeats an id in a trial, a report has the wrong number of trials, a report is not of the formal stage, a Fable report has no `options.formalCommand` or a Codex report has one, the policy hashes differ, or any trial of a report of a kind holds other case ids than the others. With stage 2 inputs it also refuses a case with no case file to name its triple, and a wall-time ratio that is not finite. `panel.json` holds the SHA-256 of each input.
 
 `unionOf` scores a panel over the cases every member holds: a bug case is a union hit when any member hit it and an intersection hit when every member did; a clean case is a union false block when any member blocked it. A unique hit is a hit no other member has. To compare the three compositions on the same cases, a case is left out of all of them (`excluded`) when any of the three reviews gave it no verdict or an error.
 
@@ -20,6 +20,8 @@ Every number below is a table row; its source is a JSON pointer into `bench/outc
 | --- | --- | --- |
 | Policy hash of the stage 1 reports | aa7f80bac1a3df11a5b915c7f85a2ef0b1e268a065229b7790c5020c0dad537e | `/policyHash/stage1` |
 | Cases left out of every composition (no verdict from a member) | 18 | `/measures/stage1/excluded` |
+| Bug cases left out (no Fable verdict) | 3 | `/measures/stage1/excludedKinds/bug` |
+| Clean cases left out (no Fable verdict) | 15 | `/measures/stage1/excludedKinds/clean` |
 
 ## Earlier records
 
@@ -95,7 +97,7 @@ Stage 1 result: the gate is not met, so `keep.stage2` is `skip` and the panel is
 
 - The stage 1 subset was chosen for baseline misses: every bug case comes from a triple where an earlier Codex run missed, so part of any gain is regression to the mean, and the hit counts are not recall on the full replay set.
 - The field-order run is not an identical rerun of round 1: it put the analysis before the verdict, so the Codex+Codex gain mixes sampling variance with a prompt change.
-- Fable ran with about 10 more lessons in docs/LESSONS.md than the 2026-11-16 Codex runs, under the same REVIEW.md (the same policy hash).
-- Fable hit its usage limit, so its clean cases and 3 bug cases have no verdict (issue 385): stage 1 measures no false block for Fable or for either panel, and the 3 bug cases are the difference between the 64 of the 2026-11-16 pair and the 61 above.
+- Fable ran with more lessons in docs/LESSONS.md than the 2026-11-16 Codex runs had (lessons added between the two runs; this report does not count them), under the same REVIEW.md (the same policy hash).
+- Fable hit its usage limit, so its clean cases and the bug cases counted in Method have no verdict (issue 385): stage 1 measures no false block for Fable or for either panel, and those bug cases are why stage 1 scores fewer bug cases than the 2026-11-16 pair holds.
 - One replay set from this repository, one Fable trial and one trial per Codex run: no spread across trials is measured.
 - No loop measure yet: nothing here shows the share of cards with two or more R3 blocks, or the STOP/review rate, with a panel on.

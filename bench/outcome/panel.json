@@ -33,6 +33,10 @@
         "T1-SWEEP2-EXTEND-REASON.g-20261014085120-fa9517.clean",
         "T1-VERIFY-SKILL.g-20261023072913-94f64f.clean"
       ],
+      "excludedKinds": {
+        "bug": 3,
+        "clean": 15
+      },
       "codex": {
         "cases": 61,
         "bugCases": 61,
