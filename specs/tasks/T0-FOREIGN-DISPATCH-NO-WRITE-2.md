@@ -88,3 +88,26 @@ Attempt 2 (this card, on 7a50d53b):
 | 4 | `tests/scenarios/two-windows.test.ts` "T0-SESSION-IDENTITY-2, live to expired", line 148: the stop of B's dispatch under A's live lease names `win-A`, `generation 0` and the lease `expiresAt`; the test's other lines unchanged | pass |
 | R4 | `src/cli/main.ts` `card status` comment: the stop of a dispatch under another session's live lease names the holder and is not saved; comment only. `changelog.d/T0-FOREIGN-DISPATCH-NO-WRITE-2.md` moved from the first card's fragment | done |
 | 6 | DoD: exit 0, 230 of 230; fault-points 28 of 28 inside it | pass |
+
+Attempt 3 (repair of R3 decision 1, F1 to F4; RED is each test run against the src of c81ccb51):
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `foreign-dispatch.test.ts` acceptance 1 (also same session on another host, a stored ownership stop, the instant of `expiresAt`) | pass |
+| 2 | same file, acceptance 2 | pass |
+| 3 | same file, acceptance 3: baseline read before `runner.next`; a fresh run at PREPARE and a BUILD run under B's expired lease taken to PREPARE, B acting before A's claim. RED on c81ccb51: journal 8 lines, expected 7 (CARD_STATE BUILD to PREPARE) | pass |
+| 4 | `two-windows.test.ts` "T0-CARD-TAKEOVER, prepared" and "T0-SESSION-IDENTITY-2, live to expired" line 148 | pass |
+| 5 | `saveOwnershipStop` fixtures as in attempt 1 | pass |
+| 6 | DoD exit 0; fault-points inside it | pass |
+
+Input forms and failure paths the repair handles, each with its covering test (`foreign-dispatch.test.ts`):
+- A lease another session takes after the dispatch's lease read (one read now decides the dispatch; `assess` takes it from `next`): "R3 F2 - a lease another session takes right after the dispatch reads it writes nothing", a fresh run and a BUILD run whose own lease was released. RED on c81ccb51: run saved STOP `stale ownership generation`, journal 6 lines, expected 5.
+- A lease another session takes or renews between the assessment and PREPARE's claim (the claim now precedes every assessment write, chosen by a selection that writes nothing): acceptance 3. RED as above.
+- A foreign live lease with the plan checkpoint missing (the lease check now precedes the checkpoint guard): "R3 F4 - with the plan checkpoint missing, a foreign live lease still returns the stop naming the holder". RED on c81ccb51: `wait`, expected `stop`.
+- The claim ahead only for PREPARE: "the claim ahead of the assessment is taken only for PREPARE: a stopped run claims no lease".
+- The selection writes nothing: "the selection ahead of the claim saves nothing: a merged card stopped for ownership with no lease is reconciled to CLOSE once, journaled".
+- PREPARE uses that claim: "PREPARE uses the claim taken ahead of the assessment: a fresh dispatch journals one LEASE_ACQUIRED and no LEASE_RENEWED".
+- The holder's own lease skips the selection ahead, so its path is as on main: `t0-flow.test.ts` "T1-REVIEW-FINDINGS-4 R3 decision 1" (fails when the selection also runs for the holder) and the released-lease case of "R3 F2" (fails when a released own lease counts as held).
+- The plan checkpoint still holds for a dispatch that may continue, with no claim: `two-windows.test.ts` "T0-CARD-TAKEOVER-2, checkpoint".
+
+Guard sweep of attempt 3 (each loosened form, then `foreign-dispatch`, `two-windows`, `ownership-wait`, `t0-flow`): holder condition dropped, T1-REVIEW-FINDINGS-4 and T1-STORE-CAS-2 duplicate check fail; `!lease.released` in it dropped, R3 F2 fails; claim for any selection, the stopped-run test fails; checkpoint test dropped, T0-CARD-TAKEOVER-2 checkpoint fails; held early return dropped, acceptance 3 and R3 F2 fail; dry save kept, the merged-reconcile test fails; dry append kept, acceptance 3 and R3 F2 fail; `assess` reading the lease again, R3 F2 and the refusals test fail; the claim not handed to PREPARE, the LEASE_ACQUIRED test fails; the lease check after the checkpoint guard, R3 F4 fails. A dry-mode guard on the renewal was removed: the selection runs only on a lease this session does not hold, which the renewal requires, so no input reached it.
