@@ -53,3 +53,21 @@ A review held on the Claude CLI limit message waits until the reset time the mes
 
 ## Why
 Issue 394: `resets 1pm (Pacific/Auckland)` printed at 22:56 local means a 14-hour wait; with the 15-minute default that is about 56 reviewer invocations, each a no-op hold, before the review can run.
+
+## Attempt evidence
+
+Attempt 1, base main at 69ef6b6f. RED commit 55971fe3 (tests only, src/ as on main): tests/core/limit-reset.test.ts fails to load (no src/core/limit-reset.ts); in tests/surface/pre-review-limit-reset.test.ts the finalizeReview row reads `retryAfterMs: undefined` for 50640000 and the docs row finds no `resets <time> (<zone>)`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/core/limit-reset.test.ts "the next instant the named zone reads the reset time, strictly after now; ..." | pass |
+| 2 | tests/core/limit-reset.test.ts "across the Pacific/Auckland daylight-saving start ..." (4am, 2am, 2:30am in the gap, 1am before it) | pass |
+| 3 | tests/core/limit-reset.test.ts "no zone, an unknown zone, an hour or minutes out of range, a date form or no phrase ..." | pass |
+| 4 | tests/surface/pre-review-limit-reset.test.ts "finalizeReview reads the reset time against the receipt finishedAt; ..." | pass |
+| 5 | tests/surface/pre-review-limit-reset.test.ts "docs/OPERATIONS.md names the reset form ..."; tests/core/parse-guard.test.ts and tests/core/review-policy.test.ts unchanged and green | pass |
+
+Revert table, each run on the two new files and restored: offsets a day either side replaced by the day-before offset alone (a fixed offset): 1 test red (acceptance 2); `at > now` changed to `at >= now`: 1 test red (the exact-instant row); the `retryAfterMs === undefined` condition dropped from `finalizeReview`: 1 test red (the 30000 row).
+
+Other suites that run `finalizeReview` or carry quota holds, run once on Windows: pre-review, r2-pass-notes, review-bench (5 files), r2-billing-hold, r2-fallback: 189 tests, 189 pass.
+
+DoD (Windows): `npm run typecheck` clean; `node --test tests/core/limit-reset.test.ts tests/surface/pre-review-limit-reset.test.ts tests/core/parse-guard.test.ts tests/core/review-policy.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts`: 113 tests, 113 pass, 0 fail.
