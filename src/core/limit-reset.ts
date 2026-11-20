@@ -4,12 +4,21 @@
  */
 
 /**
- * `resets <h>[:<mm>]<am|pm> (<IANA zone>)` in any letter case; the first one in the text decides. A zone is written as an
- * IANA name (`Pacific/Auckland`, `UTC`, `Etc/GMT-5`): it opens with a letter and has no `:`, so a numeric offset such as
- * `+05:00`, which Intl also accepts, never matches.
+ * `resets <h>[:<mm>]<am|pm> (<zone>)` in any letter case, with no letter or digit of any script joined before `resets`;
+ * the first one in the text decides. The zone text opens with a letter and has no `:`, so a numeric offset such as
+ * `+05:00`, which Intl also accepts, never matches; `isIanaName` then decides whether it names an IANA zone.
  */
-const RESET = /resets (\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z][\w+-]*(?:\/[\w+-]+)*)\)/i;
+const RESET = /(?<![\p{L}\p{N}])resets (\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z][\w+-]*(?:\/[\w+-]+)*)\)/iu;
 const DAY = 86_400_000;
+/** The areas of IANA `Area/Location` names (tzdata zone1970.tab and the `backward` link file); ICU's `SystemV/` is not one. */
+const IANA_AREAS = new Set(['Africa', 'America', 'Antarctica', 'Arctic', 'Asia', 'Atlantic', 'Australia', 'Europe', 'Indian', 'Pacific', 'Etc', 'US', 'Canada', 'Mexico', 'Brazil', 'Chile'].map((n) => n.toLowerCase()));
+/** The IANA names with no area (tzdata `etcetera`, `northamerica`, `europe` and `backward`). ICU-only aliases such as `ACT`, `PST` and `IST` are not among them. */
+const IANA_BARE = new Set(['UTC', 'UCT', 'GMT', 'GMT0', 'GMT+0', 'GMT-0', 'Greenwich', 'Universal', 'Zulu', 'EST', 'MST', 'HST', 'EST5EDT', 'CST6CDT', 'MST7MDT', 'PST8PDT', 'CET', 'EET', 'MET', 'WET', 'Cuba', 'Egypt', 'Eire', 'GB', 'GB-Eire', 'Hongkong', 'Iceland', 'Iran', 'Israel', 'Jamaica', 'Japan', 'Kwajalein', 'Libya', 'Navajo', 'NZ', 'NZ-CHAT', 'Poland', 'Portugal', 'PRC', 'ROC', 'ROK', 'Singapore', 'Turkey', 'W-SU'].map((n) => n.toLowerCase()));
+/** An IANA zone or link name in any letter case, as Intl reads it: an `Area/Location` of a listed area, or a listed bare name. */
+const isIanaName = (zone: string): boolean => {
+  const z = zone.toLowerCase();
+  return z.includes('/') ? IANA_AREAS.has(z.slice(0, z.indexOf('/'))) : IANA_BARE.has(z);
+};
 
 /**
  * The milliseconds from `nowIso` to the first instant after it at which the wall clock of the named zone reads the reset
@@ -22,7 +31,7 @@ export function limitResetMs(text: string, nowIso: string): number | undefined {
   if (!m || !Number.isFinite(now)) return undefined;
   const h = Number(m[1]);
   const min = m[2] === undefined ? 0 : Number(m[2]);
-  if (h < 1 || h > 12 || min > 59) return undefined;
+  if (h < 1 || h > 12 || min > 59 || !isIanaName(m[4]!)) return undefined;
   const hour = (h % 12) + (m[3]!.toLowerCase() === 'pm' ? 12 : 0);
   let fmt: Intl.DateTimeFormat;
   try {

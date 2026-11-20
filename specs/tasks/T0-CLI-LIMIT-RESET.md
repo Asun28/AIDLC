@@ -85,3 +85,17 @@ Input forms the repair handles, in tests/core/limit-reset.test.ts: `resets 2:30a
 | 5 | as attempt 1 | pass |
 
 DoD (Windows): typecheck clean; 115 tests, 115 pass, 0 fail.
+
+Attempt 3 (repair of R3 decision 3, F3 class non-iana-reset-zone, F4 class reset-substring-match). F3: the zone must also be an IANA zone or link name, in any letter case: an `Area/Location` whose area is an IANA area (`Africa` ... `Pacific`, `Etc`, and the `backward` areas `US`, `Canada`, `Mexico`, `Brazil`, `Chile`) or one of the IANA names with no area (`UTC`, `GMT`, `EST5EDT`, `Japan`, `NZ` ... `W-SU`), and Intl must accept it; ICU-only aliases (`ACT`, `PST`, `IST`, `SystemV/AST4`) read no delay. This is every site of the class: the zone is read in one place, `RESET` plus `isIanaName`. F4: `RESET` has the boundary the quota rule keeps, no letter or digit of any script directly before `resets`.
+
+Input forms the repair hunks handle, in tests/core/limit-reset.test.ts: ICU-only aliases `ACT`, `PST`, `pst`, `IST`, `JST`, `CST`, `AET`, `BST`, `SystemV/AST4`, an unknown area `Mars/Olympus` and an unknown location in a listed area `Pacific/Nowhere` (no delay); `UTC`, `utc`, `Etc/UTC`, `Japan`, the link `US/Pacific`, three segments `America/Argentina/Buenos_Aires`, `EST5EDT`, `Pacific/Auckland` and `PACIFIC/AUCKLAND` (their delays); `presets`, `Presets`, `éresets`, `9resets` (no delay); `·`, `(`, a line feed or the start of the text before `resets`, and `Resets` (13 h). On the attempt 2 code (73aa816f) the `ACT` row and the `presets` row fail; all pass now. docs/OPERATIONS.md names the two rules.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | as attempt 2, plus "`resets` joined to a letter or digit before it reads no delay; ..." | pass |
+| 2 | as attempt 1 | pass |
+| 3 | as attempt 2, plus "an ICU-only alias reads no delay; IANA names, links and the slash-less IANA names do ..." | pass |
+| 4 | as attempt 1 | pass |
+| 5 | as attempt 1 | pass |
+
+DoD (Windows): typecheck clean; 117 tests, 117 pass, 0 fail.

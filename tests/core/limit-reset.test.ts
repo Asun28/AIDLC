@@ -36,6 +36,29 @@ describe('limitResetMs: the delay to the reset time a CLI limit message names (T
     assert.equal(limitResetMs('resets 1pm (Etc/GMT-5)', '2026-11-20T00:00:00.000Z'), 8 * HOUR, 'an IANA Etc zone is a zone name (UTC+5)');
   });
 
+  test('an ICU-only alias reads no delay; IANA names, links and the slash-less IANA names do (F3, class non-iana-reset-zone) [R1] [R2]', () => {
+    const now = '2026-11-20T00:00:00.000Z';
+    for (const zone of ['ACT', 'PST', 'pst', 'IST', 'JST', 'CST', 'AET', 'BST', 'SystemV/AST4', 'Mars/Olympus', 'Pacific/Nowhere']) assert.equal(limitResetMs(`resets 1pm (${zone})`, now), undefined, zone);
+    const held: Array<[string, number]> = [
+      ['UTC', 13 * HOUR],
+      ['Etc/UTC', 13 * HOUR],
+      ['Japan', 4 * HOUR],
+      ['US/Pacific', 21 * HOUR],
+      ['America/Argentina/Buenos_Aires', 16 * HOUR],
+      ['EST5EDT', 18 * HOUR],
+      ['Pacific/Auckland', 24 * HOUR],
+      ['PACIFIC/AUCKLAND', 24 * HOUR],
+      ['utc', 13 * HOUR],
+    ];
+    for (const [zone, ms] of held) assert.equal(limitResetMs(`resets 1pm (${zone})`, now), ms, zone);
+  });
+
+  test('`resets` joined to a letter or digit before it reads no delay; a separator before it does (F4, class reset-substring-match) [R1]', () => {
+    const now = '2026-11-20T00:00:00.000Z';
+    for (const text of ['quota exceeded; presets 1pm (UTC)', 'éresets 1pm (UTC)', '9resets 1pm (UTC)', 'Presets 1pm (UTC)']) assert.equal(limitResetMs(text, now), undefined, text);
+    for (const text of ['limit·resets 1pm (UTC)', '(resets 1pm (UTC))', 'limit\nresets 1pm (UTC)', 'Resets 1pm (UTC)']) assert.equal(limitResetMs(text, now), 13 * HOUR, text);
+  });
+
   test('no zone, an unknown zone, an hour or minutes out of range, a date form or no phrase reads no delay and never throws [R2]', () => {
     const now = '2026-11-20T09:56:00.000Z';
     for (const text of ['resets 1pm', 'resets 1pm (Mars/Olympus)', 'resets 13pm (UTC)', 'resets 0am (UTC)', 'resets 1:60pm (UTC)', 'resets 1:5pm (UTC)', 'resets Nov 25', 'all good', '']) {
