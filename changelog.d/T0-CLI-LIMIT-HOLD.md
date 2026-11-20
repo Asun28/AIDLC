@@ -1,0 +1,1 @@
+- T0-CLI-LIMIT-HOLD: the quota word rule holds on `hit your <name> limit`, so a Claude CLI reviewer that exits 1 with `You've hit your Fable limit` (or another model, session or weekly limit) is a quota hold that waits through the review pool, where it was a `tool_error` no-verdict review that spent the no-verdict retry (issue 385).

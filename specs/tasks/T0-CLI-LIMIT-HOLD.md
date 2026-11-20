@@ -48,3 +48,22 @@ The quota word rule holds on `hit your <one to three words> limit`, so a Claude 
 
 ## Why
 Issue 385: 18 reviews of a bench panel run ended on this message as `no-verdict` / `tool_error`. The R3 fallback of this repository is `claude -p --model claude-opus-5-5`, so an Opus limit on the fallback has the same effect on a card's review cycle.
+
+## Attempt evidence
+
+Attempt 1, base main at 26ab7935. RED commit 112e6645 (tests only, src/ as on main): the four new tests failed, `hold: false` on every R1 row and on the issue 385 receipt.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/core/parse-guard.test.ts "hit your <one to three words> limit holds and names the phrase; ..." (six hold rows, five no-hold rows, status row) | pass |
+| 2 | tests/core/parse-guard.test.ts "the issue 385 receipt is a quota hold via text with no retry delay, ..." (`detectQuotaHold(quotaOutput(..))`, `classifyPreReview` on the R2/R3 command path, exit-0 row) | pass |
+| 3 | tests/core/review-policy.test.ts "T0-CLI-LIMIT-HOLD: the Claude CLI model-limit receipt of issue 385 ..." | pass |
+| 4 | tests/core/parse-guard.test.ts "docs/OPERATIONS.md names the hit your <name> limit phrase and issue 385 [R4]"; "src/core/parse-guard.ts is at most 30 lines" (29 lines) | pass |
+
+Card text correction: R3 and acceptance 3 name `classifyReviewOutcome`; the function at src/core/review-policy.ts:93 is `classifyVerdict`, and acceptance 3 tests that function. The card text is left as written (frozen at run start).
+
+Revert check: `{1,3}` widened to `{1,}` turns the R1/R2 test red (the four-word row holds); restored. Removing the alternative is the RED commit.
+
+Other suites that carry quota text, run once on Windows: r2-billing-hold, r2-fallback, pre-review, providers, review-bench, review-bench-rounds, review-bench-formal-command: 188 tests, 188 pass.
+
+DoD (Windows): `npm run typecheck` clean; `node --test tests/core/parse-guard.test.ts tests/core/review-policy.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts`: 108 tests, 108 pass, 0 fail.
