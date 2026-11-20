@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
+import { runCliInProcess } from '../infra/cli-inprocess.ts';
 import * as cli from '../../src/cli/main.ts';
 
 const main = path.resolve(import.meta.dirname, '..', '..', 'src', 'cli', 'main.ts');
@@ -46,6 +47,14 @@ function childEnv(extra: NodeJS.ProcessEnv = {}, source: NodeJS.ProcessEnv = pro
   return { ...env, GIT_CEILING_DIRECTORIES: CEILING, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_CONFIG, ...extra };
 }
 
+/** What a run of the CLI gives: `run` runs it in this process (runCliInProcess), `child` in a child process (spawnSync). */
+type CliResult = { status: number | null; stdout: string; stderr: string };
+
+/** `fx` with `run` starting the CLI in a child process, for a case that checks what the child process does. */
+function inChild<T extends { child: unknown }>(fx: T): Omit<T, 'run'> & { run: T['child'] } {
+  return { ...fx, run: fx.child };
+}
+
 function gitInit(repo: string): void {
   const r = spawnSync('git', ['init', '-q', repo], { encoding: 'utf8', env: childEnv(), windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
@@ -57,7 +66,8 @@ interface Fixture {
   target: string;
   third: string;
   state: string;
-  run: (args: string[], input?: string, cwd?: string) => SpawnSyncReturns<string>;
+  run: (args: string[], input?: string, cwd?: string) => Promise<CliResult>;
+  child: (args: string[], input?: string, cwd?: string) => SpawnSyncReturns<string>;
 }
 
 /** A caller directory the CLI starts in, a -C target, a third directory for fully qualified values and a state directory. */
@@ -70,8 +80,9 @@ function fixture(): Fixture {
   };
   const [caller, target, third, state] = [sub('caller'), sub('target'), sub('third'), sub('state')];
   const env = childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'cwd-paths-test' });
-  const run = (args: string[], input?: string, cwd = caller) => spawnSync(process.execPath, [main, ...args], { cwd, env, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
-  return { root, caller, target, third, state, run };
+  const run = (args: string[], input?: string, cwd = caller) => runCliInProcess(args, { cwd, env, input });
+  const child = (args: string[], input?: string, cwd = caller) => spawnSync(process.execPath, [main, ...args], { cwd, env, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+  return { root, caller, target, third, state, run, child };
 }
 
 /** Every file under `dir` with its bytes, so a refusal can be shown to have written nothing. */
@@ -105,14 +116,14 @@ function benchReport(): string {
 }
 
 /** The single goal of the fixture state directory. */
-function goalOf(fx: Fixture): string {
+function goalOf(fx: Pick<Fixture, 'state'>): string {
   const [file] = readdirSync(path.join(fx.state, 'goals')).filter((f) => f.endsWith('.json'));
   assert.ok(file, 'the fixture holds a goal');
   return file.slice(0, -'.json'.length);
 }
 
-function newGoal(fx: Fixture): string {
-  const r = fx.run(['-C', fx.target, 'goal', 'new', 'a small change']);
+async function newGoal(fx: Pick<Fixture, 'target' | 'state'> & { run: (args: string[]) => CliResult | Promise<CliResult> }): Promise<string> {
+  const r = await fx.run(['-C', fx.target, 'goal', 'new', 'a small change']);
   assert.equal(r.status, 0, r.stderr);
   return goalOf(fx);
 }
@@ -135,7 +146,8 @@ interface RepoFixture {
   src: string;
   caller: string;
   /** The CLI with `AIDLC_SESSION` set and no other AIDLC_ variable: the repository and its state directory come from the working directory alone. */
-  run: (args: string[], cwd: string, input?: string, extraEnv?: NodeJS.ProcessEnv) => SpawnSyncReturns<string>;
+  run: (args: string[], cwd: string, input?: string, extraEnv?: NodeJS.ProcessEnv) => Promise<CliResult>;
+  child: (args: string[], cwd: string, input?: string, extraEnv?: NodeJS.ProcessEnv) => SpawnSyncReturns<string>;
 }
 
 /** A git repository with `src/sub`, a frozen path in its config and a caller directory outside it. */
@@ -150,12 +162,13 @@ function repoFixture(): RepoFixture {
   // The default session token is read from the process directory's state directory, with or without -C (a non-goal): every call sets AIDLC_SESSION.
   const env = childEnv({ AIDLC_SESSION: 'cwd-paths-test' });
   gitInit(repo);
-  const run = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [main, ...args], { cwd, env: { ...env, ...extraEnv }, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
-  return { root, repo, src, caller, run };
+  const run = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => runCliInProcess(args, { cwd, env: { ...env, ...extraEnv }, input });
+  const child = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [main, ...args], { cwd, env: { ...env, ...extraEnv }, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+  return { root, repo, src, caller, run, child };
 }
 
 /** Every value refused as `-C` for each command, exit 2 under a hook and 1 otherwise, naming `--cwd` and the reason, with nothing written under the fixture. */
-function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
+async function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): Promise<void> {
   const event = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: fx.caller, session_id: 'cwd-paths-test' });
   const commands: Array<[string[], number, string | undefined]> = [
     [['spec', 'validate', 'spec.md'], 1, undefined],
@@ -167,7 +180,7 @@ function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
   const before = snapshot(fx.root);
   for (const [value, reason] of values) {
     for (const [args, code, input] of commands) {
-      const r = fx.run(['-C', value, ...args], input);
+      const r = await fx.run(['-C', value, ...args], input);
       const label = `-C ${JSON.stringify(value)} ${args.join(' ')}`;
       assert.equal(r.status, code, `${label}: ${r.stderr}`);
       assert.ok(r.stderr.startsWith(`aidlc: --cwd ${JSON.stringify(value)}: ${reason}`), `${label}: ${r.stderr}`);
@@ -270,6 +283,7 @@ function envViolations(text: string): EnvViolation[] {
 
 describe('T0-CLI-CWD-FILE-ARGS-2', () => {
   test('every child starts without the GIT_ variables of the test process, and repository discovery stops at the ceiling', () => {
+    // Child process (R1: the child's inherited environment): the GIT_ variables set in the test process must not reach the child.
     const repo = path.join(tempDir('leak'), 'repo');
     gitInit(repo);
     const set: Record<string, string> = { GIT_DIR: path.join(repo, '.git'), git_work_tree: repo, GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.worktree', GIT_CONFIG_VALUE_0: repo };
@@ -280,7 +294,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       assert.equal(dump.status, 0, dump.stderr);
       assert.deepEqual(Object.fromEntries(JSON.parse(dump.stdout) as Array<[string, string]>), { GIT_CEILING_DIRECTORIES: CEILING, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: GIT_CONFIG });
       // The CLI in a directory outside any repository does not reach the repository GIT_DIR names in the test process.
-      const fx = fixture();
+      const fx = inChild(fixture());
       const r = fx.run(['doctor', '--json']);
       assert.equal(r.status, 0, r.stderr);
       assert.equal((JSON.parse(r.stdout) as { repository: string }).repository, `${fx.caller} (not a git repository)`);
@@ -310,6 +324,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
   });
 
   test('every child starts without the NODE_ variables of the test process: a refusal prints the same stderr with NODE_DEBUG set', () => {
+    // Child process (R1: the child's inherited environment): NODE_DEBUG in the environment the child starts with.
     const fx = fixture();
     const runWith = (source: NodeJS.ProcessEnv) => spawnSync(process.execPath, [main, '-C', fx.target, 'spec', 'validate', ''], { cwd: fx.caller, env: childEnv({ AIDLC_STATE_DIR: fx.state, AIDLC_SESSION: 'cwd-paths-test' }, source), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
     const plain = runWith(process.env);
@@ -364,11 +379,11 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     }
   });
 
-  test('each file argument resolves against -C [R1] [R4]', () => {
+  test('each file argument resolves against -C [R1] [R4]', async () => {
     const fx = fixture();
     // One case per command; bench compare and monitor check give both of their values the same way, so a second value is
     // reached only when the first was read from the same directory.
-    const cases: Array<{ name: string; status: number; files: Record<string, string>; args: (at: (rel: string) => string) => string[]; check: (r: SpawnSyncReturns<string>, dir: string) => void }> = [
+    const cases: Array<{ name: string; status: number; files: Record<string, string>; args: (at: (rel: string) => string) => string[]; check: (r: CliResult, dir: string) => void }> = [
       {
         name: 'init [dir]',
         status: 0,
@@ -397,28 +412,28 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     for (const c of cases) {
       for (const [dir, at] of [[fx.target, (rel: string) => rel], [fx.third, (rel: string) => path.join(fx.third, rel)]] as const) {
         for (const [rel, text] of Object.entries(c.files)) write(path.join(dir, rel), text);
-        const r = fx.run(['-C', fx.target, ...c.args(at)]);
+        const r = await fx.run(['-C', fx.target, ...c.args(at)]);
         const label = `${c.name} (${dir === fx.target ? 'relative to -C' : 'fully qualified'})`;
         assert.equal(r.status, c.status, `${label}: ${r.stderr}`);
         c.check(r, dir);
       }
     }
     // evidence retain --file: the bytes of the file the value names go into a goal of the fixture state directory.
-    const goal = newGoal(fx);
+    const goal = await newGoal(fx);
     write(path.join(fx.target, 'out.txt'), 'bytes of the target');
     write(path.join(fx.third, 'out.txt'), 'bytes of the third directory');
     for (const [id, value, bytes] of [['e1', 'out.txt', 'bytes of the target'], ['e2', path.join(fx.third, 'out.txt'), 'bytes of the third directory']] as const) {
-      const r = fx.run(['-C', fx.target, 'evidence', 'retain', '--id', id, '--kind', 'log', '--file', value]);
+      const r = await fx.run(['-C', fx.target, 'evidence', 'retain', '--id', id, '--kind', 'log', '--file', value]);
       assert.equal(r.status, 0, `evidence retain --file ${value}: ${r.stderr}`);
       assert.equal(readFileSync(path.join(fx.state, 'evidence', goal, id), 'utf8'), bytes);
     }
   });
 
-  test('supplied values are refused before the command context is built [R4]', () => {
+  test('supplied values are refused before the command context is built [R4]', async () => {
     const fx = fixture();
     // ctx() refuses this configuration, so a refusal naming the option shows that the value was checked first.
     write(path.join(fx.target, 'aidlc.config.json'), '{ not json');
-    const ctxBuilt = fx.run(['-C', fx.target, 'spec', 'validate', 'spec.md']);
+    const ctxBuilt = await fx.run(['-C', fx.target, 'spec', 'validate', 'spec.md']);
     assert.equal(ctxBuilt.status, 1, ctxBuilt.stderr);
     assert.ok(ctxBuilt.stderr.startsWith('aidlc: ') && !ctxBuilt.stderr.includes('<file>'), `the fixture's configuration fails ctx(): ${ctxBuilt.stderr}`);
     // The eight of the twelve values whose command builds a context; the two commands with two inputs with the empty value first and second.
@@ -436,15 +451,15 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ['<after.json>', ['review', 'bench', 'compare', 'before.json', '']],
     ];
     for (const [option, args] of slots) {
-      const r = fx.run(['-C', fx.target, ...args]);
+      const r = await fx.run(['-C', fx.target, ...args]);
       assert.equal(r.status, 1, `${args.join(' ')}: ${r.stderr}`);
       assert.ok(r.stderr.startsWith(`aidlc: ${option} "": `), `${args.slice(0, 2).join(' ')} ${option}: ${r.stderr}`);
     }
   });
 
-  test('supplied values are refused before any read or write [R3] [R4] [R6]', () => {
+  test('supplied values are refused before any read or write [R3] [R4] [R6]', async () => {
     const fx = fixture();
-    newGoal(fx);
+    await newGoal(fx);
     // Every other value names a file that does not exist: a refusal must name the empty option, not ENOENT of another value.
     const slots: Array<[string, (v: string) => string[]]> = [
       ['[dir]', (v) => ['init', v]],
@@ -463,7 +478,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     const before = snapshot(fx.root);
     for (const [option, args] of slots) {
       for (const value of ['', '  ']) {
-        const r = fx.run(['-C', fx.target, ...args(value)]);
+        const r = await fx.run(['-C', fx.target, ...args(value)]);
         const label = `${args(value).slice(0, 2).join(' ')} ${option} ${JSON.stringify(value)}`;
         assert.equal(r.status, 1, `${label}: ${r.stderr}`);
         assert.ok(r.stderr.startsWith(`aidlc: ${option} ${JSON.stringify(value)}: `), `${label}: ${r.stderr}`);
@@ -472,9 +487,11 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     }
   });
 
-  test('supplied values: a value under a regular file fails with the error of main naming the resolved path [R6]', () => {
-    const fx = fixture();
-    newGoal(fx);
+  test('supplied values: a value under a regular file fails with the error of main naming the resolved path [R6]', async () => {
+    // Child process (R2): the child-process case of init, cards project, intent validate, spec validate, plan check, review bench
+    // compare, ci classify, migrate assess, evidence retain and monitor check.
+    const fx = inChild(fixture());
+    await newGoal(fx);
     write(path.join(fx.target, 'a-file'), 'x');
     const value = path.join('a-file', 'child');
     const resolved = path.join(fx.target, value);
@@ -503,28 +520,28 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     }
   });
 
-  test('supplied values: a drive-relative or incomplete UNC value is refused and a leading separator means the root of the -C drive [R3] [R6]', { skip: process.platform !== 'win32' && 'win32 path forms need a Windows file system; the path function test covers the rule on every host' }, () => {
+  test('supplied values: a drive-relative or incomplete UNC value is refused and a leading separator means the root of the -C drive [R3] [R6]', { skip: process.platform !== 'win32' && 'win32 path forms need a Windows file system; the path function test covers the rule on every host' }, async () => {
     const fx = fixture();
     write(path.join(fx.target, 'plans', 'p.md'), PLAN);
     const before = snapshot(fx.root);
     for (const value of ['C:plan.md', '\\\\x']) {
-      const r = fx.run(['-C', fx.target, 'cards', 'project', '--plan', value, '--write']);
+      const r = await fx.run(['-C', fx.target, 'cards', 'project', '--plan', value, '--write']);
       assert.equal(r.status, 1, r.stderr);
       assert.ok(r.stderr.startsWith(`aidlc: --plan ${JSON.stringify(value)}: `), r.stderr);
       assert.deepEqual(snapshot(fx.root), before, `--plan ${value} writes nothing`);
     }
     const rooted = `${fx.target.slice(path.parse(fx.target).root.length - 1)}\\plans\\p.md`;
-    const r = fx.run(['-C', fx.target, 'cards', 'project', '--plan', rooted]);
+    const r = await fx.run(['-C', fx.target, 'cards', 'project', '--plan', rooted]);
     assert.equal(r.status, 0, `${rooted}: ${r.stderr}`);
     assert.match(r.stdout, /<!-- T0-CWD-ROW -->/);
   });
 
-  test('an invalid -C is refused for every command [R2] [R6]', () => {
+  test('an invalid -C is refused for every command [R2] [R6]', async () => {
     const fx = fixture();
     write(path.join(fx.root, 'a-file'), 'x');
     // Under a regular file Windows reports no entry and POSIX ENOTDIR; both are the same refusal.
     const [nothing, file, child] = [path.join(fx.root, 'nothing'), path.join(fx.root, 'a-file'), path.join(fx.root, 'a-file', 'child')];
-    assertCwdRefused(fx, [
+    await assertCwdRefused(fx, [
       ['', 'the value is empty'],
       ['  ', 'the value is empty'],
       [nothing, `no directory at ${nothing} (`],
@@ -534,17 +551,17 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     ]);
   });
 
-  test('an invalid -C is refused for every command: a parent that cannot be read [R2] [R6]', { skip: (process.platform === 'win32' && 'mode 0o000 does not deny a read on Windows') || (process.getuid?.() === 0 && 'root reads a directory of mode 0o000') }, () => {
+  test('an invalid -C is refused for every command: a parent that cannot be read [R2] [R6]', { skip: (process.platform === 'win32' && 'mode 0o000 does not deny a read on Windows') || (process.getuid?.() === 0 && 'root reads a directory of mode 0o000') }, async () => {
     const fx = fixture();
     const locked = path.join(tempDir('locked'), 'locked');
     mkdirSync(path.join(locked, 'inner'), { recursive: true });
     chmodSync(locked, 0o000);
     try {
       // A directory under a parent that cannot be read: its stat fails EACCES, so -C is refused (exit 1, exit 2 under a hook).
-      assertCwdRefused(fx, [[path.join(locked, 'inner'), `no directory at ${path.join(locked, 'inner')} (`]]);
+      await assertCwdRefused(fx, [[path.join(locked, 'inner'), `no directory at ${path.join(locked, 'inner')} (`]]);
       // The mode-000 directory itself: its stat needs search permission on the parent only, so it names an existing directory and
       // R2 accepts it; the command then fails with its own error when it opens spec.md there.
-      const r = fx.run(['-C', locked, 'spec', 'validate', 'spec.md']);
+      const r = await fx.run(['-C', locked, 'spec', 'validate', 'spec.md']);
       assert.equal(r.status, 1, r.stderr);
       assert.ok(r.stderr.startsWith('aidlc: ') && !r.stderr.includes('--cwd') && r.stderr.includes(locked), r.stderr);
     } finally {
@@ -552,22 +569,22 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     }
   });
 
-  test('absent optional values [R5]', () => {
+  test('absent optional values [R5]', async () => {
     const fx = fixture();
     write(path.join(fx.target, 'aidlc.config.json'), '{}\n');
-    const init = fx.run(['-C', fx.target, 'init', '--dry-run', '--json']);
+    const init = await fx.run(['-C', fx.target, 'init', '--dry-run', '--json']);
     assert.equal(init.status, 0, init.stderr);
     assert.ok((JSON.parse(init.stdout) as { skipped: string[] }).skipped.includes('aidlc.config.json'), init.stdout);
-    const migrate = fx.run(['-C', fx.target, 'migrate', 'assess', '--paths', 'x', '--json']);
+    const migrate = await fx.run(['-C', fx.target, 'migrate', 'assess', '--paths', 'x', '--json']);
     assert.equal(migrate.status, 0, migrate.stderr);
     assert.deepEqual(JSON.parse(migrate.stdout), { impacted: false, strong: false, signals: [] });
-    const goal = newGoal(fx);
-    const retain = fx.run(['-C', fx.target, 'evidence', 'retain', '--id', 'kept', '--kind', 'note', '--content', 'kept']);
+    const goal = await newGoal(fx);
+    const retain = await fx.run(['-C', fx.target, 'evidence', 'retain', '--id', 'kept', '--kind', 'note', '--content', 'kept']);
     assert.equal(retain.status, 0, retain.stderr);
     assert.equal(readFileSync(path.join(fx.state, 'evidence', goal, 'kept'), 'utf8'), 'kept');
   });
 
-  test('plan_ref is the same with and without -C [R7]', () => {
+  test('plan_ref is the same with and without -C [R7]', async () => {
     const fx = fixture();
     const repo = path.join(fx.root, 'repo');
     write(path.join(repo, 'plans', 'p.md'), PLAN);
@@ -582,25 +599,25 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     ];
     if (process.platform === 'win32') runs.push(['-C in another drive-letter case', ['-C', swapCase(repo), 'cards', 'project', '--plan', 'plans/p.md'], fx.caller]);
     for (const [label, args, cwd] of runs) {
-      const r = fx.run(args, undefined, cwd);
+      const r = await fx.run(args, undefined, cwd);
       assert.equal(r.status, 0, `${label}: ${r.stderr}`);
       assert.match(r.stdout, /^plan_ref: plans\/p\.md#7$/m, `${label}: ${r.stdout}`);
     }
   });
 
-  test('plan_ref is the same with and without -C: an 8.3 short name [R7]', { skip: process.platform !== 'win32' && '8.3 short names exist on Windows only' }, (t) => {
+  test('plan_ref is the same with and without -C: an 8.3 short name [R7]', { skip: process.platform !== 'win32' && '8.3 short names exist on Windows only' }, async (t) => {
     const fx = fixture();
     const repo = path.join(fx.root, 'a long repository name');
     write(path.join(repo, 'plans', 'p.md'), PLAN);
     gitInit(repo);
     const short = shortName(repo);
     if (!short) return t.skip('this volume keeps no 8.3 short names');
-    const r = fx.run(['-C', short, 'cards', 'project', '--plan', 'plans/p.md']);
+    const r = await fx.run(['-C', short, 'cards', 'project', '--plan', 'plans/p.md']);
     assert.equal(r.status, 0, `${short}: ${r.stderr}`);
     assert.match(r.stdout, /^plan_ref: plans\/p\.md#7$/m, `${short}: ${r.stdout}`);
   });
 
-  test('-C selects the same repository and state directory in every form of the same directory [R1]', () => {
+  test('-C selects the same repository and state directory in every form of the same directory [R1]', async () => {
     const fx = repoFixture();
     // [label, process directory, -C value]; each names fx.src.
     const forms: Array<[string, string, string]> = [
@@ -618,20 +635,21 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     }
     const before = { src: snapshot(fx.src), caller: snapshot(fx.caller) };
     for (const [label, cwd, value] of forms) {
-      const r = fx.run(['-C', value, 'doctor', '--json'], cwd);
+      const r = await fx.run(['-C', value, 'doctor', '--json'], cwd);
       assert.equal(r.status, 0, `${label}: ${r.stderr}`);
       const checks = JSON.parse(r.stdout) as { repository: string; stateDir: string };
       assert.deepEqual({ repository: checks.repository, stateDir: checks.stateDir }, { repository: fx.repo, stateDir: path.join(fx.repo, '.aidlc') }, label);
     }
     // review bench run takes its checkout root from the -C directory (R4): its refusal names the checkout.
     for (const [cwd, value] of [[fx.repo, 'missing/../src'], [fx.repo, 'src']] as const) {
-      const r = fx.run(['-C', value, 'review', 'bench', 'run', '--stage', 'formal'], cwd);
+      // Child process (R2): the child-process run of review bench run.
+      const r = fx.child(['-C', value, 'review', 'bench', 'run', '--stage', 'formal'], cwd);
       assert.equal(r.status, 1, r.stderr);
       assert.ok(r.stderr.includes(`no REVIEW.md in ${fx.repo}`), `-C ${value} review bench run: ${r.stderr}`);
     }
     // Two commands that write state: their goals and journals go to the checkout's state directory.
     for (const [cwd, value] of [[fx.repo, 'missing/../src'], [fx.caller, fx.src]] as const) {
-      const r = fx.run(['-C', value, 'goal', 'new', 'a small change'], cwd);
+      const r = await fx.run(['-C', value, 'goal', 'new', 'a small change'], cwd);
       assert.equal(r.status, 0, `-C ${value} goal new: ${r.stderr}`);
     }
     assert.equal(readdirSync(path.join(fx.repo, '.aidlc', 'goals')).filter((f) => f.endsWith('.json')).length, 2);
@@ -639,7 +657,9 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
   });
 
   test('-C selects the same repository and state directory in every form: a hook runs its guards in the -C directory [R1]', () => {
-    const fx = repoFixture();
+    // Child process (R1: a path the child resolves from its own working directory): without -C and without an event cwd the hook
+    // reads the process directory; also the child-process case of hook protect-paths (R2).
+    const fx = inChild(repoFixture());
     // The event names another directory: with -C the guards read the configuration of the -C directory's repository.
     const event = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'frozen/a.ts' }, cwd: fx.caller, session_id: 'cwd-paths-test' });
     for (const name of ['auto', 'protect-paths']) {
@@ -657,7 +677,10 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
   });
 
   test('-C leaves the process directory and the environment as they are [R1] [R8]', () => {
-    const fx = repoFixture();
+    // Child process (R1: the child's inherited environment and its own working directory): R8 is about the process directory and
+    // the environment of the process the CLI runs in, and the -C directory removed once that process has ended; also the
+    // child-process case of doctor, goal new and hook auto (R2).
+    const fx = inChild(repoFixture());
     // A relative AIDLC_STATE_DIR is read against the process directory, with or without -C: the CLI neither changes directory nor rewrites it.
     for (const args of [['-C', fx.src, 'doctor', '--json'], ['doctor', '--json']]) {
       const r = fx.run(args, fx.caller, undefined, { AIDLC_STATE_DIR: 'rel-state' });
@@ -688,7 +711,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     assert.equal(existsSync(gone), false);
   });
 
-  test('plan_ref is canonical when the plan is given through a link [R7]', () => {
+  test('plan_ref is canonical when the plan is given through a link [R7]', async () => {
     const fx = fixture();
     const repo = path.join(fx.root, 'repo');
     write(path.join(repo, 'plans', 'p.md'), PLAN);
@@ -703,13 +726,13 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       ['-C <link> --plan ../link/plans/p.md', ['-C', link, 'cards', 'project', '--plan', '../link/plans/p.md']],
     ];
     for (const [label, args] of runs) {
-      const r = fx.run(args);
+      const r = await fx.run(args);
       assert.equal(r.status, 0, `${label}: ${r.stderr}`);
       assert.match(r.stdout, /^plan_ref: plans\/p\.md#7$/m, `${label}: ${r.stdout}`);
     }
   });
 
-  test('plan_ref without -C is the one main drafts, and with -C both sides are canonical [R7] [R9]', () => {
+  test('plan_ref without -C is the one main drafts, and with -C both sides are canonical [R7] [R9]', async () => {
     const fx = fixture();
     // Without -C, from inside a repository, a plan typed through a directory link to it: main drafts `../link/plans/p.md#7` (its output
     // is recorded in the card), the relative path of the value as typed.
@@ -718,7 +741,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     gitInit(repo);
     const link = path.join(fx.root, 'link');
     symlinkSync(repo, link, process.platform === 'win32' ? 'junction' : 'dir');
-    const plain = fx.run(['cards', 'project', '--plan', path.join(link, 'plans', 'p.md')], undefined, repo);
+    const plain = await fx.run(['cards', 'project', '--plan', path.join(link, 'plans', 'p.md')], undefined, repo);
     assert.equal(plain.status, 0, plain.stderr);
     assert.match(plain.stdout, /^plan_ref: \.\.\/link\/plans\/p\.md#7$/m, plain.stdout);
     // With -C through a link to a directory that is no repository, where the context root is the lexical -C directory.
@@ -726,7 +749,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     write(path.join(dir, 'plans', 'p.md'), PLAN);
     const dirLink = path.join(fx.root, 'plain-link');
     symlinkSync(dir, dirLink, process.platform === 'win32' ? 'junction' : 'dir');
-    const viaLink = fx.run(['-C', dirLink, 'cards', 'project', '--plan', 'plans/p.md']);
+    const viaLink = await fx.run(['-C', dirLink, 'cards', 'project', '--plan', 'plans/p.md']);
     assert.equal(viaLink.status, 0, viaLink.stderr);
     assert.match(viaLink.stdout, /^plan_ref: plans\/p\.md#7$/m, viaLink.stdout);
   });
@@ -841,7 +864,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     for (const [text, rules] of failing) assert.deepEqual([...new Set(envViolations(text).map((v) => v.rule))].sort(), rules, JSON.stringify(text));
   });
 
-  test('the CLI changes neither the process directory nor the environment: the default session token stays with the process directory [R1] [R8]', () => {
+  test('the CLI changes neither the process directory nor the environment: the default session token stays with the process directory [R1] [R8]', async () => {
     // The behaviour row: with -C <repository> from a caller directory and no AIDLC_STATE_DIR or session variable, the default session
     // token is created under the caller directory's state directory (as on main, recorded in the card) and not under the repository's.
     const root = tempDir('session');
@@ -850,7 +873,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     mkdirSync(repo);
     mkdirSync(caller);
     gitInit(repo);
-    const r = spawnSync(process.execPath, [main, '-C', repo, 'goal', 'new', 'a small change'], { cwd: caller, env: childEnv(), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const r = await runCliInProcess(['-C', repo, 'goal', 'new', 'a small change'], { cwd: caller, env: childEnv() });
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readdirSync(path.join(repo, '.aidlc', 'goals')).filter((f) => f.endsWith('.json')).length, 1);
     assert.equal(existsSync(path.join(caller, '.aidlc', 'session-default')), true, 'the session token is under the caller directory');
@@ -858,7 +881,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     assert.equal(existsSync(path.join(repo, '.aidlc', 'session-default')), false, 'no session token under the repository');
   });
 
-  test('plan_ref without -C is the one main drafts, and with -C both sides are canonical: a plan file that is a link [R7] [R9]', (t) => {
+  test('plan_ref without -C is the one main drafts, and with -C both sides are canonical: a plan file that is a link [R7] [R9]', async (t) => {
     const fx = fixture();
     const repo = path.join(fx.root, 'repo');
     write(path.join(repo, 'plans', 'real.md'), PLAN);
@@ -869,47 +892,47 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
       return t.skip(`this host cannot create a file link: ${(err as NodeJS.ErrnoException).code}`);
     }
     // With -C the plan is named by its target; without -C by the value as typed, as main drafts it.
-    const withC = fx.run(['-C', repo, 'cards', 'project', '--plan', 'plans/link.md']);
+    const withC = await fx.run(['-C', repo, 'cards', 'project', '--plan', 'plans/link.md']);
     assert.equal(withC.status, 0, withC.stderr);
     assert.match(withC.stdout, /^plan_ref: plans\/real\.md#7$/m, withC.stdout);
-    const plain = fx.run(['cards', 'project', '--plan', 'plans/link.md'], undefined, repo);
+    const plain = await fx.run(['cards', 'project', '--plan', 'plans/link.md'], undefined, repo);
     assert.equal(plain.status, 0, plain.stderr);
     assert.match(plain.stdout, /^plan_ref: plans\/link\.md#7$/m, plain.stdout);
   });
 
-  test('without -C a value is passed as given [R6] [R9]', () => {
+  test('without -C a value is passed as given [R6] [R9]', async () => {
     const fx = fixture();
     // On every host: a relative value that names no file fails without -C with the error of main, and with -C names the resolved path.
     // Main's error names the value as typed on POSIX; on Windows Node's error names the file in the process directory (recorded in the card).
-    const plain = fx.run(['spec', 'validate', 'nofile.md'], undefined, fx.target);
+    const plain = await fx.run(['spec', 'validate', 'nofile.md'], undefined, fx.target);
     assert.equal(plain.status, 1, plain.stderr);
     if (process.platform === 'win32') assert.ok(plain.stderr.startsWith('aidlc: ') && plain.stderr.includes(path.join(fx.target, 'nofile.md')), plain.stderr);
     else assert.equal(plain.stderr, "aidlc: ENOENT: no such file or directory, open 'nofile.md'\n");
-    const withC = fx.run(['-C', fx.target, 'spec', 'validate', 'nofile.md']);
+    const withC = await fx.run(['-C', fx.target, 'spec', 'validate', 'nofile.md']);
     assert.equal(withC.status, 1, withC.stderr);
     assert.ok(withC.stderr.includes(path.join(fx.target, 'nofile.md')), withC.stderr);
     // An error the command writes itself names the value as typed without -C on every host, and the resolved path with -C.
-    const bench = fx.run(['review', 'bench', 'compare', 'nofile.json', 'other.json'], undefined, fx.target);
+    const bench = await fx.run(['review', 'bench', 'compare', 'nofile.json', 'other.json'], undefined, fx.target);
     assert.equal(bench.status, 1, bench.stderr);
     assert.equal(bench.stderr, 'aidlc: nofile.json: no such file\n');
-    const benchC = fx.run(['-C', fx.target, 'review', 'bench', 'compare', 'nofile.json', 'other.json']);
+    const benchC = await fx.run(['-C', fx.target, 'review', 'bench', 'compare', 'nofile.json', 'other.json']);
     assert.ok(benchC.stderr.startsWith(`aidlc: ${path.join(fx.target, 'nofile.json')}: `), benchC.stderr);
     // Without -C the refusals of R3 still apply.
-    const empty = fx.run(['spec', 'validate', ''], undefined, fx.target);
+    const empty = await fx.run(['spec', 'validate', ''], undefined, fx.target);
     assert.equal(empty.status, 1, empty.stderr);
     assert.ok(empty.stderr.startsWith('aidlc: <file> "": '), empty.stderr);
   });
 
-  test('without -C a value is passed as given: missing/../spec.md on POSIX [R9]', { skip: process.platform === 'win32' && 'Windows reads missing\\..\\spec.md lexically, so only a POSIX file system shows the difference' }, () => {
+  test('without -C a value is passed as given: missing/../spec.md on POSIX [R9]', { skip: process.platform === 'win32' && 'Windows reads missing\\..\\spec.md lexically, so only a POSIX file system shows the difference' }, async () => {
     const fx = fixture();
     write(path.join(fx.target, 'spec.md'), 'no front matter\n');
     // Without -C the file system reads the value: `missing` does not exist, so the open fails, as on main.
-    const plain = fx.run(['spec', 'validate', 'missing/../spec.md'], undefined, fx.target);
+    const plain = await fx.run(['spec', 'validate', 'missing/../spec.md'], undefined, fx.target);
     assert.equal(plain.status, 1, plain.stderr);
     assert.equal(plain.stderr, "aidlc: ENOENT: no such file or directory, open 'missing/../spec.md'\n");
     assert.equal(plain.stdout, '');
     // With -C, R3 resolves it lexically: it names spec.md under the -C directory.
-    const withC = fx.run(['-C', fx.target, 'spec', 'validate', 'missing/../spec.md', '--json']);
+    const withC = await fx.run(['-C', fx.target, 'spec', 'validate', 'missing/../spec.md', '--json']);
     assert.equal(withC.status, 1, withC.stderr);
     assert.deepEqual((JSON.parse(withC.stdout) as { problems: string[] }).problems, ['missing front matter']);
   });
