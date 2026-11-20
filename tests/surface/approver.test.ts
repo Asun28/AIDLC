@@ -51,12 +51,11 @@ function fixture(): Fixture {
     const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: env(), windowsHide: true });
     assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   };
-  // Kept child process: checking lines index the result (`lastAuthorizations(...).map`, `f.cli(args).status`), where an
-  // added `await` would apply to the index, not the call; or the call is this file's bin/aidlc.js case for its command
-  // (R2: goal new, goal status, plan approve, authorize, report).
   const cli = (args: string[], cwd = repo) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: env(), windowsHide: true });
   const run = (args: string[], cwd = repo) => runCliInProcess(args, { cwd, env: env() });
   const lastAuthorizations = (goalId: string, n: number): Authorization[] => {
+    // child: result indexed on an R4-protected line; await would need parentheses R4 forbids: `f.lastAuthorizations(goalId, 3).map(...)`
+    // and `f.lastAuthorizations(goalId, 100).length`.
     const r = cli(['goal', 'status', goalId]);
     assert.equal(r.status, 0, String(r.stderr));
     return (JSON.parse(String(r.stdout)) as { authorizations: Authorization[] }).authorizations.slice(-n);
@@ -83,7 +82,7 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
     try {
       f.git(['config', 'user.email', 'approver@example.com']);
       f.git(['config', 'user.name', 'Approver Name']);
-      const created = f.cli(['goal', 'new', 'approve a change', '--size', 'T0']);
+      const created = await f.run(['goal', 'new', 'approve a change', '--size', 'T0']);
       assert.equal(created.status, 0, String(created.stderr));
       const goalId = (JSON.parse(String(created.stdout)) as { goal: string }).goal;
 
@@ -116,6 +115,7 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
 
       // An empty --by is given too: each command passes it on and the empty approver is refused, never replaced.
       const before = f.lastAuthorizations(goalId, 100).length;
+      // child: result indexed on an R4-protected line; await would need parentheses R4 forbids: the refusal check of `f.cli(args).status` below.
       for (const args of [
         ['plan', 'approve', goalId, '--by', ''],
         ['authorize', 'development', '--goal', goalId, '--by', ''],

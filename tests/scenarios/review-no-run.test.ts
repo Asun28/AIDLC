@@ -79,10 +79,8 @@ async function cliRepo(pre: boolean, child: boolean) {
   /** `aidlc -C <repo> <args>`: in this process, or through bin/aidlc.js in a child process when `child` is set (R2). */
   const raw = async (...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> =>
     child ? spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 }) : runCliInProcess(['-C', repo, ...args], { cwd: repo, env });
-  /**
-   * Kept child process for `card next`: checking lines index its result (`card('next')['directive']`), and `await` there
-   * would apply to the index, not the call; parentheses would change the line beyond the `await` R4 allows.
-   */
+  // child: result indexed on an R4-protected line; await would need parentheses R4 forbids: `card('next')['directive']['kind']` in toBuild and in
+  // the acceptance 2 check of `x.card('next')['directive']['kind']` after the failed attempt; every other `card next` goes through `next`.
   const rawSync = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 });
   const parsed = (args: string[], r: { status: number | null; stdout: string; stderr: string }) => {
     assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
@@ -93,6 +91,8 @@ async function cliRepo(pre: boolean, child: boolean) {
   const created = await cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
   const goalId = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
   await cli('report', '--goal', goalId, '--result', 'cards-projected', '--cards', CARD);
+  /** `card next` in this process, for a result read on an unprotected line. */
+  const next = () => cli('card', 'next', CARD, '--goal', goalId);
   /** `card next` returns its result at once (see rawSync); every other card command returns a promise. */
   function card(command: 'next', ...rest: string[]): Record<string, any>;
   function card(command: string, ...rest: string[]): Promise<Record<string, any>>;
@@ -116,13 +116,10 @@ async function cliRepo(pre: boolean, child: boolean) {
     assert.equal(r.stdout, '');
     assert.equal(existsSync(marker[kind]), false, 'the reviewer did not run');
   };
-  return { goalId, marker, cli, card, toBuild, succeed, snapshot, reviewFiles, refused, cleanup: () => [repo, state].forEach((d) => rmSync(d, { recursive: true, force: true })) };
+  return { goalId, marker, cli, card, next, toBuild, succeed, snapshot, reviewFiles, refused, cleanup: () => [repo, state].forEach((d) => rmSync(d, { recursive: true, force: true })) };
 }
 
-/** Kept child process (R2): this case runs each of its commands through bin/aidlc.js, one case per command. */
-const CHILD = true;
-
-/** Run `body` on a fresh repository, removed afterwards; with `child`, every command but `card next` in a child process too. */
+/** Run `body` on a fresh repository, removed afterwards; with `child`, every command through bin/aidlc.js in a child process. */
 async function withRepo(pre: boolean, body: (x: Awaited<ReturnType<typeof cliRepo>>) => Promise<void>, child = false): Promise<void> {
   const x = await cliRepo(pre, child);
   try {
@@ -141,7 +138,8 @@ describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () =
         await x.refused(kind, `aidlc card next ${CARD} --goal ${x.goalId}`);
         assert.deepEqual(x.snapshot(), before, 'no card run file, the same journal lines, no review queue request');
         assert.deepEqual(x.reviewFiles(), [], 'no .review/ file');
-      }));
+        // child for pre (R1, the output bin/aidlc.js prints): refused checks the one `aidlc: ` stderr line bin/aidlc.js prints.
+      }, kind === 'pre'));
 
     it(`acceptance 2: review ${kind} with no attempt, then after a failed and a not-counted attempt, exits 1 naming aidlc card attempt and changes nothing [R2]`, () =>
       withRepo(kind === 'pre', async (x) => {
@@ -155,7 +153,7 @@ describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () =
         await x.card('attempt', '--outcome', 'fail', '--cause', 'dod red: one test fails');
         assert.equal(x.card('next')['directive']['kind'], 'build');
         await x.card('attempt', '--outcome', 'not-counted', '--not-counted', 'tool-outage');
-        const attempts = x.card('next')['run']['attempts'];
+        const attempts = (await x.next())['run']['attempts'];
         assert.ok(attempts >= 2, `the run holds the failed and the not-counted attempt: ${attempts}`);
         await check();
       }));
@@ -167,7 +165,8 @@ describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () =
       await x.succeed();
       await x.card('withdraw', '--cause', 'F9 the guard is missing');
       await x.refused('r3', 'the candidate was withdrawn (F9 the guard is missing); repair it and record the attempt');
-    }, CHILD));
+      // child (R1, the output bin/aidlc.js prints): refused checks the one `aidlc: ` stderr line bin/aidlc.js prints.
+    }, true));
 });
 
 describe('T0-REVIEW-NO-RUN-2: a run with a successful attempt is reviewed [R1] [R3]', () => {
@@ -181,7 +180,7 @@ describe('T0-REVIEW-NO-RUN-2: a run with a successful attempt is reviewed [R1] [
       const r3 = await x.cli('review', 'r3', CARD, '--goal', x.goalId);
       assert.deepEqual({ outcome: r3['outcome'], decisions: r3['decisions'] }, { outcome: 'pass', decisions: 1 }, JSON.stringify(r3));
       assert.equal(existsSync(x.marker.r3), true, 'the formal reviewer ran');
-    }, CHILD));
+    }));
 });
 
 // Acceptance 4: the sentences this card adds, each in its place, and removing any one fails.

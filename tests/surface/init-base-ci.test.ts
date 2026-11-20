@@ -20,6 +20,8 @@ const SKIP_EVALS = `${EVALS} (no package.json)`;
 const FIXTURE_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_')));
 
 const dirs: string[] = [];
+/** The repository on master that the clones of master are made from; set in `before` and only read (cloned) by the cases. */
+let masterSource: string | undefined;
 after(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
@@ -35,21 +37,19 @@ function git(cwd: string, ...args: string[]): void {
   assert.equal(r.status, 0, r.stderr);
 }
 
-/** A repository on `branch` with one commit. */
+/** A repository on `branch` with one commit; on master, the shared source once `before` has made it. */
 function repository(branch: string): string {
+  if (branch === 'master' && masterSource) return masterSource;
   const dir = tempDir();
   git(dir, 'init', '-q', '-b', branch);
   git(dir, 'commit', '-q', '--allow-empty', '-m', 'first');
   return dir;
 }
 
-/** The repository on master that the clones of master are made from; set in `before` and only read (cloned) by the cases. */
-let masterSource: string | undefined;
-
 /** A clone of a repository on `branch`, standing on that branch. */
 function cloneOnDefault(branch: string): string {
   const clone = path.join(tempDir(), 'clone');
-  git(path.dirname(clone), 'clone', '-q', branch === 'master' && masterSource ? masterSource : repository(branch), clone);
+  git(path.dirname(clone), 'clone', '-q', repository(branch), clone);
   return clone;
 }
 

@@ -110,22 +110,12 @@ describe('T1-INIT-HOOK-PATH: the command init writes', () => {
 });
 
 describe('T1-INIT-HOOK-PATH: a real hook process', () => {
-  /**
-   * A target laid by the real CLI, so the path of the running CLI reaches the settings file. Kept child process: this is
-   * the file's bin/aidlc.js case for `init` (R2); initialisedInProcess serves the other case.
-   */
-  function initialisedByCli(): string {
+  /** A target laid by the real CLI, so the path of the running CLI reaches the settings file. */
+  async function initialisedByCli(): Promise<string> {
     const target = tempDir();
-    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'init', target, '--json'], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
-    assert.equal(r.status, 0, r.stderr);
-    return target;
-  }
-
-  /** As initialisedByCli, in this process: src/cli/main.ts names the same bin/aidlc-hook.js from its own location. */
-  async function initialisedInProcess(): Promise<string> {
-    const target = tempDir();
+    // In this process: src/cli/main.ts names the same bin/aidlc-hook.js from its own location as the child does.
     const r = await runCliInProcess(['init', target, '--json'], { cwd: root });
-    if (r.status !== 0) throw new Error(`aidlc init exited ${r.status}: ${r.stderr}`);
+    assert.equal(r.status, 0, r.stderr);
     return target;
   }
 
@@ -139,15 +129,15 @@ describe('T1-INIT-HOOK-PATH: a real hook process', () => {
     return spawnSync(written, { shell: true, input, cwd: target, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
   }
 
-  test('acceptance 2: the written command exits 2 on a production command with no approval [R1] [R2]', () => {
+  test('acceptance 2: the written command exits 2 on a production command with no approval [R1] [R2]', async () => {
     const command = ['kubectl', 'apply', '-f', ['pr', 'od/'].join('')].join(' ');
     assert.ok(DEFAULT_HOOK_CONFIG.productionPatterns.some((p) => new RegExp(p, 'i').test(command)), 'the command matches a default pattern');
-    const r = runWritten(initialisedByCli(), command);
+    const r = runWritten(await initialisedByCli(), command);
     assert.equal(r.status, 2, r.stderr);
   });
 
   test('acceptance 2: the written command exits 0 on echo hello [R1] [R2]', async () => {
-    const r = runWritten(await initialisedInProcess(), 'echo hello');
+    const r = runWritten(await initialisedByCli(), 'echo hello');
     assert.equal(r.status, 0, r.stderr);
   });
 });
@@ -321,7 +311,7 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
     const ampersand = `node "${tempDir().replace(/\\/g, '/')}/x&mkdir ran.marker&/bin/aidlc-hook.js"`;
     for (const command of ['mkdir ran.marker', ampersand]) {
       const target = wired(command);
-      // Kept child process: this file's bin/aidlc.js case for `doctor` (R2).
+      // child (R1, the output bin/aidlc.js prints): this case checks the hookCommand line printed through bin/aidlc.js.
       const line = await doctorLine(target, true);
       assert.equal(existsSync(path.join(target, 'ran.marker')), false, `ran: ${command}`);
       assert.equal(line, 'not wired', command);
