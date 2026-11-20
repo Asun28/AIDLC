@@ -100,7 +100,8 @@ describe('terminalGoalRefusal (T0-CARD-TERMINAL-GOAL)', () => {
 describe('doneGoalTakeover (T0-TAKEOVER-DONE-GOAL)', () => {
   test('a DONE goal gives a text naming the goal and DONE [R3]', () => {
     const text = doneGoalTakeover({ id: 'g-1', state: 'DONE' });
-    assert.ok(text !== undefined && text.includes('g-1') && text.includes('DONE'), String(text));
+    assert.ok(text !== undefined, 'expected a text');
+    for (const part of ['g-1', 'DONE', 'nothing to take over', 'no lease was taken', 'no event was journaled']) assert.ok(text.includes(part), `${text} names ${part}`);
   });
 
   test('a goal in PLAN, RUN, CLOSE or STOP gives nothing [R3]', () => {

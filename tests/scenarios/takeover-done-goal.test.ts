@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { resourceKeys } from '../../src/coordination/lease.ts';
 import { doneGoalTakeover } from '../../src/core/card-goal.ts';
@@ -105,5 +105,49 @@ test('T0-TAKEOVER-DONE-GOAL acceptance 4: on the same fixtures with the goal in 
     assert.equal(generation(cardLease), cardBefore + 1, 'the card lease generation advances');
   } finally {
     fx.cleanup();
+  }
+});
+
+/** The CLI with the goal-store call-log preload of card-terminal-goal.test.ts; returns the logged call names in order. */
+const PRELOAD = pathToFileURL(fileURLToPath(new URL('./card-terminal-goal.preload.ts', import.meta.url))).href;
+function calls(fx: ReturnType<typeof makeFixture>, ...args: string[]): { status: number | null; stderr: string; calls: string[] } {
+  const log = path.join(fx.tmp, `calls-${Math.random().toString(16).slice(2)}.log`);
+  const r = spawnSync(process.execPath, ['--import', PRELOAD, MAIN, ...args, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-Z', AIDLC_TEST_CALL_LOG: log }, encoding: 'utf8', timeout: 120_000 });
+  return { status: r.status, stderr: r.stderr, calls: existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean) : [] };
+}
+
+test('T0-TAKEOVER-DONE-GOAL-2 acceptance 5: goal takeover reads the goal record once; card takeover, with --goal and without, reads the goal records once, with no getGoal, before its first card-run read [R1] [R2]', () => {
+  for (const args of [['card', 'takeover', CARD, '--goal'], ['card', 'takeover', CARD]]) {
+    const { fx, goalId } = setup('DONE');
+    try {
+      // A DONE goal: the whole command logs one listGoals and nothing else.
+      const full = args.at(-1) === '--goal' ? [...args, goalId] : args;
+      const done = calls(fx, ...full);
+      assert.equal(done.status, 0, done.stderr);
+      assert.deepEqual(done.calls, ['listGoals'], `${full.join(' ')} on a DONE goal: ${done.calls.join(',')}`);
+    } finally {
+      fx.cleanup();
+    }
+    const { fx: live, goalId: liveId } = setup('RUN');
+    try {
+      const full = args.at(-1) === '--goal' ? [...args, liveId] : args;
+      const r = calls(live, ...full);
+      assert.equal(r.status, 0, r.stderr);
+      const first = r.calls.findIndex((n) => n === 'getCardRun' || n === 'saveCardRun');
+      assert.ok(first > 0, `${full.join(' ')} reads the run: ${r.calls.join(',')}`);
+      assert.deepEqual(r.calls.slice(0, first), ['listGoals'], `${full.join(' ')} on a RUN goal before the first card-run access: ${r.calls.join(',')}`);
+    } finally {
+      live.cleanup();
+    }
+  }
+  for (const state of ['DONE', 'RUN'] as const) {
+    const { fx, goalId } = setup(state);
+    try {
+      const r = calls(fx, 'goal', 'takeover', goalId);
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(r.calls.filter((n) => n === 'getGoal' || n === 'listGoals'), ['getGoal'], `goal takeover on a ${state} goal: ${r.calls.join(',')}`);
+    } finally {
+      fx.cleanup();
+    }
   }
 });
