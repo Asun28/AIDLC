@@ -90,3 +90,37 @@ Repair after R3 decision 1 (candidate 20f59f6c, findings F1 to F4). F1: the two 
 | that check ignores letter case | case-sensitive | acceptance 1 fails |
 | remove without cover: `covered by` is `none` | any row with remove | acceptance 2 fails |
 | remove without cover: action is not update | any row with none | acceptance 2 fails |
+
+Repair after R3 decision 2 (candidate 4109a8a8, markdown-row-bypass). Choice: as in Markdown, every line after the separator up to the first blank (or whitespace-only) line is a row; this checker accepts only rows that start with a pipe and hold six cells, and any other line there refuses the whole table, so acceptance 1 and 2 fail on it (acceptance 2 now also asserts the table parses). Parsing rows with optional outer pipes was the alternative; refusing keeps one rule for the header, the separator and the rows (all start with a pipe). RED: the new cases run against the `auditRows` of 4109a8a8 fail acceptance 1 with "a row without an initial pipe right after the separator" (pass 1, fail 1).
+
+Input forms the parser and the name check handle after both repairs, each with its assertion in `tests/surface/test-audit.test.ts` (acceptance 1 unless noted):
+
+| Input form | Result | Assertion message |
+| --- | --- | --- |
+| header of other columns, valid separator | no table | another six-column table |
+| header with no separator line | no table | a header without its separator |
+| separator of five cells | no table | a separator of five cells |
+| separator cell that is not dashes | no table | a separator cell that is not dashes |
+| separator without leading pipe | no table | a separator without the leading pipe the rows need |
+| separator with alignment colons | table | alignment colons |
+| row without an initial pipe right after the separator | no table | a row without an initial pipe right after the separator |
+| the same row after a valid piped row | no table | a row without an initial pipe after a piped row |
+| row of five cells, row of seven cells | no table | a row of five cells; a row of seven cells |
+| whitespace-only line, then prose | table ends at it | a whitespace-only line ends the table |
+| escaped pipe in a cell | one cell holding a pipe | the `['a \| b']` deepEqual |
+| test name only in a comment, a string, fixture text, or a `t.test` subtest | not a test name | a call inside a comment; a call inside a string; fixture text of this file is not a test name; a t.test subtest is not an it or test call |
+| `it` with a double-quoted name holding escaped quotes | test name | the first `rowProblems` deepEqual |
+| covered by `none: ...` or `None` | problem | a covered by that starts with none; a covered by of another letter case |
+| covered by `nonexistent-path test` | no problem | a word that only starts with the letters none |
+| document with no parsable table | acceptance 1 and 2 fail | the `assert.ok(rows, ...)` of both tests |
+
+Not handled, as before the repairs: a name built by concatenation or a template with substitutions, and `test.only`/`test.skip` calls; such a row is refused as naming no test.
+
+Sweep of the guards this repair adds (each loosened, the file run, restored; the other 21 guards of the decision 1 sweep were run again and all still fail a test; its guard "rows end at the first non-table line" no longer exists):
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| a blank line ends the table | skip blank lines | acceptance 1 fails |
+| a row without an initial pipe refuses the table | not checked | acceptance 1 fails |
+| a row of other than six cells refuses the table | not checked | acceptance 1 fails |
+| (whole change) | the 4109a8a8 loop: a non-pipe line ends the table | acceptance 1 fails |

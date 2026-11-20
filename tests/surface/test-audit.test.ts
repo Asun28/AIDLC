@@ -19,15 +19,21 @@ const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\
 /** Whether a line is the Markdown separator of a six-column table: six cells of dashes with optional alignment colons. */
 const isSeparator = (line: string | undefined) => line !== undefined && line.trim().startsWith('|') && cells(line).length === HEADER.length && cells(line).every((c) => /^:?-+:?$/.test(c));
 
-/** The rows of the first table whose header is HEADER in order and is followed by a separator; undefined when the text holds no such table. */
+/**
+ * The rows of the first table whose header is HEADER in order and is followed by a separator; undefined when the text holds no
+ * such table. As in Markdown, every line after the separator up to the first blank line is a row of the table. This checker
+ * accepts only rows that start with a pipe and hold six cells: any other line before the first blank line refuses the whole
+ * table, so a row Markdown renders is never left unchecked.
+ */
 function auditRows(text: string): Row[] | undefined {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const at = lines.findIndex((l) => l.trim().startsWith('|') && cells(l).join('\n') === HEADER.join('\n'));
   if (at < 0 || !isSeparator(lines[at + 1])) return undefined;
   const rows: Row[] = [];
   for (const line of lines.slice(at + 2)) {
-    if (!line.trim().startsWith('|')) break;
+    if (line.trim() === '') break;
     const c = cells(line);
+    if (!line.trim().startsWith('|') || c.length !== HEADER.length) return undefined;
     rows.push(Object.fromEntries(HEADER.map((h, i) => [h, c[i] ?? ''])) as Row);
   }
   return rows;
@@ -109,10 +115,19 @@ test('T1-TEST-AUDIT-LIST acceptance 1: every row names an existing test with a v
   assert.equal(auditRows('| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |'), undefined, 'another six-column table');
   assert.deepEqual(auditRows(`${head}\n| :--- | --- | ---: | :-: | - | --- |`), [], 'alignment colons');
   assert.deepEqual(auditRows(`${head}\n|---|---|---|---|---|---|\n| f | a \\| b | duplicate | e | none | update |\n\n| x |`)?.map((r) => r.test), ['a | b']);
+  // Every line up to the first blank line is a row: one without an initial pipe, or without six cells, refuses the table (R3 decision 2).
+  const bare = 'missing.test.ts | nonexistent | invalid | e | none | remove';
+  const sep = '|---|---|---|---|---|---|';
+  assert.equal(auditRows(`${head}\n${sep}\n${bare}`), undefined, 'a row without an initial pipe right after the separator');
+  assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update |\n${bare}`), undefined, 'a row without an initial pipe after a piped row');
+  assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none |`), undefined, 'a row of five cells');
+  assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update | x |`), undefined, 'a row of seven cells');
+  assert.deepEqual(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update |\n   \nprose after a blank line`)?.length, 1, 'a whitespace-only line ends the table');
 });
 
 test('T1-TEST-AUDIT-LIST acceptance 2: no row proposes remove without a covering test', () => {
-  const rows = auditRows(readFileSync(path.join(root, DOC), 'utf8')) ?? [];
+  const rows = auditRows(readFileSync(path.join(root, DOC), 'utf8'));
+  assert.ok(rows, `${DOC} holds a table with the columns ${HEADER.join(', ')}`);
   assert.deepEqual(removeWithoutCover(rows).map((r) => r.test), []);
   assert.deepEqual(removeWithoutCover([row({ 'covered by': 'none', action: 'remove' }), row({ 'covered by': 'none' }), row({ action: 'remove' })]).length, 1);
 });
