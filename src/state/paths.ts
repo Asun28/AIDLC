@@ -44,8 +44,9 @@ function gitOut(args: string[], cwd: string): string | undefined {
 
 /**
  * Repository identity is asked for several times per CLI call (context, state paths, session id, hooks);
- * it costs one `git rev-parse` per process and cwd. The cache is per process and has no reset: an
- * identity resolved before a repository was created in that directory stays until the process ends.
+ * it costs one `git rev-parse` per process and cwd. The cache is per process, and the CLI never resets it: an
+ * identity resolved before a repository was created in that directory stays until the process ends. Only tests
+ * reset it, through `resetRepoIdentityForTests`.
  */
 const identityCache = new Map<string, RepoIdentity>();
 
@@ -83,6 +84,12 @@ type Lookup = { answered: true; out: string | undefined } | { answered: false };
 
 /** The lookup `prefetchRepoIdentity` started, for the one cwd it was started in. */
 let prefetch: { key: string; lookup: Promise<Lookup> } | undefined;
+
+/** Tests only (the in-process CLI helper): empties the identity cache and drops a pending prefetch, whose git child still runs to its end. */
+export function resetRepoIdentityForTests(): void {
+  identityCache.clear();
+  prefetch = undefined;
+}
 
 /** Ends a child and stops reading it. Each step runs whatever the one before did, and a failure of any step changes nothing. */
 function endChild(steps: (() => void)[]): void {

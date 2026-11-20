@@ -1,1 +1,0 @@
-- T1-TEST-CLI-INPROC (tests): `runCliInProcess` in `tests/infra/cli-inprocess.ts` runs `main` of `src/cli/main.ts` in the test process and returns the status, stdout and stderr that `bin/aidlc.js` returns, with cwd, env, exitCode, `process.exit`, stdin and the stream writers restored after each call.

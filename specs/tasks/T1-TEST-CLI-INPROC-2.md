@@ -49,3 +49,41 @@ npm run typecheck && node --test tests/infra/cli-inprocess.test.ts tests/infra/p
 ```
 - Expected exit code: 0
 - Assertion: the carried and new acceptance tests pass; the three paths tests pass unchanged.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/cli-inprocess.test.ts`, the four T1-TEST-CLI-INPROC tests, no line changed (`git diff e9562d53 -- tests/infra/cli-inprocess.test.ts` adds imports and a second `describe` only) | pass |
+| 2 | "T1-TEST-CLI-INPROC-2 acceptance 2": `intent new` authors equal the session of each call, as two children; two `GIT_DIR`/`GIT_WORK_TREE` calls from one cwd write into their own repository, as two children; an identity the caller cached is not seen by a call and a call's identity is not seen by the caller; the caller's actor is restored (a set actor stays, with none the cache stays empty). RED on 283328ab: author `default-1debdfbf` for `inproc-a` | pass |
+| 3 | "T1-TEST-CLI-INPROC-2 acceptance 3": `card close --cleanup` refused at load (status 1) and `card close --all` (status 0) each report `worktree removed: T0-FINISHED` in the call's stderr, the worktree is gone when the call returns, `process.rawListeners('exit')` equals its value before, a listener present before is not called. RED on 283328ab: stderr held only the refusal line | pass |
+| 4 | "T1-TEST-CLI-INPROC-2 acceptance 4": both paths captured, none refused. Scaffold `card start` (pwsh with `stdio: 'inherit'`, input fed) equals the child; `card red` writes 1,100,000 bytes whole; `card close` refused at load equals the child's status, stdout and stderr (the `writeSync(2)` sweep note) with temp paths, goal ids and times normalized; `fs.writeSync` and `spawnSync` are the originals after the calls. RED on 283328ab: stdout and stderr empty for `card start` | pass |
+| 5 | `tests/infra/paths.test.ts`, `tests/surface/hook-git-prefetch.test.ts`, `tests/surface/hook-lazy.test.ts`, unchanged, in the DoD | pass |
+
+R2: `src/state/paths.ts` gains `resetRepoIdentityForTests` (empties `identityCache`, drops `prefetch`) and the comment above `identityCache` now names it; no other line of `src/` changes and `src/` never calls it. R3 without a change to `journal.ts`: the caller's cached actor is read as `currentActor({ AIDLC_SESSION: <probe> })`, which returns a cached actor unchanged and otherwise returns the probe session without I/O; the probe is dropped by the reset before the call.
+
+Not covered: an async `spawn` with inherited stdio is neither captured nor refused; no path in `src/` uses one (the only `stdio: 'inherit'` is `src/cli/main.ts:870`, a `spawnSync`).
+
+Guard sweep (each guard loosened, the test file run, then restored):
+
+| Guard | Loosened form | Failed |
+|---|---|---|
+| actor reset before the call | dropped | INPROC acceptance 1, INPROC-2 acceptance 2 |
+| identity reset before the call | dropped | INPROC-2 acceptance 2 |
+| caller actor restored | not restored / restored as none | INPROC-2 acceptance 2 (each) |
+| identity reset after the call | dropped | INPROC-2 acceptance 2 |
+| probe: no cached actor when the probe session comes back | always the returned actor | INPROC-2 acceptance 2 |
+| exit listeners: only those added in the call | all listeners | INPROC acceptance 1, INPROC-2 acceptance 3 |
+| added exit listeners removed | not removed | equivalent: `main` adds its listener with `process.once`, whose wrapper removes itself when called; a `process.on` listener would stay, and `src/` adds none |
+| added exit listeners run | not run | INPROC-2 acceptance 3, 4 |
+| listeners run inside the call context | run outside | INPROC-2 acceptance 3, 4 |
+| writeSync: fd 1 captured | fd 2 only | equivalent: `src/` has no `writeSync(1, ...)` |
+| writeSync: fd 2 captured | fd 1 only | INPROC-2 acceptance 3, 4 |
+| writeSync: only writes inside the call | all fd 1/2 writes | equivalent: nothing outside a call writes to fd 1 or 2 with `writeSync` while one runs |
+| spawnSync: only inside the call | all | equivalent: no `spawnSync` with inherited stdio runs outside a call while one runs |
+| spawnSync: unchanged when nothing is inherited | early return dropped | equivalent: the call then only adds `maxBuffer: Infinity` to a piped spawn, and no spawn in the tests passes 1 MiB |
+| spawnSync: inherited stdin fed `input` | not fed | INPROC-2 acceptance 4 |
+| spawnSync: `maxBuffer` raised | default | INPROC-2 acceptance 4 |
+| spawnSync: child stdout / stderr forwarded | each dropped | INPROC-2 acceptance 4 (each) |
+| wrappers synced into ESM bindings | not synced | the run did not finish: pwsh inherited the test runner's stdin and waited; the sweep's 400 s timeout ended it (no pwsh left, checked by command line) |
+| wrappers restored | not restored | INPROC-2 acceptance 4 |

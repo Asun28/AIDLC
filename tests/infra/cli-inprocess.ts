@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import childProcess, { type SpawnSyncOptions, type SpawnSyncReturns, type StdioOptions } from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { Readable } from 'node:stream';
 import { main } from '../../src/cli/main.ts';
+import { currentActor, setActorForTests } from '../../src/state/journal.ts';
+import { resetRepoIdentityForTests } from '../../src/state/paths.ts';
 
 /** Thrown by the replaced `process.exit` to end `main` where the child process would end. */
 class ExitSignal {
@@ -28,6 +33,48 @@ function collector(into: string[], original: typeof process.stdout.write, stream
   }) as typeof process.stdout.write;
 }
 
+/** `fs.writeSync` with a write to file descriptor 1 or 2 made in the call `token` marks collected into `out` or `err`. */
+function syncWriter(original: typeof fs.writeSync, out: string[], err: string[], token: symbol): typeof fs.writeSync {
+  return ((fd: number, data: string | NodeJS.ArrayBufferView, ...rest: unknown[]): number => {
+    const into = fd === 1 ? out : fd === 2 ? err : undefined;
+    if (!into || call.getStore() !== token) return (original as (...args: unknown[]) => number)(fd, data, ...rest);
+    // Offset and length arguments of a buffer write are not read: src/ writes only strings to fd 1 and 2.
+    const text = typeof data === 'string' ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8');
+    into.push(text);
+    return Buffer.byteLength(text);
+  }) as typeof fs.writeSync;
+}
+
+/**
+ * `child_process.spawnSync` with standard output and error inherited by the child, in the call `token` marks, read
+ * through pipes into `out` and `err`, and an inherited standard input fed `input`: a child of bin/aidlc.js writes them
+ * to the pipes spawnSync gave bin/aidlc.js and reads the same input.
+ */
+function syncSpawner(original: typeof childProcess.spawnSync, out: string[], err: string[], input: string, token: symbol): typeof childProcess.spawnSync {
+  return ((command: string, argsOrOptions?: readonly string[] | SpawnSyncOptions, maybeOptions?: SpawnSyncOptions): SpawnSyncReturns<string | Buffer> => {
+    const args = Array.isArray(argsOrOptions) ? (argsOrOptions as readonly string[]) : [];
+    const options = (Array.isArray(argsOrOptions) ? maybeOptions : (argsOrOptions as SpawnSyncOptions | undefined)) ?? {};
+    const given: StdioOptions = options.stdio ?? 'pipe';
+    const stdio = typeof given === 'string' ? [given, given, given] : [...given];
+    const inherited = [0, 1, 2].map((i) => stdio[i] === 'inherit');
+    if (call.getStore() !== token || !inherited.some(Boolean)) return original(command, args, options);
+    for (const i of [0, 1, 2]) if (inherited[i]) stdio[i] = 'pipe';
+    const r = original(command, args, { ...options, stdio, ...(inherited[0] ? { input } : {}), ...(options.maxBuffer === undefined ? { maxBuffer: Infinity } : {}) });
+    const text = (b: string | Buffer | null | undefined) => (b === null || b === undefined ? '' : typeof b === 'string' ? b : b.toString('utf8'));
+    if (inherited[1]) out.push(text(r.stdout));
+    if (inherited[2]) err.push(text(r.stderr));
+    return r;
+  }) as typeof childProcess.spawnSync;
+}
+
+/** The actor `currentActor` caches for the caller, read without changing it: undefined when none is cached. */
+function cachedActor(): ReturnType<typeof currentActor> | undefined {
+  const probe = 'runCliInProcess-no-cached-actor';
+  const actor = currentActor({ AIDLC_SESSION: probe });
+  // A probe actor cached here is dropped by the reset before the call.
+  return actor.session === probe ? undefined : actor;
+}
+
 function replaceEnv(next: NodeJS.ProcessEnv): void {
   // A key given as undefined is left out, as spawnSync leaves it out of a child's environment.
   for (const key of Object.keys(process.env)) if (next[key] === undefined) delete process.env[key];
@@ -38,7 +85,10 @@ function replaceEnv(next: NodeJS.ProcessEnv): void {
  * Runs `main` of `src/cli/main.ts` in this process with `cwd` and `env` (default `process.env`) for the call and `input`
  * as standard input, and returns the exit status, stdout and stderr that `bin/aidlc.js` in a child process returns.
  * cwd, env, exitCode, `process.exit`, `process.stdin` and the stdout and stderr writers are restored after every call.
- * Calls do not nest: one made while another runs rejects.
+ * Each call starts with no cached session actor and no cached repository identity, and the caller's actor is restored
+ * after it. The exit listeners a call adds run inside it, in order, as the child runs them when it exits, and are
+ * removed. Output written past the stream methods (`fs.writeSync` to fd 1 or 2, `spawnSync` with inherited stdio) is
+ * collected with the rest. Calls do not nest: one made while another runs rejects.
  */
 export async function runCliInProcess(argv: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; input?: string }): Promise<{ status: number; stdout: string; stderr: string }> {
   if (running) throw new Error('runCliInProcess: a call is already running; await it before the next call');
@@ -53,6 +103,10 @@ export async function runCliInProcess(argv: string[], options: { cwd: string; en
     stderrWrite: process.stderr.write,
     stdin: Object.getOwnPropertyDescriptor(process, 'stdin'),
     stdoutTTY: Object.getOwnPropertyDescriptor(process.stdout, 'isTTY'),
+    actor: cachedActor(),
+    exitListeners: process.rawListeners('exit'),
+    writeSync: fs.writeSync,
+    spawnSync: childProcess.spawnSync,
   };
   const token = Symbol('runCliInProcess call');
   const out: string[] = [];
@@ -74,6 +128,11 @@ export async function runCliInProcess(argv: string[], options: { cwd: string; en
     if (options.input) stdin.push(Buffer.from(options.input, 'utf8'));
     stdin.push(null);
     Object.defineProperty(process, 'stdin', { value: stdin, configurable: true, writable: true, enumerable: true });
+    fs.writeSync = syncWriter(saved.writeSync, out, err, token);
+    childProcess.spawnSync = syncSpawner(saved.spawnSync, out, err, options.input ?? '', token);
+    syncBuiltinESMExports();
+    setActorForTests(undefined);
+    resetRepoIdentityForTests();
     try {
       await call.run(token, () => main(['node', 'aidlc', ...argv]));
       status = asStatus(process.exitCode) ?? 0;
@@ -86,7 +145,19 @@ export async function runCliInProcess(argv: string[], options: { cwd: string; en
         status = 1;
       }
     }
+    // The child runs its exit listeners when it ends, in registration order; each added here runs once, inside the call.
+    const added = process.rawListeners('exit').filter((l) => !saved.exitListeners.includes(l));
+    for (const listener of added) process.removeListener('exit', listener as (code: number) => void);
+    const exitCode = status;
+    await call.run(token, () => {
+      for (const listener of added) listener.call(process, exitCode);
+    });
   } finally {
+    fs.writeSync = saved.writeSync;
+    childProcess.spawnSync = saved.spawnSync;
+    syncBuiltinESMExports();
+    setActorForTests(saved.actor);
+    resetRepoIdentityForTests();
     if (saved.stdin) Object.defineProperty(process, 'stdin', saved.stdin);
     if (saved.stdoutTTY) Object.defineProperty(process.stdout, 'isTTY', saved.stdoutTTY);
     else delete (process.stdout as { isTTY?: boolean }).isTTY;

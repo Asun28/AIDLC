@@ -4,13 +4,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { runCliInProcess } from './cli-inprocess.ts';
 import { tmpDir } from './helpers.ts';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import childProcess from 'node:child_process';
 import { actorA, candidateShaFor, goalForCards, makeFixture, T0, writeCard, type Fixture } from '../scenarios/_harness.ts';
 import { resourceKeys } from '../../src/coordination/lease.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { currentActor, setActorForTests } from '../../src/state/journal.ts';
-import { hostName, shortKey } from '../../src/state/paths.ts';
+import { hostName, resolveRepoIdentity, shortKey } from '../../src/state/paths.ts';
 
 const BIN = path.join(import.meta.dirname, '..', '..', 'bin', 'aidlc.js');
 
@@ -174,6 +175,8 @@ describe('runCliInProcess, per-call state and output', () => {
     }
 
     const work = tmpDir('aidlc-inproc-work-');
+    // An identity the caller cached for this cwd before the calls does not reach them.
+    const callers = resolveRepoIdentity(work);
     for (const [n, name] of ['one', 'two'].entries()) {
       const other = tmpDir(`aidlc-inproc-${name}-`);
       gitIn(other, ['init', '-q']);
@@ -184,6 +187,8 @@ describe('runCliInProcess, per-call state and output', () => {
       assert.equal(actual.status, 0, actual.stderr);
       assert.equal(path.dirname(intentFile(actual.stdout)), path.dirname(intentFile(expected.stdout)));
       assert.equal(path.dirname(intentFile(actual.stdout)), path.join(realpathSync.native(other), 'intent'));
+      // The identity the call resolved does not reach the caller either.
+      assert.deepEqual(resolveRepoIdentity(work), callers);
     }
 
     // The caller's actor is restored: a set one stays, and with none set the cache stays empty.
@@ -233,16 +238,26 @@ describe('runCliInProcess, per-call state and output', () => {
 
   it('T1-TEST-CLI-INPROC-2 acceptance 4: output written through stdio inherit and a synchronous write to fd 2 is captured or the call is refused', async () => {
     // stdio inherit (scaffold `card start` runs pwsh with stdio: 'inherit'): captured, equal to the child.
+    const writeSyncBefore = fs.writeSync;
+    const spawnSyncBefore = childProcess.spawnSync;
     const { repo, env } = fixture();
     mkdirSync(path.join(repo, 'scripts'));
-    writeFileSync(path.join(repo, 'scripts', 'task.ps1'), 'param([string]$TaskId, [string]$Phase, [string]$Base, [switch]$Local)\nWrite-Output "task out $TaskId $Phase"\n[Console]::Error.WriteLine("task err $Base")\nexit 3\n');
+    writeFileSync(path.join(repo, 'scripts', 'task.ps1'), 'param([string]$TaskId, [string]$Phase, [string]$Base, [switch]$Local)\nif ($Phase -eq "red") { [Console]::Out.Write("x" * 1100000); exit 0 }\nWrite-Output "task out $TaskId $Phase"\nWrite-Output "task in $([Console]::In.ReadToEnd())"\n[Console]::Error.WriteLine("task err $Base")\nexit 3\n');
     writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ shipPath: 'scaffold', base: 'main' }));
     const argv = ['card', 'start', 'T1-FOO'];
-    const expected = child(argv, { cwd: repo, env });
+    const input = 'fed to the task';
+    const expected = child(argv, { cwd: repo, env, input });
     assert.equal(expected.status, 3, expected.stderr);
     assert.match(expected.stdout, /task out T1-FOO start/);
+    assert.match(expected.stdout, /task in fed to the task/);
     assert.match(expected.stderr, /task err main/);
-    assert.deepEqual(await runCliInProcess(argv, { cwd: repo, env }), expected);
+    assert.deepEqual(await runCliInProcess(argv, { cwd: repo, env, input }), expected);
+    // Inherited output has no size limit in the child: more than spawnSync's default 1 MiB buffer arrives whole.
+    const large = await runCliInProcess(['card', 'red', 'T1-FOO'], { cwd: repo, env });
+    assert.deepEqual({ status: large.status, length: large.stdout.length }, { status: 0, length: 1_100_000 });
+    // The wrappers are gone after the calls.
+    assert.equal(fs.writeSync, writeSyncBefore);
+    assert.equal(childProcess.spawnSync, spawnSyncBefore);
 
     // writeSync(2) (the sweep note of card close): captured, equal to the child's stderr.
     const viaChild = closeFixture(false);
