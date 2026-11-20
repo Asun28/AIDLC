@@ -5,7 +5,6 @@ import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reviewerEnv, runReviewPanel } from '../../src/review/pre-review.ts';
-import { runPreReview } from './_review-once.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { tmpDir } from '../infra/helpers.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
@@ -48,7 +47,7 @@ test('T0-REVIEWER-UTF8 acceptance 1: reviewerEnv adds PYTHONUTF8=1 and PYTHONIOE
   }
 });
 
-test('T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]', async () => {
+test('T0-REVIEWER-UTF8 acceptance 2: a single pass in stdin and argv mode and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]', async () => {
   const dir = tempDir();
   try {
     const envs: Array<[string, NodeJS.ProcessEnv | undefined]> = [];
@@ -58,8 +57,8 @@ test('T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPa
       return script(command, args, options);
     };
     const common = { cwd: dir, timeoutMs: 1000, shell: false, reviewDir: path.join(dir, '.review'), head: 'abc123', reviewer: 'fake' };
-    runPreReview({ ...common, runner: recording, command: ['fake-reviewer', '--stdin'], prompt: 'P', fileStem: 'T0-RU.pre.0.1' });
-    runPreReview({ ...common, runner: recording, command: ['fake-reviewer', '{instructions}'], prompt: 'argv', fileStem: 'T0-RU.pre.0.2' });
+    await runReviewPanel({ ...common, runner: async (c, a, o) => recording(c, a, o), command: ['fake-reviewer', '--stdin'], perspectives: [], promptFor: () => 'P', vars: {}, fileStem: 'T0-RU.pre.0.1' });
+    await runReviewPanel({ ...common, runner: async (c, a, o) => recording(c, a, o), command: ['fake-reviewer', '{instructions}'], perspectives: [], promptFor: () => 'argv', vars: {}, fileStem: 'T0-RU.pre.0.2' });
     await runReviewPanel({ ...common, runner: async (c, a, o) => recording(c, a, o), command: ['fake-reviewer', '--focus', '{perspective}'], perspectives: ['bugs', 'security', 'compliance'], promptFor: (p) => `P ${p}`, vars: {}, fileStem: 'T0-RU.pre.0.3' });
     const expected = reviewerEnv();
     assert.deepEqual(envs.map(([key]) => key).sort(), ['--focus bugs', '--focus compliance', '--focus security', '--stdin', 'argv'].sort());
