@@ -11,7 +11,7 @@ import { resourceKeys } from '../../src/coordination/lease.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { currentActor, setActorForTests } from '../../src/state/journal.ts';
-import { hostName, resolveRepoIdentity, shortKey } from '../../src/state/paths.ts';
+import { hostName, prefetchRepoIdentity, resetRepoIdentityForTests, resolveRepoIdentity, settleRepoIdentity, shortKey } from '../../src/state/paths.ts';
 
 const BIN = path.join(import.meta.dirname, '..', '..', 'bin', 'aidlc.js');
 
@@ -273,5 +273,58 @@ describe('runCliInProcess, per-call state and output', () => {
       viaCall.fx.cleanup();
       setActorForTests(undefined);
     }
+  });
+});
+
+describe('runCliInProcess, R3 decision 1 repairs', () => {
+  it('T1-TEST-CLI-INPROC-2 acceptance 2: a caller keeps its cached actor whatever its session, the former probe value included', async () => {
+    const { repo, env } = fixture();
+    try {
+      for (const session of ['runCliInProcess-no-cached-actor', 'caller-any']) {
+        const mine = { ...actorA, session };
+        setActorForTests(mine);
+        const r = await runCliInProcess(['--help'], { cwd: repo, env });
+        assert.equal(r.status, 0, r.stderr);
+        assert.deepEqual(currentActor(), mine, session);
+      }
+    } finally {
+      setActorForTests(undefined);
+    }
+  });
+
+  it('T1-TEST-CLI-INPROC-2 acceptance 2: resetRepoIdentityForTests drops a pending prefetch, so a later lookup does not take its answer', async () => {
+    // The prefetch runs git with the environment it starts under: here GIT_DIR names another repository.
+    const work = tmpDir('aidlc-inproc-prefetch-');
+    const other = tmpDir('aidlc-inproc-prefetch-repo-');
+    gitIn(other, ['init', '-q']);
+    const saved = { dir: process.env['GIT_DIR'], tree: process.env['GIT_WORK_TREE'] };
+    resetRepoIdentityForTests();
+    try {
+      process.env['GIT_DIR'] = path.join(other, '.git');
+      process.env['GIT_WORK_TREE'] = other;
+      prefetchRepoIdentity(work);
+    } finally {
+      for (const [key, value] of [['GIT_DIR', saved.dir], ['GIT_WORK_TREE', saved.tree]] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    try {
+      resetRepoIdentityForTests();
+      await settleRepoIdentity(work);
+      assert.notEqual(resolveRepoIdentity(work).mainRoot, realpathSync.native(other));
+    } finally {
+      resetRepoIdentityForTests();
+    }
+  });
+
+  it('T1-TEST-CLI-INPROC-2 acceptance 2: env keys that differ only in case resolve as in a bin/aidlc.js child on win32', { skip: process.platform !== 'win32' && 'win32 only: elsewhere env keys are case-sensitive' }, async () => {
+    const { repo, env } = fixture();
+    const colliding = { ...env, AIDLC_SESSION: 'upper-session', aidlc_session: 'lower-session' };
+    const expected = child(['intent', 'new', '--title', 'case child'], { cwd: repo, env: colliding });
+    assert.equal(authorOf(expected.stdout), 'upper-session', expected.stderr);
+    const actual = await runCliInProcess(['intent', 'new', '--title', 'case inproc'], { cwd: repo, env: colliding });
+    assert.equal(actual.status, 0, actual.stderr);
+    assert.equal(authorOf(actual.stdout), authorOf(expected.stdout));
   });
 });
