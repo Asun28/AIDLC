@@ -11,7 +11,16 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const START = '<!-- audit-table:start -->';
 const END = '<!-- audit-table:end -->';
 
-const text = z.string().min(1);
+/** A line terminator: CR, LF, NEL, LS or PS. */
+const LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
+/**
+ * A cell value: non-empty, on one line, with no whitespace at either end (refused, not trimmed, so the rendering is the value),
+ * and no backslash directly before a pipe (a source `\|` would render as `\\|`, an escaped backslash and a cell boundary).
+ */
+const text = z.string().min(1)
+  .refine((s) => !LINE_BREAK.test(s), 'a line terminator')
+  .refine((s) => s === s.trim(), 'whitespace at an end')
+  .refine((s) => !s.includes('\\|'), 'a backslash before a pipe');
 const Row = z.strictObject({
   file: text,
   test: text,
@@ -52,7 +61,11 @@ function rowProblems(rows: Row[], read: (file: string) => string | undefined, al
 
 /** The Markdown table of the rows (R3), a pipe inside a cell written as \|. */
 const render = (rows: Row[]) => ['| file | test | class | evidence | covered by | action |', '| --- | --- | --- | --- | --- | --- |',
-  ...rows.map((r) => `| ${[r.file, r.test, r.class, r.evidence, r.coveredBy, r.action].map((c) => c.replaceAll('|', '\\|')).join(' | ')} |`)].join('\n');
+  ...rows.map((r) => {
+    const line = `| ${[r.file, r.test, r.class, r.evidence, r.coveredBy, r.action].map((c) => c.replaceAll('|', '\\|')).join(' | ')} |`;
+    if (LINE_BREAK.test(line)) throw new Error(`the row of ${r.test} does not render to one line`);
+    return line;
+  })].join('\n');
 
 /** The problems of R3: each marker line once, the start before the end, and exactly the rendering between them, which occurs once. */
 function tableProblems(md: string, table: string): string[] {
@@ -111,6 +124,18 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names 
     ['a class outside the set', { ...ok, rows: [{ ...row(), class: 'obsolete' }] }],
     ['an action outside the set', { ...ok, rows: [{ ...row(), action: 'skip' }] }],
     ['a commit that is not a sha', { ...ok, commit: 'main' }],
+    ['a commit of six hex digits', { ...ok, commit: '1a757a' }],
+    ['a commit of 41 hex digits', { ...ok, commit: 'a'.repeat(41) }],
+    ['a commit in capitals', { ...ok, commit: '1A757ADB' }],
+    ['an LF in a value', { ...ok, rows: [row({ evidence: 'a\nb' })] }],
+    ['a CRLF in a value', { ...ok, rows: [row({ evidence: 'a\r\nb' })] }],
+    ['a CR in a value', { ...ok, rows: [row({ evidence: 'a\rb' })] }],
+    ['a U+2028 in a value', { ...ok, rows: [row({ evidence: 'a\u2028b' })] }],
+    ['a U+2029 in a value', { ...ok, rows: [row({ evidence: 'a\u2029b' })] }],
+    ['a U+0085 in a value', { ...ok, rows: [row({ evidence: 'a\u0085b' })] }],
+    ['leading whitespace', { ...ok, rows: [row({ test: ' it holds' })] }],
+    ['trailing whitespace', { ...ok, rows: [row({ coveredBy: 'it holds\t' })] }],
+    ['a backslash before a pipe', { ...ok, rows: [row({ evidence: 'a \\| b' })] }],
   ] as const) assert.equal(Audit.safeParse(bad).success, false, why);
   assert.deepEqual(fixture([row()]), []);
   assert.equal(fixture([row({ test: 'in a comment' })]).length, 1, 'a name only in a comment');
@@ -153,6 +178,9 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 2: no row proposes remove without a coveri
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 3: the Markdown table is exactly the rendering of the JSON rows', () => {
   const table = render(audit().rows);
+  assert.equal(table.split('\n').length, audit().rows.length + 2, 'one physical line per row of the repository file');
+  assert.ok(Audit.safeParse({ commit: 'a'.repeat(40), rows: [row({ evidence: 'a | b, a \\ b, inner  spaces' })] }).success, 'a pipe, a lone backslash and inner spaces are kept');
+  assert.throws(() => render([row({ evidence: 'a\nb' })]), /one line/, 'the renderer refuses a row that is not one line');
   assert.deepEqual(tableProblems(readFileSync(path.join(root, 'docs/reliability/test-audit.md'), 'utf8'), table), []);
   const t = render([row({ test: 'a | b' })]);
   assert.ok(t.includes('| a \\| b |'), 'a pipe in a cell is escaped');

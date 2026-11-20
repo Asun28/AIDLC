@@ -116,3 +116,31 @@ Sweep (28 guards, each loosened in turn, the file run, restored): 26 fail a test
 | resolved path not absolute | not checked | not detectable on this host (links refused) |
 | coveredBy search reads through testsPath | reads every file found | not detectable on this host (links refused) |
 | a missing file is a problem | no problem | acceptance 1 fails |
+
+Repair after R3 decision 3 (candidate 853d0ae4, multiline-audit-rendering). Every string value of a row is refused when it holds a line terminator (CR, LF, U+0085, U+2028, U+2029), whitespace at either end (refused, not trimmed, so the rendering is the value), or a backslash directly before a pipe (a source `\|` would render as `\|`, an escaped backslash and a cell boundary; refused rather than escaping backslashes, so every other backslash renders as itself). The renderer throws when a row does not render to one line, and acceptance 3 asserts the repository rendering has one physical line per row. The commit field is 7 to 40 lower-case hex digits. What this newly refuses: a test name or evidence with an end space, a line break or `\|`; no repository value has one.
+
+Input forms (acceptance 1 unless noted):
+
+| Input | Result | Assertion message |
+| --- | --- | --- |
+| LF, CRLF, CR, U+2028, U+2029, U+0085 inside a value | refused | an LF / a CRLF / a CR / a U+2028 / a U+2029 / a U+0085 in a value |
+| leading space, trailing tab | refused | leading whitespace; trailing whitespace |
+| `a \| b` in source (backslash before pipe) | refused | a backslash before a pipe |
+| `a \| b` pipe, lone backslash, inner double space | kept | a pipe, a lone backslash and inner spaces are kept (acceptance 3) |
+| a pipe in a cell | rendered as `\|` | a pipe in a cell is escaped (acceptance 3) |
+| a row value with a line break given to the renderer directly | throws | the renderer refuses a row that is not one line (acceptance 3) |
+| the repository rows | rows + 2 lines | one physical line per row of the repository file (acceptance 3) |
+| commit `main`, 6 hex digits, 41 hex digits, capitals; 40 hex digits | refused; 40 accepted | a commit that is not a sha / of six hex digits / of 41 hex digits / in capitals; a pipe, a lone backslash and inner spaces are kept |
+
+Sweep (40 guards, each loosened in turn, the file run, restored): 38 fail a test; the two link-dependent guards of the decision 1 repair are still not detectable on this host (links refused, EPERM). New guards:
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| no line terminator in a value | not checked | acceptance 1 fails |
+| terminator class holds CR / LF / NEL / LS / PS | each dropped in turn | acceptance 1 fails (each) |
+| no whitespace at an end | not checked | acceptance 1 fails |
+| no backslash before a pipe | not checked | acceptance 1 fails |
+| renderer refuses a multi-line row | not checked | acceptance 3 fails |
+| commit at least 7 digits | 6 | acceptance 1 fails |
+| commit at most 40 digits | 41 | acceptance 1 fails |
+| commit lower case | any case | acceptance 1 fails |
