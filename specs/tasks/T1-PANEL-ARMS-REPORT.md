@@ -127,3 +127,30 @@ Guard sweep, attempt 3: every guard of `panel.ts`, 57 in all, loosened in turn w
 Attempt 3 DoD: `npm run typecheck && node --test tests/surface/outcome-panel.test.ts tests/surface/outcome-baseline.test.ts tests/surface/prose.test.ts` exit 0, tests 29, pass 29, fail 0. `npm run check`: exit 0, tests 3888, pass 3856, fail 0, skipped 32.
 
 Attempt 3, docs line (coordinator, option 1): panel.md lesson limit reworded to "more by the count in the rows below (the card estimated about ten)"; no test changed. DoD exit 0, tests 29, pass 29, fail 0.
+
+Build attempt 5 (R3 decision 3 block, class unvalidated-report-cases; owner approved the root fix). RED receipt `e360cd36:outcome-panel acceptance 2-3`: the attempt 5 tests against the attempt 3 `panel.ts` fail acceptance 2 and 3. Of the new faults, ten were accepted and written: the Fable miss-to-clean swap; a hit with runStatus timeout and no matched; a hit with no matched; a no-verdict that cites a reason; a matched reason not among the cited; a matched reason that cites another file; a stored hit whose reason misses the site; a stored miss whose reason hits it; a hit matched to a later reason; a round hit dropped by a later round. The pass-with-a-reason fault was refused for another reason. The stage 2 replay-to-clean swap in trial 2 threw, because stage 2 now reads case files. Recomputation on the real inputs: every bug case's stored outcome and `matched` equal those its cited reasons give against its case file (rounds-miss, order-miss and fable-miss: 64 cases each; the clean reports: 15 each), and every case keeps rules (c) to (f). The regenerated panel.json is byte-identical to attempt 3's: stage 1 61, 33, 34, 20, 40, 38; unique 5 and 7.
+
+| Finding | Fix | Proof |
+|---|---|---|
+| (a) stage 1 miss and clean concatenated before pairing | `checkFile` per report file: each miss report's ids equal `arms/miss25`, each clean report's equal `panel-arms/clean15`, before any concatenation | acceptance 2: a Fable case moved from the miss to the clean report |
+| (b) stage 2 replay and clean concatenated | the same per trial: each replay report's trial ids equal `evals/review/replay`, each clean report's `evals/review/clean`; with every trial equal to its directory, the rotating Codex pair holds the same ids | acceptance 2: a Fable case moved from replay to clean in trial 2; a missing case file; an unreadable directory |
+| (c) contradictory scoring evidence | `brokenRule`, rules (c) to (f), mirrored from src/review/bench.ts:741-750; `rescored` recomputes a scored bug case's outcome and `matched` as `score` does (src/review/bench.ts:462-476, `citedSite` at 437-444); rounds must be cumulative | acceptance 2: twelve faults, each refused with its rule named and nothing written; acceptance 3: a miss citing another file and lines outside the window stays a miss |
+
+Clean cases: a false block means a scored round blocked, which `cited` cannot show (a block may cite nothing on the changed paths), so clean cases are held to rules (c) to (e) and not recomputed. Round 1 of the three-round run cannot be recomputed either (a round's cited reasons are saved only as a count); it is held to the round rules (cumulative, the last round equals the outcome).
+
+Field-guard table, rows added or changed in attempt 5 (the attempt 3 table stands for the rest):
+
+| Field | Guard |
+|---|---|
+| per report file `trialResults[t].cases` ids | `checkFile`: exactly the ids of its case directory, element by element, for each stage 1 report and each stage 2 report and trial, before concatenation |
+| case `kind` | `checkFile`: the kind of its case file |
+| case `outcome` (bug, scored) | `rescored`: hit exactly when a cited reason names an expected site of the case file (file equal, lines overlapping line plus or minus window), else miss |
+| case `matched` | `brokenRule` rule (f) (only a hit; among the cited; cites the matched file); `rescored`: the first cited reason on an expected site and that site |
+| case `runStatus` | `brokenRule` rule (d): success on every scored outcome |
+| case `cited` | `brokenRule` rule (e): empty on pass, no-verdict and error; read by `rescored` |
+| case `rounds[].outcome` | outcome for its kind; cumulative (a block never followed by a non-block) |
+| stage 2 triple | candidate, base and card path from the case files (`tripleOf`) |
+
+Guard sweep, attempt 5: each guard added, loosened in turn with `outcome-panel.test.ts` run and the file restored, caught (24): rule (c) outcome for kind; round outcome for kind; rule (d) scored needs success; rule (e) pass/no-verdict/error cite nothing; rule (f) only a hit has matched; rule (f) matched reason among cited; rule (f) matched reason cites matched file; citedSite range; rounds cumulative; per-file ids against case dir; per-file id lengths; kind against case file; rescore called; rescore outcome; rescore first matched; rescore same file; rescore window low; rescore window high; rescore only scored bug; stage 1 clean group checked; stage 2 clean group checked; stage 2 case dirs readable; stage 1 case dirs readable; triple from case files. The attempt 3 sweep rerun: 52 of its guards caught; the four whose code was replaced (orphan triple, pair ids, pair id lengths, pair kinds) are covered by the per-file guards above. equivalent: a separate check of the rotating Codex member, because every trial of every report is checked against its case directory.
+
+Attempt 5 DoD: `npm run typecheck && node --test tests/surface/outcome-panel.test.ts tests/surface/outcome-baseline.test.ts tests/surface/prose.test.ts` exit 0, tests 29, pass 29, fail 0. `npm run check`: exit 0, tests 3888, pass 3856, fail 0, skipped 32.

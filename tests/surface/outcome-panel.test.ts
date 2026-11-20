@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
 import { LESSON_COMMITS, assemble, keep, unionOf, type CaseResult, type Measures, type Union } from '../../bench/outcome/panel.ts';
+import type { ReviewBenchCase } from '../../src/core/types.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
 const dirs: string[] = [];
@@ -18,32 +19,44 @@ type Outcome = CaseResult['outcome'];
 const POLICY = 'aa7f80bac1a3df11a5b915c7f85a2ef0b1e268a065229b7790c5020c0dad537e';
 const FABLE = { rounds: 1, formalCommand: { path: 'bench/outcome/fable-r3.json', sha256: '0e2b' } };
 const range = (from: number, to: number): number[] => Array.from({ length: to - from }, (_, i) => from + i);
+/** A cited reason at `file`:`line`, in the form `citedSite` reads (src/review/bench.ts:437). */
+const reason = (file: string, line: number): string => `[spec] [P1] 6 tests (class: x) @ ${file}:${line}: defect`;
+/** What the bench saves for a case of each outcome (src/review/bench.ts, score): a hit cites the expected site of its case file (src/f<i>.ts:10) and names it as matched. */
+const evidence = (i: number, outcome: Outcome): Partial<CaseResult> => {
+  if (outcome === 'no-verdict' || outcome === 'error') return { runStatus: 'tool_error', cited: [] };
+  if (outcome === 'hit') return { runStatus: 'success', cited: [reason(`src/f${i}.ts`, 10)], matched: { reason: reason(`src/f${i}.ts`, 10), file: `src/f${i}.ts`, line: 10 } };
+  return { runStatus: 'success', cited: outcome === 'false-block' ? [reason(`src/c${i}.ts`, 1)] : [] };
+};
 const bugs = (n: number, hits: number[], other: Record<number, Outcome> = {}, dur = 100): CaseResult[] =>
-  range(0, n).map((i) => ({ id: `b${i}`, kind: 'bug', confirmed: true, cited: [], outcome: other[i] ?? (hits.includes(i) ? 'hit' : 'miss'), durationMs: dur, verdictRef: `x/b${i}.json` }));
+  range(0, n).map((i) => { const outcome = other[i] ?? (hits.includes(i) ? 'hit' : 'miss'); return { id: `b${i}`, kind: 'bug', confirmed: true, cited: [], outcome, durationMs: dur, verdictRef: `x/b${i}.json`, ...evidence(i, outcome) }; });
 const cleans = (n: number, blocks: number[], other: Record<number, Outcome> = {}, dur = 100): CaseResult[] =>
-  range(0, n).map((i) => ({ id: `c${i}`, kind: 'clean', confirmed: true, cited: [], outcome: other[i] ?? (blocks.includes(i) ? 'false-block' : 'pass'), durationMs: dur, verdictRef: `x/c${i}.json` }));
+  range(0, n).map((i) => { const outcome = other[i] ?? (blocks.includes(i) ? 'false-block' : 'pass'); return { id: `c${i}`, kind: 'clean', confirmed: true, cited: [], outcome, durationMs: dur, verdictRef: `x/c${i}.json`, ...evidence(i, outcome) }; });
+/** Case files: bug case b<i> expects src/f<i>.ts:10 (window 0), and b0 and b1, b2 and b3, ... share one candidate, base and card (one triple); a clean case has its own. */
+const sha = (n: number): string => n.toString(16).padStart(40, '0');
+const caseFile = (id: string, kind: 'bug' | 'clean', triple: number): ReviewBenchCase => ({ id, kind, candidate: sha(triple + 1), base: sha(999), card: { id: 'T1-X', path: `specs/tasks/T${triple}.md` }, confirmed: true, confirmedBy: 'fixture', origin: 'fixture', ...(kind === 'bug' ? { expected: [{ file: `src/f${id.slice(1)}.ts`, line: 10, window: 0, class: 'x' }] } : {}) }) as ReviewBenchCase;
+const bugFiles = (n: number): ReviewBenchCase[] => range(0, n).map((i) => caseFile(`b${i}`, 'bug', Math.floor(i / 2)));
+const cleanFiles = (n: number): ReviewBenchCase[] => range(0, n).map((i) => caseFile(`c${i}`, 'clean', 100 + i));
+const CASE_DIRS: Record<string, ReviewBenchCase[]> = { 'arms/miss25': bugFiles(30), 'panel-arms/clean15': cleanFiles(3), 'evals/review/replay': bugFiles(10), 'evals/review/clean': cleanFiles(5) };
 interface ReportOpts { stage?: string; options?: Record<string, unknown>; policyHash?: string }
 const report = (trials: CaseResult[][], o: ReportOpts = {}): string =>
   JSON.stringify({ stage: o.stage ?? 'formal', policyHash: o.policyHash ?? POLICY, options: o.options ?? { rounds: 1 }, leftCheckouts: [], cases: trials[0], trialResults: trials.map((cases) => ({ cases })) });
-/** Codex round 1 is `rounds[0]`; the final outcome after three rounds hits one more case (b10), which round 1 missed. */
+/** Codex round 1 is `rounds[0]`; after three rounds the run hits one more case (b10), which round 1 missed. */
 const withRounds = (cases: CaseResult[]): CaseResult[] =>
-  cases.map((c) => ({ ...c, outcome: c.id === 'b10' ? 'hit' : c.outcome, rounds: [{ outcome: c.outcome, durationMs: c.durationMs, cited: 0 }, { outcome: c.id === 'b10' ? 'hit' : c.outcome, durationMs: 1, cited: 0 }] }));
+  cases.map((c) => ({ ...c, rounds: [{ outcome: c.id === 'b10' ? 'miss' : c.outcome, durationMs: c.durationMs, cited: 0 }, { outcome: c.outcome, durationMs: 1, cited: 0 }] }));
 
 /** The three-round Codex bug cases: b28 is an error no round reviewed, so it carries an empty `rounds` (src/review/bench.ts:209). */
-const roundsMiss = (): CaseResult[] => withRounds(bugs(30, range(0, 10), { 28: 'error' })).map((c) => (c.id === 'b28' ? { ...c, rounds: [] } : c));
+const roundsMiss = (): CaseResult[] => withRounds(bugs(30, range(0, 11), { 28: 'error' })).map((c) => (c.id === 'b28' ? { ...c, rounds: [] } : c));
 /** Stage 1 inputs: 30 bug cases and 3 clean (b28 an error of round 1, b29 and c2 no verdict for Fable). Round 1 hits b0-b9, the field-order run b5-b14, Fable b0, b1 and `fableUnique` cases from b10. */
 function stage1(fableUnique: number): Record<string, string> {
   return {
     'arms/rounds-miss.json': report([roundsMiss()], { options: { rounds: 3 } }),
-    'arms/order-miss.json': report([bugs(30, range(5, 15))], { options: { rounds: 1, order: 'analysis-first' } }),
+    'arms/order-miss.json': report([bugs(30, range(5, 15)).map((c) => (c.id === 'b20' ? { ...c, cited: [reason('src/other.ts', 10), reason('src/f20.ts', 5), reason('src/f20.ts', 15)] } : c))], { options: { rounds: 1, order: 'analysis-first' } }),
     'panel-arms/fable-miss.json': report([bugs(30, [0, 1, ...range(10, 10 + fableUnique)], { 29: 'no-verdict' })], { options: FABLE }),
     'arms/rounds-clean.json': report([withRounds(cleans(3, [0]))], { options: { rounds: 3 } }),
     'arms/order-clean.json': report([cleans(3, [0])], { options: { rounds: 1, order: 'analysis-first' } }),
     'panel-arms/fable-clean.json': report([cleans(3, [1], { 2: 'no-verdict' })], { options: FABLE }),
   };
 }
-/** The triple of a case by its case file: bug cases b0 and b1, b2 and b3, ... share one, as the cases of one review do; a clean case has its own. */
-const pairedTriple = (id: string): string | undefined => (id.startsWith('b') ? `t${Math.floor(Number(id.slice(1)) / 2)}` : id);
 /** No verdict file, as a case stopped by a quota hold has none: the triple comes from the case files. */
 const noRef = (cases: CaseResult[]): CaseResult[] => cases.map(({ verdictRef: _, ...c }) => c);
 /** Stage 2 inputs: 10 bug cases in 5 triples and 5 clean cases, 3 trials each; Codex takes 100 ms on a bug triple and 200 on a clean one, Fable 50 and 300. */
@@ -62,12 +75,12 @@ const LESSON = (kind: string, n: number): string => `- 2026-11-0${n} T1-X: ${kin
 const LESSON_TEXT: Record<string, string> = { [LESSON_COMMITS.arms]: [LESSON('NEVER', 1), LESSON('NOTE', 2)].join('\n'), [LESSON_COMMITS.stage1]: ['# Lessons', LESSON('NEVER', 1), LESSON('NOTE', 2), LESSON('ALWAYS', 3)].join('\n') };
 const lessonsAt = (sha: string): string | undefined => LESSON_TEXT[sha];
 /** Writes `files` under a temp input directory and assembles from it; returns the refusal and what was written. */
-function run(files: Record<string, string | undefined>, triple = pairedTriple, lessons = lessonsAt): { refusal?: string; written: string[]; doc?: { commit: string; lessons: unknown; measures: Measures; keep: ReturnType<typeof keep> } } {
+function run(files: Record<string, string | undefined>, caseDirs: Record<string, ReviewBenchCase[] | undefined> = CASE_DIRS, lessons = lessonsAt): { refusal?: string; written: string[]; doc?: { commit: string; lessons: unknown; measures: Measures; keep: ReturnType<typeof keep> } } {
   const dir = temp();
   for (const [rel, text] of Object.entries(files)) if (text !== undefined) { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); }
   const written: string[] = [];
   const read = (rel: string): string | undefined => (existsSync(path.join(dir, rel)) ? readFileSync(path.join(dir, rel), 'utf8') : undefined);
-  const r = assemble({ commit: 'abc', hasCommit: (sha) => sha === 'abc', read, triple, lessons }, (t) => written.push(t));
+  const r = assemble({ commit: 'abc', hasCommit: (c) => c === 'abc', read, caseDir: (rel) => caseDirs[rel], lessons }, (t) => written.push(t));
   return { refusal: r?.refusal, written, doc: written[0] === undefined ? undefined : JSON.parse(written[0]) };
 }
 
@@ -101,11 +114,11 @@ test('T1-PANEL-ARMS-REPORT acceptance 2: assemble refuses each input fault of R2
   ];
   const s12 = { ...stage1(8), ...stage2() };
   const at = (cases: CaseResult[], i: number, patch: Record<string, unknown>): CaseResult[] => cases.map((c, j) => (j === i ? ({ ...c, ...patch } as CaseResult) : c));
-  const bad = (name: string, patch: Record<string, unknown>): [string, Record<string, string | undefined>, RegExp] => [name, { ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, patch)], { options: FABLE }) }, /panel-arms\/fable-miss\.json: (unparsable|case b3)/];
+  const bad = (name: string, patch: Record<string, unknown>, why = /panel-arms\/fable-miss\.json: (unparsable|case b3)/): [string, Record<string, string | undefined>, RegExp] => [name, { ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, patch)], { options: FABLE }) }, why];
   const s2With = (name: string, codex: CaseResult[][], fable: CaseResult[][]): [string, Record<string, string | undefined>, RegExp] => [name, { ...s12, 'panel-arms/stage2/codex-replay.json': report(codex), 'panel-arms/stage2/fable-replay.json': report(fable, { options: FABLE }) }, /case ids/];
   const b4 = bugs(4, []);
   faults.push(
-    bad('an outcome outside the bench enum', { outcome: 'hits' }), bad('a bug case with a clean outcome', { outcome: 'pass' }), bad('a kind outside bug and clean', { kind: 'other' }),
+    bad('an outcome outside the bench enum', { outcome: 'hits' }), bad('a bug case with a clean outcome', { outcome: 'pass' }, /fable-miss\.json: case b3: a bug case has outcome pass/), bad('a kind outside bug and clean', { kind: 'other' }),
     bad('no durationMs', { durationMs: undefined }), bad('a negative durationMs', { durationMs: -1 }), bad('a round with a negative duration', { rounds: [{ outcome: 'miss', durationMs: -1, cited: 0 }] }), bad('a round outside the enum', { rounds: [{ outcome: 'x', durationMs: 1, cited: 0 }] }),
     ['a duplicate case id', { ...ok, 'panel-arms/fable-miss.json': report([[...bugs(30, []), bugs(1, [])[0]!]], { options: FABLE }) }, /duplicate case id b0/],
     ['a stage 1 report of two trials', { ...ok, 'arms/order-miss.json': report([bugs(30, []), bugs(30, [])]) }, /not one trial/],
@@ -121,7 +134,7 @@ test('T1-PANEL-ARMS-REPORT acceptance 2: assemble refuses each input fault of R2
   faults.push(
     roundsFault('a scored case of a multi-round report without rounds', { rounds: undefined }, /arms\/rounds-miss\.json: case b3 has no rounds in a report of 3 rounds/),
     roundsFault('a scored case with an empty rounds', { rounds: [] }, /case b3 is scored \(hit\) with no round/),
-    roundsFault('an outcome other than its last round', { outcome: 'miss' }, /case b3 has outcome miss but its last round hit/),
+    roundsFault('an outcome other than its last round', { outcome: 'miss', cited: [], matched: undefined }, /case b3 has outcome miss but its last round hit/),
     roundsFault('more rounds than the report ran', { rounds: [0, 1, 2, 3].map(() => ({ outcome: 'miss', durationMs: 1, cited: 0 })) }, /case b3 has 4 rounds in a report of 3/),
     ['rounds in a one-round report', { ...ok, 'arms/order-miss.json': report([at(bugs(30, range(5, 15)), 3, { rounds: [{ outcome: 'miss', durationMs: 1, cited: 0 }] })], { options: { rounds: 1 } }) }, /arms\/order-miss\.json: case b3 holds rounds in a one-round report/],
     kindFault('a kind that differs between members', 'panel-arms/fable-miss.json', fableB3Clean, FABLE),
@@ -136,6 +149,18 @@ test('T1-PANEL-ARMS-REPORT acceptance 2: assemble refuses each input fault of R2
     roundsFault('a round with no cited count', { rounds: [{ outcome: 'hit', durationMs: 1 }] }, /case b3: rounds\.0\.cited/),
     roundsFault('options.rounds not a whole number', {}, /arms\/rounds-miss\.json: unparsable/, { rounds: 2.5 }),
     ['trialResults not an array', { ...ok, 'arms/order-miss.json': JSON.stringify({ stage: 'formal', policyHash: POLICY, options: { rounds: 1 }, trialResults: 'x' }) }, /arms\/order-miss\.json: unparsable/],
+    ['a Fable case moved from the miss report to the clean report', { ...ok, 'panel-arms/fable-miss.json': report([bugs(30, [0, 1, ...range(10, 18)], { 29: 'no-verdict' }).filter((c) => c.id !== 'b3')], { options: FABLE }), 'panel-arms/fable-clean.json': report([[...cleans(3, [1], { 2: 'no-verdict' }), bugs(4, [])[3]!]], { options: FABLE }) }, /stage 1: the case ids differ: panel-arms\/fable-miss\.json against arms\/miss25/],
+    ['a Fable case moved from the replay report to the clean report in trial 2', { ...s12, 'panel-arms/stage2/fable-replay.json': report([bugs(10, [5, 6], { 9: 'no-verdict' }, 50), bugs(10, [0, 5], {}, 50).filter((c) => c.id !== 'b3'), bugs(10, [0, 1, 2, 7], {}, 50)], { options: FABLE }), 'panel-arms/stage2/fable-clean.json': report([cleans(5, [], {}, 300), [...cleans(5, [1], {}, 300), bugs(4, [])[3]!], cleans(5, [], {}, 300)], { options: FABLE }) }, /stage 2 trial 2: the case ids differ: panel-arms\/stage2\/fable-replay\.json against evals\/review\/replay/],
+    bad('a hit with runStatus timeout and no matched', { outcome: 'hit', runStatus: 'timeout' }, /case b3: rule \(d\): outcome hit with runStatus timeout/), bad('a hit with no matched', { outcome: 'hit' }, /case b3: rule \(f\): only a hit has matched/),
+    bad('a miss with matched', { matched: { reason: reason('src/f3.ts', 10), file: 'src/f3.ts', line: 10 }, cited: [reason('src/f3.ts', 10)] }, /case b3: rule \(f\): only a hit has matched/),
+    bad('a pass that cites a reason', { outcome: 'pass', kind: 'clean', cited: [reason('src/c3.ts', 1)] }, /case b3: rule \(e\): outcome pass cites no reason/), bad('a no-verdict that cites a reason', { outcome: 'no-verdict', runStatus: 'tool_error', cited: [reason('src/f3.ts', 10)] }, /case b3: rule \(e\): outcome no-verdict cites no reason/),
+    bad('a matched reason not among the cited', { outcome: 'hit', cited: [reason('src/f3.ts', 10)], matched: { reason: reason('src/f3.ts', 11), file: 'src/f3.ts', line: 10 } }, /case b3: rule \(f\): only a hit has matched, and its matched reason is one of its cited/),
+    bad('a matched reason that cites another file', { outcome: 'hit', cited: [reason('src/g.ts', 10)], matched: { reason: reason('src/g.ts', 10), file: 'src/f3.ts', line: 10 } }, /case b3: rule \(f\): its matched reason cites src\/g\.ts, not its matched file src\/f3\.ts/),
+    roundsFault('a round outcome of the other kind', { rounds: [{ outcome: 'pass', durationMs: 1, cited: 0 }, { outcome: 'hit', durationMs: 1, cited: 1 }] }, /rounds-miss\.json: case b3: a bug case has outcome pass/),
+    ['a stored hit whose cited reason misses the expected site', { ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, { outcome: 'hit', cited: [reason('src/f3.ts', 99)], matched: { reason: reason('src/f3.ts', 99), file: 'src/f3.ts', line: 10 } })], { options: FABLE }) }, /stage 1: panel-arms\/fable-miss\.json: case b3 is stored as hit; its cited reasons and case file score miss/],
+    ['a stored miss whose cited reason hits the expected site', { ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, { cited: [reason('src/f3.ts', 10)] })], { options: FABLE }) }, /stage 1: panel-arms\/fable-miss\.json: case b3 is stored as miss; its cited reasons and case file score hit/],
+    ['a hit whose matched is not the first cited reason on a site', { ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, { outcome: 'hit', cited: [reason('src/f3.ts', 10), reason('src/f3.ts', 10) + ' again'], matched: { reason: reason('src/f3.ts', 10) + ' again', file: 'src/f3.ts', line: 10 } })], { options: FABLE }) }, /case b3 is stored as hit by another reason or site than its first cited reason on an expected site/],
+    roundsFault('a round hit followed by a round miss', { outcome: 'miss', cited: [], matched: undefined, rounds: [{ outcome: 'hit', durationMs: 1, cited: 1 }, { outcome: 'miss', durationMs: 1, cited: 0 }] }, /case b3: round 2 drops the hit of round 1/),
     ['cases not an array', { ...ok, 'arms/order-miss.json': JSON.stringify({ stage: 'formal', policyHash: POLICY, options: { rounds: 1 }, trialResults: [{ cases: 'x' }] }) }, /arms\/order-miss\.json: unparsable/],
   );
   for (const [name, files, why] of faults) {
@@ -143,16 +168,22 @@ test('T1-PANEL-ARMS-REPORT acceptance 2: assemble refuses each input fault of R2
     assert.match(r.refusal ?? '(no refusal)', why, name);
     assert.deepEqual(r.written, [], `${name}: nothing written`);
   }
-  const noLessons = run(ok, pairedTriple, (sha) => (sha === LESSON_COMMITS.arms ? undefined : lessonsAt(sha)));
+  const noLessons = run(ok, CASE_DIRS, (sha) => (sha === LESSON_COMMITS.arms ? undefined : lessonsAt(sha)));
   assert.match(noLessons.refusal ?? '(no refusal)', /docs\/LESSONS\.md at 1418c7b9acc18621171384e3d92d7ffcbcde3a07 cannot be read/);
   assert.deepEqual(noLessons.written, []);
-  const noTriple = run(s12, (id) => (id === 'b3' ? undefined : pairedTriple(id)));
-  assert.match(noTriple.refusal ?? '(no refusal)', /case b3 has no case file/);
-  assert.deepEqual(noTriple.written, []);
+  const noCaseFile = run(s12, { ...CASE_DIRS, 'evals/review/replay': bugFiles(10).filter((c) => c.id !== 'b3') });
+  assert.match(noCaseFile.refusal ?? '(no refusal)', /stage 2 trial 1: the case ids differ: panel-arms\/stage2\/codex-replay\.json against evals\/review\/replay/);
+  assert.deepEqual(noCaseFile.written, []);
+  const noDir = run(ok, { ...CASE_DIRS, 'arms/miss25': undefined });
+  assert.match(noDir.refusal ?? '(no refusal)', /case directory arms\/miss25 cannot be read/);
+  assert.deepEqual(noDir.written, []);
+  const noDir2 = run(s12, { ...CASE_DIRS, 'evals/review/clean': undefined });
+  assert.match(noDir2.refusal ?? '(no refusal)', /case directory evals\/review\/clean cannot be read/);
+  assert.deepEqual(noDir2.written, []);
   const zero = run({ ...s12, 'panel-arms/stage2/codex-replay.json': report([0, 1, 2].map(() => bugs(10, [], {}, 0))), 'panel-arms/stage2/codex-clean.json': report([0, 1, 2].map(() => cleans(5, [], {}, 0))) });
   assert.match(zero.refusal ?? '(no refusal)', /wall-time ratio/, 'a single Codex median of 0 gives no ratio');
   assert.deepEqual(zero.written, []);
-  assert.match(assemble({ commit: 'zzz', hasCommit: () => false, read: () => undefined, triple: () => undefined, lessons: () => undefined }, () => assert.fail('wrote'))?.refusal ?? '', /--commit zzz/);
+  assert.match(assemble({ commit: 'zzz', hasCommit: () => false, read: () => undefined, caseDir: () => undefined, lessons: () => undefined }, () => assert.fail('wrote'))?.refusal ?? '', /--commit zzz/);
   // The command writes no file on a refusal.
   const dir = temp();
   const out = path.join(dir, 'panel.json');

@@ -174,7 +174,7 @@ Every boolean is computed from the tables as read: when `github_errors` has rows
 
 ## Review panel (`panel.ts`)
 
-`node bench/outcome/panel.ts assemble --commit <sha> [--in <dir>] [--out <file>]` reads saved bench reports under `--in` (default `_local` under the checkout: the 2026-11-16 Codex pair in `arms/`, the Fable runs in `panel-arms/`, and stage 2 reports in `panel-arms/stage2/` when the stage gate is met), scores single Codex, Codex+Codex and Codex+Fable with `unionOf` (union, intersection, unique hits, excluded cases) and applies the keep rule of intent/review-panel.md. It writes `bench/outcome/panel.json` (default `--out`), or refuses and writes nothing. `docs/reliability/panel.md` reports it (card T1-PANEL-ARMS-REPORT).
+`node bench/outcome/panel.ts assemble --commit <sha> [--in <dir>] [--out <file>]` reads saved bench reports under `--in` (default `_local` under the checkout: the 2026-11-16 Codex pair in `arms/`, the Fable runs in `panel-arms/`, and stage 2 reports in `panel-arms/stage2/` when the stage gate is met) and the case files their ids must match (`arms/miss25` and `panel-arms/clean15` under `--in`, `evals/review/replay` and `evals/review/clean`), checks every case against the bench's saved-case rules and its outcome against its own cited reasons, scores single Codex, Codex+Codex and Codex+Fable with `unionOf` (union, intersection, unique hits, excluded cases) and applies the keep rule of intent/review-panel.md. It writes `bench/outcome/panel.json` (default `--out`), or refuses and writes nothing. `docs/reliability/panel.md` reports it (card T1-PANEL-ARMS-REPORT).
 
 ## Tests
 
