@@ -238,6 +238,9 @@ describe('the Claude CLI model-limit message holds (T0-CLI-LIMIT-HOLD, issue 385
       ['YOU HAVE HIT YOUR DAILY LIMITS', 'HIT YOUR DAILY LIMITS'],
       ['hit your Claude OpUs 5.5 limit', 'hit your Claude OpUs 5.5 limit'],
       ['hit your FaBlE limit', 'hit your FaBlE limit'],
+      ['hit your usage limit', 'hit your usage limit'],
+      ['hit your capacity limit', 'hit your capacity limit'],
+      ['rate limited: you have hit your Fable limit', 'hit your Fable limit'],
     ];
     for (const [text, phrase] of held) assert.deepEqual(detectQuotaHold(text), { hold: true, via: 'text', evidence: phrase }, text);
     for (const text of ['you hit your one two three four limit', 'you hit your Fable limitless plan', 'you hit the limit', 'whit your Fable limit', 'hit your Fable limit2', 'hit your Fable limitLess', 'hitYour Fable limit', 'hit_your Fable limit']) {
