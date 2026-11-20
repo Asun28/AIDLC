@@ -1,7 +1,7 @@
 ---
 id: T1-TEST-INPROC-B-2
 title: (replaces T1-TEST-INPROC-B) init-base-ci, review-no-run, approver and init-no-package tests start the CLI in-process except where a case asserts what the child process does, and share read-only git fixtures, with every assertion line and test name unchanged
-status: todo
+status: merged
 branch: T1-TEST-INPROC-B-2
 worktree: D:\wt\AIDLC\T1-TEST-INPROC-B-2
 plan_ref: plans/test-time.md#order-of-work
