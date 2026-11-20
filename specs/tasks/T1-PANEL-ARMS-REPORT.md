@@ -91,3 +91,37 @@ Class sites checked: F1 every earlier-record row (14) and every pointer row; F2 
 Guard sweep, attempt 2 (loosened, `outcome-panel.test.ts` run, restored): kind enum, duration `>= 0` required, outcome for its kind, duplicate id, trial count, every trial same ids, missing case file, finite ratio (acc 2); triple key from case files, slowest member of a triple, `excluded` left out of the fold, `excludedKinds` by kind (acc 3); a round with a negative duration (acc 2). equivalent: the zod outcome enum for the outcome and for round outcomes, because the outcome-for-its-kind check rejects every value outside the enum.
 
 Attempt 2 DoD: `npm run typecheck && node --test tests/surface/outcome-panel.test.ts tests/surface/outcome-baseline.test.ts tests/surface/prose.test.ts` exit 0, tests 29, pass 29, fail 0. `npm run check`: exit 0, tests 3888, pass 3856, fail 0, skipped 32.
+
+Build attempt 3 (R3 decision 2 block, five findings; owner approved one more repair). RED receipt `a90a1d6a:outcome-panel acceptance 2-3`: the attempt 3 tests against the attempt 2 `panel.ts` (with only `LESSON_COMMITS` added so the file loads) fail acceptance 2 and 3, because the stage 1 fixture's error case with `rounds: []` (src/review/bench.ts:209) is refused where it must be left out; acceptance 4 then failed on the missing lesson rows. Each other new rule is shown by the guard sweep below (each guard loosened makes a fault of acceptance 2 pass). panel.json stage 1 numbers are unchanged (61, 33, 34, 20, 40, 38; unique 5 and 7); added: `lessons`.
+
+Lesson counts (`parseLessonLine` of src/artifacts/lessons.ts over `git show <sha>:docs/LESSONS.md`, NEVER, ALWAYS and NOTE lines): arms 1418c7b9acc18621171384e3d92d7ffcbcde3a07 (merge of T1-BENCH-ORDER-PRE, PR 339; the arms worktrees `_arms-p` and `_arms-q` are gone and their reports name no commit, so this is the plan's pin) 171; the commits just before (35de54fe, committed 26 s before rounds-miss started) and after (ef3e0ac3) also 171. Stage 1 be8b2c8a584bd56b982e14d3f1c70f32d0e354f2 (`git rev-list -1 --before=2026-11-19T01:46:00Z origin/main`, includes be8b2c8a) 187. Added 16 (the card's estimate: about 10). The review prompt carries only the newest NEVER and ALWAYS lines within `REVIEW_LESSONS_MAX_BYTES`.
+
+| Finding | Fix | Proof |
+|---|---|---|
+| 1 lessons count | `lessons` in panel.json (both commits, counts, added); five rows in the limits section | acceptance 3 (fixture 2 and 3 lessons, committed 171, 187, 16), acceptance 4 (rows present), refusal when LESSONS.md cannot be read |
+| 2 empty rounds | an unscored case of a multi-round report may have `rounds: []` and is left out | acceptance 3: stage 1 fixture b28 `error` with `rounds: []` excluded, excludedKinds bug 2 |
+| 3 rounds required | `validateReport`: with `options.rounds` above 1 every case holds `rounds` (at most that many), a scored case at least one ending on its outcome; a one-round report holds none | acceptance 2: five faults |
+| 4 kind per id | `checkPairs`: same kind per id in every member of stage 1 and of each stage 2 trial | acceptance 2: stage 1 and stage 2 trial 2 faults |
+| 5 id collisions | `checkPairs` compares sorted id arrays element by element; ids follow the `ReviewBenchCase` syntax | acceptance 2: `b3,b4`, `b 3`, a member whose ids are a prefix of the others' |
+
+Fields panel.ts reads, and the check that guards each (all in acceptance 2 unless named):
+
+| Field | Guard |
+|---|---|
+| report `stage` | `Envelope` string; `validateReport` formal stage |
+| report `policyHash` | `Envelope` string; `load` one hash per stage |
+| report `options.formalCommand` | `validateReport`: present on a Fable report, absent on a Codex report |
+| report `options.rounds` | `Envelope` whole number at least 1; `validateReport` rounds rules |
+| report `trialResults` | `Envelope` array of at least one; `validateReport` trial count (one in stage 1, three in stage 2) |
+| report `trialResults[].cases` | `Envelope` array; every element through `Case` |
+| case `id` | `Case` id syntax (src/core/types.ts:883); unique per trial; `checkPairs` element-wise id arrays; stage 2 triple from the case files (refusal when none) |
+| case `kind` | `Case` enum; `checkPairs` same kind per id across members |
+| case `outcome` | `Case` enum; outcome for its kind (`KIND_OUTCOMES`); equal to the last round's |
+| case `durationMs` | `Case` finite, at least 0, required; stage 2 wall-time ratio refused when not finite |
+| case `rounds`, `rounds[0].outcome`, `rounds[0].durationMs` | `Case` round shape (outcome, finite duration, cited count); presence rules of `validateReport`; round 1 read only from a non-empty `rounds` |
+| case `confirmed`, `cited`, `runStatus`, `matched`, `detail`, `verdictRef`, `logRef` | not read; `Case` checks each against `BenchCaseResult` (src/review/bench.ts:36-53) |
+| report `reviewer`, `rules`, `leftCheckouts`, top-level `cases`, `totals`, `summary`, `roundTotals` | not read and not checked |
+
+Guard sweep, attempt 3: every guard of `panel.ts`, 57 in all, loosened in turn with `outcome-panel.test.ts` run and the file restored, each caught: unionOf member count; ids held by every member; scored: no-verdict and error; excluded when some member; blocked: hit or false-block; union some; intersection every; unique: no other member; common scope; excludedKinds by kind; median even branch; triple key; slowest of a triple; fold drops excluded; orphan triple; finite ratio; Codex+Codex rotation; gate <; fable gain >=; fable false blocks <=; panel gain >=; panel false blocks <=; ratio <=; better follows member2; id syntax; kind enum; confirmed boolean; cited array; duration finite >= 0; round shape; options.rounds int >= 1; envelope trialResults; outcome for its kind; duplicate id; one-round report holds no rounds; multi-round case has rounds; at most options.rounds; scored case has a round; empty rounds allowed for unscored; last round equals outcome; trial count; formal stage; Fable formalCommand; Codex no formalCommand; policy hash; pair ids element-wise; pair id lengths; pair kinds; stage 1 pairing called; stage 2 pairing called; commit check; round 1 is rounds[0]; round 1 only when rounds hold one; stage 2 read only on run; lessons unreadable; lesson count by parser; lessons added. Also caught (separate runs): runStatus, matched, detail, verdictRef, logRef loosened to any. equivalent: the `Outcome` enum (case and round), because the outcome-for-its-kind check rejects every value outside it.
+
+Attempt 3 DoD: `npm run typecheck && node --test tests/surface/outcome-panel.test.ts tests/surface/outcome-baseline.test.ts tests/surface/prose.test.ts` exit 0, tests 29, pass 29, fail 0. `npm run check`: exit 0, tests 3888, pass 3856, fail 0, skipped 32.

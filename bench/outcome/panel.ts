@@ -5,10 +5,12 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { parseLessonLine } from '../../src/artifacts/lessons.ts';
+import { FindingSeverity, RunStatus } from '../../src/core/types.ts';
 import { runSync } from '../../src/probes/exec.ts';
-import { loadBenchCases } from '../../src/review/bench.ts';
+import { loadBenchCases, type BenchCaseResult } from '../../src/review/bench.ts';
 
-export interface CaseResult { id: string; kind: 'bug' | 'clean'; outcome: 'hit' | 'miss' | 'pass' | 'false-block' | 'no-verdict' | 'error'; durationMs: number; verdictRef?: string; rounds?: Array<{ outcome: CaseResult['outcome']; durationMs: number; cited: number }> }
+export type CaseResult = BenchCaseResult;
 export interface Tally { hits: number; falseBlocks: number }
 export interface Union { cases: number; bugCases: number; cleanCases: number; members: Tally[]; union: Tally; intersection: Tally; uniqueHits: number[]; excluded: string[] }
 export interface Panels { codex: Union; codexCodex: Union; codexFable: Union }
@@ -17,15 +19,34 @@ type Medians = Record<keyof Panels, Omit<Union, 'excluded'>>;
 type Scoped = Panels & { excluded: string[]; excludedKinds: { bug: number; clean: number } };
 export interface Measures { stage1: Scoped; stage2?: { trials: Scoped[]; median: Medians; min: Medians; max: Medians; wallTimeRatio: { codexCodex: number; codexFable: number } } }
 export interface Keep { stage2: 'run' | 'skip'; gate: { fableUniqueHits: number; fieldOrderUniqueHits: number; threshold: number }; rule: typeof RULE; panel?: 'keep' | 'drop'; member2?: 'fable' | 'codex' }
-/** `triple`: the candidate, base and card of a case by its case file, undefined when no case file holds the id. */
-export interface AssembleInput { commit: string | undefined; hasCommit: (sha: string) => boolean; read: (rel: string) => string | undefined; triple: (id: string) => string | undefined }
-interface Report { stage: string; policyHash: string; options?: { formalCommand?: unknown }; trialResults: Array<{ cases: CaseResult[] }> }
+/**
+ * `triple`: the candidate, base and card of a case by its case file, undefined when no case file holds the id. `lessons`: the
+ * text of docs/LESSONS.md at a commit, undefined when it cannot be read.
+ */
+export interface AssembleInput { commit: string | undefined; hasCommit: (sha: string) => boolean; read: (rel: string) => string | undefined; triple: (id: string) => string | undefined; lessons: (sha: string) => string | undefined }
+interface Report { stage: string; policyHash: string; options?: { rounds?: number; formalCommand?: unknown }; trialResults: Array<{ cases: CaseResult[] }> }
+/**
+ * A saved case result, field for field `BenchCaseResult` (src/review/bench.ts:36-53, as `SavedCases` at src/review/bench.ts:731-733
+ * parses it, with `rounds`), and the id syntax of `ReviewBenchCase` (src/core/types.ts:883). Neither schema is exported.
+ */
 const Outcome = z.enum(['hit', 'miss', 'pass', 'false-block', 'no-verdict', 'error']);
 const Ms = z.number().finite().min(0);
-const Case = z.object({ id: z.string().min(1), kind: z.enum(['bug', 'clean']), outcome: Outcome, durationMs: Ms, verdictRef: z.string().optional(), rounds: z.array(z.object({ outcome: Outcome, durationMs: Ms })).min(1).optional() });
-const Envelope = z.object({ stage: z.string(), policyHash: z.string(), options: z.object({ formalCommand: z.unknown().optional() }).optional(), trialResults: z.array(z.object({ cases: z.array(z.unknown()) })).min(1) });
+const Case = z.object({
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'expected letters, digits, dot, underscore or dash'), kind: z.enum(['bug', 'clean']), confirmed: z.boolean(),
+  outcome: Outcome, runStatus: RunStatus.optional(), cited: z.array(z.string()), matched: z.object({ reason: z.string(), file: z.string(), line: z.number(), severity: FindingSeverity.optional() }).optional(),
+  detail: z.string().optional(), verdictRef: z.string().optional(), logRef: z.string().optional(), durationMs: Ms,
+  rounds: z.array(z.object({ outcome: Outcome, durationMs: Ms, cited: z.number().int().min(0) })).optional(),
+});
+/** The report fields panel.ts reads (`ReviewBenchReport`, src/review/bench.ts:73); `options.rounds` is the bench's `--rounds`. */
+const Envelope = z.object({ stage: z.string(), policyHash: z.string(), options: z.object({ rounds: z.number().int().min(1).optional(), formalCommand: z.unknown().optional() }).optional(), trialResults: z.array(z.object({ cases: z.array(z.unknown()) })).min(1) });
 /** The outcomes a case of each kind can have (src/review/bench.ts, KIND_OUTCOMES). */
 const KIND_OUTCOMES: Record<string, string[]> = { bug: ['hit', 'miss', 'no-verdict', 'error'], clean: ['pass', 'false-block', 'no-verdict', 'error'] };
+/**
+ * The commits whose docs/LESSONS.md the lesson count compares. The arms worktrees of 2026-11-16 are gone and their reports name
+ * no commit, so the arms commit is the merge of T1-BENCH-ORDER-PRE (PR 339), the pin plans/review-recall.md names for the arms run.
+ * Stage 1 is main when it started (2026-11-19T01:46Z): `git rev-list -1 --before=2026-11-19T01:46:00Z origin/main`.
+ */
+export const LESSON_COMMITS = { arms: '1418c7b9acc18621171384e3d92d7ffcbcde3a07', stage1: 'be8b2c8a584bd56b982e14d3f1c70f32d0e354f2' };
 
 /** Decisions of intent/review-panel.md: stage 2 runs only when Fable's unique hits over Codex round 1 are at least 8. */
 export const GATE = 8;
@@ -99,58 +120,93 @@ export function keep(m: Measures): Keep {
 }
 
 /**
- * Reads and checks the reports `names` (Fable when the name says so), each of `trials` trials, in runs of `group` of one kind
- * in which every trial of every report holds the same case ids (so every pair, the rotating Codex pairs too, compares the same
- * cases); a refusal string, or the parsed reports.
+ * The one input check every report passes before any scoring: the report envelope, each case result against `Case`, its outcome
+ * and round outcomes for its kind, unique ids per trial, `trials` trials, the formal stage, `options.formalCommand` on a Fable
+ * report only, and the rounds rule of the bench (src/review/bench.ts:209 and 405): with `options.rounds` above 1 every case holds
+ * `rounds` with at most that many entries, a scored case at least one whose last outcome is the case's, an unscored case
+ * (no-verdict, error) possibly none; with one round no case holds `rounds`. A refusal string, or the report.
  */
-function load(read: AssembleInput['read'], names: string[], group: number, trials: number): string | Report[] {
+function validateReport(name: string, text: string | undefined, trials: number): string | Report {
+  if (text === undefined) return `${name}: missing`;
+  let r: Report;
+  try { r = Envelope.parse(JSON.parse(text)) as Report; } catch (err) { return `${name}: unparsable (${(err as Error).message.slice(0, 200)})`; }
+  const rounds = r.options?.rounds ?? 1;
+  for (const t of r.trialResults) {
+    const seen = new Set<string>();
+    for (const raw of t.cases) {
+      const p = Case.safeParse(raw), id = (raw as { id?: unknown } | null)?.id;
+      if (!p.success) return `${name}: case ${String(id)}: ${p.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`;
+      const c = p.data as CaseResult, rs = c.rounds;
+      const bad = [c.outcome, ...(rs ?? []).map((x) => x.outcome)].find((o) => !KIND_OUTCOMES[c.kind]!.includes(o));
+      if (bad) return `${name}: case ${c.id}: a ${c.kind} case has outcome ${bad}`;
+      if (seen.has(c.id)) return `${name}: duplicate case id ${c.id} in a trial`;
+      seen.add(c.id);
+      const roundFault = rounds === 1 ? (rs === undefined ? undefined : 'holds rounds in a one-round report')
+        : rs === undefined ? `has no rounds in a report of ${rounds} rounds`
+        : rs.length > rounds ? `has ${rs.length} rounds in a report of ${rounds}`
+        : rs.length === 0 ? (scored(c) ? `is scored (${c.outcome}) with no round` : undefined)
+        : rs.at(-1)!.outcome !== c.outcome ? `has outcome ${c.outcome} but its last round ${rs.at(-1)!.outcome}` : undefined;
+      if (roundFault) return `${name}: case ${c.id} ${roundFault}`;
+    }
+  }
+  if (r.trialResults.length !== trials) return `${name}: ${r.trialResults.length} trials, not ${trials === 1 ? 'one trial' : 'three trials'}`;
+  const fable = name.includes('fable');
+  if (r.stage !== 'formal') return `${name}: stage ${r.stage} is not formal`;
+  if (fable && r.options?.formalCommand === undefined) return `${name}: a Fable report without options.formalCommand`;
+  if (!fable && r.options?.formalCommand !== undefined) return `${name}: a Codex report with options.formalCommand`;
+  return r;
+}
+/** Validates the reports `names`, of `trials` trials each, and their one policy hash; a refusal string, or the reports. */
+function load(read: AssembleInput['read'], names: string[], trials: number): string | Report[] {
   const reports: Report[] = [];
   for (const name of names) {
-    const text = read(name);
-    if (text === undefined) return `${name}: missing`;
-    let r: Report;
-    try { r = Envelope.parse(JSON.parse(text)) as Report; } catch (err) { return `${name}: unparsable (${(err as Error).message.slice(0, 200)})`; }
-    for (const t of r.trialResults) {
-      const seen = new Set<string>();
-      for (const raw of t.cases) {
-        const p = Case.safeParse(raw), id = (raw as { id?: unknown } | null)?.id;
-        if (!p.success) return `${name}: case ${String(id)}: ${p.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`;
-        const bad = [p.data.outcome, ...(p.data.rounds ?? []).map((x) => x.outcome)].find((o) => !KIND_OUTCOMES[p.data.kind]!.includes(o));
-        if (bad) return `${name}: case ${p.data.id}: a ${p.data.kind} case has outcome ${bad}`;
-        if (seen.has(p.data.id)) return `${name}: duplicate case id ${p.data.id} in a trial`;
-        seen.add(p.data.id);
-      }
-    }
-    if (r.trialResults.length !== trials) return `${name}: ${r.trialResults.length} trials, not ${trials === 1 ? 'one trial' : 'three trials'}`;
-    const fable = name.includes('fable');
-    if (r.stage !== 'formal') return `${name}: stage ${r.stage} is not formal`;
-    if (fable && r.options?.formalCommand === undefined) return `${name}: a Fable report without options.formalCommand`;
-    if (!fable && r.options?.formalCommand !== undefined) return `${name}: a Codex report with options.formalCommand`;
+    const r = validateReport(name, read(name), trials);
+    if (typeof r === 'string') return r;
     reports.push(r);
   }
-  if (new Set(reports.map((r) => r.policyHash)).size !== 1) return `${names.join(', ')}: the policy hashes differ`;
-  const ids = (r: Report): string[] => r.trialResults.map((t) => t.cases.map((c) => c.id).sort().join());
-  for (let i = 0; i < names.length; i += group) if (!reports.slice(i, i + group).flatMap(ids).every((x, _, all) => x === all[0])) return `${names.slice(i, i + group).join(', ')}: the case ids differ`;
-  return reports;
+  return new Set(reports.map((r) => r.policyHash)).size === 1 ? reports : `${names.join(', ')}: the policy hashes differ`;
 }
+/**
+ * The one pairing check, for the members of every comparison actually scored (stage 1, and each stage 2 trial with its rotating
+ * Codex pair): the same sorted id arrays, compared element by element, and the same kind for each id in every member.
+ */
+function checkPairs(label: string, members: CaseResult[][]): string | undefined {
+  const ids = members.map((m) => m.map((c) => c.id).sort());
+  if (!ids.every((x) => x.length === ids[0]!.length && x.every((id, i) => id === ids[0]![i]))) return `${label}: the case ids differ between members`;
+  const kinds = new Map(members[0]!.map((c) => [c.id, c.kind]));
+  const odd = members.flat().find((c) => kinds.get(c.id) !== c.kind);
+  return odd && `${label}: case ${odd.id} has kind ${odd.kind} in one member and ${kinds.get(odd.id)} in another`;
+}
+/** The NEVER, ALWAYS and NOTE lessons of a docs/LESSONS.md text, by the repository's own parser. */
+const lessonCount = (text: string): number => text.split(/\r?\n/).filter((l) => parseLessonLine(l) !== undefined).length;
 
 export function assemble(input: AssembleInput, write: (text: string) => void): { refusal: string } | undefined {
   if (input.commit === undefined || !input.hasCommit(input.commit)) return { refusal: `--commit ${input.commit ?? '(missing)'} is not a commit of this repository` };
-  const one = load(input.read, STAGE1, 3, 1);
+  const one = load(input.read, STAGE1, 1);
   if (typeof one === 'string') return { refusal: one };
   // Codex round 1 is `rounds[0]` of the three-round run.
   const round1 = (cs: CaseResult[]): CaseResult[] => cs.map((c) => (c.rounds?.length ? { ...c, outcome: c.rounds[0]!.outcome, durationMs: c.rounds[0]!.durationMs } : c));
   const [rm, om, fm, rc, oc, fc] = one.map((r) => r.trialResults[0]!.cases);
-  const measures: Measures = { stage1: compositions(round1([...rm!, ...rc!]), [...om!, ...oc!], [...fm!, ...fc!]) };
+  const s1: [CaseResult[], CaseResult[], CaseResult[]] = [round1([...rm!, ...rc!]), [...om!, ...oc!], [...fm!, ...fc!]];
+  const unpaired = checkPairs('stage 1', [...s1]);
+  if (unpaired) return { refusal: unpaired };
+  const texts = { arms: input.lessons(LESSON_COMMITS.arms), stage1: input.lessons(LESSON_COMMITS.stage1) };
+  if (texts.arms === undefined || texts.stage1 === undefined) return { refusal: `docs/LESSONS.md at ${texts.arms === undefined ? LESSON_COMMITS.arms : LESSON_COMMITS.stage1} cannot be read` };
+  const lessons = { arms: { commit: LESSON_COMMITS.arms, lessons: lessonCount(texts.arms) }, stage1: { commit: LESSON_COMMITS.stage1, lessons: lessonCount(texts.stage1) } };
+  const measures: Measures = { stage1: compositions(...s1) };
   const hashes: Record<string, string> = Object.fromEntries(STAGE1.map((n) => [n, createHash('sha256').update(input.read(n)!, 'utf8').digest('hex')]));
   const policyHash: Record<string, string> = { stage1: one[0]!.policyHash };
   if (keep(measures).stage2 === 'run' && STAGE2.some((n) => input.read(n) !== undefined)) {
-    const two = load(input.read, STAGE2, 2, 3);
+    const two = load(input.read, STAGE2, 3);
     if (typeof two === 'string') return { refusal: two };
     const [cr, fr, cc, fcl] = two;
     const codex = [0, 1, 2].map((t) => [...cr!.trialResults[t]!.cases, ...cc!.trialResults[t]!.cases]);
     const fable = [0, 1, 2].map((t) => [...fr!.trialResults[t]!.cases, ...fcl!.trialResults[t]!.cases]);
     // Codex+Codex in trial t pairs Codex trial t with Codex trial t+1 (mod 3): every panel makes two calls per triple.
+    for (const t of [0, 1, 2]) {
+      const unpaired2 = checkPairs(`stage 2 trial ${t + 1}`, [codex[t]!, codex[(t + 1) % 3]!, fable[t]!]);
+      if (unpaired2) return { refusal: unpaired2 };
+    }
     const trials = [0, 1, 2].map((t) => compositions(codex[t]!, codex[(t + 1) % 3]!, fable[t]!));
     const stat = (f: (xs: number[]) => number): Medians => Object.fromEntries(COMPOSITIONS.map((k) => [k, fold(trials.map((t) => t[k]), f)])) as Medians;
     const orphan = codex[0]!.find((c) => input.triple(c.id) === undefined);
@@ -163,7 +219,8 @@ export function assemble(input: AssembleInput, write: (text: string) => void): {
     for (const n of STAGE2) hashes[n] = createHash('sha256').update(input.read(n)!, 'utf8').digest('hex');
     policyHash.stage2 = two[0]!.policyHash;
   }
-  write(`${JSON.stringify({ commit: input.commit, policyHash, inputs: hashes, measures, keep: keep(measures) }, null, 2)}\n`);
+  const lessonsOut = { ...lessons, added: lessons.stage1.lessons - lessons.arms.lessons };
+  write(`${JSON.stringify({ commit: input.commit, policyHash, inputs: hashes, lessons: lessonsOut, measures, keep: keep(measures) }, null, 2)}\n`);
   return undefined;
 }
 
@@ -176,7 +233,8 @@ function main(argv: string[]): number {
   const hasCommit = (sha: string): boolean => runSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: root }).exitCode === 0;
   let triples: Map<string, string> | undefined;
   const triple = (id: string): string | undefined => (triples ??= new Map(['replay', 'clean'].flatMap((d) => loadBenchCases(path.join(root, 'evals', 'review', d))).map((c) => [c.id, `${c.candidate} ${c.base} ${c.card.path}`]))).get(id);
-  const result = assemble({ commit: arg('--commit'), hasCommit, read, triple }, (text) => writeFileSync(out, text));
+  const lessons = (sha: string): string | undefined => { const r = runSync('git', ['show', `${sha}:docs/LESSONS.md`], { cwd: root }); return r.exitCode === 0 ? r.stdout : undefined; };
+  const result = assemble({ commit: arg('--commit'), hasCommit, read, triple, lessons }, (text) => writeFileSync(out, text));
   if (result) process.stderr.write(`panel: ${result.refusal}\n`);
   return result ? 1 : 0;
 }

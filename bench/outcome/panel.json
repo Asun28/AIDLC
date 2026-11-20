@@ -11,6 +11,17 @@
     "arms/order-clean.json": "8471689240d913689aa55c3dfc63a498102e90b9bfb50d88455dd628a1b60e4a",
     "panel-arms/fable-clean.json": "4d32f6a185828c85ae98b4d53302e24e74ed0b3bf08671584c850c78fd81e0be"
   },
+  "lessons": {
+    "arms": {
+      "commit": "1418c7b9acc18621171384e3d92d7ffcbcde3a07",
+      "lessons": 171
+    },
+    "stage1": {
+      "commit": "be8b2c8a584bd56b982e14d3f1c70f32d0e354f2",
+      "lessons": 187
+    },
+    "added": 16
+  },
   "measures": {
     "stage1": {
       "excluded": [

@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
-import { assemble, keep, unionOf, type CaseResult, type Measures, type Union } from '../../bench/outcome/panel.ts';
+import { LESSON_COMMITS, assemble, keep, unionOf, type CaseResult, type Measures, type Union } from '../../bench/outcome/panel.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '..', '..');
 const dirs: string[] = [];
@@ -19,9 +19,9 @@ const POLICY = 'aa7f80bac1a3df11a5b915c7f85a2ef0b1e268a065229b7790c5020c0dad537e
 const FABLE = { rounds: 1, formalCommand: { path: 'bench/outcome/fable-r3.json', sha256: '0e2b' } };
 const range = (from: number, to: number): number[] => Array.from({ length: to - from }, (_, i) => from + i);
 const bugs = (n: number, hits: number[], other: Record<number, Outcome> = {}, dur = 100): CaseResult[] =>
-  range(0, n).map((i) => ({ id: `b${i}`, kind: 'bug', outcome: other[i] ?? (hits.includes(i) ? 'hit' : 'miss'), durationMs: dur, verdictRef: `x/b${i}.json` }));
+  range(0, n).map((i) => ({ id: `b${i}`, kind: 'bug', confirmed: true, cited: [], outcome: other[i] ?? (hits.includes(i) ? 'hit' : 'miss'), durationMs: dur, verdictRef: `x/b${i}.json` }));
 const cleans = (n: number, blocks: number[], other: Record<number, Outcome> = {}, dur = 100): CaseResult[] =>
-  range(0, n).map((i) => ({ id: `c${i}`, kind: 'clean', outcome: other[i] ?? (blocks.includes(i) ? 'false-block' : 'pass'), durationMs: dur, verdictRef: `x/c${i}.json` }));
+  range(0, n).map((i) => ({ id: `c${i}`, kind: 'clean', confirmed: true, cited: [], outcome: other[i] ?? (blocks.includes(i) ? 'false-block' : 'pass'), durationMs: dur, verdictRef: `x/c${i}.json` }));
 interface ReportOpts { stage?: string; options?: Record<string, unknown>; policyHash?: string }
 const report = (trials: CaseResult[][], o: ReportOpts = {}): string =>
   JSON.stringify({ stage: o.stage ?? 'formal', policyHash: o.policyHash ?? POLICY, options: o.options ?? { rounds: 1 }, leftCheckouts: [], cases: trials[0], trialResults: trials.map((cases) => ({ cases })) });
@@ -29,10 +29,12 @@ const report = (trials: CaseResult[][], o: ReportOpts = {}): string =>
 const withRounds = (cases: CaseResult[]): CaseResult[] =>
   cases.map((c) => ({ ...c, outcome: c.id === 'b10' ? 'hit' : c.outcome, rounds: [{ outcome: c.outcome, durationMs: c.durationMs, cited: 0 }, { outcome: c.id === 'b10' ? 'hit' : c.outcome, durationMs: 1, cited: 0 }] }));
 
-/** Stage 1 inputs: 30 bug cases and 3 clean (b29 and c2 no verdict for Fable). Round 1 hits b0-b9, the field-order run b5-b14, Fable b0, b1 and `fableUnique` cases from b10. */
+/** The three-round Codex bug cases: b28 is an error no round reviewed, so it carries an empty `rounds` (src/review/bench.ts:209). */
+const roundsMiss = (): CaseResult[] => withRounds(bugs(30, range(0, 10), { 28: 'error' })).map((c) => (c.id === 'b28' ? { ...c, rounds: [] } : c));
+/** Stage 1 inputs: 30 bug cases and 3 clean (b28 an error of round 1, b29 and c2 no verdict for Fable). Round 1 hits b0-b9, the field-order run b5-b14, Fable b0, b1 and `fableUnique` cases from b10. */
 function stage1(fableUnique: number): Record<string, string> {
   return {
-    'arms/rounds-miss.json': report([withRounds(bugs(30, range(0, 10)))], { options: { rounds: 3 } }),
+    'arms/rounds-miss.json': report([roundsMiss()], { options: { rounds: 3 } }),
     'arms/order-miss.json': report([bugs(30, range(5, 15))], { options: { rounds: 1, order: 'analysis-first' } }),
     'panel-arms/fable-miss.json': report([bugs(30, [0, 1, ...range(10, 10 + fableUnique)], { 29: 'no-verdict' })], { options: FABLE }),
     'arms/rounds-clean.json': report([withRounds(cleans(3, [0]))], { options: { rounds: 3 } }),
@@ -55,13 +57,17 @@ function stage2(): Record<string, string> {
     'panel-arms/stage2/fable-replay.json': report(fableBug, { options: FABLE }), 'panel-arms/stage2/fable-clean.json': report(fableClean, { options: FABLE }),
   };
 }
+/** docs/LESSONS.md at the two commits: two lessons, then three and a line that is not a lesson. */
+const LESSON = (kind: string, n: number): string => `- 2026-11-0${n} T1-X: ${kind} rule ${n} (source: PR ${n})`;
+const LESSON_TEXT: Record<string, string> = { [LESSON_COMMITS.arms]: [LESSON('NEVER', 1), LESSON('NOTE', 2)].join('\n'), [LESSON_COMMITS.stage1]: ['# Lessons', LESSON('NEVER', 1), LESSON('NOTE', 2), LESSON('ALWAYS', 3)].join('\n') };
+const lessonsAt = (sha: string): string | undefined => LESSON_TEXT[sha];
 /** Writes `files` under a temp input directory and assembles from it; returns the refusal and what was written. */
-function run(files: Record<string, string | undefined>, triple = pairedTriple): { refusal?: string; written: string[]; doc?: { commit: string; measures: Measures; keep: ReturnType<typeof keep> } } {
+function run(files: Record<string, string | undefined>, triple = pairedTriple, lessons = lessonsAt): { refusal?: string; written: string[]; doc?: { commit: string; lessons: unknown; measures: Measures; keep: ReturnType<typeof keep> } } {
   const dir = temp();
   for (const [rel, text] of Object.entries(files)) if (text !== undefined) { mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true }); writeFileSync(path.join(dir, rel), text); }
   const written: string[] = [];
   const read = (rel: string): string | undefined => (existsSync(path.join(dir, rel)) ? readFileSync(path.join(dir, rel), 'utf8') : undefined);
-  const r = assemble({ commit: 'abc', hasCommit: (sha) => sha === 'abc', read, triple }, (t) => written.push(t));
+  const r = assemble({ commit: 'abc', hasCommit: (sha) => sha === 'abc', read, triple, lessons }, (t) => written.push(t));
   return { refusal: r?.refusal, written, doc: written[0] === undefined ? undefined : JSON.parse(written[0]) };
 }
 
@@ -106,18 +112,47 @@ test('T1-PANEL-ARMS-REPORT acceptance 2: assemble refuses each input fault of R2
     s2With('trial boundaries differ between paired reports', [[b4[0]!, b4[1]!], [b4[2]!], [b4[3]!]], [[b4[0]!], [b4[1]!, b4[2]!], [b4[3]!]]),
     s2With('consecutive Codex trials differ', [bugs(10, []), bugs(9, []), bugs(10, [])], [bugs(10, []), bugs(9, []), bugs(10, [])]),
   );
+  // Rounds (src/review/bench.ts:209 and 405): a scored case of a multi-round report needs its rounds, ending on its outcome.
+  const roundsFault = (name: string, patch: Record<string, unknown>, why: RegExp, options: Record<string, unknown> = { rounds: 3 }): [string, Record<string, string | undefined>, RegExp] =>
+    [name, { ...ok, 'arms/rounds-miss.json': report([at(roundsMiss(), 3, patch)], { options }) }, why];
+  const kindFault = (name: string, rel: string, cases: CaseResult[], options: Record<string, unknown>): [string, Record<string, string | undefined>, RegExp] => [name, { ...ok, [rel]: report([cases], { options }) }, /stage 1: case b3 has kind clean/];
+  const fableB3Clean = at(bugs(30, [0, 1, ...range(10, 18)], { 29: 'no-verdict' }), 3, { kind: 'clean', outcome: 'false-block' });
+  const fableTrial2B3Clean = [bugs(10, [5, 6], { 9: 'no-verdict' }, 50), at(bugs(10, [0, 5], {}, 50), 3, { kind: 'clean', outcome: 'false-block' }), bugs(10, [0, 1, 2, 7], {}, 50)];
+  faults.push(
+    roundsFault('a scored case of a multi-round report without rounds', { rounds: undefined }, /arms\/rounds-miss\.json: case b3 has no rounds in a report of 3 rounds/),
+    roundsFault('a scored case with an empty rounds', { rounds: [] }, /case b3 is scored \(hit\) with no round/),
+    roundsFault('an outcome other than its last round', { outcome: 'miss' }, /case b3 has outcome miss but its last round hit/),
+    roundsFault('more rounds than the report ran', { rounds: [0, 1, 2, 3].map(() => ({ outcome: 'miss', durationMs: 1, cited: 0 })) }, /case b3 has 4 rounds in a report of 3/),
+    ['rounds in a one-round report', { ...ok, 'arms/order-miss.json': report([at(bugs(30, range(5, 15)), 3, { rounds: [{ outcome: 'miss', durationMs: 1, cited: 0 }] })], { options: { rounds: 1 } }) }, /arms\/order-miss\.json: case b3 holds rounds in a one-round report/],
+    kindFault('a kind that differs between members', 'panel-arms/fable-miss.json', fableB3Clean, FABLE),
+    [ 'a kind that differs in one stage 2 trial', { ...s12, 'panel-arms/stage2/fable-replay.json': report(fableTrial2B3Clean.map(noRef), { options: FABLE }) }, /stage 2 trial 2: case b3 has kind clean/],
+    ['ids that a comma join would merge',{ ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, { id: 'b3,b4' })], { options: FABLE }) }, /case b3,b4: id expected letters, digits, dot, underscore or dash/],
+    ['an id outside the bench syntax', { ...ok, 'panel-arms/fable-miss.json': report([at(bugs(30, []), 3, { id: 'b 3' })], { options: FABLE }) }, /case b 3: id expected letters/],
+    // The member's sorted ids are a prefix of the others' (c2 sorts last of the bug and clean ids).
+    ['a member short of the last id', { ...ok, 'panel-arms/fable-clean.json': report([cleans(2, [1])], { options: FABLE }) }, /stage 1: the case ids differ/],
+    bad('confirmed not a boolean', { confirmed: 'yes' }), bad('no cited', { cited: undefined }), bad('a runStatus outside the enum', { runStatus: 'done' }),
+    bad('matched without a reason', { matched: { file: 'a.ts', line: 1 } }), bad('detail not a string', { detail: 1 }), bad('verdictRef not a string', { verdictRef: 1 }), bad('logRef not a string', { logRef: 1 }),
+    roundsFault('a round with a negative duration in a multi-round report', { rounds: [{ outcome: 'hit', durationMs: -1, cited: 0 }] }, /case b3: rounds\.0\.durationMs/),
+    roundsFault('a round with no cited count', { rounds: [{ outcome: 'hit', durationMs: 1 }] }, /case b3: rounds\.0\.cited/),
+    roundsFault('options.rounds not a whole number', {}, /arms\/rounds-miss\.json: unparsable/, { rounds: 2.5 }),
+    ['trialResults not an array', { ...ok, 'arms/order-miss.json': JSON.stringify({ stage: 'formal', policyHash: POLICY, options: { rounds: 1 }, trialResults: 'x' }) }, /arms\/order-miss\.json: unparsable/],
+    ['cases not an array', { ...ok, 'arms/order-miss.json': JSON.stringify({ stage: 'formal', policyHash: POLICY, options: { rounds: 1 }, trialResults: [{ cases: 'x' }] }) }, /arms\/order-miss\.json: unparsable/],
+  );
   for (const [name, files, why] of faults) {
     const r = run(files);
     assert.match(r.refusal ?? '(no refusal)', why, name);
     assert.deepEqual(r.written, [], `${name}: nothing written`);
   }
+  const noLessons = run(ok, pairedTriple, (sha) => (sha === LESSON_COMMITS.arms ? undefined : lessonsAt(sha)));
+  assert.match(noLessons.refusal ?? '(no refusal)', /docs\/LESSONS\.md at 1418c7b9acc18621171384e3d92d7ffcbcde3a07 cannot be read/);
+  assert.deepEqual(noLessons.written, []);
   const noTriple = run(s12, (id) => (id === 'b3' ? undefined : pairedTriple(id)));
   assert.match(noTriple.refusal ?? '(no refusal)', /case b3 has no case file/);
   assert.deepEqual(noTriple.written, []);
   const zero = run({ ...s12, 'panel-arms/stage2/codex-replay.json': report([0, 1, 2].map(() => bugs(10, [], {}, 0))), 'panel-arms/stage2/codex-clean.json': report([0, 1, 2].map(() => cleans(5, [], {}, 0))) });
   assert.match(zero.refusal ?? '(no refusal)', /wall-time ratio/, 'a single Codex median of 0 gives no ratio');
   assert.deepEqual(zero.written, []);
-  assert.match(assemble({ commit: 'zzz', hasCommit: () => false, read: () => undefined, triple: () => undefined }, () => assert.fail('wrote'))?.refusal ?? '', /--commit zzz/);
+  assert.match(assemble({ commit: 'zzz', hasCommit: () => false, read: () => undefined, triple: () => undefined, lessons: () => undefined }, () => assert.fail('wrote'))?.refusal ?? '', /--commit zzz/);
   // The command writes no file on a refusal.
   const dir = temp();
   const out = path.join(dir, 'panel.json');
@@ -142,10 +177,11 @@ function measuresOf(fableUnique: number, s2?: { med: Array<[number, number]>; ra
 test('T1-PANEL-ARMS-REPORT acceptance 3: measures and keep equal those recomputed from the inputs', () => {
   // Stage 1 only, gate edge 8 and 7.
   const runGate = run(stage1(8)).doc!;
-  assert.deepEqual(runGate.measures.stage1.codex, { cases: 31, bugCases: 29, cleanCases: 2, members: [tally(10, 1)], union: tally(10, 1), intersection: tally(10, 1), uniqueHits: [10], excluded: [] });
-  assert.deepEqual(runGate.measures.stage1.codexCodex, { cases: 31, bugCases: 29, cleanCases: 2, members: [tally(10, 1), tally(10, 1)], union: tally(15, 1), intersection: tally(5, 1), uniqueHits: [5, 5], excluded: [] });
-  assert.deepEqual(runGate.measures.stage1.codexFable, { cases: 31, bugCases: 29, cleanCases: 2, members: [tally(10, 1), tally(10, 1)], union: tally(18, 2), intersection: tally(2, 0), uniqueHits: [8, 8], excluded: [] });
-  assert.deepEqual([runGate.measures.stage1.excluded, runGate.measures.stage1.excludedKinds], [['b29', 'c2'], { bug: 1, clean: 1 }]);
+  assert.deepEqual(runGate.measures.stage1.codex, { cases: 30, bugCases: 28, cleanCases: 2, members: [tally(10, 1)], union: tally(10, 1), intersection: tally(10, 1), uniqueHits: [10], excluded: [] });
+  assert.deepEqual(runGate.measures.stage1.codexCodex, { cases: 30, bugCases: 28, cleanCases: 2, members: [tally(10, 1), tally(10, 1)], union: tally(15, 1), intersection: tally(5, 1), uniqueHits: [5, 5], excluded: [] });
+  assert.deepEqual(runGate.measures.stage1.codexFable, { cases: 30, bugCases: 28, cleanCases: 2, members: [tally(10, 1), tally(10, 1)], union: tally(18, 2), intersection: tally(2, 0), uniqueHits: [8, 8], excluded: [] });
+  assert.deepEqual([runGate.measures.stage1.excluded, runGate.measures.stage1.excludedKinds], [['b28', 'b29', 'c2'], { bug: 2, clean: 1 }], 'an error with empty rounds is left out, not refused');
+  assert.deepEqual(runGate.lessons, { arms: { commit: LESSON_COMMITS.arms, lessons: 2 }, stage1: { commit: LESSON_COMMITS.stage1, lessons: 3 }, added: 1 });
   assert.deepEqual(runGate.keep, { stage2: 'run', gate: { fableUniqueHits: 8, fieldOrderUniqueHits: 5, threshold: 8 }, rule: { panelGain: 7, extraFalseBlocks: 1, wallTimeRatio: 1.5, fableGain: 5 } });
   assert.equal(runGate.measures.stage2, undefined);
   const skip = run({ ...stage1(7), ...stage2() }).doc!;
@@ -187,7 +223,9 @@ test('T1-PANEL-ARMS-REPORT acceptance 3: measures and keep equal those recompute
   assert.deepEqual(k(measuresOf(8)), ['run', undefined, undefined], 'gate met, no stage 2 inputs yet');
 
   // The committed panel.json: the stage 1 count of 2026-11-19 (61 scored bug cases) and a keep equal to keep(measures).
-  const doc = JSON.parse(readFileSync(path.join(ROOT, 'bench', 'outcome', 'panel.json'), 'utf8')) as { measures: Measures; keep: ReturnType<typeof keep> };
+  const doc = JSON.parse(readFileSync(path.join(ROOT, 'bench', 'outcome', 'panel.json'), 'utf8')) as { lessons: unknown; measures: Measures; keep: ReturnType<typeof keep> };
+  // Counted by hand with `git show <sha>:docs/LESSONS.md`: 171 lesson lines at the arms pin, 187 when stage 1 started.
+  assert.deepEqual(doc.lessons, { arms: { commit: '1418c7b9acc18621171384e3d92d7ffcbcde3a07', lessons: 171 }, stage1: { commit: 'be8b2c8a584bd56b982e14d3f1c70f32d0e354f2', lessons: 187 }, added: 16 });
   const m = doc.measures.stage1;
   assert.deepEqual([m.codex.bugCases, m.codex.union.hits, m.codexCodex.members[1]!.hits, m.codexFable.members[1]!.hits, m.codexCodex.union.hits, m.codexFable.union.hits, m.codexFable.uniqueHits[1], m.codexCodex.uniqueHits[1]], [61, 33, 34, 20, 40, 38, 5, 7]);
   assert.deepEqual([m.excluded.length, m.excludedKinds], [18, { bug: 3, clean: 15 }], '3 Fable bug cases and 15 Fable clean cases have no verdict');
@@ -286,6 +324,8 @@ test('T1-PANEL-ARMS-REPORT acceptance 4: panel.md has its title, sections and th
   const s2 = doc.slice(doc.indexOf('## Stage 2'), doc.indexOf('## Keep rule')).join('\n');
   assert.ok(s2.includes('not run') && s2.includes('`/keep/gate/fableUniqueHits`'), 'Stage 2 states not run and the gate value');
   const limits = doc.slice(doc.indexOf('## What these numbers do not show')).join('\n');
+  const lessonRows = ['/lessons/arms/commit', '/lessons/arms/lessons', '/lessons/stage1/commit', '/lessons/stage1/lessons', '/lessons/added'];
+  assert.deepEqual(lessonRows.filter((p) => !limits.includes(`| \`${p}\` |`)), [], 'the lesson limit carries its counts and commits as rows');
   const names = /\b(stage|round|issue) \d+\b|\d{4}-\d{2}-\d{2}/g;
-  assert.deepEqual(limits.replace(names, '').match(/\b\d+\b/g) ?? [], [], 'the limits carry no count outside a table row (stage, round and issue names and dates aside)');
+  assert.deepEqual(limits.split('\n').filter((l) => !l.startsWith('|')).join('\n').replace(names, '').match(/\b\d+\b/g) ?? [], [], 'the limits carry no count outside a table row (stage, round and issue names and dates aside)');
 });

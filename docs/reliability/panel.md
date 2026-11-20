@@ -10,7 +10,7 @@ Does a second R3 reviewer find enough more defects to run, and should it be Clau
 - The field-order run: `_local/arms/order-miss.json` and `_local/arms/order-clean.json` (2026-11-16, one round, analysis first). It is the second Codex member.
 - Fable: `_local/panel-arms/fable-miss.json` and `_local/panel-arms/fable-clean.json` (2026-11-19, `--formal-command bench/outcome/fable-r3.json`) on the same bug and clean cases.
 
-The command refuses, writing nothing, when an input is missing or unparsable, a case result is not one the bench writes (kind, outcome for its kind, duration, rounds) or repeats an id in a trial, a report has the wrong number of trials, a report is not of the formal stage, a Fable report has no `options.formalCommand` or a Codex report has one, the policy hashes differ, or any trial of a report of a kind holds other case ids than the others. With stage 2 inputs it also refuses a case with no case file to name its triple, and a wall-time ratio that is not finite. `panel.json` holds the SHA-256 of each input.
+The command refuses, writing nothing, when an input is missing or unparsable, a case result does not have the shape the bench writes (an id of the case id syntax, kind, outcome for its kind, duration, rounds) or repeats an id in a trial, a scored case of a multi-round report has no round or ends on a round with another outcome, a one-round report holds rounds, a report has the wrong number of trials, a report is not of the formal stage, a Fable report has no `options.formalCommand` or a Codex report has one, the policy hashes differ, or the members of a comparison (stage 1, and each stage 2 trial with its rotating Codex pair) differ in case ids or in the kind of a case. An unscored case of a multi-round report (no-verdict or error, which the bench writes with no round) is left out, not refused. With stage 2 inputs it also refuses a case with no case file to name its triple, and a wall-time ratio that is not finite. `panel.json` holds the SHA-256 of each input.
 
 `unionOf` scores a panel over the cases every member holds: a bug case is a union hit when any member hit it and an intersection hit when every member did; a clean case is a union false block when any member blocked it. A unique hit is a hit no other member has. To compare the three compositions on the same cases, a case is left out of all of them (`excluded`) when any of the three reviews gave it no verdict or an error.
 
@@ -97,7 +97,15 @@ Stage 1 result: the gate is not met, so `keep.stage2` is `skip` and the panel is
 
 - The stage 1 subset was chosen for baseline misses: every bug case comes from a triple where an earlier Codex run missed, so part of any gain is regression to the mean, and the hit counts are not recall on the full replay set.
 - The field-order run is not an identical rerun of round 1: it put the analysis before the verdict, so the Codex+Codex gain mixes sampling variance with a prompt change.
-- Fable ran with more lessons in docs/LESSONS.md than the 2026-11-16 Codex runs had (lessons added between the two runs; this report does not count them), under the same REVIEW.md (the same policy hash).
+- Fable ran with more lessons in docs/LESSONS.md than the 2026-11-16 Codex runs, about ten more by the card's estimate and the count in the rows below, under the same REVIEW.md (the same policy hash). The count is of the NEVER, ALWAYS and NOTE lines the repository's lesson parser reads. The arms worktrees are gone and their reports name no commit, so the arms commit is the merge of T1-BENCH-ORDER-PRE, the pin plans/review-recall.md names for the arms run; the commits just before it (35de54fe) and after it (ef3e0ac3), where the two arms runs could also have started, hold the same count. The stage 1 commit is main when stage 1 started, 2026-11-19T01:46Z. A review prompt carries only the newest NEVER and ALWAYS lines that fit `REVIEW_LESSONS_MAX_BYTES` (src/artifacts/lessons.ts), so the reviewer saw the newest of the added lessons in place of older ones, not all of them on top.
 - Fable hit its usage limit, so its clean cases and the bug cases counted in Method have no verdict (issue 385): stage 1 measures no false block for Fable or for either panel, and those bug cases are why stage 1 scores fewer bug cases than the 2026-11-16 pair holds.
 - One replay set from this repository, one Fable trial and one trial per Codex run: no spread across trials is measured.
 - No loop measure yet: nothing here shows the share of cards with two or more R3 blocks, or the STOP/review rate, with a panel on.
+
+| Measure | Value | Source |
+| --- | --- | --- |
+| Arms commit (merge of T1-BENCH-ORDER-PRE) | 1418c7b9acc18621171384e3d92d7ffcbcde3a07 | `/lessons/arms/commit` |
+| Lessons in docs/LESSONS.md at the arms commit | 171 | `/lessons/arms/lessons` |
+| Stage 1 commit (main at 2026-11-19T01:46Z) | be8b2c8a584bd56b982e14d3f1c70f32d0e354f2 | `/lessons/stage1/commit` |
+| Lessons in docs/LESSONS.md at the stage 1 commit | 187 | `/lessons/stage1/lessons` |
+| Lessons added between the two | 16 | `/lessons/added` |
