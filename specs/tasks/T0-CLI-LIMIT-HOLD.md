@@ -67,3 +67,9 @@ Revert check: `{1,3}` widened to `{1,}` turns the R1/R2 test red (the four-word 
 Other suites that carry quota text, run once on Windows: r2-billing-hold, r2-fallback, pre-review, providers, review-bench, review-bench-rounds, review-bench-formal-command: 188 tests, 188 pass.
 
 DoD (Windows): `npm run typecheck` clean; `node --test tests/core/parse-guard.test.ts tests/core/review-policy.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts`: 108 tests, 108 pass, 0 fail.
+
+Attempt 2 (repair of R3 decision 1, F1 and F2, class cli-phrase-normalization). The phrase moved out of `QUOTA` into its own pattern `LIMIT` (src/core/parse-guard.ts), run on the text as written after `QUOTA` on the `asWords` text finds no word, so the letter-case splits of `asWords` no longer change the phrase's word count, evidence or trailing boundary. The legacy words keep `asWords`. File is 30 lines (the blank line before `detectQuotaHold` removed).
+
+Input forms the repair hunks handle, each in tests/core/parse-guard.test.ts "hit your <one to three words> limit holds ...": mixed case inside a word (`hit your Claude OpUs 5.5 limit` holds with three words; `hit your FaBlE limit` holds with evidence as written); a capital joined after `limit` (`limitLess`: no hold); a capital joined before `Your` (`hitYour`: no hold); `_` between `hit` and `your` (no hold); all capitals (`HIT YOUR DAILY LIMITS` holds); more than three words, `hit the`, a letter before `hit`, a digit after `limit` (no hold); a text with no phrase (the existing word-rule tests); undefined text (`detectQuotaHold(undefined)` path unchanged, `?? ''`). These rows fail on the attempt 1 code (3b2d5490) and pass now.
+
+The acceptance table above stands for attempt 2 with the same tests, all pass. DoD (Windows): typecheck clean; 108 tests, 108 pass, 0 fail.

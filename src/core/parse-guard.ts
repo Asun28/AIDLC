@@ -11,18 +11,19 @@ export const quotaOutput = (r: { exitCode: number | null; stdout: string; stderr
 
 export interface QuotaSignal { hold: boolean; via: 'structured' | 'text'; evidence?: string; retryAfterMs?: number }
 
-/** A quota or billing word, or a CLI limit phrase (`hit your Fable limit`), in any letter case, with no letter or digit of any script directly before or after it. */
-const QUOTA = /(?<![\p{L}\p{N}])(?:rate[- ]?limit(?:s|ed|er|ing)?|quotas?|usage limits?|429s?|retry[- ]after|too many requests|capacity|overloaded|insufficient[- ]?balances?|payment[- ]?required|hit your(?: [\p{L}\p{N}.-]+){1,3} limits?)(?![\p{L}\p{N}])/iu;
+/** A quota or billing word in any letter case, with no letter or digit of any script directly before or after it. */
+const QUOTA = /(?<![\p{L}\p{N}])(?:rate[- ]?limit(?:s|ed|er|ing)?|quotas?|usage limits?|429s?|retry[- ]after|too many requests|capacity|overloaded|insufficient[- ]?balances?|payment[- ]?required)(?![\p{L}\p{N}])/iu;
 /** `_`, a lowercase-to-uppercase change and the last capital of a run before a capitalised word separate words like a space. */
 const asWords = (text: string) => text.replace(/_/g, ' ').replace(/(\p{Ll})(?=\p{Lu})|(\p{Lu})(?=\p{Lu}\p{Ll})/gu, '$1$2 ');
 /** A unit is a whole word: a milliseconds or minutes word; a seconds word, none or any other word is seconds. */
 const RETRY = /retry[- ]after[:=\s]+(\d+)(?:\s*(?:(?<ms>milliseconds?|millis|msecs?|ms)|(?<min>minutes?|mins?|m))(?![\p{L}\p{N}]))?/iu;
-
+/** The CLI limit phrase (`You've hit your Fable limit`, issue 385), read on the text as written so its words, case and ends stay as printed. */
+const LIMIT = /(?<![\p{L}\p{N}])hit your(?: [\p{L}\p{N}.-]+){1,3} limits?(?![\p{L}\p{N}])/iu;
 /** A numeric status decides alone (429 and 529 hold); without one the word rule decides. The result names the path that decided. */
 export function detectQuotaHold(text: string | undefined, status?: number, retryAfterMs?: number): QuotaSignal {
   const held = status === 429 || status === 529;
   if (status !== undefined) return { hold: held, via: 'structured', evidence: `status ${status}`, ...(held && retryAfterMs !== undefined ? { retryAfterMs } : {}) };
-  const word = QUOTA.exec(asWords(text ?? ''))?.[0];
+  const word = QUOTA.exec(asWords(text ?? ''))?.[0] ?? LIMIT.exec(text ?? '')?.[0];
   if (!word) return { hold: false, via: 'text' };
   const retry = RETRY.exec(text ?? '');
   return { hold: true, via: 'text', evidence: word, ...(retry ? { retryAfterMs: Number(retry[1]) * (retry.groups?.['ms'] ? 1 : retry.groups?.['min'] ? 60_000 : 1000) } : {}) };
