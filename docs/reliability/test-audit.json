@@ -19,15 +19,15 @@
     },
     {
       "file": "tests/surface/reviewer-env.test.ts",
-      "test": "T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]",
+      "test": "T0-REVIEWER-UTF8 acceptance 2: a single pass in stdin and argv mode and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]",
       "class": "removed-path",
       "evidence": "The test came with `c8a239d5` (T0-REVIEWER-UTF8, #107), when `runPreReview` was in `src/`; `77b57457` (#156) moved it to `tests/surface/_review-once.ts`. The two `runPreReview` calls at `tests/surface/reviewer-env.test.ts:61-62` now check the test copy's `env: reviewerEnv()` (`tests/surface/_review-once.ts:36`). Covered by the `runReviewPanel` arm of this same test (`tests/surface/reviewer-env.test.ts:63`), which reaches `src/review/pre-review.ts:1330`.",
-      "coveredBy": "T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]",
+      "coveredBy": "T0-REVIEWER-UTF8 acceptance 2: a single pass in stdin and argv mode and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]",
       "action": "update"
     },
     {
       "file": "tests/surface/plan.test.ts",
-      "test": "renderPlan light omits the ten-section skeleton; full includes it",
+      "test": "the plan template aidlc init installs holds the ten-section skeleton and the sections the readiness gates and parsePlanCards read",
       "class": "removed-path",
       "evidence": "Commit `9d856614` (T1-SWEEP2-TEST-ONLY) moved `renderPlan` from `src/artifacts/plan.ts` into the fixture file `tests/surface/_artifacts.ts:47` (\"only tests called them\"). The test at `tests/surface/plan.test.ts:29-40` asserts only the text `renderPlan` writes and calls no `src/` function, so it tests a fixture. The plan skeleton the product installs is `templates/plans/_TEMPLATE.md`, which this test does not read. Uncovered: the skeleton assertions (a light plan has no `## 1. Goal and boundaries`; a full plan has `## 1. Goal and boundaries`, `none this version`, `## 7. Task split` and `## 10. After merge`). The readiness test (`:42`) and the parsePlanCards test (`:122`) do not cover them: with headings 1 and 10 removed from the fixture, readiness still answers `admit` and the parsed cards are the same (R3 decision 1, F2). The update is to assert the skeleton against `templates/plans/_TEMPLATE.md` or to fold the fixture checks into the tests that use it.",
       "coveredBy": "none",
