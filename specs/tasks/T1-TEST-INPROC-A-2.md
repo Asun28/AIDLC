@@ -67,4 +67,4 @@ Command -> bin/aidlc.js child-process case (R2):
 
 `assertCwdRefused` and `assertRefused` keep their declarations as on main (synchronous, return type `void`), so their bodies start the CLI through bin/aidlc.js in a child process and their call sites are unchanged.
 
-Guard sweep: the change adds no guard to product code; `cli()` in review-resolve picks the child process when `preload` is set, and the preload rows fail without the injected fault (the in-process form would not load the module), so the branch is exercised by those rows.
+Guard sweep: the change adds no guard to product code; the one branch it adds to the tests, `cli()` in review-resolve starting a child process when `preload` is set, is taken by every row that passes `preload: true`.
