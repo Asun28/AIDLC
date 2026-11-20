@@ -1,7 +1,8 @@
 // Card T1-TEST-AUDIT-LIST-2: the audit rows live in docs/reliability/test-audit.json; the table of test-audit.md is their rendering.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
 import { z } from 'zod';
@@ -40,11 +41,10 @@ function testNames(source: string): Set<string> {
 function rowProblems(rows: Row[], read: (file: string) => string | undefined, allNames: Set<string>): string[] {
   const problems: string[] = [];
   for (const r of rows) {
-    const source = r.file.startsWith('tests/') ? read(r.file) : undefined;
+    const source = read(r.file);
     if (source === undefined) problems.push(`${r.file}: no such file under tests/`);
     else if (!testNames(source).has(r.test)) problems.push(`${r.file}: no it/test named ${r.test}`);
     if (r.coveredBy === 'none' && r.action !== 'update') problems.push(`${r.test}: remove without a covering test`);
-    if (r.coveredBy === r.test) problems.push(`${r.test}: a row cannot name its own test as its cover`);
     if (r.coveredBy !== 'none' && !allNames.has(r.coveredBy)) problems.push(`${r.test}: covered by names no test: ${r.coveredBy}`);
   }
   return problems;
@@ -66,10 +66,26 @@ function tableProblems(md: string, table: string): string[] {
   return problems;
 }
 
-const repoRead = (file: string) => (existsSync(path.join(root, file)) ? readFileSync(path.join(root, file), 'utf8') : undefined);
+/**
+ * The absolute path of `file` when it names an existing .ts file inside `<base>/tests`, else undefined. `file` must be relative,
+ * use forward slashes and be already normalised (`tests/../tests/x.ts` and `tests/./x.ts` are refused, not normalised), and the
+ * file it resolves to, links followed, must lie inside the resolved tests directory (which also refuses a path outside tests/).
+ */
+function testsPath(base: string, file: string): string | undefined {
+  if (file.includes('\\') || path.isAbsolute(file) || path.posix.normalize(file) !== file || !file.endsWith('.ts')) return undefined;
+  const abs = path.join(base, file);
+  if (!existsSync(abs)) return undefined;
+  const rel = path.relative(realpathSync(path.join(base, 'tests')), realpathSync(abs));
+  return rel.split(path.sep)[0] !== '..' && !path.isAbsolute(rel) ? abs : undefined;
+}
+/** A reader of files under `<base>/tests` that answers undefined for any path testsPath refuses. */
+const readerOf = (base: string) => (file: string) => { const abs = testsPath(base, file); return abs === undefined ? undefined : readFileSync(abs, 'utf8'); };
+const repoRead = readerOf(root);
 const filesUnder = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
   .flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []));
-const allNames = new Set(filesUnder(path.join(root, 'tests')).flatMap((f) => [...testNames(readFileSync(f, 'utf8'))]));
+/** The it/test names of every file under `<base>/tests`, each read through testsPath (the coveredBy search). */
+const namesUnder = (base: string) => new Set(filesUnder(path.join(base, 'tests')).flatMap((f) => [...testNames(readerOf(base)(path.relative(base, f).split(path.sep).join('/')) ?? '')]));
+const allNames = namesUnder(root);
 const audit = () => Audit.parse(JSON.parse(readFileSync(path.join(root, 'docs/reliability/test-audit.json'), 'utf8')));
 
 const SRC = [
@@ -80,8 +96,8 @@ const SRC = [
   "submit('not a test');",
   'test(`tpl ${x}`, () => {});',
 ].join('\n');
-const row = (over: Partial<Row> = {}): Row => ({ file: 'tests/a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', coveredBy: 'outer', action: 'update', ...over });
-const fixture = (rows: Row[]) => rowProblems(rows, (f) => (['tests/a.test.ts', 'other/a.test.ts'].includes(f) ? SRC : undefined), testNames(SRC));
+const row = (over: Partial<Row> = {}): Row => ({ file: 'tests/a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', coveredBy: 'it holds', action: 'update', ...over });
+const fixture = (rows: Row[]) => rowProblems(rows, (f) => (f === 'tests/a.test.ts' ? SRC : undefined), testNames(SRC));
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names an existing test with a valid class and action', () => {
   assert.deepEqual(rowProblems(audit().rows, repoRead, allNames), []);
@@ -100,10 +116,33 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names 
   assert.equal(fixture([row({ test: 'in a comment' })]).length, 1, 'a name only in a comment');
   assert.equal(fixture([row({ test: 'in a string' })]).length, 1, 'a name only in a string');
   assert.equal(fixture([row({ file: 'tests/b.test.ts' })]).length, 1, 'a missing file');
-  assert.equal(fixture([row({ file: 'other/a.test.ts' })]).length, 1, 'a file outside tests/');
   for (const name of ['a subtest', 'not a test', 'tpl ${x}']) assert.equal(fixture([row({ test: name })]).length, 1, `not an it/test name: ${name}`);
   assert.equal(fixture([row({ coveredBy: 'in a string' })]).length, 1, 'a coveredBy naming no test');
-  assert.equal(fixture([row({ coveredBy: 'it holds' })]).length, 1, 'a row naming its own test as its cover');
+  assert.ok(testsPath(root, 'tests/surface/test-audit.test.ts'), 'a file under tests/');
+  for (const bad of ['tests/../specs/tasks/T0-AUDIT-BINDING.md', 'tests\\..\\specs\\tasks\\T0-AUDIT-BINDING.md', path.join(root, 'tests', 'surface', 'test-audit.test.ts'),
+    '/tests/surface/test-audit.test.ts', 'tests/../tests/surface/test-audit.test.ts', 'tests/./surface/test-audit.test.ts', 'tests/surface/../../src/config.ts', 'package.json', 'src/config.ts', 'tests\\surface\\test-audit.test.ts']) {
+    assert.equal(testsPath(root, bad), undefined, `refused: ${bad}`);
+  }
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'test-audit-'));
+  try {
+    mkdirSync(path.join(tmp, 'tests'));
+    for (const name of ['tests/x.md', 'tests/x.ts', 'tests/..x.ts', 'outside.ts']) writeFileSync(path.join(tmp, name), 'x');
+    assert.ok(testsPath(tmp, 'tests/x.ts'), 'a .ts file inside');
+    assert.ok(testsPath(tmp, 'tests/..x.ts'), 'a name that starts with two dots is inside');
+    assert.equal(testsPath(tmp, 'tests/x.md'), undefined, 'a file that is not .ts');
+    assert.equal(testsPath(tmp, 'tests/missing.ts'), undefined, 'a file that does not exist');
+    // Links out of tests/: one to a sibling (relative path starts with ..), one to this file, on another drive when the temporary
+    // directory is on one (relative path is absolute on win32). A host that refuses links skips these two.
+    for (const [link, target] of [['near.ts', path.join(tmp, 'outside.ts')], ['far.ts', import.meta.filename]] as const) {
+      let linked = true;
+      try { symlinkSync(target, path.join(tmp, 'tests', link), 'file'); } catch { linked = false; }
+      if (linked) assert.equal(testsPath(tmp, `tests/${link}`), undefined, `a link out of tests/: ${link}`);
+    }
+    writeFileSync(path.join(tmp, 'outside.ts'), "test('outside', () => {});");
+    if (existsSync(path.join(tmp, 'tests', 'near.ts'))) assert.equal(namesUnder(tmp).has('outside'), false, 'the coveredBy search reads no linked file outside tests/');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 2: no row proposes remove without a covering test', () => {
@@ -114,7 +153,7 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 2: no row proposes remove without a coveri
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 3: the Markdown table is exactly the rendering of the JSON rows', () => {
   const table = render(audit().rows);
-  assert.deepEqual(tableProblems(repoRead('docs/reliability/test-audit.md')!, table), []);
+  assert.deepEqual(tableProblems(readFileSync(path.join(root, 'docs/reliability/test-audit.md'), 'utf8'), table), []);
   const t = render([row({ test: 'a | b' })]);
   assert.ok(t.includes('| a \\| b |'), 'a pipe in a cell is escaped');
   const doc = (body: string) => `intro\n${START}\n${body}\n${END}\nend`;

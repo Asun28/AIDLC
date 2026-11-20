@@ -84,3 +84,35 @@ Coordinator correction before R3: row 3 named its own test as its cover. Its `co
 | Guard | Loosened form | Result |
 | --- | --- | --- |
 | `coveredBy` is not the row's own test name | not checked | acceptance 1 fails |
+
+Repair after R3 decision 1 (candidate 83e5c5a3). F1: the self-cover request was wrong; `docs/reliability/test-audit.json` and `docs/reliability/test-audit.md` are byte-identical to 662a055c again (row 3 `coveredBy` is the exact name of its own test, whose `runReviewPanel` arm is the carried cover, explained in its evidence), and the self-cover check, its case and its fixture change are removed. F2: every file the test reads under `tests/`, for a row and for the coveredBy search, goes through `testsPath(base, file)`: refused when the path holds a backslash, is absolute, is not already normalised (decision: `tests/../tests/x.test.ts` and `tests/./x` are refused, not normalised), is not `.ts` or does not exist; otherwise the file is resolved with links followed and must lie inside the resolved tests directory, `..` read as a whole first segment. This containment replaces the `startsWith('tests/')` check, which it implies.
+
+Input forms and their assertions (acceptance 1):
+
+| Input | Result | Assertion message |
+| --- | --- | --- |
+| `tests/surface/test-audit.test.ts` | read | a file under tests/ |
+| `tests/../specs/tasks/T0-AUDIT-BINDING.md`, `tests\..\specs\tasks\T0-AUDIT-BINDING.md` | refused | refused: (each) |
+| absolute path with backslashes, `/tests/surface/test-audit.test.ts` | refused | refused: (each) |
+| `tests/../tests/surface/test-audit.test.ts`, `tests/./surface/test-audit.test.ts` | refused | refused: (each) |
+| `tests/surface/../../src/config.ts`, `src/config.ts`, `package.json` | refused | refused: (each) |
+| `tests\surface\test-audit.test.ts` (inside on win32) | refused | refused: (each) |
+| `tests/x.md` (non-.ts), `tests/missing.ts` | refused | a file that is not .ts; a file that does not exist |
+| `tests/..x.ts` | read | a name that starts with two dots is inside |
+| link in tests/ to a sibling or to this file (another drive) | refused | a link out of tests/: near.ts, far.ts (skipped where links are refused) |
+| coveredBy search over a tests/ holding a link out | name not read | the coveredBy search reads no linked file outside tests/ (skipped where links are refused) |
+
+Sweep (28 guards, each loosened in turn, the file run, restored): 26 fail a test on this host. Two are not detectable here because this host refuses symbolic links (EPERM), which skips the link cases: "resolved path is not absolute" (reachable only through a link to another drive on win32; the far.ts case covers it where links are allowed) and "the coveredBy search reads through testsPath" (the near.ts search case covers it where links are allowed, which includes the Linux CI runners). New guards:
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| no backslash | not checked | acceptance 1 fails |
+| not absolute | not checked | acceptance 1 fails |
+| already normalised | not checked | acceptance 1 fails |
+| a .ts file | any file | acceptance 1 fails |
+| exists | not checked | acceptance 1 fails |
+| resolved inside tests: no `..` first segment | not checked | acceptance 1 fails |
+| `..` is a whole segment | prefix `..` | acceptance 1 fails |
+| resolved path not absolute | not checked | not detectable on this host (links refused) |
+| coveredBy search reads through testsPath | reads every file found | not detectable on this host (links refused) |
+| a missing file is a problem | no problem | acceptance 1 fails |
