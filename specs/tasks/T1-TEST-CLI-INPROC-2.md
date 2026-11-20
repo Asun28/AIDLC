@@ -123,3 +123,29 @@ Guard sweep of the repair (each loosened, the test file run, then restored):
 | keys absent from the call deleted | not deleted | INPROC acceptance 1, 2; INPROC-2 acceptance 2, 3, 4 |
 | `resetRepoIdentityForTests`: `prefetch = undefined` | dropped | "drops a pending prefetch" |
 | `resetRepoIdentityForTests`: `identityCache.clear()` | dropped | INPROC-2 acceptance 2 |
+
+### Repair after R3 decision 2 (candidate 8a353cf6)
+
+RED on 5354c8f3: the `__proto__` test failed (pwsh printed `proto=` in the call, `proto=call-marker` in the child) and the setup test failed (the call after a throwing env getter rejected with "a call is already running").
+
+- F1: Node passes an own `__proto__` env entry to a child (checked with a probe on Node 22.23.1: an own `__proto__` of a plain, null-prototype, spread or `JSON.parse` object, and `process.env.__proto__`, all reach the child). `childEnv` now builds a null-prototype dictionary, so the entry is an ordinary key in the call's environment and in the saved caller environment that is restored; `replaceEnv` writes `process.env[key]`, which sets the variable.
+- F2: `running` is released in an outer `finally` around everything after it is taken; the work moved into `runOnce`.
+
+Setup steps and the tests for a failure in each:
+
+| Step | Where | Test |
+|---|---|---|
+| nested-call refusal | before the guard is taken, takes nothing | INPROC acceptance 3 |
+| reading `options.env` (`childEnv`, getters run) | inside the outer `try` | "a call whose setup throws": rejects, state equal, next call succeeds |
+| snapshot of the caller (`saved`: cwd, env, exitCode, exit, writers, stdin and isTTY descriptors, actor probe, exit listeners, writeSync, spawnSync) | inside the outer `try`; reads only, the actor probe's cache is reset in the inner `finally` | same test (state equal after) |
+| env swap, `chdir` to a missing directory | first steps of the inner `try`, restored by its `finally` | "a call whose setup throws" (`no-such-dir`: rejects ENOENT, state equal, next call succeeds) |
+| exit, writers, isTTY, stdin, writeSync, spawnSync, actor and identity resets | inside the inner `try` | INPROC acceptance 2, INPROC-2 acceptance 4 (originals after the calls) |
+
+Guard sweep of this repair:
+
+| Guard | Loosened form | Failed |
+|---|---|---|
+| null-prototype env dictionary | `{}` | "an env entry named __proto__" |
+| `options.env` read inside the released region | read before the outer `try` | "a call whose setup throws" |
+| `running = false` in the outer `finally` | dropped | 12 of 13 tests |
+| env swap and `chdir` inside the restoring `try` | before it | "a call whose setup throws" |

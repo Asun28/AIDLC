@@ -97,7 +97,8 @@ function childEnv(env: NodeJS.ProcessEnv): Record<string, string> {
       return true;
     });
   }
-  const out: Record<string, string> = {};
+  // No prototype: a key named `__proto__` is an ordinary entry, as an own `__proto__` of `env` is for Node.
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
   for (const key of keys) {
     const value = env[key];
     if (value !== undefined) out[key] = String(value);
@@ -122,6 +123,15 @@ function replaceEnv(next: Record<string, string>): void {
 export async function runCliInProcess(argv: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; input?: string }): Promise<{ status: number; stdout: string; stderr: string }> {
   if (running) throw new Error('runCliInProcess: a call is already running; await it before the next call');
   running = true;
+  // Released whatever throws, the reading of `options.env` included; the inner `finally` restores what was swapped.
+  try {
+    return await runOnce(argv, options);
+  } finally {
+    running = false;
+  }
+}
+
+async function runOnce(argv: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; input?: string }): Promise<{ status: number; stdout: string; stderr: string }> {
   const env = childEnv(options.env ?? process.env);
   const saved = {
     cwd: process.cwd(),
@@ -196,7 +206,6 @@ export async function runCliInProcess(argv: string[], options: { cwd: string; en
     process.exitCode = saved.exitCode;
     process.chdir(saved.cwd);
     replaceEnv(saved.env);
-    running = false;
   }
   return { status, stdout: out.join(''), stderr: err.join('') };
 }
