@@ -44,6 +44,7 @@ function rowProblems(rows: Row[], read: (file: string) => string | undefined, al
     if (source === undefined) problems.push(`${r.file}: no such file under tests/`);
     else if (!testNames(source).has(r.test)) problems.push(`${r.file}: no it/test named ${r.test}`);
     if (r.coveredBy === 'none' && r.action !== 'update') problems.push(`${r.test}: remove without a covering test`);
+    if (r.coveredBy === r.test) problems.push(`${r.test}: a row cannot name its own test as its cover`);
     if (r.coveredBy !== 'none' && !allNames.has(r.coveredBy)) problems.push(`${r.test}: covered by names no test: ${r.coveredBy}`);
   }
   return problems;
@@ -79,7 +80,7 @@ const SRC = [
   "submit('not a test');",
   'test(`tpl ${x}`, () => {});',
 ].join('\n');
-const row = (over: Partial<Row> = {}): Row => ({ file: 'tests/a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', coveredBy: 'it holds', action: 'update', ...over });
+const row = (over: Partial<Row> = {}): Row => ({ file: 'tests/a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', coveredBy: 'outer', action: 'update', ...over });
 const fixture = (rows: Row[]) => rowProblems(rows, (f) => (['tests/a.test.ts', 'other/a.test.ts'].includes(f) ? SRC : undefined), testNames(SRC));
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names an existing test with a valid class and action', () => {
@@ -102,6 +103,7 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names 
   assert.equal(fixture([row({ file: 'other/a.test.ts' })]).length, 1, 'a file outside tests/');
   for (const name of ['a subtest', 'not a test', 'tpl ${x}']) assert.equal(fixture([row({ test: name })]).length, 1, `not an it/test name: ${name}`);
   assert.equal(fixture([row({ coveredBy: 'in a string' })]).length, 1, 'a coveredBy naming no test');
+  assert.equal(fixture([row({ coveredBy: 'it holds' })]).length, 1, 'a row naming its own test as its cover');
 });
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 2: no row proposes remove without a covering test', () => {

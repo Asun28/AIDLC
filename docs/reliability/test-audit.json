@@ -21,8 +21,8 @@
       "file": "tests/surface/reviewer-env.test.ts",
       "test": "T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]",
       "class": "removed-path",
-      "evidence": "The test came with `c8a239d5` (T0-REVIEWER-UTF8, #107), when `runPreReview` was in `src/`; `77b57457` (#156) moved it to `tests/surface/_review-once.ts`. The two `runPreReview` calls at `tests/surface/reviewer-env.test.ts:61-62` now check the test copy's `env: reviewerEnv()` (`tests/surface/_review-once.ts:36`). Covered by the `runReviewPanel` arm of this same test (`tests/surface/reviewer-env.test.ts:63`), which reaches `src/review/pre-review.ts:1330`.",
-      "coveredBy": "T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]",
+      "evidence": "The test came with `c8a239d5` (T0-REVIEWER-UTF8, #107), when `runPreReview` was in `src/`; `77b57457` (#156) moved it to `tests/surface/_review-once.ts`. The two `runPreReview` calls at `tests/surface/reviewer-env.test.ts:61-62` now check the test copy's `env: reviewerEnv()` (`tests/surface/_review-once.ts:36`). The `runReviewPanel` arm of this same test (`tests/surface/reviewer-env.test.ts:63`) still reaches `src/review/pre-review.ts:1330`; it is part of the test this row proposes to update, so it is not named as a cover.",
+      "coveredBy": "none",
       "action": "update"
     },
     {

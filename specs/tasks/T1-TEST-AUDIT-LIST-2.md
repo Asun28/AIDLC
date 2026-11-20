@@ -78,3 +78,9 @@ Guard sweep of `tests/surface/test-audit.test.ts` (each guard loosened in turn, 
 | the lines between the markers are the rendering | not checked | acceptance 3 fails |
 | the rendering occurs exactly once | at least once | acceptance 3 fails |
 | a marker is a whole line | any line holding it | acceptance 3 fails |
+
+Coordinator correction before R3: row 3 named its own test as its cover. Its `coveredBy` is now `none` (it proposes update), the note on the `runReviewPanel` arm stays in its evidence, and the table is rendered again. New guard, swept with the other 20 (all 21 fail a test when loosened):
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| `coveredBy` is not the row's own test name | not checked | acceptance 1 fails |
