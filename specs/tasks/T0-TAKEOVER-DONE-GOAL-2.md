@@ -59,3 +59,17 @@ npm run typecheck && node --test tests/core/card-goal.test.ts tests/scenarios/ta
 - Assertion: every acceptance test above passes.
 
 ## Attempt evidence
+
+History: T0-TAKEOVER-DONE-GOAL, RED ff84f3e6 (`node --test tests/core/card-goal.test.ts tests/scenarios/takeover-done-goal.test.ts`, exit 1, tests 4, pass 1, fail 3: `doneGoalTakeover` not exported; acceptance 2 and 3 printed the lease the takeover took), fix 1827ae37, R3 decision 1 repair ee3cb5e3; R3 decision 2 blocked (stale-done-check, helper text) and this card replaces it.
+
+Changes over ee3cb5e3: `card takeover` resolves its goal from one `listGoals` with `resolveCardGoal` and uses that record (no `cardGoalId`, no `mustGoal` reload); the helper test asserts the explanation; acceptance 5 added; the fragment moves to the new id; the OPERATIONS.md sentence states R5.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/card-goal.test.ts`, `doneGoalTakeover (T0-TAKEOVER-DONE-GOAL)` (two tests) | pass |
+| 2 | `tests/scenarios/takeover-done-goal.test.ts`, acceptance 2 | pass (failed at RED ff84f3e6) |
+| 3 | same file, acceptance 3 (three cases, unparseable run and lease files) | pass (failed at RED ff84f3e6) |
+| 4 | same file, acceptance 4 | pass |
+| 5 | same file, `T0-TAKEOVER-DONE-GOAL-2 acceptance 5` with `card-terminal-goal.preload.ts` | pass (fails at ee3cb5e3) |
+| 6 | `tests/scenarios/card-terminal-goal.test.ts`, unchanged | pass |
+| 7 | `docs/OPERATIONS.md` (terminal-goal paragraph after the STOP reasons table), `changelog.d/T0-TAKEOVER-DONE-GOAL-2.md` | reviewer-verified |

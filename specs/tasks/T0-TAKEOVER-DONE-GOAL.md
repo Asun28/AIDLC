@@ -52,3 +52,16 @@ npm run typecheck && node --test tests/core/card-goal.test.ts tests/scenarios/ta
 - Assertion: every acceptance test above passes.
 
 ## Attempt evidence
+
+RED at ff84f3e6: `node --test tests/core/card-goal.test.ts tests/scenarios/takeover-done-goal.test.ts`, exit 1, tests 4, pass 1, fail 3: card-goal.test.ts does not load (`doneGoalTakeover` not exported); acceptance 2 and 3 fail on `names the goal and DONE` / `names DONE`, the output being the lease the takeover took.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/card-goal.test.ts`, `doneGoalTakeover (T0-TAKEOVER-DONE-GOAL)` (two tests) | pass |
+| 2 | `tests/scenarios/takeover-done-goal.test.ts`, acceptance 2: JSON report equals the text of R3, human line equals it | pass (failed at RED) |
+| 3 | same file, acceptance 3: card run and card lease files unreadable, three cases (with and without `--goal`, and `--goal` naming the DONE goal for a run of a card it does not project); JSON and human report, no `next:` | pass (failed at RED; fails with the explicit-goal precheck removed) |
+| 4 | same file, acceptance 4 | pass |
+| 5 | `tests/scenarios/card-terminal-goal.test.ts`, unchanged | pass |
+| 6 | `docs/OPERATIONS.md` (the terminal-goal paragraph after the STOP reasons table), `changelog.d/T0-TAKEOVER-DONE-GOAL.md` | reviewer-verified |
+
+R3 decision 1 (verdict .review/T0-TAKEOVER-DONE-GOAL.r3.1.cdbb2183.json) blocked on four findings: F1 a non-goal added after the run started (removed; the card's requirements are as committed on main), F2 no assertion that nothing is read before the DONE check, F3 and F4 the text of R3 not asserted in JSON and human output (acceptance 2 and 3 now assert both).

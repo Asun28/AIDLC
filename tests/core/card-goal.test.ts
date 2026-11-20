@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCardGoal, terminalGoalRefusal, type CardGoalCandidate } from '../../src/core/card-goal.ts';
+import { doneGoalTakeover, resolveCardGoal, terminalGoalRefusal, type CardGoalCandidate } from '../../src/core/card-goal.ts';
 
 /** A goal record as the resolver reads it; lists are newest first, as the goal store returns them. */
 const goal = (id: string, cards: string[], terminal = false): CardGoalCandidate => ({ id, cards, terminal });
@@ -94,5 +94,17 @@ describe('terminalGoalRefusal (T0-CARD-TERMINAL-GOAL)', () => {
 
   test('a non-terminal goal left in STOP by the resume of a time stop names aidlc goal extend [R2]', () => {
     names(terminalGoalRefusal({ id: 'g-1', state: 'STOP', terminal: false }), ['g-1', 'STOP', EXTEND], 'goal resume');
+  });
+});
+
+describe('doneGoalTakeover (T0-TAKEOVER-DONE-GOAL)', () => {
+  test('a DONE goal gives a text naming the goal and DONE [R3]', () => {
+    const text = doneGoalTakeover({ id: 'g-1', state: 'DONE' });
+    assert.ok(text !== undefined, 'expected a text');
+    for (const part of ['g-1', 'DONE', 'nothing to take over', 'no lease was taken', 'no event was journaled']) assert.ok(text.includes(part), `${text} names ${part}`);
+  });
+
+  test('a goal in PLAN, RUN, CLOSE or STOP gives nothing [R3]', () => {
+    for (const state of ['PLAN', 'RUN', 'CLOSE', 'STOP']) assert.equal(doneGoalTakeover({ id: 'g-1', state }), undefined, state);
   });
 });
