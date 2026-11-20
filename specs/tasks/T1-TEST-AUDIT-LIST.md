@@ -2,6 +2,7 @@
 id: T1-TEST-AUDIT-LIST
 title: docs/reliability/test-audit.md lists the tests that no longer match the code, each with checkable evidence and a proposed action, for the owner to approve; no test file changes
 status: todo
+superseded_by: T1-TEST-AUDIT-LIST-2
 branch: T1-TEST-AUDIT-LIST
 worktree: D:\wt\AIDLC\T1-TEST-AUDIT-LIST
 plan_ref: plans/test-time.md#order-of-work
