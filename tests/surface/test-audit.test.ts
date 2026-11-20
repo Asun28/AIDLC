@@ -1,8 +1,8 @@
 // Card T1-TEST-AUDIT-LIST-2: the audit rows live in docs/reliability/test-audit.json; the table of test-audit.md is their rendering.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cleanup, tmpDir } from '../infra/helpers.ts';
 import path from 'node:path';
 import ts from 'typescript';
 import { z } from 'zod';
@@ -148,7 +148,7 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names 
     '/tests/surface/test-audit.test.ts', 'tests/../tests/surface/test-audit.test.ts', 'tests/./surface/test-audit.test.ts', 'tests/surface/../../src/config.ts', 'package.json', 'src/config.ts', 'tests\\surface\\test-audit.test.ts']) {
     assert.equal(testsPath(root, bad), undefined, `refused: ${bad}`);
   }
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'test-audit-'));
+  const tmp = tmpDir('test-audit-');
   try {
     mkdirSync(path.join(tmp, 'tests'));
     for (const name of ['tests/x.md', 'tests/x.ts', 'tests/..x.ts', 'outside.ts']) writeFileSync(path.join(tmp, name), 'x');
@@ -166,7 +166,7 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names 
     writeFileSync(path.join(tmp, 'outside.ts'), "test('outside', () => {});");
     if (existsSync(path.join(tmp, 'tests', 'near.ts'))) assert.equal(namesUnder(tmp).has('outside'), false, 'the coveredBy search reads no linked file outside tests/');
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    cleanup(tmp);
   }
 });
 

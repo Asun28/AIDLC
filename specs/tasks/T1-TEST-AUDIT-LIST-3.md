@@ -41,3 +41,6 @@ npm run typecheck && node --test tests/surface/test-audit.test.ts tests/surface/
 ```
 - Expected exit code: 0
 - Assertion: both files pass; the sweep test fails on the carried candidate.
+
+## Attempt evidence
+Before (carried candidate 5eb62ce8 merged with main at cac96590): `node --test tests/surface/test-temp.test.ts` exits 1, "T0-TEST-TEMP-SWEEP acceptance 1" lists `tests/surface/test-audit.test.ts:4 [module scope] reference of mkdtempSync` and `:151 [<anonymous>] call of mkdtempSync`. After: the temporary directory comes from `tmpDir('test-audit-')` and is removed by `cleanup(tmp)` in the same `finally`; `mkdtempSync`, `rmSync` and `os` leave the imports. Four lines change in `tests/surface/test-audit.test.ts` (two imports, the creation, the removal); no `assert`, `it(` or `test(` line changes. No guard is added, so there is no sweep.
