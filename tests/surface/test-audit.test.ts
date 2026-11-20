@@ -71,9 +71,16 @@ const filesUnder = (dir: string): string[] => readdirSync(dir, { withFileTypes: 
 const allNames = new Set(filesUnder(path.join(root, 'tests')).flatMap((f) => [...testNames(readFileSync(f, 'utf8'))]));
 const audit = () => Audit.parse(JSON.parse(readFileSync(path.join(root, 'docs/reliability/test-audit.json'), 'utf8')));
 
-const SRC = "test('it holds', () => {});\n// test('in a comment', () => {});\nconst s = \"test('in a string', () => {})\";";
+const SRC = [
+  "test('it holds', () => {});",
+  "// test('in a comment', () => {});",
+  "const s = \"test('in a string', () => {})\";",
+  "test('outer', async (t) => { await t.test('a subtest', () => {}); });",
+  "submit('not a test');",
+  'test(`tpl ${x}`, () => {});',
+].join('\n');
 const row = (over: Partial<Row> = {}): Row => ({ file: 'tests/a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', coveredBy: 'it holds', action: 'update', ...over });
-const fixture = (rows: Row[]) => rowProblems(rows, (f) => (f === 'tests/a.test.ts' ? SRC : undefined), testNames(SRC));
+const fixture = (rows: Row[]) => rowProblems(rows, (f) => (['tests/a.test.ts', 'other/a.test.ts'].includes(f) ? SRC : undefined), testNames(SRC));
 
 test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names an existing test with a valid class and action', () => {
   assert.deepEqual(rowProblems(audit().rows, repoRead, allNames), []);
@@ -92,7 +99,8 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names 
   assert.equal(fixture([row({ test: 'in a comment' })]).length, 1, 'a name only in a comment');
   assert.equal(fixture([row({ test: 'in a string' })]).length, 1, 'a name only in a string');
   assert.equal(fixture([row({ file: 'tests/b.test.ts' })]).length, 1, 'a missing file');
-  assert.equal(rowProblems([row({ file: 'package.json' })], repoRead, allNames).length, 1, 'a file outside tests/');
+  assert.equal(fixture([row({ file: 'other/a.test.ts' })]).length, 1, 'a file outside tests/');
+  for (const name of ['a subtest', 'not a test', 'tpl ${x}']) assert.equal(fixture([row({ test: name })]).length, 1, `not an it/test name: ${name}`);
   assert.equal(fixture([row({ coveredBy: 'in a string' })]).length, 1, 'a coveredBy naming no test');
 });
 
@@ -109,7 +117,8 @@ test('T1-TEST-AUDIT-LIST-2 acceptance 3: the Markdown table is exactly the rende
   assert.ok(t.includes('| a \\| b |'), 'a pipe in a cell is escaped');
   const doc = (body: string) => `intro\n${START}\n${body}\n${END}\nend`;
   assert.deepEqual(tableProblems(doc(t), t), []);
-  assert.equal(tableProblems(doc(t.replace('duplicate', 'removed-path')), t).length, 1, 'a changed cell');
+  assert.deepEqual(tableProblems(`a line that mentions ${START} is not a marker\n${doc(t)}`, t), [], 'a marker is a whole line');
+  assert.ok(tableProblems(doc(t.replace('duplicate', 'removed-path')), t).includes('the lines between the markers are not the rendering'), 'a changed cell');
   assert.equal(tableProblems(doc(`${t}\n| x | x | x | x | x | x |`), t).length, 1, 'an added row');
   assert.equal(tableProblems(`${START}\n${t}`, t).length, 1, 'a missing end marker');
   assert.equal(tableProblems(`${doc(t)}\n${START}`, t).length, 1, 'a doubled start marker');

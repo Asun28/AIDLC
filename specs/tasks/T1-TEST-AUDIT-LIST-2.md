@@ -48,3 +48,33 @@ npm run typecheck && node --test tests/surface/test-audit.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the three acceptance tests pass; they fail on the carried candidate because the JSON file does not exist.
+
+## Attempt evidence
+RED: `2ea3a39b:tests/surface/test-audit.test.ts` acceptance 1, 2 and 3 fail with ENOENT on `docs/reliability/test-audit.json` (pass 0, fail 3).
+
+Rows against 36cd563c (acceptance 4): file, test, class and action are the same in all four rows, and coveredBy in rows 1, 2 and 4 (`none`). Row 3's covered-by cell was prose ("the `runReviewPanel` arm of this same test ..."); R1 needs the exact name of a covering test, so `coveredBy` is now the name of that same test, which holds the `runReviewPanel` arm, and the prose moved to the end of its evidence. Each evidence text is the old cell unchanged, with that one sentence added to row 3. The Markdown table parser, its helpers and its regression cases are removed; the only Markdown the test reads are the two marker lines.
+
+Guard sweep of `tests/surface/test-audit.test.ts` (each guard loosened in turn, the file run, then restored; all 20 fail a test; the first run left five alive, and the subtest, non-test call, template name, outside-tests file and inline-marker cases were added for them):
+
+| Guard | Loosened form | Result |
+| --- | --- | --- |
+| strings are non-empty | any string | acceptance 1 fails |
+| row object is strict | unknown keys kept | acceptance 1 fails |
+| top-level object is strict | unknown keys kept | acceptance 1 fails |
+| class in the four values | any string | acceptance 1 fails |
+| action in the two values | any string | acceptance 1 fails |
+| commit is a sha | any string | acceptance 1 fails |
+| callee is an identifier | last name of any callee (`t.test`) | acceptance 1 fails |
+| callee is `it` or `test` | any identifier | acceptance 1 fails |
+| first argument is a string literal | the text of any first argument | acceptance 1 fails |
+| file is under `tests/` | any path | acceptance 1 fails |
+| a missing file is a problem | no problem | acceptance 1 fails |
+| the test name is an it/test call of the file | not checked | acceptance 1 fails |
+| `coveredBy` none needs update | not checked | acceptance 2 fails |
+| `coveredBy` other than none names a test under tests/ | not checked | acceptance 1 fails |
+| `coveredBy` none is exempt from that check | checked too | acceptance 1 fails |
+| a pipe in a cell is rendered as `\|` | not escaped | acceptance 3 fails |
+| each marker line occurs exactly once | at least once | acceptance 3 fails |
+| the lines between the markers are the rendering | not checked | acceptance 3 fails |
+| the rendering occurs exactly once | at least once | acceptance 3 fails |
+| a marker is a whole line | any line holding it | acceptance 3 fails |
