@@ -1,7 +1,7 @@
 ---
 id: T1-TEST-INPROC-A-2
 title: (replaces T1-TEST-INPROC-A) cli-cwd-paths, review-resolve and review-r3-wait tests start the CLI in-process except where a case asserts what the child process does, with every assertion line and test name unchanged
-status: todo
+status: merged
 branch: T1-TEST-INPROC-A-2
 worktree: D:\wt\AIDLC\T1-TEST-INPROC-A-2
 plan_ref: plans/test-time.md#order-of-work
