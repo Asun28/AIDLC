@@ -1,7 +1,7 @@
 ---
 id: T1-TEST-INPROC-REST
 title: The CLI cases kept as child processes only because a protected line could not take an await (the sync helpers assertCwdRefused and assertRefused, and results indexed on a protected line in review-no-run and approver) run in-process
-status: todo
+status: merged
 branch: T1-TEST-INPROC-REST
 worktree: D:\wt\AIDLC\T1-TEST-INPROC-REST
 plan_ref: plans/test-time.md#order-of-work
