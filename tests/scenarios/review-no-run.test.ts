@@ -76,31 +76,47 @@ async function cliRepo(pre: boolean, child: boolean) {
   git(repo, 'commit', '-q', '-am', 'candidate');
   const sha = git(repo, 'rev-parse', 'HEAD');
   const env = { ...process.env, AIDLC_STATE_DIR: state };
-  /** `aidlc -C <repo> <args>`: in this process, or through bin/aidlc.js in a child process when `child` is set (R2). */
-  const raw = async (...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> =>
-    child ? spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 }) : runCliInProcess(['-C', repo, ...args], { cwd: repo, env });
-  // child: result indexed on an R4-protected line; await would need parentheses R4 forbids: `card('next')['directive']['kind']` in toBuild and in
-  // the acceptance 2 check of `x.card('next')['directive']['kind']` after the failed attempt; every other `card next` goes through `next`.
-  const rawSync = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 });
+  /** The last call `raw` started, settled either way: each call starts when the one before it has ended. */
+  let tail: Promise<unknown> = Promise.resolve();
+  /**
+   * `aidlc -C <repo> <args>`: in this process, or through bin/aidlc.js in a child process when `child` is set (R2). The calls
+   * run one after another, so the two `card next` calls toBuild starts at once never overlap (runCliInProcess refuses a
+   * nested call).
+   */
+  const raw = (...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> => {
+    const run = tail.then(async () => (child ? spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 }) : runCliInProcess(['-C', repo, ...args], { cwd: repo, env })));
+    tail = run.catch(() => undefined);
+    return run;
+  };
+  /** Resolves once every call started so far has ended and the checks awaiting their results have run. */
+  const settled = async (): Promise<void> => {
+    await tail;
+    await new Promise<void>((done) => setImmediate(done));
+  };
   const parsed = (args: string[], r: { status: number | null; stdout: string; stderr: string }) => {
     assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
     return JSON.parse(r.stdout) as Record<string, any>;
   };
   const cli = async (...args: string[]) => parsed(args, await raw(...args, '--json'));
-  const cliSync = (...args: string[]) => parsed(args, rawSync(...args, '--json'));
   const created = await cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
   const goalId = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
   await cli('report', '--goal', goalId, '--result', 'cards-projected', '--cards', CARD);
   /** `card next` in this process, for a result read on an unprotected line. */
   const next = () => cli('card', 'next', CARD, '--goal', goalId);
-  /** `card next` returns its result at once (see rawSync); every other card command returns a promise. */
-  function card(command: 'next', ...rest: string[]): Record<string, any>;
-  function card(command: string, ...rest: string[]): Promise<Record<string, any>>;
-  function card(...args: string[]): Record<string, any> | Promise<Record<string, any>> {
-    return args[0] === 'next' ? cliSync('card', args[0], CARD, '--goal', goalId, ...args.slice(1)) : cli('card', args[0]!, CARD, '--goal', goalId, ...args.slice(1));
+  /**
+   * `aidlc card <command> <card> --goal <goal> ...`. In-process (T1-TEST-INPROC-REST): the owner's follow-up of the
+   * T1-TEST-INPROC-A-2/B-2 exception; `card next` runs through `raw` as every other command does, and its child-process
+   * case is the withdrawn-candidate test, which runs every command through bin/aidlc.js (R2).
+   */
+  function card(...args: string[]): Promise<Record<string, any>> {
+    return cli('card', args[0]!, CARD, '--goal', goalId, ...args.slice(1));
   }
-  /** `card next` twice: PREPARE, then BUILD. */
-  const toBuild = () => ['prepare', 'build'].forEach((kind) => assert.equal(card('next')['directive']['kind'], kind));
+  /** `card next` twice: PREPARE, then BUILD. A failed check fails the test that runs it (node:test reports the rejection there); `build` waits for both. */
+  const toBuild = () => ['prepare', 'build'].forEach(async (kind) => assert.equal((await card('next'))['directive']['kind'], kind));
+  const build = async (): Promise<void> => {
+    toBuild();
+    await settled();
+  };
   const succeed = () => card('attempt', '--outcome', 'success', '--dod-receipt', 'dod:cli', '--red-receipt', 'red:cli', '--candidate-sha', sha);
   /** The card-run records, the goal journal and the review queue, byte for byte. */
   const snapshot = () => ({ cards: tree(path.join(state, 'cards')), journal: tree(path.join(state, 'journal')), queue: tree(path.join(state, 'review-queue')) });
@@ -116,7 +132,7 @@ async function cliRepo(pre: boolean, child: boolean) {
     assert.equal(r.stdout, '');
     assert.equal(existsSync(marker[kind]), false, 'the reviewer did not run');
   };
-  return { goalId, marker, cli, card, next, toBuild, succeed, snapshot, reviewFiles, refused, cleanup: () => [repo, state].forEach((d) => rmSync(d, { recursive: true, force: true })) };
+  return { goalId, marker, cli, card, next, toBuild: build, succeed, snapshot, reviewFiles, refused, cleanup: () => [repo, state].forEach((d) => rmSync(d, { recursive: true, force: true })) };
 }
 
 /** Run `body` on a fresh repository, removed afterwards; with `child`, every command through bin/aidlc.js in a child process. */
@@ -148,10 +164,10 @@ describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () =
           await x.refused(kind, `aidlc card attempt ${CARD} --outcome success`);
           assert.deepEqual(x.snapshot(), before, 'the card run, the journal and the review queue are byte-for-byte unchanged');
         };
-        x.toBuild();
+        await x.toBuild();
         await check();
         await x.card('attempt', '--outcome', 'fail', '--cause', 'dod red: one test fails');
-        assert.equal(x.card('next')['directive']['kind'], 'build');
+        assert.equal((await x.card('next'))['directive']['kind'], 'build');
         await x.card('attempt', '--outcome', 'not-counted', '--not-counted', 'tool-outage');
         const attempts = (await x.next())['run']['attempts'];
         assert.ok(attempts >= 2, `the run holds the failed and the not-counted attempt: ${attempts}`);
@@ -161,7 +177,7 @@ describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () =
 
   it('acceptance 2: after a successful attempt withdrawn with card withdraw, review r3 exits 1 with the withdrawn-candidate refusal and the reviewer does not run [R2]', () =>
     withRepo(false, async (x) => {
-      x.toBuild();
+      await x.toBuild();
       await x.succeed();
       await x.card('withdraw', '--cause', 'F9 the guard is missing');
       await x.refused('r3', 'the candidate was withdrawn (F9 the guard is missing); repair it and record the attempt');
@@ -172,7 +188,7 @@ describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () =
 describe('T0-REVIEW-NO-RUN-2: a run with a successful attempt is reviewed [R1] [R3]', () => {
   it('acceptance 3: after a successful attempt with --candidate-sha, review pre and review r3 run their reviewers and record their decisions [R1] [R3]', () =>
     withRepo(true, async (x) => {
-      x.toBuild();
+      await x.toBuild();
       await x.succeed();
       const pre = await x.cli('review', 'pre', CARD, '--goal', x.goalId);
       assert.equal(pre['outcome'], 'pass', JSON.stringify(pre));

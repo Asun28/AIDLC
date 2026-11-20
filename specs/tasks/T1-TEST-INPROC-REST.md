@@ -64,3 +64,27 @@ npm run typecheck && node --test tests/surface/cli-cwd-paths.test.ts tests/scena
 - Assertion: the files pass; each test named in acceptance 4 is faster than on main.
 
 ## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1. DoD [R1] [R3] | `npm run typecheck && node --test <the five files>` | exit 0; tests 132, pass 127, fail 0, skipped 5 (output sha256 5306214460b09a143c9bb88468c7d588ac645439eb2be2fd6962e39cf17638cd); `tests/surface/test-temp.test.ts` also run: 2 pass, 0 fail |
+| 2. Protected lines [R3] | a script outside the worktree pairs the removed and added lines of `git diff -U0 main -- <file>` holding `assert`, `it(`, `test(` or `describe(`, removes `async `, `await `, `Promise<` with its matching `>` and all parentheses, and compares | cli-cwd-paths 4/4 pairs equal, review-resolve 10/10, review-no-run 2/2, approver 8/8; 0 unpaired. Counts main = branch: cli-cwd-paths test( 27, review-resolve test( 61, review-no-run it( 6, approver it( 2. Each added parenthesis pair is `(await x)` around one call: `(await card('next'))`, `(await x.card('next'))`, `(await f.lastAuthorizations(goalId, n))` |
+| 3. Child case per command [R2] [R4] | the list below | every command with a child-process case on main keeps one |
+| 4. Junit times [R1] | each file alone, `node --test --test-reporter=junit`, main checkout at 88c1a2fe then the branch, sequential | each named test lower on the branch (table below) |
+| Guard sweep | the change adds one guard: `statusCalls++ === 0` in approver's `lastAuthorizations` (the first call a child process) | `equivalent:` the guard selects how `goal status` runs, not what it returns; a child process and an in-process run give the same JSON, so no assertion of the test can tell `=== 0` from a loosened form; the R2 child case is shown by this list, not by a test. The `tail` queue and `settled` in review-no-run add no comparison; a wrong expected kind in `toBuild` (`'buildX'`, edited and restored) failed acceptance 3 with `failureType: 'unhandledRejection'`, `'build' !== 'buildX'` |
+
+Command to child-process case, per file (after the change):
+
+- cli-cwd-paths: doctor (the GIT_ variables test, `inChild`; the R8 test); goal new (the R6 supplied-values test through `newGoal`; the R8 test); init, cards project, intent validate, spec validate, plan check, review bench compare, ci classify, migrate assess, evidence retain, monitor check (the R6 supplied-values test, `inChild`; spec validate also the NODE_DEBUG test); review bench run (the `fx.child` R2 run in the R1 forms test); hook auto (the hook test and the R8 test); hook protect-paths (the hook test). The five commands of `assertCwdRefused` (spec validate, review bench compare, review bench run, hook auto, hook protect-paths) now run in-process.
+- review-resolve: review resolve (cliAsync, the concurrent-children test; every `preload` row and call, including `resolveChild`).
+- review-no-run: goal new, report (acceptance 1 for pre and the withdrawn-candidate test, both `child`); review pre (acceptance 1 for pre); card next, card attempt, card withdraw, review r3 (the withdrawn-candidate test).
+- approver: plan approve, authorize, report (the three empty `--by` refusal rows, kept as child processes by R2: each is its command's only child case); goal status (the first `lastAuthorizations` call of the fixture, kept by R2). goal new (the one `goal new` call of the identity test, through `f.cli`, added after R3 decision 1: on main it ran in-process and the file had no child case for it).
+
+Junit times (seconds, this machine, same session):
+
+| Test | main (88c1a2fe) | branch |
+|---|---|---|
+| review-resolve: every option, path and file row, then again under a configuration ctx() refuses | 36.1 | 3.2 |
+| cli-cwd-paths: an invalid -C is refused for every command [R2] [R6] | 17.3 | 0.1 |
+| approver: an approval without --by records the git identity... | 9.5 | 6.4 |
+| review-no-run: the four acceptance 2 and 3 tests, summed | 13.5 | 10.4 |

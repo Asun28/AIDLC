@@ -170,7 +170,7 @@ function repoFixture(): RepoFixture {
 }
 
 /** Every value refused as `-C` for each command, exit 2 under a hook and 1 otherwise, naming `--cwd` and the reason, with nothing written under the fixture. */
-function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
+async function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): Promise<void> {
   const event = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: fx.caller, session_id: 'cwd-paths-test' });
   const commands: Array<[string[], number, string | undefined]> = [
     [['spec', 'validate', 'spec.md'], 1, undefined],
@@ -182,8 +182,9 @@ function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
   const before = snapshot(fx.root);
   for (const [value, reason] of values) {
     for (const [args, code, input] of commands) {
-      // Child process: called from an R3-protected synchronous helper declaration, so every row runs through bin/aidlc.js.
-      const r = fx.child(['-C', value, ...args], input);
+      // In-process (T1-TEST-INPROC-REST): the owner's follow-up of the T1-TEST-INPROC-A-2/B-2 exception; the child-process cases of these
+      // five commands are the R2 cases of spec validate and review bench compare, review bench run, hook protect-paths and hook auto below.
+      const r = await fx.run(['-C', value, ...args], input);
       const label = `-C ${JSON.stringify(value)} ${args.join(' ')}`;
       assert.equal(r.status, code, `${label}: ${r.stderr}`);
       assert.ok(r.stderr.startsWith(`aidlc: --cwd ${JSON.stringify(value)}: ${reason}`), `${label}: ${r.stderr}`);
@@ -539,12 +540,12 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     assert.match(r.stdout, /<!-- T0-CWD-ROW -->/);
   });
 
-  test('an invalid -C is refused for every command [R2] [R6]', () => {
+  test('an invalid -C is refused for every command [R2] [R6]', async () => {
     const fx = fixture();
     write(path.join(fx.root, 'a-file'), 'x');
     // Under a regular file Windows reports no entry and POSIX ENOTDIR; both are the same refusal.
     const [nothing, file, child] = [path.join(fx.root, 'nothing'), path.join(fx.root, 'a-file'), path.join(fx.root, 'a-file', 'child')];
-    assertCwdRefused(fx, [
+    await assertCwdRefused(fx, [
       ['', 'the value is empty'],
       ['  ', 'the value is empty'],
       [nothing, `no directory at ${nothing} (`],
@@ -561,7 +562,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     chmodSync(locked, 0o000);
     try {
       // A directory under a parent that cannot be read: its stat fails EACCES, so -C is refused (exit 1, exit 2 under a hook).
-      assertCwdRefused(fx, [[path.join(locked, 'inner'), `no directory at ${path.join(locked, 'inner')} (`]]);
+      await assertCwdRefused(fx, [[path.join(locked, 'inner'), `no directory at ${path.join(locked, 'inner')} (`]]);
       // The mode-000 directory itself: its stat needs search permission on the parent only, so it names an existing directory and
       // R2 accepts it; the command then fails with its own error when it opens spec.md there.
       const r = await fx.run(['-C', locked, 'spec', 'validate', 'spec.md']);
