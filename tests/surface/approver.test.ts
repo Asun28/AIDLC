@@ -83,7 +83,8 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
     try {
       f.git(['config', 'user.email', 'approver@example.com']);
       f.git(['config', 'user.name', 'Approver Name']);
-      const created = await f.run(['goal', 'new', 'approve a change', '--size', 'T0']);
+      // Child process (R2): the bin/aidlc.js case of goal new in this file (T1-TEST-INPROC-REST R3 decision 1).
+      const created = f.cli(['goal', 'new', 'approve a change', '--size', 'T0']);
       assert.equal(created.status, 0, String(created.stderr));
       const goalId = (JSON.parse(String(created.stdout)) as { goal: string }).goal;
 
