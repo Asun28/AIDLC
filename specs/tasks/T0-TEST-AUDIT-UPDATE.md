@@ -46,3 +46,9 @@ npm run typecheck && node --test tests/surface/pre-review.test.ts tests/surface/
 - Assertion: the three files pass; each mutation in acceptance 2 and 3 fails its test and passes on main.
 
 ## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | DoD: typecheck clean; `node --test` over the three files, 87 tests, 87 pass, 0 fail. No `runPreReview(` call remains in the four named tests (grep of `tests/surface/pre-review.test.ts:196-226,313-317`, `tests/surface/reviewer-env.test.ts`, `tests/surface/plan.test.ts`); other tests in `pre-review.test.ts` still call it, so the import stays | pass |
+| 2 | Mutation sweep of `runAngle` in `src/review/pre-review.ts`, each alone and reverted (scratch script): `input: prompt` fails "formal review (R3) command"; `input: ''` fails it; `shell: (r.shell ?? …)` fails "panel: perspectives run concurrently"; `env: process.env` fails "T0-REVIEWER-UTF8 acceptance 2". On main the first three pass (they reached the test copy). On main `env: process.env` already fails acceptance 2 through its existing `runReviewPanel` arm, which is why audit row 3 is `coveredBy` that arm; its two `runPreReview` calls did not reach the mutation | pass |
+| 3 | Deleting `## 10. After merge` from `templates/plans/_TEMPLATE.md` fails the plan template test; on main it passes (the old test read only the fixture) | pass |

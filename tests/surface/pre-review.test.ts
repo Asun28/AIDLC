@@ -193,7 +193,7 @@ test('T0-QUOTA-FALSE-HOLD acceptance 2: a reviewer that exits 0 is held only on 
   assert.equal(r.runStatus, 'malformed');
 });
 
-test('formal review (R3) command: placeholders expand, the prompt is passed in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised', () => {
+test('formal review (R3) command: placeholders expand, the prompt is passed in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised', async () => {
   const { dir, card } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
   const schema = materialiseVerdictSchema(reviewDir);
@@ -214,12 +214,12 @@ test('formal review (R3) command: placeholders expand, the prompt is passed in a
     const base = scriptedRunner({ [command]: { stdout: '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n' } });
     return base(command, args, options);
   };
-  const r = runPreReview({ runner: argvRunner, command: ['fake-r3', '--output-schema', '{schema}', '{instructions}'], vars: { schema, instructions: 'INSTRUCTIONS' }, cwd: dir, prompt: 'INSTRUCTIONS', timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.r3.0.1', head: 'def456', reviewer: 'fake-r3' });
+  const r = await runReviewPanel({ runner: async (c, a, o) => argvRunner(c, a, o), command: ['fake-r3', '--output-schema', '{schema}', '{instructions}'], perspectives: [], promptFor: () => 'INSTRUCTIONS', vars: { schema }, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.r3.0.1', head: 'def456', reviewer: 'fake-r3' });
   assert.equal(r.outcome, 'pass');
   assert.deepEqual(seen[0]?.args, ['--output-schema', schema, 'INSTRUCTIONS']);
   assert.equal(seen[0]?.input, '', 'argv mode closes stdin');
   // stdin mode: no {instructions} placeholder, the prompt arrives on stdin
-  runPreReview({ runner: argvRunner, command: ['fake-r3', '--model', 'x'], cwd: dir, prompt: 'STDIN PROMPT', timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.r3.0.2', head: 'def456', reviewer: 'fake-r3' });
+  await runReviewPanel({ runner: async (c, a, o) => argvRunner(c, a, o), command: ['fake-r3', '--model', 'x'], perspectives: [], promptFor: () => 'STDIN PROMPT', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.r3.0.2', head: 'def456', reviewer: 'fake-r3' });
   assert.equal(seen[1]?.input, 'STDIN PROMPT');
 
   // the formal prompt without an embedded diff tells the reviewer where to look instead
@@ -312,7 +312,7 @@ test('panel: perspectives run concurrently with their own prompt section and fil
 
   // dynamic instructions never go through a shell, even when a shell was requested for the command
   const shells: Array<boolean | undefined> = [];
-  runPreReview({ runner: (c, a, o = {}) => { shells.push(o.shell); return sync(c, a, o); }, command: ['fake-panel', '{instructions}'], cwd: dir, prompt: 'P `rm -rf` $(x)', timeoutMs: 1000, shell: true, reviewDir, fileStem: 'T1-GATE.pre.0.6', head: 'def456', reviewer: 'fake' });
+  await runReviewPanel({ runner: async (c, a, o = {}) => { shells.push(o.shell); return sync(c, a, o); }, command: ['fake-panel', '{instructions}'], perspectives: [], promptFor: () => 'P `rm -rf` $(x)', vars: {}, cwd: dir, timeoutMs: 1000, shell: true, reviewDir, fileStem: 'T1-GATE.pre.0.6', head: 'def456', reviewer: 'fake' });
   assert.equal(shells[0], false, 'argv instructions force shell=false');
 
   // a reviewer that fails to spawn or dies on stdin is a failed receipt for that angle; the round still aggregates
