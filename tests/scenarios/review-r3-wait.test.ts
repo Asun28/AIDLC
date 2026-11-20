@@ -138,6 +138,7 @@ function cliRepo() {
   git(repo, 'commit', '-q', '-m', 'base');
 
   const env = { ...process.env, AIDLC_STATE_DIR: state };
+  // Child process (R2): the setup is the bin/aidlc.js child case of goal new, report, card next and card attempt.
   const raw = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 60_000 });
   const cli = (...args: string[]) => {
     const r = raw(...args, '--json');
@@ -170,6 +171,7 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
   it('acceptance 2 and 3: an unknown error is one aidlc: line and exit 1; a busy pool and a running match are the wait directive and exit 75 [R2] [R3]', () => {
     const { state, raw, goalId, toReview, cleanup } = cliRepo();
     try {
+      // Child process (R1: checks what bin/aidlc.js prints): a thrown error as one aidlc: line and exit 1.
       // Acceptance 3: the card has no card run and the checkout no candidate diff against main, so the command throws.
       const failed = raw('review', 'r3', CARD, '--goal', goalId);
       assert.equal(failed.status, 1, `${failed.stderr}\n${failed.stdout}`);
@@ -188,6 +190,7 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
       assert.equal(queue.admit('default', actorB, now).status, 'admitted');
 
       // Acceptance 2: a busy pool.
+      // Child process (R1: checks what bin/aidlc.js prints): the wait directive and exit 75.
       const busy = raw('review', 'r3', CARD, '--goal', goalId);
       assert.equal(busy.status, 75, `${busy.stderr}\n${busy.stdout}`);
       assert.equal(busy.stderr, '');
@@ -202,6 +205,7 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
       const own = queue.list('default').find((r) => r.requesters.includes(`${goalId}:${CARD}`) && r.state === 'queued');
       assert.ok(own, "the card's request is queued");
       assert.equal(queue.admit('default', actorB, now, own.key).status, 'admitted');
+      // Child process (R1: checks what bin/aidlc.js prints): the wait directive and exit 75.
       const running = raw('review', 'r3', CARD, '--goal', goalId);
       assert.equal(running.status, 75, `${running.stderr}\n${running.stdout}`);
       assert.equal(running.stderr, '');
@@ -224,6 +228,7 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
       const foreign = queue.enqueue({ pool: 'default', repository: goal.repository, candidateDigest: 'digest-x', base: 'main', policyVersion: ProjectConfig.parse({}).reviewPolicyVersion, reviewer: 'other', requester: OTHER, deadline: resetAt, now: goal.createdAt }).request;
       assert.equal(queue.admit('default', actorB, goal.createdAt).status, 'admitted');
       queue.hold(foreign.key, resetAt, 'quota', goal.createdAt);
+      // Child process (R1: checks what bin/aidlc.js prints): the wait directive and exit 75.
       const pending = raw('review', 'r3', CARD, '--goal', goalId);
       assert.equal(pending.status, 75, `${pending.stderr}\n${pending.stdout}`);
       assert.equal(pending.stderr, '');
@@ -236,6 +241,7 @@ describe('T0-R3-POOL-WAIT: review r3 through bin/aidlc.js [R2] [R3]', () => {
   });
 
   it('F2: a rejection whose message spans lines is one aidlc: line and exit 1 through bin/aidlc.js, and the direct entry prints it as thrown [R3]', () => {
+    // Child process (R1: checks what bin/aidlc.js prints, and the direct src/cli/main.ts entry).
     const { repo, state, raw, goalId, cleanup } = cliRepo();
     try {
       const viaBin = raw('report', '--goal', goalId, '--result', 'invalid');
