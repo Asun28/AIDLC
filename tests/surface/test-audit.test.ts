@@ -16,26 +16,39 @@ type Row = { [K in (typeof HEADER)[number]]: string };
 /** The cells of a table line, split at each pipe not escaped by a backslash; an escaped pipe becomes a pipe. */
 const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
 
-/** Whether a line is the Markdown separator of a six-column table: six cells of dashes with optional alignment colons. */
-const isSeparator = (line: string | undefined) => line !== undefined && line.trim().startsWith('|') && cells(line).length === HEADER.length && cells(line).every((c) => /^:?-+:?$/.test(c));
+/** Whether a line starts with a pipe after any indentation, so an indented code line that starts with a pipe counts too. */
+const pipeLeading = (line: string) => line.trimStart().startsWith('|');
+
+/** Whether a line has the shape of a Markdown delimiter row: it holds a pipe and every cell is dashes with optional colons. */
+const delimiterLike = (line: string) => line.includes('|') && cells(line).every((c) => /^:?-+:?$/.test(c));
+
+/** Whether a line is the separator of the audit table: pipe-leading, six cells, each a delimiter cell. */
+const isSeparator = (line: string | undefined) => line !== undefined && pipeLeading(line) && cells(line).length === HEADER.length && delimiterLike(line);
 
 /**
- * The rows of the first table whose header is HEADER in order and is followed by a separator; undefined when the text holds no
- * such table. As in Markdown, every line after the separator up to the first blank line is a row of the table. This checker
- * accepts only rows that start with a pipe and hold six cells: any other line before the first blank line refuses the whole
- * table, so a row Markdown renders is never left unchecked.
+ * The rows of the audit table, or undefined when the document breaks the one-table rule. The rule, so that no table the reader
+ * sees is left unchecked: (a) no fenced code block (a line starting with ``` or ~~~ after any indentation) and no HTML comment
+ * (`<!--`); (b) exactly one line whose cells equal HEADER; (c) the line after it is a six-cell separator, the table runs from
+ * there to the first blank line, and every line in it starts with a pipe and holds six cells (d); no other line of the document
+ * starts with a pipe after any indentation or has the shape of a delimiter row, so neither a second table (with or without outer
+ * pipes) nor an indented code block holding pipe lines can stand beside the checked one.
  */
 function auditRows(text: string): Row[] | undefined {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
-  const at = lines.findIndex((l) => l.trim().startsWith('|') && cells(l).join('\n') === HEADER.join('\n'));
-  if (at < 0 || !isSeparator(lines[at + 1])) return undefined;
+  if (lines.some((l) => /^\s*(```|~~~)/.test(l) || l.includes('<!--'))) return undefined;
+  const heads = lines.flatMap((l, i) => (cells(l).join('\n') === HEADER.join('\n') ? [i] : []));
+  const at = heads[0];
+  if (at === undefined || heads.length !== 1 || !pipeLeading(lines[at]!) || !isSeparator(lines[at + 1])) return undefined;
+  let end = at + 2;
+  while (end < lines.length && lines[end]!.trim() !== '') end++;
   const rows: Row[] = [];
-  for (const line of lines.slice(at + 2)) {
-    if (line.trim() === '') break;
+  for (const line of lines.slice(at + 2, end)) {
     const c = cells(line);
-    if (!line.trim().startsWith('|') || c.length !== HEADER.length) return undefined;
+    if (!pipeLeading(line) || c.length !== HEADER.length) return undefined;
     rows.push(Object.fromEntries(HEADER.map((h, i) => [h, c[i] ?? ''])) as Row);
   }
+  const outside = (i: number) => i < at || i >= end;
+  if (lines.some((l, i) => outside(i) && (pipeLeading(l) || delimiterLike(l)))) return undefined;
   return rows;
 }
 
@@ -114,7 +127,7 @@ test('T1-TEST-AUDIT-LIST acceptance 1: every row names an existing test with a v
   assert.equal(auditRows(`${head}\n---|---|---|---|---|---\n| f | a | duplicate | e | none | update |`), undefined, 'a separator without the leading pipe the rows need');
   assert.equal(auditRows('| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |'), undefined, 'another six-column table');
   assert.deepEqual(auditRows(`${head}\n| :--- | --- | ---: | :-: | - | --- |`), [], 'alignment colons');
-  assert.deepEqual(auditRows(`${head}\n|---|---|---|---|---|---|\n| f | a \\| b | duplicate | e | none | update |\n\n| x |`)?.map((r) => r.test), ['a | b']);
+  assert.deepEqual(auditRows(`${head}\n|---|---|---|---|---|---|\n| f | a \\| b | duplicate | e | none | update |\n\nprose`)?.map((r) => r.test), ['a | b']);
   // Every line up to the first blank line is a row: one without an initial pipe, or without six cells, refuses the table (R3 decision 2).
   const bare = 'missing.test.ts | nonexistent | invalid | e | none | remove';
   const sep = '|---|---|---|---|---|---|';
@@ -123,6 +136,24 @@ test('T1-TEST-AUDIT-LIST acceptance 1: every row names an existing test with a v
   assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none |`), undefined, 'a row of five cells');
   assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update | x |`), undefined, 'a row of seven cells');
   assert.deepEqual(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update |\n   \nprose after a blank line`)?.length, 1, 'a whitespace-only line ends the table');
+  // The one-table rule (R3 decision 3): a document that could show a table the checker does not read is refused whole.
+  const good = `${head}\n${sep}\n| f | a | duplicate | e | none | update |`;
+  const bad = `${head}\n${sep}\n| ${bare} |`;
+  assert.equal(auditRows(`\`\`\`\n${head}\n${sep}\n\n\`\`\`\n${bad}`), undefined, 'R3 decision 3: a fenced header and separator before the real table');
+  assert.equal(auditRows(`\`\`\`\n${good}\n\n\`\`\``), undefined, 'a fenced example alone');
+  assert.equal(auditRows(`~~~md\n${good}\n\n~~~`), undefined, 'a tilde fence');
+  assert.equal(auditRows(`  \`\`\`\n${good}\n\n  \`\`\``), undefined, 'an indented fence');
+  assert.equal(auditRows(`<!--\n${good}\n\n-->`), undefined, 'a table inside an HTML comment');
+  assert.equal(auditRows(`${HEADER.join(' | ')}\n${sep}\n| f | a | duplicate | e | none | update |`), undefined, 'a header line without its outer pipes');
+  assert.deepEqual(auditRows(`intro\n\n---\n\n${good}`)?.length, 1, 'a thematic break is not a separator');
+  assert.equal(auditRows(`${good}\n\n${bad}`), undefined, 'a second audit table');
+  assert.equal(auditRows(`${good}\n\n| a | b |\n|---|---|\n| 1 | 2 |`), undefined, 'a second table of other columns');
+  assert.equal(auditRows(`${good}\n\na | b\n---|---\n1 | 2`), undefined, 'a second table without outer pipes');
+  assert.equal(auditRows(`${good}\n\n| x |`), undefined, 'a pipe line after the table');
+  assert.equal(auditRows(`| x |\n\n${good}`), undefined, 'a pipe line before the table');
+  assert.equal(auditRows(`${good}\n\n    | ${bare} |`), undefined, 'an indented pipe line');
+  assert.equal(auditRows(`${good}\n\nfile | test | class | evidence | covered by | action`), undefined, 'a second header line without pipes');
+  assert.deepEqual(auditRows(`text with a | pipe and --- dashes\n\n${good}\n\nmore text`)?.length, 1, 'prose with a pipe inside a line');
 });
 
 test('T1-TEST-AUDIT-LIST acceptance 2: no row proposes remove without a covering test', () => {

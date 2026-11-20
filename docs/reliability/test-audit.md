@@ -18,6 +18,8 @@ Not searched: behaviour a test asserts without naming it in its title or reachin
 
 Rows by class: `removed-path` 4, `removed-behaviour` 0, `duplicate` 0, `superseded-card` 0.
 
+The table below is the only table in this document, and the test refuses the document otherwise: no fenced code block and no HTML comment, exactly one header line, a six-cell separator right after it, every row a pipe-leading line of six cells up to the first blank line, and no other line that starts with a pipe (after any indentation) or has the shape of a table separator.
+
 | file | test | class | evidence | covered by | action |
 | --- | --- | --- | --- | --- | --- |
 | tests/surface/pre-review.test.ts | formal review (R3) command: placeholders expand, the prompt is passed in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised | removed-path | Commit `77b57457` (T1-SWEEP-REVIEW-WRAPPERS) moved `runPreReview` out of `src/review/pre-review.ts` into `tests/surface/_review-once.ts:31-37`, because no code in `src/` had called it since the R2 panel (`a7bbcaee`). The argv and stdin arms at `tests/surface/pre-review.test.ts:217-223` (`argv mode closes stdin` at :220) call `runPreReview`, so they check the test copy at `tests/surface/_review-once.ts:36`, not the spawn the loop runs at `src/review/pre-review.ts:1330` (`runReviewPanel`, used for R3 by `src/loop/card-runner.ts`). The `expandCommand` and schema assertions of the same test read `src/` and stay valid. Uncovered: no other test asserts the stdin of an argv-mode reviewer spawn (`grep` for `input` assertions on reviewer runners under `tests/`). | none | update |
