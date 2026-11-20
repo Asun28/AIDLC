@@ -1,7 +1,7 @@
 ---
 id: T0-TAKEOVER-DONE-GOAL-2
 title: "(replaces T0-TAKEOVER-DONE-GOAL and carries its candidate; R1 and R2 scoped to the command's one goal read) aidlc goal takeover and aidlc card takeover on a goal that is DONE take no lease, append no journal event, report the DONE state and exit 0 (issue 379)"
-status: todo
+status: merged
 branch: T0-TAKEOVER-DONE-GOAL-2
 allow_paths:
   - src/core/card-goal.ts
