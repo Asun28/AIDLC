@@ -1,5 +1,5 @@
 // Card T1-INIT-BASE-CI: the base of a created config, the workflows that need a package.json, and the npx form of every workflow.
-import { test, describe, after } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -43,10 +43,13 @@ function repository(branch: string): string {
   return dir;
 }
 
+/** The repository on master that the clones of master are made from; set in `before` and only read (cloned) by the cases. */
+let masterSource: string | undefined;
+
 /** A clone of a repository on `branch`, standing on that branch. */
 function cloneOnDefault(branch: string): string {
   const clone = path.join(tempDir(), 'clone');
-  git(path.dirname(clone), 'clone', '-q', repository(branch), clone);
+  git(path.dirname(clone), 'clone', '-q', branch === 'master' && masterSource ? masterSource : repository(branch), clone);
   return clone;
 }
 
@@ -81,6 +84,13 @@ function holdingOneFile(): string {
 }
 
 describe('T1-INIT-BASE-CI: the base of a created config', () => {
+  before(() => {
+    masterSource = repository('master');
+  });
+  after(() => {
+    masterSource = undefined;
+  });
+
   test('acceptance 1: a clone whose remote default branch is master gets master, whatever branch it is on [R1]', () => {
     assert.equal(baseAfterInit(cloneOf('master')), 'master');
   });
@@ -305,6 +315,7 @@ describe('T1-INIT-BASE-CI: a target with no package.json', () => {
     assert.ok(!report.skipped.includes(CI), 'one line per workflow');
   });
 
+  // Kept child process: the case checks what bin/aidlc.js prints, and it is the file's only `init` call (R2).
   test('acceptance 2: the CLI prints each skip on its own line, and writes nothing on --dry-run [R2]', () => {
     const target = holdingOneFile();
     const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'init', target, '--dry-run'], { env: FIXTURE_ENV, encoding: 'utf8', timeout: 60_000, windowsHide: true });

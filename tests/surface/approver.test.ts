@@ -5,10 +5,11 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Journal } from '../../src/state/journal.ts';
 import { tmpDir } from '../infra/helpers.ts';
+import { runCliInProcess } from '../infra/cli-inprocess.ts';
 
 // Card T0-APPROVER-IDENTITY: an approval recorded without --by names the git identity of the repository.
 const root = path.resolve(import.meta.dirname, '..', '..');
-const main = path.join(root, 'src', 'cli', 'main.ts');
+const bin = path.join(root, 'bin', 'aidlc.js');
 
 interface Authorization {
   kind: string;
@@ -19,6 +20,7 @@ interface Fixture {
   tmp: string;
   repo: string;
   cli: (args: string[], cwd?: string) => ReturnType<typeof spawnSync>;
+  run: (args: string[], cwd?: string) => Promise<{ status: number; stdout: string; stderr: string }>;
   git: (args: string[]) => void;
   lastAuthorizations: (goalId: string, n: number) => Authorization[];
   journal: (goalId: string) => Journal;
@@ -49,30 +51,34 @@ function fixture(): Fixture {
     const r = spawnSync('git', args, { cwd, encoding: 'utf8', env: env(), windowsHide: true });
     assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   };
-  const cli = (args: string[], cwd = repo) => spawnSync(process.execPath, [main, ...args], { cwd, encoding: 'utf8', env: env(), windowsHide: true });
+  // Kept child process: checking lines index the result (`lastAuthorizations(...).map`, `f.cli(args).status`), where an
+  // added `await` would apply to the index, not the call; or the call is this file's bin/aidlc.js case for its command
+  // (R2: goal new, goal status, plan approve, authorize, report).
+  const cli = (args: string[], cwd = repo) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: env(), windowsHide: true });
+  const run = (args: string[], cwd = repo) => runCliInProcess(args, { cwd, env: env() });
   const lastAuthorizations = (goalId: string, n: number): Authorization[] => {
     const r = cli(['goal', 'status', goalId]);
     assert.equal(r.status, 0, String(r.stderr));
     return (JSON.parse(String(r.stdout)) as { authorizations: Authorization[] }).authorizations.slice(-n);
   };
   git(['init', '-q', '-b', 'main', repo], tmp);
-  return { tmp, repo, cli, git, lastAuthorizations, journal: (goalId) => Journal.forGoal(path.join(stateDir, 'journal'), goalId), cleanup: () => rmSync(tmp, { recursive: true, force: true }) };
+  return { tmp, repo, cli, run, git, lastAuthorizations, journal: (goalId) => Journal.forGoal(path.join(stateDir, 'journal'), goalId), cleanup: () => rmSync(tmp, { recursive: true, force: true }) };
 }
 
 /** Runs plan approve, authorize and report --result approved in that order, each with the extra args. */
-function approveThreeWays(f: Fixture, goalId: string, extra: string[]): void {
+async function approveThreeWays(f: Fixture, goalId: string, extra: string[]): Promise<void> {
   for (const args of [
     ['plan', 'approve', goalId, ...extra],
     ['authorize', 'development', '--goal', goalId, ...extra],
     ['report', '--goal', goalId, '--result', 'approved', ...extra],
   ]) {
-    const r = f.cli(args);
+    const r = await f.run(args);
     assert.equal(r.status, 0, `aidlc ${args.join(' ')}: ${String(r.stderr)}`);
   }
 }
 
 describe('approver identity (T0-APPROVER-IDENTITY)', () => {
-  it('an approval without --by records the git identity: user.email, else user.name, else user; an explicit --by is recorded as given (acceptance 2, 3)', () => {
+  it('an approval without --by records the git identity: user.email, else user.name, else user; an explicit --by is recorded as given (acceptance 2, 3)', async () => {
     const f = fixture();
     try {
       f.git(['config', 'user.email', 'approver@example.com']);
@@ -82,12 +88,12 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       const goalId = (JSON.parse(String(created.stdout)) as { goal: string }).goal;
 
       // A report of any other result carries no approver: its data is journaled as given.
-      const accepted = f.cli(['report', '--goal', goalId, '--result', 'intent-accepted']);
+      const accepted = await f.run(['report', '--goal', goalId, '--result', 'intent-accepted']);
       assert.equal(accepted.status, 0, String(accepted.stderr));
       const planAccepted = f.journal(goalId).readAll().filter((e) => e.type === 'PLAN_ACCEPTED');
       assert.deepEqual(planAccepted.map((e) => e.data), [{}], 'intent-accepted records no by');
 
-      approveThreeWays(f, goalId, []);
+      await approveThreeWays(f, goalId, []);
       assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => ({ kind: a.kind, grantedBy: a.grantedBy })), [
         { kind: 'plan-checkpoint', grantedBy: 'approver@example.com' },
         { kind: 'development', grantedBy: 'approver@example.com' },
@@ -95,16 +101,16 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       ]);
 
       // Run from outside the repository with -C: the identity is the one of the repository named, not of the cwd.
-      const outside = f.cli(['-C', f.repo, 'authorize', 'development', '--goal', goalId], f.tmp);
+      const outside = await f.run(['-C', f.repo, 'authorize', 'development', '--goal', goalId], f.tmp);
       assert.equal(outside.status, 0, String(outside.stderr));
       assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['approver@example.com'], '-C names the repository');
 
-      approveThreeWays(f, goalId, ['--by', 'release manager']);
+      await approveThreeWays(f, goalId, ['--by', 'release manager']);
       assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => a.grantedBy), ['release manager', 'release manager', 'release manager']);
-      const viaData = f.cli(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":"data approver"}']);
+      const viaData = await f.run(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":"data approver"}']);
       assert.equal(viaData.status, 0, String(viaData.stderr));
       assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['data approver'], 'a by in --data is recorded as given');
-      const nullData = f.cli(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":null}']);
+      const nullData = await f.run(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":null}']);
       assert.equal(nullData.status, 0, String(nullData.stderr));
       assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['user'], 'a by key in --data is given, so the git identity is not read');
 
@@ -118,11 +124,11 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       assert.equal(f.lastAuthorizations(goalId, 100).length, before, 'no authorization recorded for an empty --by');
 
       f.git(['config', '--unset', 'user.email']);
-      approveThreeWays(f, goalId, []);
+      await approveThreeWays(f, goalId, []);
       assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => a.grantedBy), ['Approver Name', 'Approver Name', 'Approver Name']);
 
       f.git(['config', '--unset', 'user.name']);
-      approveThreeWays(f, goalId, []);
+      await approveThreeWays(f, goalId, []);
       assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => a.grantedBy), ['user', 'user', 'user']);
     } finally {
       f.cleanup();

@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard } from './_harness.ts';
 import { tmpDir } from '../infra/helpers.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
+import { runCliInProcess } from '../infra/cli-inprocess.ts';
 
 const CARD = 'T0-NR';
 const KINDS = ['r3', 'pre'] as const;
@@ -47,7 +48,7 @@ function tree(dir: string, rel = '', files: Record<string, string> = {}): Record
  * against main. The r3 refusals leave the pre-reviewer out: with one set, `review r3` on main is refused by the pre-review
  * gate before its reviewer runs, so the test could not show that the guard keeps the reviewer from running.
  */
-function cliRepo(pre: boolean) {
+async function cliRepo(pre: boolean, child: boolean) {
   const [repo, state] = [tmpDir('aidlc-norun-repo-'), tmpDir('aidlc-norun-state-')];
   const local = path.join(repo, '_local');
   for (const d of [path.join(repo, 'specs', 'tasks'), path.join(repo, 'src'), local]) mkdirSync(d, { recursive: true });
@@ -75,16 +76,29 @@ function cliRepo(pre: boolean) {
   git(repo, 'commit', '-q', '-am', 'candidate');
   const sha = git(repo, 'rev-parse', 'HEAD');
   const env = { ...process.env, AIDLC_STATE_DIR: state };
-  const raw = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 });
-  const cli = (...args: string[]) => {
-    const r = raw(...args, '--json');
+  /** `aidlc -C <repo> <args>`: in this process, or through bin/aidlc.js in a child process when `child` is set (R2). */
+  const raw = async (...args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> =>
+    child ? spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 }) : runCliInProcess(['-C', repo, ...args], { cwd: repo, env });
+  /**
+   * Kept child process for `card next`: checking lines index its result (`card('next')['directive']`), and `await` there
+   * would apply to the index, not the call; parentheses would change the line beyond the `await` R4 allows.
+   */
+  const rawSync = (...args: string[]) => spawnSync(process.execPath, [bin, '-C', repo, ...args], { cwd: repo, env, encoding: 'utf8', timeout: 120_000 });
+  const parsed = (args: string[], r: { status: number | null; stdout: string; stderr: string }) => {
     assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
     return JSON.parse(r.stdout) as Record<string, any>;
   };
-  const created = cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
+  const cli = async (...args: string[]) => parsed(args, await raw(...args, '--json'));
+  const cliSync = (...args: string[]) => parsed(args, rawSync(...args, '--json'));
+  const created = await cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
   const goalId = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
-  cli('report', '--goal', goalId, '--result', 'cards-projected', '--cards', CARD);
-  const card = (...args: string[]) => cli('card', args[0]!, CARD, '--goal', goalId, ...args.slice(1));
+  await cli('report', '--goal', goalId, '--result', 'cards-projected', '--cards', CARD);
+  /** `card next` returns its result at once (see rawSync); every other card command returns a promise. */
+  function card(command: 'next', ...rest: string[]): Record<string, any>;
+  function card(command: string, ...rest: string[]): Promise<Record<string, any>>;
+  function card(...args: string[]): Record<string, any> | Promise<Record<string, any>> {
+    return args[0] === 'next' ? cliSync('card', args[0], CARD, '--goal', goalId, ...args.slice(1)) : cli('card', args[0]!, CARD, '--goal', goalId, ...args.slice(1));
+  }
   /** `card next` twice: PREPARE, then BUILD. */
   const toBuild = () => ['prepare', 'build'].forEach((kind) => assert.equal(card('next')['directive']['kind'], kind));
   const succeed = () => card('attempt', '--outcome', 'success', '--dod-receipt', 'dod:cli', '--red-receipt', 'red:cli', '--candidate-sha', sha);
@@ -93,8 +107,8 @@ function cliRepo(pre: boolean) {
   /** Every `.review/` file of the checkout and of the card worktrees. */
   const reviewFiles = () => [...Object.keys(tree(path.join(repo, '.review'))), ...Object.keys(tree(worktreeRoot)).filter((f) => f.split(path.sep).includes('.review'))];
   /** `review <kind>` exits 1 with one `aidlc: ` stderr line containing `expected`, nothing on stdout, and its reviewer did not run. */
-  const refused = (kind: 'r3' | 'pre', expected: string): void => {
-    const r = raw('review', kind, CARD, '--goal', goalId);
+  const refused = async (kind: 'r3' | 'pre', expected: string): Promise<void> => {
+    const r = await raw('review', kind, CARD, '--goal', goalId);
     assert.equal(r.status, 1, `${r.stderr}\n${r.stdout}`);
     const lines = r.stderr.split(/\r?\n/).filter((l) => l !== '');
     assert.equal(lines.length, 1, `exactly one stderr line: ${r.stderr}`);
@@ -105,11 +119,14 @@ function cliRepo(pre: boolean) {
   return { goalId, marker, cli, card, toBuild, succeed, snapshot, reviewFiles, refused, cleanup: () => [repo, state].forEach((d) => rmSync(d, { recursive: true, force: true })) };
 }
 
-/** Run `body` on a fresh repository, removed afterwards. */
-function withRepo(pre: boolean, body: (x: ReturnType<typeof cliRepo>) => void): void {
-  const x = cliRepo(pre);
+/** Kept child process (R2): this case runs each of its commands through bin/aidlc.js, one case per command. */
+const CHILD = true;
+
+/** Run `body` on a fresh repository, removed afterwards; with `child`, every command but `card next` in a child process too. */
+async function withRepo(pre: boolean, body: (x: Awaited<ReturnType<typeof cliRepo>>) => Promise<void>, child = false): Promise<void> {
+  const x = await cliRepo(pre, child);
   try {
-    body(x);
+    await body(x);
   } finally {
     x.cleanup();
   }
@@ -118,53 +135,53 @@ function withRepo(pre: boolean, body: (x: ReturnType<typeof cliRepo>) => void): 
 describe('T0-REVIEW-NO-RUN-2: refusals before any reviewer runs [R1] [R2]', () => {
   for (const kind of KINDS) {
     it(`acceptance 1: review ${kind} on a card with no run exits 1 naming aidlc card next and writes nothing; the reviewer does not run [R1]`, () =>
-      withRepo(kind === 'pre', (x) => {
+      withRepo(kind === 'pre', async (x) => {
         const before = x.snapshot();
         assert.deepEqual(before.cards, {}, 'no card run before');
-        x.refused(kind, `aidlc card next ${CARD} --goal ${x.goalId}`);
+        await x.refused(kind, `aidlc card next ${CARD} --goal ${x.goalId}`);
         assert.deepEqual(x.snapshot(), before, 'no card run file, the same journal lines, no review queue request');
         assert.deepEqual(x.reviewFiles(), [], 'no .review/ file');
       }));
 
     it(`acceptance 2: review ${kind} with no attempt, then after a failed and a not-counted attempt, exits 1 naming aidlc card attempt and changes nothing [R2]`, () =>
-      withRepo(kind === 'pre', (x) => {
-        const check = (): void => {
+      withRepo(kind === 'pre', async (x) => {
+        const check = async (): Promise<void> => {
           const before = x.snapshot();
-          x.refused(kind, `aidlc card attempt ${CARD} --outcome success`);
+          await x.refused(kind, `aidlc card attempt ${CARD} --outcome success`);
           assert.deepEqual(x.snapshot(), before, 'the card run, the journal and the review queue are byte-for-byte unchanged');
         };
         x.toBuild();
-        check();
-        x.card('attempt', '--outcome', 'fail', '--cause', 'dod red: one test fails');
+        await check();
+        await x.card('attempt', '--outcome', 'fail', '--cause', 'dod red: one test fails');
         assert.equal(x.card('next')['directive']['kind'], 'build');
-        x.card('attempt', '--outcome', 'not-counted', '--not-counted', 'tool-outage');
+        await x.card('attempt', '--outcome', 'not-counted', '--not-counted', 'tool-outage');
         const attempts = x.card('next')['run']['attempts'];
         assert.ok(attempts >= 2, `the run holds the failed and the not-counted attempt: ${attempts}`);
-        check();
+        await check();
       }));
   }
 
   it('acceptance 2: after a successful attempt withdrawn with card withdraw, review r3 exits 1 with the withdrawn-candidate refusal and the reviewer does not run [R2]', () =>
-    withRepo(false, (x) => {
+    withRepo(false, async (x) => {
       x.toBuild();
-      x.succeed();
-      x.card('withdraw', '--cause', 'F9 the guard is missing');
-      x.refused('r3', 'the candidate was withdrawn (F9 the guard is missing); repair it and record the attempt');
-    }));
+      await x.succeed();
+      await x.card('withdraw', '--cause', 'F9 the guard is missing');
+      await x.refused('r3', 'the candidate was withdrawn (F9 the guard is missing); repair it and record the attempt');
+    }, CHILD));
 });
 
 describe('T0-REVIEW-NO-RUN-2: a run with a successful attempt is reviewed [R1] [R3]', () => {
   it('acceptance 3: after a successful attempt with --candidate-sha, review pre and review r3 run their reviewers and record their decisions [R1] [R3]', () =>
-    withRepo(true, (x) => {
+    withRepo(true, async (x) => {
       x.toBuild();
-      x.succeed();
-      const pre = x.cli('review', 'pre', CARD, '--goal', x.goalId);
+      await x.succeed();
+      const pre = await x.cli('review', 'pre', CARD, '--goal', x.goalId);
       assert.equal(pre['outcome'], 'pass', JSON.stringify(pre));
       assert.equal(existsSync(x.marker.pre), true, 'the pre-reviewer ran');
-      const r3 = x.cli('review', 'r3', CARD, '--goal', x.goalId);
+      const r3 = await x.cli('review', 'r3', CARD, '--goal', x.goalId);
       assert.deepEqual({ outcome: r3['outcome'], decisions: r3['decisions'] }, { outcome: 'pass', decisions: 1 }, JSON.stringify(r3));
       assert.equal(existsSync(x.marker.r3), true, 'the formal reviewer ran');
-    }));
+    }, CHILD));
 });
 
 // Acceptance 4: the sentences this card adds, each in its place, and removing any one fails.
