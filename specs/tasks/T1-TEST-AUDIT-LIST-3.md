@@ -7,6 +7,9 @@ worktree: D:\wt\AIDLC\T1-TEST-AUDIT-LIST-3
 plan_ref: plans/test-time.md#order-of-work
 allow_paths:
   - tests/surface/test-audit.test.ts
+  - docs/reliability/test-audit.json
+  - docs/reliability/test-audit.md
+  - specs/tasks/T1-TEST-AUDIT-LIST.md
   - changelog.d/T1-TEST-AUDIT-LIST-2.md
   - changelog.d/T1-TEST-AUDIT-LIST-3.md
   - specs/tasks/T1-TEST-AUDIT-LIST-2.md
@@ -22,9 +25,10 @@ acceptance:
 depends_on: []
 budget: 30
 tdd: false
+sweep: "Diff of the branch against main at bc6b361d (git diff --stat origin/main...HEAD): changelog.d/T1-TEST-AUDIT-LIST-3.md, docs/reliability/test-audit.json, docs/reliability/test-audit.md, specs/tasks/T1-TEST-AUDIT-LIST.md, specs/tasks/T1-TEST-AUDIT-LIST-2.md, specs/tasks/T1-TEST-AUDIT-LIST-3.md, tests/surface/test-audit.test.ts; all but the tmpDir lines of the test file and the changelog sentence come from the carried candidate 5eb62ce8 that R3 passed on T1-TEST-AUDIT-LIST-2 (decision 4). Amended 2026-11-20 after the formal review refused the out-of-scope carried paths before deciding (no decision consumed)."
 forbid:
   - changing, skipping or deleting any test file other than tests/surface/test-audit.test.ts
-  - a change to docs/reliability/test-audit.json or docs/reliability/test-audit.md
+  - a change to docs/reliability/test-audit.json or docs/reliability/test-audit.md beyond the carried candidate 5eb62ce8 (these paths are allowed only because the carried candidate adds them)
   - a change under src/
 non_goals: [new audit rows, acting on any row]
 hygiene: "Replaces T1-TEST-AUDIT-LIST-2: R3 passed its candidate 5eb62ce8 (decision 4), and the ship stopped with STOP/ci because the CI gate failed on the temporary-directory sweep (tests/surface/test-temp.test.ts) and the gate log held no test output to classify. tdd is false: the change moves two lines to the shared helper and the failing sweep test is the oracle. Start the branch from T1-TEST-AUDIT-LIST-2 (carries 5eb62ce8), merge main, set specs/tasks/T1-TEST-AUDIT-LIST-2.md to `superseded_by: T1-TEST-AUDIT-LIST-3` if main does not have it, and rename changelog.d/T1-TEST-AUDIT-LIST-2.md into changelog.d/T1-TEST-AUDIT-LIST-3.md. PR 390 is closed unmerged."
