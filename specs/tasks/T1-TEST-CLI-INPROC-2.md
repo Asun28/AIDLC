@@ -1,7 +1,7 @@
 ---
 id: T1-TEST-CLI-INPROC-2
 title: (replaces T1-TEST-CLI-INPROC and carries its candidate) The in-process CLI helper resets the session and repository caches before each call, runs and removes the exit handlers a call adds, and captures output written past the stream methods
-status: todo
+status: merged
 branch: T1-TEST-CLI-INPROC-2
 worktree: D:\wt\AIDLC\T1-TEST-CLI-INPROC-2
 plan_ref: plans/test-time.md#order-of-work
