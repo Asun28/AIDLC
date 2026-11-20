@@ -13,6 +13,8 @@ import { runCliInProcess } from '../infra/cli-inprocess.ts';
 import * as cli from '../../src/cli/main.ts';
 
 const main = path.resolve(import.meta.dirname, '..', '..', 'src', 'cli', 'main.ts');
+/** The CLI entry every child process runs. */
+const bin = path.resolve(import.meta.dirname, '..', '..', 'bin', 'aidlc.js');
 const temps: string[] = [];
 /**
  * A new directory under the OS temporary directory, created by `tmpDir` of tests/infra/helpers.ts and removed by `cleanup` in the
@@ -81,7 +83,7 @@ function fixture(): Fixture {
   const [caller, target, third, state] = [sub('caller'), sub('target'), sub('third'), sub('state')];
   const env = childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'cwd-paths-test' });
   const run = (args: string[], input?: string, cwd = caller) => runCliInProcess(args, { cwd, env, input });
-  const child = (args: string[], input?: string, cwd = caller) => spawnSync(process.execPath, [main, ...args], { cwd, env, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+  const child = (args: string[], input?: string, cwd = caller) => spawnSync(process.execPath, [bin, ...args], { cwd, env, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
   return { root, caller, target, third, state, run, child };
 }
 
@@ -163,12 +165,12 @@ function repoFixture(): RepoFixture {
   const env = childEnv({ AIDLC_SESSION: 'cwd-paths-test' });
   gitInit(repo);
   const run = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => runCliInProcess(args, { cwd, env: { ...env, ...extraEnv }, input });
-  const child = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [main, ...args], { cwd, env: { ...env, ...extraEnv }, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+  const child = (args: string[], cwd: string, input?: string, extraEnv: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [bin, ...args], { cwd, env: { ...env, ...extraEnv }, input, encoding: 'utf8', windowsHide: true, timeout: 120_000 });
   return { root, repo, src, caller, run, child };
 }
 
 /** Every value refused as `-C` for each command, exit 2 under a hook and 1 otherwise, naming `--cwd` and the reason, with nothing written under the fixture. */
-async function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): Promise<void> {
+function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): void {
   const event = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, cwd: fx.caller, session_id: 'cwd-paths-test' });
   const commands: Array<[string[], number, string | undefined]> = [
     [['spec', 'validate', 'spec.md'], 1, undefined],
@@ -180,7 +182,8 @@ async function assertCwdRefused(fx: Fixture, values: Array<[string, string]>): P
   const before = snapshot(fx.root);
   for (const [value, reason] of values) {
     for (const [args, code, input] of commands) {
-      const r = await fx.run(['-C', value, ...args], input);
+      // Child process: called from an R3-protected synchronous helper declaration, so every row runs through bin/aidlc.js.
+      const r = fx.child(['-C', value, ...args], input);
       const label = `-C ${JSON.stringify(value)} ${args.join(' ')}`;
       assert.equal(r.status, code, `${label}: ${r.stderr}`);
       assert.ok(r.stderr.startsWith(`aidlc: --cwd ${JSON.stringify(value)}: ${reason}`), `${label}: ${r.stderr}`);
@@ -309,7 +312,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     gitInit(outer);
     const caller = path.join(outer, 'fx', 'caller');
     mkdirSync(caller, { recursive: true });
-    const doctor = (extra: NodeJS.ProcessEnv) => spawnSync(process.execPath, [main, 'doctor', '--json'], { cwd: caller, env: childEnv({ AIDLC_SESSION: 'cwd-paths-test', AIDLC_STATE_DIR: path.join(outer, 'state'), ...extra }), encoding: 'utf8', windowsHide: true, timeout: 120_000 });
+    const doctor = (extra: NodeJS.ProcessEnv) => spawnSync(process.execPath, [bin, 'doctor', '--json'], { cwd: caller, env: childEnv({ AIDLC_SESSION: 'cwd-paths-test', AIDLC_STATE_DIR: path.join(outer, 'state'), ...extra }), encoding: 'utf8', windowsHide: true, timeout: 120_000 });
     const without = doctor({});
     assert.equal((JSON.parse(without.stdout) as { repository: string }).repository, outer, without.stderr);
     const capped = doctor({ GIT_CEILING_DIRECTORIES: outer });
@@ -326,7 +329,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
   test('every child starts without the NODE_ variables of the test process: a refusal prints the same stderr with NODE_DEBUG set', () => {
     // Child process (R1: the child's inherited environment): NODE_DEBUG in the environment the child starts with.
     const fx = fixture();
-    const runWith = (source: NodeJS.ProcessEnv) => spawnSync(process.execPath, [main, '-C', fx.target, 'spec', 'validate', ''], { cwd: fx.caller, env: childEnv({ AIDLC_STATE_DIR: fx.state, AIDLC_SESSION: 'cwd-paths-test' }, source), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const runWith = (source: NodeJS.ProcessEnv) => spawnSync(process.execPath, [bin, '-C', fx.target, 'spec', 'validate', ''], { cwd: fx.caller, env: childEnv({ AIDLC_STATE_DIR: fx.state, AIDLC_SESSION: 'cwd-paths-test' }, source), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
     const plain = runWith(process.env);
     assert.equal(plain.status, 1, plain.stderr);
     assert.ok(plain.stderr.startsWith('aidlc: <file> "": '), plain.stderr);
@@ -536,12 +539,12 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     assert.match(r.stdout, /<!-- T0-CWD-ROW -->/);
   });
 
-  test('an invalid -C is refused for every command [R2] [R6]', async () => {
+  test('an invalid -C is refused for every command [R2] [R6]', () => {
     const fx = fixture();
     write(path.join(fx.root, 'a-file'), 'x');
     // Under a regular file Windows reports no entry and POSIX ENOTDIR; both are the same refusal.
     const [nothing, file, child] = [path.join(fx.root, 'nothing'), path.join(fx.root, 'a-file'), path.join(fx.root, 'a-file', 'child')];
-    await assertCwdRefused(fx, [
+    assertCwdRefused(fx, [
       ['', 'the value is empty'],
       ['  ', 'the value is empty'],
       [nothing, `no directory at ${nothing} (`],
@@ -558,7 +561,7 @@ describe('T0-CLI-CWD-FILE-ARGS-2', () => {
     chmodSync(locked, 0o000);
     try {
       // A directory under a parent that cannot be read: its stat fails EACCES, so -C is refused (exit 1, exit 2 under a hook).
-      await assertCwdRefused(fx, [[path.join(locked, 'inner'), `no directory at ${path.join(locked, 'inner')} (`]]);
+      assertCwdRefused(fx, [[path.join(locked, 'inner'), `no directory at ${path.join(locked, 'inner')} (`]]);
       // The mode-000 directory itself: its stat needs search permission on the parent only, so it names an existing directory and
       // R2 accepts it; the command then fails with its own error when it opens spec.md there.
       const r = await fx.run(['-C', locked, 'spec', 'validate', 'spec.md']);

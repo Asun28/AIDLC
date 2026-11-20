@@ -21,8 +21,8 @@ import { atomicWriteJson } from '../../src/state/store.ts';
 import type { Goal, JournalEvent, ReviewRequest } from '../../src/core/types.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
 
-/** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
-const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
+/** The CLI entry a child process runs: bin/aidlc.js, which loads the sources unless a build is at least as new as every source file. */
+const BIN = fileURLToPath(new URL('../../bin/aidlc.js', import.meta.url));
 const POOL = 'default';
 const FAR = '2126-01-01T00:00:00.000Z';
 const HELD = 'T1-HELD';
@@ -147,9 +147,9 @@ function preloadArgs(r: Rig): string[] {
   return ['--import', pathToFileURL(file).href];
 }
 
-/** The CLI in a child process. Child process (R1: a module preloaded with --import): every call with `preload` runs here. */
+/** The CLI in a child process through bin/aidlc.js. Child process (R1: a module preloaded with --import): every call with `preload` runs here. */
 function cliChild(r: Rig, args: string[], options: RunOptions = {}): Result {
-  const res = spawnSync(process.execPath, [...(options.preload ? preloadArgs(r) : []), MAIN, ...args], { cwd: r.cwd, env: childEnv(r, options.env, options.session), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+  const res = spawnSync(process.execPath, [...(options.preload ? preloadArgs(r) : []), BIN, ...args], { cwd: r.cwd, env: childEnv(r, options.env, options.session), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
   return { status: res.status, stdout: res.stdout, stderr: res.stderr };
 }
 
@@ -160,9 +160,9 @@ async function cli(r: Rig, args: string[], options: RunOptions = {}): Promise<Re
 }
 
 /**
- * A run of the CLI that also carries its exit status as a promise of its own, so that `await resolve(...).status` reads the
- * status where the child-process form read `resolve(...).status`. The status promise is marked handled: a failed run rejects
- * where the run or its status is awaited.
+ * A run of the CLI with its exit status also given as a promise of its own: `await resolve(...).status` reads the status where
+ * the synchronous form read `resolve(...).status`, as `await` binds looser than the property access. The status promise is
+ * marked handled; a failed run still rejects where the run or its status is awaited.
  */
 type Run = Promise<Result> & { status: Promise<number | null> };
 function withStatus(run: Promise<Result>): Run {
@@ -175,10 +175,10 @@ const resolve = (r: Rig, key: string, flags: string[], options: RunOptions = {})
 /** `review resolve` in a child process, for a call made inside a synchronous callback. */
 const resolveChild = (r: Rig, key: string, flags: string[], options: RunOptions = {}): Result => cliChild(r, ['review', 'resolve', key, ...flags], options);
 
-/** Child process (R1: concurrent children): two commands run at once. */
+/** Child process (R1: concurrent children): two commands through bin/aidlc.js at once. */
 function cliAsync(r: Rig, args: string[]): Promise<Result> {
   return new Promise((done, reject) => {
-    const child = spawn(process.execPath, [MAIN, ...args], { cwd: r.cwd, env: childEnv(r), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 60_000 });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd: r.cwd, env: childEnv(r), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 60_000 });
     const chunks = { out: '', err: '' };
     child.stdout.on('data', (chunk: Buffer) => (chunks.out += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (chunks.err += chunk.toString('utf8')));
@@ -327,9 +327,10 @@ interface Row { name: string; args: string[]; stderr: string; preload?: boolean;
 const aidlc = (message: string): string => `aidlc: ${message}\n`;
 
 /** One refusal: exit 1, the whole message on stderr, nothing written or journaled. */
-async function assertRefused(r: Rig, row: Row): Promise<void> {
+function assertRefused(r: Rig, row: Row): void {
   const before = snapshot(r.fx);
-  const res = await cli(r, row.args, { preload: row.preload, env: row.env });
+  // Child process: called from an R3-protected synchronous helper declaration, so every refusal row runs through bin/aidlc.js.
+  const res = cliChild(r, row.args, { preload: row.preload, env: row.env });
   assert.equal(res.status, 1, `${row.name}: ${res.stderr}`);
   assert.equal(res.stderr, row.stderr, row.name);
   assert.deepEqual(snapshot(r.fx), before, `${row.name}: the state changed`);
@@ -380,11 +381,11 @@ function optionRows(r: Rig, key: string, queuedKey: string): Row[] {
 }
 
 test('every refusal of review resolve writes nothing and journals nothing', async (t) => {
-  await t.test('an unknown key and a request that is not lost', async (t) => {
+  await t.test('an unknown key and a request that is not lost', (t) => {
     const r = rig(t);
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
-    await assertRefused(r, { name: 'unknown key', args: ['review', 'resolve', 'o/r|none|main|p|r', '--no-result', ...LOOKED], stderr: aidlc('unknown review request o/r|none|main|p|r') });
-    await assertRefused(r, { name: 'queued, upper-case alias', args: ['review', 'resolve', upper(queued.key), '--no-result', ...LOOKED], stderr: aidlc(`request ${upper(queued.key)} is not lost`) });
+    assertRefused(r, { name: 'unknown key', args: ['review', 'resolve', 'o/r|none|main|p|r', '--no-result', ...LOOKED], stderr: aidlc('unknown review request o/r|none|main|p|r') });
+    assertRefused(r, { name: 'queued, upper-case alias', args: ['review', 'resolve', upper(queued.key), '--no-result', ...LOOKED], stderr: aidlc(`request ${upper(queued.key)} is not lost`) });
   });
 
   const states: Array<[string, (r: Rig, key: string) => void]> = [
@@ -395,12 +396,12 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
     ['cancelled', (r, key) => void r.fx.queue.cancel(key, 'cancelled by the test', r.fx.now())],
   ];
   for (const [state, setup] of states) {
-    await t.test(`a ${state} request`, async (t) => {
+    await t.test(`a ${state} request`, (t) => {
       const r = rig(t);
       const key = r.fx.queue.enqueue(enqueueInput(state, `${r.one.id}:${HELD}`)).request.key;
       setup(r, key);
       assert.equal(r.fx.queue.get(key)?.state, state);
-      await assertRefused(r, { name: state, args: ['review', 'resolve', key, '--no-result', ...LOOKED], stderr: aidlc(`request ${key} is not lost`) });
+      assertRefused(r, { name: state, args: ['review', 'resolve', key, '--no-result', ...LOOKED], stderr: aidlc(`request ${key} is not lost`) });
     });
   }
 
@@ -442,13 +443,13 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
     mkdirSync(path.join(r.cwd, 'a-directory'));
     const rows = optionRows(r, lost.key, queued.key);
-    for (const row of rows) await assertRefused(r, row);
+    for (const row of rows) assertRefused(r, row);
     writeFileSync(path.join(r.cwd, 'aidlc.config.json'), '{ not json');
     const control = await resolve(r, lost.key, ['--no-result', ...LOOKED]);
     assert.equal(control.status, 1);
     assert.ok(control.stderr.startsWith('aidlc: ') && !control.stderr.includes('--verdict'), control.stderr);
     assert.ok(!control.stderr.includes('review resolve:'), `the configuration error is none of M1 to M6: ${control.stderr}`);
-    for (const row of rows) await assertRefused(r, { ...row, name: `${row.name}, bad configuration` });
+    for (const row of rows) assertRefused(r, { ...row, name: `${row.name}, bad configuration` });
   });
 });
 
@@ -961,14 +962,14 @@ test('--verdict is read as T0-CLI-CWD-FILE-ARGS-2 reads a file argument, and ver
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, path.join(r.cwd, 'verdict.json'));
   });
 
-  await t.test('Windows: a drive-relative and a network value are refused', { skip: windows }, async (t) => {
+  await t.test('Windows: a drive-relative and a network value are refused', { skip: windows }, (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const rows: Array<[string, string]> = [
       ['C:verdict.json', '--verdict "C:verdict.json": a drive letter without a separator names the current directory of that drive; pass C:\\ and the full path, or a path relative to the -C directory'],
       ['\\\\x', '--verdict "\\\\\\\\x": a network path needs a server and a share; pass \\\\server\\share\\path, or a path relative to the -C directory'],
     ];
-    for (const [value, message] of rows) await assertRefused(r, { name: value, args: ['review', 'resolve', lost.key, '--verdict', value, ...LOOKED], stderr: aidlc(message) });
+    for (const [value, message] of rows) assertRefused(r, { name: value, args: ['review', 'resolve', lost.key, '--verdict', value, ...LOOKED], stderr: aidlc(message) });
   });
 });
 

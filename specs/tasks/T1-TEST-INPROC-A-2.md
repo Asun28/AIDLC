@@ -45,3 +45,26 @@ npm run typecheck && node --test tests/surface/cli-cwd-paths.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: the three files pass with no assertion line or test name changed.
+
+## Attempt evidence
+
+| # | Proof | Result |
+|---|---|---|
+| 1 | DoD: `npm run typecheck && node --test` over the three files | exit 0 (counts in the attempt receipt) |
+| 2 | Script outside the worktree: for each hunk of `git diff -U0 622dda7c -- <file>`, every removed or added line containing the substring `assert`, `it(`, `test(` or `describe(` is paired in order and compared with every `async ` and `await ` removed; it(/test(/t.test( counts per file | 66 pairs equal, 0 unpaired, 0 different; counts 25 -> 25, 61 -> 61, 7 -> 7 |
+| 3 | Comments `// Child process (...)` at each kept child case; command coverage below | every command has a bin/aidlc.js child case |
+| 4 | `changelog.d/T1-TEST-INPROC-A-2.md`, junit times from `node --test --test-reporter=junit` | 146.2 -> 59.4 s, 123.0 -> 66.2 s, 18.4 -> 18.7 s |
+
+Command -> bin/aidlc.js child-process case (R2):
+- init, cards project, intent validate, spec validate, plan check, review bench compare, ci classify, migrate assess, evidence retain, monitor check -> cli-cwd-paths "supplied values: a value under a regular file fails with the error of main naming the resolved path [R6]"; spec validate also "every child starts without the NODE_ variables of the test process: a refusal prints the same stderr with NODE_DEBUG set".
+- review bench run, hook auto, hook protect-paths -> cli-cwd-paths "an invalid -C is refused for every command [R2] [R6]" (through `assertCwdRefused`); review bench run also "-C selects the same repository and state directory in every form of the same directory [R1]"; both hooks also "-C selects the same repository and state directory in every form: a hook runs its guards in the -C directory [R1]".
+- doctor -> cli-cwd-paths "every child starts without the GIT_ variables of the test process, and repository discovery stops at the ceiling" and "-C leaves the process directory and the environment as they are [R1] [R8]".
+- goal new -> cli-cwd-paths "-C leaves the process directory and the environment as they are [R1] [R8]"; review-r3-wait `cliRepo` setup.
+- review resolve -> review-resolve "every refusal of review resolve writes nothing and journals nothing" (through `assertRefused`), every `preload` call, and "two commands resolving the same lost request, one settles and the other is refused" (`cliAsync`).
+- report, card next, card attempt, review r3 -> review-r3-wait "acceptance 2 and 3: ..." and "F1: ..." (`cliRepo` and `toReview` setup, every `review r3` call); report also "F2: ...".
+
+`resolve()` in review-resolve returns the promise of the run with one added property, `status`, a promise of the run's exit status. It exists because 15 protected lines read `assert.equal(resolve(...).status, 0)`: `await` binds looser than the property access, so `(await resolve(...)).status` would need parentheses, which R3 does not allow. With the property, each such line changes by `await ` alone. The status promise has a no-op rejection handler so that a run whose status is never read does not raise an unhandled rejection; a failed run still rejects where its result or status is awaited.
+
+`assertCwdRefused` and `assertRefused` keep their declarations as on main (synchronous, return type `void`), so their bodies start the CLI through bin/aidlc.js in a child process and their call sites are unchanged.
+
+Guard sweep: the change adds no guard to product code; `cli()` in review-resolve picks the child process when `preload` is set, and the preload rows fail without the injected fault (the in-process form would not load the module), so the branch is exercised by those rows.
