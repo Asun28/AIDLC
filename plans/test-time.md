@@ -25,10 +25,10 @@ test file).
 - T1-TEST-CLI-INPROC-2 (replaces T1-TEST-CLI-INPROC; adds a test-only cache reset export in `src/state/paths.ts`): `tests/infra/cli-inprocess.ts` (new), `tests/infra/cli-inprocess.test.ts` (new), changelog.
 - T1-TEST-INPROC-A: `tests/surface/cli-cwd-paths.test.ts`, `tests/scenarios/review-resolve.test.ts`, `tests/scenarios/review-r3-wait.test.ts`, changelog.
 - T1-TEST-INPROC-B: `tests/surface/init-base-ci.test.ts`, `tests/scenarios/review-no-run.test.ts`, `tests/surface/approver.test.ts`, `tests/surface/init-no-package.test.ts`, changelog.
-- T1-TEST-AUDIT-LIST-2 (replaces T1-TEST-AUDIT-LIST): `docs/reliability/test-audit.json` (new, the rows), `docs/reliability/test-audit.md` (new, prose and the rendered table), `tests/surface/test-audit.test.ts` (new), changelog.
+- T1-TEST-AUDIT-LIST-3 (replaces T1-TEST-AUDIT-LIST-2, which replaced T1-TEST-AUDIT-LIST): `docs/reliability/test-audit.json` (new, the rows), `docs/reliability/test-audit.md` (new, prose and the rendered table), `tests/surface/test-audit.test.ts` (new), changelog.
 
 ## Order of work
-1. T1-TEST-CLI-INPROC-2 and T1-TEST-AUDIT-LIST-2 in parallel.
+1. T1-TEST-CLI-INPROC-2 and T1-TEST-AUDIT-LIST-3 in parallel.
 2. T1-TEST-INPROC-A and T1-TEST-INPROC-B in parallel, after T1-TEST-CLI-INPROC-2 (successor of T1-TEST-CLI-INPROC) merges.
 3. Coordinator: the junit timing of the seven files and the full suite wall time on this
    machine, before (2026-11-19 baseline: 666 s wall) and after, in the goal's closing note.
