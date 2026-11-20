@@ -1,7 +1,7 @@
 ---
 id: T0-TEST-AUDIT-UPDATE
 title: The four tests of the owner-approved audit list check the code the loop runs (runReviewPanel, templates/plans/_TEMPLATE.md) instead of the test copies runPreReview and renderPlan
-status: todo
+status: merged
 branch: T0-TEST-AUDIT-UPDATE
 worktree: D:\wt\AIDLC\T0-TEST-AUDIT-UPDATE
 plan_ref: plans/test-time.md#order-of-work
