@@ -1,7 +1,7 @@
 ---
 id: T1-TEST-AUDIT-LIST-3
 title: (replaces T1-TEST-AUDIT-LIST-2 and carries its candidate) The audit test creates its temporary directories through tmpDir of tests/infra/helpers.ts, so the temporary-directory sweep test passes
-status: todo
+status: merged
 branch: T1-TEST-AUDIT-LIST-3
 worktree: D:\wt\AIDLC\T1-TEST-AUDIT-LIST-3
 plan_ref: plans/test-time.md#order-of-work
