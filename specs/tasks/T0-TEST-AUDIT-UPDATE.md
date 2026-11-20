@@ -11,7 +11,9 @@ allow_paths:
   - tests/surface/plan.test.ts
   - changelog.d/T0-TEST-AUDIT-UPDATE.md
   - specs/tasks/T0-TEST-AUDIT-UPDATE.md
-dod_command: npm run typecheck && node --test tests/surface/pre-review.test.ts tests/surface/reviewer-env.test.ts tests/surface/plan.test.ts
+  - docs/reliability/test-audit.json
+  - docs/reliability/test-audit.md
+dod_command: npm run typecheck && node --test tests/surface/pre-review.test.ts tests/surface/reviewer-env.test.ts tests/surface/plan.test.ts tests/surface/test-audit.test.ts
 dod_exit: 0
 requirements:
   - R1. In `tests/surface/pre-review.test.ts`, test "formal review (R3) command: placeholders expand…", the argv-mode and stdin-mode arms shall call `runReviewPanel` of `src/review/pre-review.ts` (one angle, `perspectives: []`) instead of `runPreReview` of `tests/surface/_review-once.ts`, and keep their assertions: argv mode passes the instructions as an argument and an empty stdin, stdin mode passes the prompt on stdin, and the argv-mode round passes.
@@ -29,7 +31,8 @@ forbid:
   - a change under src/ or templates/
   - changing any test other than the four named in R1 to R4, or an assertion of those four beyond what R1 to R4 name
   - removing runPreReview or renderPlan from the test helpers (other tests still call them)
-non_goals: [editing docs/reliability/test-audit.json or its table, converting other runPreReview callers]
+non_goals: [adding, removing or reclassifying audit rows, converting other runPreReview callers]
+sweep: "Amended 2026-11-21 on the owner's instruction in session: the renames that R3 and R4 require break tests/surface/test-audit.test.ts, whose rows name tests by title, so docs/reliability/test-audit.json and its rendered table in docs/reliability/test-audit.md join allow_paths and the DoD. Only the `test` titles of rows 3 and 4 and the `coveredBy` of row 3 (its own title) change; no requirement, acceptance item or budget changes."
 hygiene: "Acts on the four rows of docs/reliability/test-audit.json that the owner approved in session on 2026-11-20 (all four `update`). tdd is false: the product code is correct, so no test goes RED by a code change; the oracle is the mutation sweep in acceptance 2 and 3, which fails the updated tests and passes on main. Changelog entry in changelog.d/T0-TEST-AUDIT-UPDATE.md (form: changelog.d/README.md)."
 ---
 
