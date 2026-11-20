@@ -71,3 +71,17 @@ Revert table, each run on the two new files and restored: offsets a day either s
 Other suites that run `finalizeReview` or carry quota holds, run once on Windows: pre-review, r2-pass-notes, review-bench (5 files), r2-billing-hold, r2-fallback: 189 tests, 189 pass.
 
 DoD (Windows): `npm run typecheck` clean; `node --test tests/core/limit-reset.test.ts tests/surface/pre-review-limit-reset.test.ts tests/core/parse-guard.test.ts tests/core/review-policy.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts`: 113 tests, 113 pass, 0 fail.
+
+Attempt 2 (repair of R3 decision 1, F1 class skipped-fold-occurrence, F2 class non-iana-reset-zone). F1: a time a daylight-saving end repeats has two exact candidates; the earliest strictly after now decides, and when both have passed the next day does, where attempt 1 took the first exact candidate and, when it had passed, skipped to the next day. A time with no exact candidate is still the end of the gap. F2: the zone in `RESET` must open with a letter and has no `:` (`[A-Za-z][\w+-]*(?:/[\w+-]+)*`), so a numeric offset Intl accepts (`+05:00`, `-0800`, `+05`) reads no delay.
+
+Input forms the repair handles, in tests/core/limit-reset.test.ts: `resets 2:30am (Pacific/Auckland)` across the 2026-04-05 fall-back with the first occurrence ahead (30 min), between the two (45 min, F1) and at the second (24 h); `resets 1pm (<zone>)` for `+05:00`, `-0800`, `+05`, `05:00`, `UTC+5`, `GMT+05:00` (no delay, F2) and `Etc/GMT-5` (8 h, an IANA name). On the attempt 1 code (8d7c5e5e) the between-occurrences row and the numeric-offset rows fail; all pass now.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | as attempt 1, plus "across the Pacific/Auckland daylight-saving end a time that occurs twice ..." | pass |
+| 2 | as attempt 1 | pass |
+| 3 | as attempt 1, plus "a numeric offset or other non-IANA zone text reads no delay ..." | pass |
+| 4 | as attempt 1 | pass |
+| 5 | as attempt 1 | pass |
+
+DoD (Windows): typecheck clean; 115 tests, 115 pass, 0 fail.

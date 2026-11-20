@@ -3,8 +3,12 @@
  * as the Claude CLI's `You've hit your Fable limit · resets 1pm (Pacific/Auckland)`. Pure: the caller passes the clock.
  */
 
-/** `resets <h>[:<mm>]<am|pm> (<IANA zone>)` in any letter case; the first one in the text decides. */
-const RESET = /resets (\d{1,2})(?::(\d{2}))?(am|pm) \(([^()\s]+)\)/i;
+/**
+ * `resets <h>[:<mm>]<am|pm> (<IANA zone>)` in any letter case; the first one in the text decides. A zone is written as an
+ * IANA name (`Pacific/Auckland`, `UTC`, `Etc/GMT-5`): it opens with a letter and has no `:`, so a numeric offset such as
+ * `+05:00`, which Intl also accepts, never matches.
+ */
+const RESET = /resets (\d{1,2})(?::(\d{2}))?(am|pm) \(([A-Za-z][\w+-]*(?:\/[\w+-]+)*)\)/i;
 const DAY = 86_400_000;
 
 /**
@@ -37,9 +41,11 @@ export function limitResetMs(text: string, nowIso: string): number | undefined {
     const target = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + d, hour, min);
     // The offsets a day either side bound the offset at the target: a zone changes its offset at most once a day.
     const candidates = [target - offset(target - DAY), target - offset(target + DAY)].sort((a, b) => a - b);
-    const exact = candidates.find((t) => wall(t) === target);
-    const at = exact ?? gapEnd(candidates[0]!, candidates[1]!, offset);
-    if (at > now) return at - now;
+    // A time a daylight-saving end repeats has two exact candidates: the earliest still ahead decides, and when both have
+    // passed the next day does. A time with no exact candidate is in a gap and waits until its end.
+    const exact = candidates.filter((t) => wall(t) === target);
+    const at = exact.length > 0 ? exact.find((t) => t > now) : gapEnd(candidates[0]!, candidates[1]!, offset);
+    if (at !== undefined && at > now) return at - now;
   }
   return undefined;
 }
