@@ -1,7 +1,7 @@
 ---
 id: T1-PANEL-ARMS-REPORT
 title: docs/reliability/panel.md reports Codex+Codex against Codex+Fable 5.2 as panels of R3, from the saved 2026-11-16 Codex pair and the Fable runs, with union, intersection and unique hits computed in bench/outcome/panel.ts, against the keep rule of intent/review-panel.md
-status: todo
+status: merged
 branch: T1-PANEL-ARMS-REPORT
 worktree: D:\wt\AIDLC\T1-PANEL-ARMS-REPORT
 plan_ref: plans/review-panel.md#order-of-work
