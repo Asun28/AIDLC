@@ -1,0 +1,146 @@
+{
+  "commit": "c7a7ce14b8942c06ea53ced7fd70669f7f749e5a",
+  "policyHash": {
+    "stage1": "aa7f80bac1a3df11a5b915c7f85a2ef0b1e268a065229b7790c5020c0dad537e"
+  },
+  "inputs": {
+    "arms/rounds-miss.json": "fbdda7ec68ae595d0720ddbf030f2ff2113947f83bf94891001dcac613370b52",
+    "arms/order-miss.json": "28e4d4f051a3cb89b23718656bd7023e1adf9637d82e130bbe6fed47092f212f",
+    "panel-arms/fable-miss.json": "5cbf4e75bed28d5f1245d857982ec7508db373d1e96fcc2b8eefe3f3592baf7a",
+    "arms/rounds-clean.json": "dab53003c8574e08f6b094ec1630e15d2e9c2292d78a6f431af1c09d1505fb58",
+    "arms/order-clean.json": "8471689240d913689aa55c3dfc63a498102e90b9bfb50d88455dd628a1b60e4a",
+    "panel-arms/fable-clean.json": "4d32f6a185828c85ae98b4d53302e24e74ed0b3bf08671584c850c78fd81e0be"
+  },
+  "lessons": {
+    "arms": {
+      "commit": "1418c7b9acc18621171384e3d92d7ffcbcde3a07",
+      "lessons": 171
+    },
+    "stage1": {
+      "commit": "be8b2c8a584bd56b982e14d3f1c70f32d0e354f2",
+      "lessons": 187
+    },
+    "added": 16
+  },
+  "measures": {
+    "stage1": {
+      "excluded": [
+        "T1-PARSE-GUARD.g-20260926084954-89a33c.F1",
+        "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F1",
+        "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F3",
+        "T0-BENCH-DRAFTS-IGNORE-2.g-20261113192241-bc89c5.clean",
+        "T0-BOARD-OWNER-WAIT.g-20261110004006-d26e06.clean",
+        "T0-EDGE-SCOPE.g-20261110002415-636259.clean",
+        "T0-EVAL-TEST-TEMP.g-20261110042730-ae66fa.clean",
+        "T0-HOOK-CLASSIFIER-3.g-20260927185019-1b4266.clean",
+        "T0-INTAKE-TARGET-2.g-20261107061914-d4ca11.clean",
+        "T0-LESSONS-TEST-RUN-ENV.g-20261107073339-f8808f.clean",
+        "T0-MANIFEST-LOCK.g-20261111055540-7e0044.clean",
+        "T0-MERGED-VIEW-CHECK.g-20261107014429-8ad0cf.clean",
+        "T0-OPS-INTENT-KIND.g-20261107012016-84da8b.clean",
+        "T0-PROD-GATE-GENERATION.g-20261111204133-83a5b6.clean",
+        "T0-R2-OFF.g-20261106222641-3df166.clean",
+        "T1-EFF-AGENTS-DOD.g-20261019092137-6fcee2.clean",
+        "T1-SWEEP2-EXTEND-REASON.g-20261014085120-fa9517.clean",
+        "T1-VERIFY-SKILL.g-20261023072913-94f64f.clean"
+      ],
+      "excludedKinds": {
+        "bug": 3,
+        "clean": 15
+      },
+      "codex": {
+        "cases": 61,
+        "bugCases": 61,
+        "cleanCases": 0,
+        "members": [
+          {
+            "hits": 33,
+            "falseBlocks": 0
+          }
+        ],
+        "union": {
+          "hits": 33,
+          "falseBlocks": 0
+        },
+        "intersection": {
+          "hits": 33,
+          "falseBlocks": 0
+        },
+        "uniqueHits": [
+          33
+        ],
+        "excluded": []
+      },
+      "codexCodex": {
+        "cases": 61,
+        "bugCases": 61,
+        "cleanCases": 0,
+        "members": [
+          {
+            "hits": 33,
+            "falseBlocks": 0
+          },
+          {
+            "hits": 34,
+            "falseBlocks": 0
+          }
+        ],
+        "union": {
+          "hits": 40,
+          "falseBlocks": 0
+        },
+        "intersection": {
+          "hits": 27,
+          "falseBlocks": 0
+        },
+        "uniqueHits": [
+          6,
+          7
+        ],
+        "excluded": []
+      },
+      "codexFable": {
+        "cases": 61,
+        "bugCases": 61,
+        "cleanCases": 0,
+        "members": [
+          {
+            "hits": 33,
+            "falseBlocks": 0
+          },
+          {
+            "hits": 20,
+            "falseBlocks": 0
+          }
+        ],
+        "union": {
+          "hits": 38,
+          "falseBlocks": 0
+        },
+        "intersection": {
+          "hits": 15,
+          "falseBlocks": 0
+        },
+        "uniqueHits": [
+          18,
+          5
+        ],
+        "excluded": []
+      }
+    }
+  },
+  "keep": {
+    "stage2": "skip",
+    "gate": {
+      "fableUniqueHits": 5,
+      "fieldOrderUniqueHits": 7,
+      "threshold": 8
+    },
+    "rule": {
+      "panelGain": 7,
+      "extraFalseBlocks": 1,
+      "wallTimeRatio": 1.5,
+      "fableGain": 5
+    }
+  }
+}

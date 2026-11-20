@@ -18,7 +18,7 @@ From intent: intent/test-time.md. Status: accepted (owner decisions of 2026-11-1
 
 ## Acceptance
 - 1. The in-process helper and `bin/aidlc.js` give the same status, stdout and stderr on at least five calls, and a passing, an exiting and a throwing call leave the process state as it was. [R1]
-- 2. The seven converted files pass with no added or removed line containing `assert`, `it(`, `test(` or `describe(`, and each command they run keeps a child-process case. [R2] [R3]
+- 2. The seven converted files pass with no added or removed line containing `assert`, `it(`, `test(` or `describe(`, each changed such line equal to main once `async ` and `await ` are removed (owner decision 2026-11-20), and each command they run keeps a child-process case. [R2] [R3]
 - 3. The audit list exists, and a test checks that each row names an existing test with a valid class and action and that no row proposes `remove` without a covering test. [R4]
 - 4. The closing note gives the junit time of the seven files and the full suite wall time before (666 s) and after. [R2] [R3]
 

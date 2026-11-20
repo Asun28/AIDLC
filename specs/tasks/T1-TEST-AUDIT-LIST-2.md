@@ -2,6 +2,7 @@
 id: T1-TEST-AUDIT-LIST-2
 title: (replaces T1-TEST-AUDIT-LIST and carries its candidate) The test audit rows live in docs/reliability/test-audit.json, which the test validates, and the table of docs/reliability/test-audit.md is checked to be exactly the rendering of that file
 status: todo
+superseded_by: T1-TEST-AUDIT-LIST-3
 branch: T1-TEST-AUDIT-LIST-2
 worktree: D:\wt\AIDLC\T1-TEST-AUDIT-LIST-2
 plan_ref: plans/test-time.md#order-of-work
