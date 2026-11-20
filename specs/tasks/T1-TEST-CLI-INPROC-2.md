@@ -87,3 +87,39 @@ Guard sweep (each guard loosened, the test file run, then restored):
 | spawnSync: child stdout / stderr forwarded | each dropped | INPROC-2 acceptance 4 (each) |
 | wrappers synced into ESM bindings | not synced | the run did not finish: pwsh inherited the test runner's stdin and waited; the sweep's 400 s timeout ended it (no pwsh left, checked by command line) |
 | wrappers restored | not restored | INPROC-2 acceptance 4 |
+
+### Repair after R3 decision 1 (candidate 2a2341d6)
+
+RED on 7a453d5b: the probe-collision test failed (the caller's actor with session `runCliInProcess-no-cached-actor` came back as a fresh actor) and the win32 case test failed (`lower-session`, child `upper-session`). The prefetch test passed on that commit and failed with `prefetch = undefined;` removed from `resetRepoIdentityForTests` (the later lookup took the pending prefetch's repository).
+
+- F1: the probe session is a fresh `randomUUID()` per call, so no session a caller can hold is reserved. Test: "a caller keeps its cached actor whatever its session, the former probe value included".
+- F2: "resetRepoIdentityForTests drops a pending prefetch, so a later lookup does not take its answer": a prefetch started with `GIT_DIR`/`GIT_WORK_TREE` naming another repository, then the reset, then `settleRepoIdentity` and `resolveRepoIdentity` resolve without that repository.
+- F3: the call's environment is built as Node's `normalizeSpawnArguments` builds a child's (read in the installed Node 22.23.1 binary): every enumerable key including inherited ones; on win32 keys sorted and only the first of those equal apart from case kept; then undefined values dropped. Tests: "env keys that differ only in case resolve as in a bin/aidlc.js child on win32" (skipped elsewhere by platform; both insertion orders) and "an env key inherited from the prototype of the env object reaches the call as it reaches a bin/aidlc.js child".
+
+Input forms and the tests that cover them:
+
+| Input form | Test |
+|---|---|
+| caller actor: none / set / set with the former probe session | INPROC-2 acceptance 2 (restored set, restored none), "a caller keeps its cached actor whatever its session" |
+| env key with an undefined value | INPROC acceptance 1 (doctor session line) |
+| env key added for the call | INPROC acceptance 2 (`AIDLC_INPROC_PROBE`) |
+| env keys equal apart from case, both orders (win32) | "env keys that differ only in case" |
+| env key inherited from the env object's prototype | "an env key inherited from the prototype" |
+| `GIT_DIR`/`GIT_WORK_TREE` per call, caller-cached identity | INPROC-2 acceptance 2 |
+| pending prefetch at reset | "resetRepoIdentityForTests drops a pending prefetch" |
+
+Guard sweep of the repair (each loosened, the test file run, then restored):
+
+| Guard | Loosened form | Failed |
+|---|---|---|
+| probe: uncached when the probe session comes back | always uncached | INPROC-2 acceptance 2, "a caller keeps its cached actor" |
+| same | always cached | INPROC-2 acceptance 2 |
+| probe value random | fixed `runCliInProcess-no-cached-actor` | "a caller keeps its cached actor" |
+| win32 branch | off | "env keys that differ only in case" |
+| win32: keys sorted | not sorted | same |
+| win32: dedupe ignores case | case-sensitive | same |
+| undefined values dropped | kept as `"undefined"` | INPROC acceptance 1 |
+| inherited keys included | own keys only | "an env key inherited from the prototype" |
+| keys absent from the call deleted | not deleted | INPROC acceptance 1, 2; INPROC-2 acceptance 2, 3, 4 |
+| `resetRepoIdentityForTests`: `prefetch = undefined` | dropped | "drops a pending prefetch" |
+| `resetRepoIdentityForTests`: `identityCache.clear()` | dropped | INPROC-2 acceptance 2 |

@@ -320,11 +320,27 @@ describe('runCliInProcess, R3 decision 1 repairs', () => {
 
   it('T1-TEST-CLI-INPROC-2 acceptance 2: env keys that differ only in case resolve as in a bin/aidlc.js child on win32', { skip: process.platform !== 'win32' && 'win32 only: elsewhere env keys are case-sensitive' }, async () => {
     const { repo, env } = fixture();
-    const colliding = { ...env, AIDLC_SESSION: 'upper-session', aidlc_session: 'lower-session' };
-    const expected = child(['intent', 'new', '--title', 'case child'], { cwd: repo, env: colliding });
-    assert.equal(authorOf(expected.stdout), 'upper-session', expected.stderr);
-    const actual = await runCliInProcess(['intent', 'new', '--title', 'case inproc'], { cwd: repo, env: colliding });
-    assert.equal(actual.status, 0, actual.stderr);
-    assert.equal(authorOf(actual.stdout), authorOf(expected.stdout));
+    // Both orders: Node keeps the first key in sorted order, not the first or the last given.
+    for (const [n, order] of [['AIDLC_SESSION', 'aidlc_session'], ['aidlc_session', 'AIDLC_SESSION']].entries()) {
+      const colliding: NodeJS.ProcessEnv = { ...env };
+      delete colliding['AIDLC_SESSION'];
+      for (const key of order) colliding[key] = key === 'AIDLC_SESSION' ? 'upper-session' : 'lower-session';
+      const expected = child(['intent', 'new', '--title', `case child ${n}`], { cwd: repo, env: colliding });
+      assert.equal(authorOf(expected.stdout), 'upper-session', expected.stderr);
+      const actual = await runCliInProcess(['intent', 'new', '--title', `case inproc ${n}`], { cwd: repo, env: colliding });
+      assert.equal(actual.status, 0, actual.stderr);
+      assert.equal(authorOf(actual.stdout), authorOf(expected.stdout), order.join(' then '));
+    }
+  });
+
+  it('T1-TEST-CLI-INPROC-2 acceptance 2: an env key inherited from the prototype of the env object reaches the call as it reaches a bin/aidlc.js child', async () => {
+    const { repo, env } = fixture();
+    const own: NodeJS.ProcessEnv = { ...env };
+    delete own['AIDLC_SESSION'];
+    const inherited = Object.assign(Object.create({ AIDLC_SESSION: 'inherited-session' }) as NodeJS.ProcessEnv, own);
+    const expected = child(['intent', 'new', '--title', 'inherited child'], { cwd: repo, env: inherited });
+    assert.equal(authorOf(expected.stdout), 'inherited-session', expected.stderr);
+    const actual = await runCliInProcess(['intent', 'new', '--title', 'inherited inproc'], { cwd: repo, env: inherited });
+    assert.equal(authorOf(actual.stdout), 'inherited-session', actual.stderr);
   });
 });

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import childProcess, { type SpawnSyncOptions, type SpawnSyncReturns, type StdioOptions } from 'node:child_process';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -67,18 +68,46 @@ function syncSpawner(original: typeof childProcess.spawnSync, out: string[], err
   }) as typeof childProcess.spawnSync;
 }
 
-/** The actor `currentActor` caches for the caller, read without changing it: undefined when none is cached. */
+/**
+ * The actor `currentActor` caches for the caller, undefined when none is cached. With none
+ * cached, `currentActor` returns and caches an actor of the session it is given: a fresh random one, so no session a
+ * caller can hold is mistaken for it.
+ */
 function cachedActor(): ReturnType<typeof currentActor> | undefined {
-  const probe = 'runCliInProcess-no-cached-actor';
+  const probe = randomUUID();
   const actor = currentActor({ AIDLC_SESSION: probe });
-  // A probe actor cached here is dropped by the reset before the call.
+  // An actor cached here for the probe is dropped by the reset before the call.
   return actor.session === probe ? undefined : actor;
 }
 
-function replaceEnv(next: NodeJS.ProcessEnv): void {
-  // A key given as undefined is left out, as spawnSync leaves it out of a child's environment.
-  for (const key of Object.keys(process.env)) if (next[key] === undefined) delete process.env[key];
-  for (const [key, value] of Object.entries(next)) if (value !== undefined) process.env[key] = value;
+/**
+ * The environment a child started with `env` receives, as Node's `normalizeSpawnArguments` (lib/child_process.js) builds
+ * it: every enumerable key, inherited ones included; on win32 the keys sorted and only the first of those equal apart
+ * from case kept; then a key whose value is undefined left out.
+ */
+function childEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  let keys: string[] = [];
+  for (const key in env) keys.push(key);
+  if (process.platform === 'win32') {
+    const seen = new Set<string>();
+    keys = keys.sort().filter((key) => {
+      const upper = key.toUpperCase();
+      if (seen.has(upper)) return false;
+      seen.add(upper);
+      return true;
+    });
+  }
+  const out: Record<string, string> = {};
+  for (const key of keys) {
+    const value = env[key];
+    if (value !== undefined) out[key] = String(value);
+  }
+  return out;
+}
+
+function replaceEnv(next: Record<string, string>): void {
+  for (const key of Object.keys(process.env)) if (!Object.hasOwn(next, key)) delete process.env[key];
+  for (const [key, value] of Object.entries(next)) process.env[key] = value;
 }
 
 /**
@@ -93,10 +122,10 @@ function replaceEnv(next: NodeJS.ProcessEnv): void {
 export async function runCliInProcess(argv: string[], options: { cwd: string; env?: NodeJS.ProcessEnv; input?: string }): Promise<{ status: number; stdout: string; stderr: string }> {
   if (running) throw new Error('runCliInProcess: a call is already running; await it before the next call');
   running = true;
-  const env = { ...(options.env ?? process.env) };
+  const env = childEnv(options.env ?? process.env);
   const saved = {
     cwd: process.cwd(),
-    env: { ...process.env },
+    env: childEnv(process.env),
     exitCode: process.exitCode,
     exit: process.exit,
     stdoutWrite: process.stdout.write,
