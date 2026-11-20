@@ -1,7 +1,7 @@
 ---
 id: T0-CLI-LIMIT-HOLD
 title: The quota word rule holds on the Claude CLI model-limit message "You've hit your <name> limit", so a reviewer at its limit is a quota hold where it was a tool_error no-verdict round (issue 385)
-status: todo
+status: merged
 branch: T0-CLI-LIMIT-HOLD
 worktree: D:\wt\AIDLC\T0-CLI-LIMIT-HOLD
 allow_paths:
