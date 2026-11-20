@@ -224,3 +224,39 @@ describe('a billing state holds (T0-R2-BILLING-HOLD, issue #92)', () => {
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
+
+describe('the Claude CLI model-limit message holds (T0-CLI-LIMIT-HOLD, issue 385)', () => {
+  /** The stdout of the Claude CLI at its Fable limit in the stage 1 panel arm of goal review-panel, exit code 1 (issue 385). */
+  const STDOUT = "You've hit your Fable limit · resets 1pm (Pacific/Auckland). Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue.\n";
+  test('hit your <one to three words> limit holds and names the phrase; more words, a joined letter or no your does not hold [R1] [R2]', () => {
+    const held: Array<[string, string]> = [
+      ["You've hit your Fable limit", 'hit your Fable limit'],
+      ["You've hit your Opus limit · resets 5am", 'hit your Opus limit'],
+      ["you've hit your weekly limit", 'hit your weekly limit'],
+      ['You have hit your session limit', 'hit your session limit'],
+      ["You've hit your Claude Opus 5.5 limit", 'hit your Claude Opus 5.5 limit'],
+      ['YOU HAVE HIT YOUR DAILY LIMITS', 'HIT YOUR DAILY LIMITS'],
+      ['hit your Claude OpUs 5.5 limit', 'hit your Claude OpUs 5.5 limit'],
+      ['hit your FaBlE limit', 'hit your FaBlE limit'],
+      ['hit your usage limit', 'hit your usage limit'],
+      ['hit your capacity limit', 'hit your capacity limit'],
+      ['rate limited: you have hit your Fable limit', 'hit your Fable limit'],
+    ];
+    for (const [text, phrase] of held) assert.deepEqual(detectQuotaHold(text), { hold: true, via: 'text', evidence: phrase }, text);
+    for (const text of ['you hit your one two three four limit', 'you hit your Fable limitless plan', 'you hit the limit', 'whit your Fable limit', 'hit your Fable limit2', 'hit your Fable limitLess', 'hitYour Fable limit', 'hit_your Fable limit']) {
+      assert.deepEqual(detectQuotaHold(text), { hold: false, via: 'text' }, text);
+    }
+    assert.deepEqual(detectQuotaHold("You've hit your Fable limit", 500), { hold: false, via: 'structured', evidence: 'status 500' }, 'a status decides alone');
+  });
+  test('the issue 385 receipt is a quota hold via text with no retry delay, on the R2/R3 command path too; the same stdout from a process that exited 0 is not [R3]', () => {
+    assert.deepEqual(detectQuotaHold(quotaOutput({ exitCode: 1, stdout: STDOUT, stderr: '' })), { hold: true, via: 'text', evidence: 'hit your Fable limit' });
+    assert.deepEqual(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: STDOUT, stderr: '' }), { outcome: 'quota-hold', runStatus: 'tool_error', reasons: ['via text: hit your Fable limit'], retryAfterMs: undefined });
+    assert.deepEqual(detectQuotaHold(quotaOutput({ exitCode: 0, stdout: STDOUT, stderr: '' })), { hold: false, via: 'text' });
+  });
+  test('docs/OPERATIONS.md names the hit your <name> limit phrase and issue 385 [R4]', () => {
+    const ops = readFileSync(path.join(import.meta.dirname, '..', '..', 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const sentence = ops.split('\n').find((line) => line.includes('`hit your <name> limit`'));
+    assert.ok(sentence, 'docs/OPERATIONS.md names `hit your <name> limit`');
+    assert.match(sentence, /issue 385/);
+  });
+});

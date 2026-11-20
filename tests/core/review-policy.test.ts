@@ -75,6 +75,13 @@ describe('classifyVerdict (Q6)', () => {
     assert.deepEqual(detectQuotaHold('retry-after: 30s'), { hold: true, via: 'text', evidence: 'retry-after', retryAfterMs: 30_000 });
     assert.deepEqual(detectQuotaHold('Retry-After: 2 min'), { hold: true, via: 'text', evidence: 'Retry-After', retryAfterMs: 120_000 });
     assert.deepEqual(detectQuotaHold('all good'), { hold: false, via: 'text' });
+  });
+  test('T0-CLI-LIMIT-HOLD: the Claude CLI model-limit receipt of issue 385 with no verdict is a quota hold that names the phrase [R3]', () => {
+    const stdout = "You've hit your Fable limit · resets 1pm (Pacific/Auckland). Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue.\n";
+    const c = classifyVerdict(undefined, { receipt: { exitCode: 1, stdout, stderr: '' } });
+    assert.equal(c.outcome, 'quota-hold');
+    assert.equal(c.runStatus, 'tool_error');
+    assert.ok(c.reasons.includes('via text: hit your Fable limit'), c.reasons.join(' | '));
     assert.deepEqual(detectQuotaHold(undefined), { hold: false, via: 'text' });
   });
 
