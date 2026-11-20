@@ -59,3 +59,13 @@ export function terminalGoalRefusal(goal: CardGoalState, ruling = false): string
   const readmit = forTime ? `aidlc goal extend ${goal.id} --until <iso> --by <who> --reason "..."` : `aidlc goal resume ${goal.id} --reason "..."`;
   return `goal ${goal.id} is ${goal.state}${reason}; card commands do no card work on it; re-admit it with \`${readmit}\``;
 }
+
+/**
+ * The report of `aidlc goal takeover` and `aidlc card takeover` on a DONE goal (card T0-TAKEOVER-DONE-GOAL, issue 379): a DONE
+ * goal has no work left to own, so the takeover takes no lease and journals nothing, and exits 0. Returns nothing for any other
+ * state; a goal in STOP keeps the takeover as a recovery command (T0-CARD-TERMINAL-GOAL-2 R4).
+ */
+export function doneGoalTakeover(goal: { id: string; state: string }): string | undefined {
+  if (goal.state !== 'DONE') return undefined;
+  return `goal ${goal.id} is DONE: nothing to take over; no lease was taken and no event was journaled`;
+}
