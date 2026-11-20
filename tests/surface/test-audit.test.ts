@@ -1,164 +1,117 @@
-// Card T1-TEST-AUDIT-LIST: docs/reliability/test-audit.md lists the tests that no longer match the code, for the owner to approve.
+// Card T1-TEST-AUDIT-LIST-2: the audit rows live in docs/reliability/test-audit.json; the table of test-audit.md is their rendering.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
+import { z } from 'zod';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
-const DOC = 'docs/reliability/test-audit.md';
-const HEADER = ['file', 'test', 'class', 'evidence', 'covered by', 'action'] as const;
-const CLASSES = ['removed-behaviour', 'duplicate', 'removed-path', 'superseded-card'];
-const ACTIONS = ['update', 'remove'];
+const START = '<!-- audit-table:start -->';
+const END = '<!-- audit-table:end -->';
 
-type Row = { [K in (typeof HEADER)[number]]: string };
+const text = z.string().min(1);
+const Row = z.strictObject({
+  file: text,
+  test: text,
+  class: z.enum(['removed-behaviour', 'duplicate', 'removed-path', 'superseded-card']),
+  evidence: text,
+  coveredBy: text,
+  action: z.enum(['update', 'remove']),
+});
+const Audit = z.strictObject({ commit: z.string().regex(/^[0-9a-f]{7,40}$/), rows: z.array(Row) });
+type Row = z.infer<typeof Row>;
 
-/** The cells of a table line, split at each pipe not escaped by a backslash; an escaped pipe becomes a pipe. */
-const cells = (line: string) => line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
-
-/** Whether a line starts with a pipe after any indentation, so an indented code line that starts with a pipe counts too. */
-const pipeLeading = (line: string) => line.trimStart().startsWith('|');
-
-/** Whether a line has the shape of a Markdown delimiter row: it holds a pipe and every cell is dashes with optional colons. */
-const delimiterLike = (line: string) => line.includes('|') && cells(line).every((c) => /^:?-+:?$/.test(c));
-
-/** Whether a line is the separator of the audit table: pipe-leading, six cells, each a delimiter cell. */
-const isSeparator = (line: string | undefined) => line !== undefined && pipeLeading(line) && cells(line).length === HEADER.length && delimiterLike(line);
-
-/**
- * The rows of the audit table, or undefined when the document breaks the one-table rule. The rule, so that no table the reader
- * sees is left unchecked: (a) no fenced code block (a line starting with ``` or ~~~ after any indentation) and no HTML comment
- * (`<!--`); (b) exactly one line whose cells equal HEADER; (c) the line after it is a six-cell separator, the table runs from
- * there to the first blank line, and every line in it starts with a pipe and holds six cells (d); no other line of the document
- * starts with a pipe after any indentation or has the shape of a delimiter row, so neither a second table (with or without outer
- * pipes) nor an indented code block holding pipe lines can stand beside the checked one.
- */
-function auditRows(text: string): Row[] | undefined {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  if (lines.some((l) => /^\s*(```|~~~)/.test(l) || l.includes('<!--'))) return undefined;
-  const heads = lines.flatMap((l, i) => (cells(l).join('\n') === HEADER.join('\n') ? [i] : []));
-  const at = heads[0];
-  if (at === undefined || heads.length !== 1 || !pipeLeading(lines[at]!) || !isSeparator(lines[at + 1])) return undefined;
-  let end = at + 2;
-  while (end < lines.length && lines[end]!.trim() !== '') end++;
-  const rows: Row[] = [];
-  for (const line of lines.slice(at + 2, end)) {
-    const c = cells(line);
-    if (!pipeLeading(line) || c.length !== HEADER.length) return undefined;
-    rows.push(Object.fromEntries(HEADER.map((h, i) => [h, c[i] ?? ''])) as Row);
-  }
-  const outside = (i: number) => i < at || i >= end;
-  if (lines.some((l, i) => outside(i) && (pipeLeading(l) || delimiterLike(l)))) return undefined;
-  return rows;
-}
-
-/** Whether `source` holds a call of `it` or `test` whose first argument is a string literal with the value `name`; text in comments and strings is not a call. */
-function namesTest(source: string, name: string): boolean {
-  const visit = (node: ts.Node): boolean => {
+/** The names of the `it` and `test` calls of a source, read from its syntax tree: text in comments and strings is not a call. */
+function testNames(source: string): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && ['it', 'test'].includes(node.expression.text)) {
       const first = node.arguments[0];
-      if (first && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) && first.text === name) return true;
+      if (first && (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first))) names.add(first.text);
     }
-    return ts.forEachChild(node, visit) ?? false;
+    ts.forEachChild(node, visit);
   };
-  return visit(ts.createSourceFile('t.ts', source, ts.ScriptTarget.Latest, true));
+  visit(ts.createSourceFile('t.ts', source, ts.ScriptTarget.Latest, true));
+  return names;
 }
 
-/** The problems of each row of R1 and R4; `read` answers a repository file's text or undefined when it does not exist. */
-function rowProblems(rows: Row[], read: (file: string) => string | undefined): string[] {
+/** The problems of R2; `read` answers a file's text or undefined, `allNames` the test names of every file under tests/. */
+function rowProblems(rows: Row[], read: (file: string) => string | undefined, allNames: Set<string>): string[] {
   const problems: string[] = [];
   for (const r of rows) {
-    const source = read(r.file);
-    if (source === undefined) problems.push(`${r.file}: no such file`);
-    else if (!namesTest(source, r.test)) problems.push(`${r.file}: no it/test named ${r.test}`);
-    if (!CLASSES.includes(r.class)) problems.push(`${r.test}: class ${r.class}`);
-    if (!ACTIONS.includes(r.action)) problems.push(`${r.test}: action ${r.action}`);
-    if (r.evidence === '' || r['covered by'] === '') problems.push(`${r.test}: empty evidence or covered by`);
-    // Only the exact value none means uncovered; any other cell that starts with the word none (none: why, None) is refused as ambiguous.
-    if (/^none\b/i.test(r['covered by']) && r['covered by'] !== 'none') problems.push(`${r.test}: covered by is not exactly none`);
+    const source = r.file.startsWith('tests/') ? read(r.file) : undefined;
+    if (source === undefined) problems.push(`${r.file}: no such file under tests/`);
+    else if (!testNames(source).has(r.test)) problems.push(`${r.file}: no it/test named ${r.test}`);
+    if (r.coveredBy === 'none' && r.action !== 'update') problems.push(`${r.test}: remove without a covering test`);
+    if (r.coveredBy !== 'none' && !allNames.has(r.coveredBy)) problems.push(`${r.test}: covered by names no test: ${r.coveredBy}`);
   }
   return problems;
 }
 
-/** The rows that propose remove with no covering test (R2). */
-const removeWithoutCover = (rows: Row[]) => rows.filter((r) => r['covered by'] === 'none' && r.action !== 'update');
+/** The Markdown table of the rows (R3), a pipe inside a cell written as \|. */
+const render = (rows: Row[]) => ['| file | test | class | evidence | covered by | action |', '| --- | --- | --- | --- | --- | --- |',
+  ...rows.map((r) => `| ${[r.file, r.test, r.class, r.evidence, r.coveredBy, r.action].map((c) => c.replaceAll('|', '\\|')).join(' | ')} |`)].join('\n');
 
-const readRepo = (file: string) => {
-  const abs = path.join(root, file);
-  return existsSync(abs) ? readFileSync(abs, 'utf8') : undefined;
-};
+/** The problems of R3: each marker line once, the start before the end, and exactly the rendering between them, which occurs once. */
+function tableProblems(md: string, table: string): string[] {
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const at = (m: string) => lines.flatMap((l, i) => (l === m ? [i] : []));
+  const [s, e] = [at(START), at(END)];
+  if (s.length !== 1 || e.length !== 1) return [`markers: ${s.length} start, ${e.length} end`];
+  const problems: string[] = [];
+  if (lines.slice(s[0]! + 1, e[0]).join('\n') !== table) problems.push('the lines between the markers are not the rendering');
+  if (md.split(table).length !== 2) problems.push('the rendering does not occur exactly once');
+  return problems;
+}
 
-const row = (over: Partial<Row>): Row => ({ file: 'a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', 'covered by': 'x', action: 'update', ...over });
+const repoRead = (file: string) => (existsSync(path.join(root, file)) ? readFileSync(path.join(root, file), 'utf8') : undefined);
+const filesUnder = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+  .flatMap((e) => (e.isDirectory() ? filesUnder(path.join(dir, e.name)) : e.name.endsWith('.ts') ? [path.join(dir, e.name)] : []));
+const allNames = new Set(filesUnder(path.join(root, 'tests')).flatMap((f) => [...testNames(readFileSync(f, 'utf8'))]));
+const audit = () => Audit.parse(JSON.parse(readFileSync(path.join(root, 'docs/reliability/test-audit.json'), 'utf8')));
 
-test('T1-TEST-AUDIT-LIST acceptance 1: every row names an existing test with a valid class and action', () => {
-  const rows = auditRows(readFileSync(path.join(root, DOC), 'utf8'));
-  assert.ok(rows, `${DOC} holds a table with the columns ${HEADER.join(', ')}`);
-  assert.deepEqual(rowProblems(rows, readRepo), []);
-  // The checks refuse what R1 and R4 refuse.
-  const src = [
-    "test('it holds', () => {});",
-    'it("say \\"hi\\"", () => {});',
-    "submit('gone');",
-    "// test('in a comment', () => {});",
-    "const text = \"test('in a string', () => {})\";",
-    "test('outer', async (t) => { await t.test('a subtest', () => {}); });",
-  ].join('\n');
-  const read = (f: string) => (f === 'a.test.ts' ? src : undefined);
-  assert.deepEqual(rowProblems([row({}), row({ test: 'say "hi"' })], read), []);
-  assert.equal(rowProblems([row({ file: 'b.test.ts' })], read).length, 1, 'a missing file');
-  assert.equal(rowProblems([row({ test: 'it hold' })], read).length, 1, 'a name that is not the whole literal');
-  assert.equal(rowProblems([row({ test: 'gone' })], read).length, 1, 'a call that is not it or test');
-  assert.equal(rowProblems([row({ test: 'in a comment' })], read).length, 1, 'a call inside a comment');
-  assert.equal(rowProblems([row({ test: 'in a string' })], read).length, 1, 'a call inside a string');
-  assert.equal(rowProblems([row({ test: 'a subtest' })], read).length, 1, 'a t.test subtest is not an it or test call');
-  assert.equal(rowProblems([row({ file: 'tests/surface/test-audit.test.ts' })], readRepo).length, 1, 'fixture text of this file is not a test name');
-  assert.equal(rowProblems([row({ 'covered by': 'none: no other test' })], read).length, 1, 'a covered by that starts with none');
-  assert.equal(rowProblems([row({ 'covered by': 'None' })], read).length, 1, 'a covered by of another letter case');
-  assert.deepEqual(rowProblems([row({ 'covered by': 'nonexistent-path test' })], read), [], 'a word that only starts with the letters none');
-  assert.equal(rowProblems([row({ class: 'obsolete' })], read).length, 1, 'an unknown class');
-  assert.equal(rowProblems([row({ action: 'skip' })], read).length, 1, 'an unknown action');
-  assert.equal(rowProblems([row({ evidence: '' })], read).length, 1, 'an empty evidence');
-  assert.equal(rowProblems([row({ 'covered by': '' })], read).length, 1, 'an empty covered by');
-  assert.equal(auditRows('| file | test | class | evidence | action |\n| - |'), undefined, 'a table without the six columns');
-  const head = `| ${HEADER.join(' | ')} |`;
-  assert.equal(auditRows(`${head}\n| f | a | duplicate | e | none | update |`), undefined, 'a header without its separator');
-  assert.equal(auditRows(`${head}\n|---|---|---|---|---|\n| f | a | duplicate | e | none | update |`), undefined, 'a separator of five cells');
-  assert.equal(auditRows(`${head}\n|---|---|---|---|---|x|`), undefined, 'a separator cell that is not dashes');
-  assert.equal(auditRows(`${head}\n---|---|---|---|---|---\n| f | a | duplicate | e | none | update |`), undefined, 'a separator without the leading pipe the rows need');
-  assert.equal(auditRows('| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |'), undefined, 'another six-column table');
-  assert.deepEqual(auditRows(`${head}\n| :--- | --- | ---: | :-: | - | --- |`), [], 'alignment colons');
-  assert.deepEqual(auditRows(`${head}\n|---|---|---|---|---|---|\n| f | a \\| b | duplicate | e | none | update |\n\nprose`)?.map((r) => r.test), ['a | b']);
-  // Every line up to the first blank line is a row: one without an initial pipe, or without six cells, refuses the table (R3 decision 2).
-  const bare = 'missing.test.ts | nonexistent | invalid | e | none | remove';
-  const sep = '|---|---|---|---|---|---|';
-  assert.equal(auditRows(`${head}\n${sep}\n${bare}`), undefined, 'a row without an initial pipe right after the separator');
-  assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update |\n${bare}`), undefined, 'a row without an initial pipe after a piped row');
-  assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none |`), undefined, 'a row of five cells');
-  assert.equal(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update | x |`), undefined, 'a row of seven cells');
-  assert.deepEqual(auditRows(`${head}\n${sep}\n| f | a | duplicate | e | none | update |\n   \nprose after a blank line`)?.length, 1, 'a whitespace-only line ends the table');
-  // The one-table rule (R3 decision 3): a document that could show a table the checker does not read is refused whole.
-  const good = `${head}\n${sep}\n| f | a | duplicate | e | none | update |`;
-  const bad = `${head}\n${sep}\n| ${bare} |`;
-  assert.equal(auditRows(`\`\`\`\n${head}\n${sep}\n\n\`\`\`\n${bad}`), undefined, 'R3 decision 3: a fenced header and separator before the real table');
-  assert.equal(auditRows(`\`\`\`\n${good}\n\n\`\`\``), undefined, 'a fenced example alone');
-  assert.equal(auditRows(`~~~md\n${good}\n\n~~~`), undefined, 'a tilde fence');
-  assert.equal(auditRows(`  \`\`\`\n${good}\n\n  \`\`\``), undefined, 'an indented fence');
-  assert.equal(auditRows(`<!--\n${good}\n\n-->`), undefined, 'a table inside an HTML comment');
-  assert.equal(auditRows(`${HEADER.join(' | ')}\n${sep}\n| f | a | duplicate | e | none | update |`), undefined, 'a header line without its outer pipes');
-  assert.deepEqual(auditRows(`intro\n\n---\n\n${good}`)?.length, 1, 'a thematic break is not a separator');
-  assert.equal(auditRows(`${good}\n\n${bad}`), undefined, 'a second audit table');
-  assert.equal(auditRows(`${good}\n\n| a | b |\n|---|---|\n| 1 | 2 |`), undefined, 'a second table of other columns');
-  assert.equal(auditRows(`${good}\n\na | b\n---|---\n1 | 2`), undefined, 'a second table without outer pipes');
-  assert.equal(auditRows(`${good}\n\n| x |`), undefined, 'a pipe line after the table');
-  assert.equal(auditRows(`| x |\n\n${good}`), undefined, 'a pipe line before the table');
-  assert.equal(auditRows(`${good}\n\n    | ${bare} |`), undefined, 'an indented pipe line');
-  assert.equal(auditRows(`${good}\n\nfile | test | class | evidence | covered by | action`), undefined, 'a second header line without pipes');
-  assert.deepEqual(auditRows(`text with a | pipe and --- dashes\n\n${good}\n\nmore text`)?.length, 1, 'prose with a pipe inside a line');
+const SRC = "test('it holds', () => {});\n// test('in a comment', () => {});\nconst s = \"test('in a string', () => {})\";";
+const row = (over: Partial<Row> = {}): Row => ({ file: 'tests/a.test.ts', test: 'it holds', class: 'duplicate', evidence: 'e', coveredBy: 'it holds', action: 'update', ...over });
+const fixture = (rows: Row[]) => rowProblems(rows, (f) => (f === 'tests/a.test.ts' ? SRC : undefined), testNames(SRC));
+
+test('T1-TEST-AUDIT-LIST-2 acceptance 1: the JSON rows are valid and each names an existing test with a valid class and action', () => {
+  assert.deepEqual(rowProblems(audit().rows, repoRead, allNames), []);
+  const ok = { commit: '1a757adb', rows: [row()] };
+  assert.equal(Audit.safeParse(ok).success, true);
+  for (const [why, bad] of [
+    ['an unknown row key', { ...ok, rows: [{ ...row(), note: 'x' }] }],
+    ['an unknown top-level key', { ...ok, extra: 1 }],
+    ['a missing key', { ...ok, rows: [{ ...row(), coveredBy: undefined }] }],
+    ['an empty value', { ...ok, rows: [row({ evidence: '' })] }],
+    ['a class outside the set', { ...ok, rows: [{ ...row(), class: 'obsolete' }] }],
+    ['an action outside the set', { ...ok, rows: [{ ...row(), action: 'skip' }] }],
+    ['a commit that is not a sha', { ...ok, commit: 'main' }],
+  ] as const) assert.equal(Audit.safeParse(bad).success, false, why);
+  assert.deepEqual(fixture([row()]), []);
+  assert.equal(fixture([row({ test: 'in a comment' })]).length, 1, 'a name only in a comment');
+  assert.equal(fixture([row({ test: 'in a string' })]).length, 1, 'a name only in a string');
+  assert.equal(fixture([row({ file: 'tests/b.test.ts' })]).length, 1, 'a missing file');
+  assert.equal(rowProblems([row({ file: 'package.json' })], repoRead, allNames).length, 1, 'a file outside tests/');
+  assert.equal(fixture([row({ coveredBy: 'in a string' })]).length, 1, 'a coveredBy naming no test');
 });
 
-test('T1-TEST-AUDIT-LIST acceptance 2: no row proposes remove without a covering test', () => {
-  const rows = auditRows(readFileSync(path.join(root, DOC), 'utf8'));
-  assert.ok(rows, `${DOC} holds a table with the columns ${HEADER.join(', ')}`);
-  assert.deepEqual(removeWithoutCover(rows).map((r) => r.test), []);
-  assert.deepEqual(removeWithoutCover([row({ 'covered by': 'none', action: 'remove' }), row({ 'covered by': 'none' }), row({ action: 'remove' })]).length, 1);
+test('T1-TEST-AUDIT-LIST-2 acceptance 2: no row proposes remove without a covering test', () => {
+  assert.deepEqual(audit().rows.filter((r) => r.coveredBy === 'none' && r.action !== 'update'), []);
+  assert.equal(fixture([row({ coveredBy: 'none', action: 'remove' })]).length, 1);
+  assert.deepEqual(fixture([row({ coveredBy: 'none' }), row({ action: 'remove' })]), []);
+});
+
+test('T1-TEST-AUDIT-LIST-2 acceptance 3: the Markdown table is exactly the rendering of the JSON rows', () => {
+  const table = render(audit().rows);
+  assert.deepEqual(tableProblems(repoRead('docs/reliability/test-audit.md')!, table), []);
+  const t = render([row({ test: 'a | b' })]);
+  assert.ok(t.includes('| a \\| b |'), 'a pipe in a cell is escaped');
+  const doc = (body: string) => `intro\n${START}\n${body}\n${END}\nend`;
+  assert.deepEqual(tableProblems(doc(t), t), []);
+  assert.equal(tableProblems(doc(t.replace('duplicate', 'removed-path')), t).length, 1, 'a changed cell');
+  assert.equal(tableProblems(doc(`${t}\n| x | x | x | x | x | x |`), t).length, 1, 'an added row');
+  assert.equal(tableProblems(`${START}\n${t}`, t).length, 1, 'a missing end marker');
+  assert.equal(tableProblems(`${doc(t)}\n${START}`, t).length, 1, 'a doubled start marker');
+  assert.equal(tableProblems(`${doc(t)}\n\n${t}`, t).length, 1, 'the rendering twice');
 });
