@@ -23,7 +23,7 @@ acceptance:
   - 2. `git diff main -- <the three files>` has no added or removed line containing `assert`, `it(`, `test(` or `describe(`, and the count of `it(`/`test(` per file is unchanged (reviewer-verified against the diff). [R3]
   - 3. Each case left as a child process names in a comment which R1 exception applies, and each command run by the files has one child-process case (reviewer-verified). [R1] [R2]
   - 4. The changelog entry gives the before and after times. [R4]
-depends_on: [T1-TEST-CLI-INPROC]
+depends_on: [T1-TEST-CLI-INPROC-2]
 budget: 120
 tdd: false
 forbid:

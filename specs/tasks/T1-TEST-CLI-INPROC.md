@@ -2,6 +2,7 @@
 id: T1-TEST-CLI-INPROC
 title: A test helper runs main of src/cli/main.ts in the test process and returns the exit code, stdout and stderr that bin/aidlc.js returns, restoring cwd, env, exit and the streams after each call
 status: todo
+superseded_by: T1-TEST-CLI-INPROC-2
 branch: T1-TEST-CLI-INPROC
 worktree: D:\wt\AIDLC\T1-TEST-CLI-INPROC
 plan_ref: plans/test-time.md#order-of-work
