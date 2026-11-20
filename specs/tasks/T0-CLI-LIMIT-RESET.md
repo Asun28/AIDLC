@@ -1,7 +1,7 @@
 ---
 id: T0-CLI-LIMIT-RESET
 title: A review held on the Claude CLI limit message waits until the reset time it names ("resets 1pm (Pacific/Auckland)"), where it waited the 15-minute default (issue 394)
-status: todo
+status: merged
 branch: T0-CLI-LIMIT-RESET
 worktree: D:\wt\AIDLC\T0-CLI-LIMIT-RESET
 allow_paths:
