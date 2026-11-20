@@ -22,6 +22,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
+import { limitResetMs } from '../core/limit-reset.ts';
 import { ADVISORY_TAG, findingLocation, parseVerdictDocument } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
@@ -1059,9 +1060,12 @@ export function finalizeReview(receipt: ExecReceipt, o: ReviewRetentionOptions):
   const raw = requested ? read.verdict : withoutCoverage(read.verdict);
   const enforced = raw ? enforceCitations(raw, o.changedPaths, o.changedLines) : undefined;
   const verdict = enforced && !enforced.inconsistent ? enforced.verdict : undefined;
-  const cls: PreReviewClassification = enforced?.inconsistent
+  const classified: PreReviewClassification = enforced?.inconsistent
     ? { outcome: 'no-verdict', runStatus: 'malformed', reasons: ['verdict contradicts its axes; never pass'], advisory: [] }
     : { ...classifyPreReview(verdict, receipt), advisory: enforced?.advisory ?? [] };
+  // A hold that names no delay waits until the reset time its message names, read against the receipt's own clock (card T0-CLI-LIMIT-RESET).
+  const reset = classified.outcome === 'quota-hold' && classified.retryAfterMs === undefined ? limitResetMs(quotaOutput(receipt), receipt.finishedAt) : undefined;
+  const cls: PreReviewClassification = reset === undefined ? classified : { ...classified, retryAfterMs: reset };
   mkdirSync(o.reviewDir, { recursive: true });
   const logRef = path.join(o.reviewDir, `${o.fileStem}.log`);
   writeFileSync(

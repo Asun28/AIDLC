@@ -53,3 +53,49 @@ A review held on the Claude CLI limit message waits until the reset time the mes
 
 ## Why
 Issue 394: `resets 1pm (Pacific/Auckland)` printed at 22:56 local means a 14-hour wait; with the 15-minute default that is about 56 reviewer invocations, each a no-op hold, before the review can run.
+
+## Attempt evidence
+
+Attempt 1, base main at 69ef6b6f. RED commit 55971fe3 (tests only, src/ as on main): tests/core/limit-reset.test.ts fails to load (no src/core/limit-reset.ts); in tests/surface/pre-review-limit-reset.test.ts the finalizeReview row reads `retryAfterMs: undefined` for 50640000 and the docs row finds no `resets <time> (<zone>)`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/core/limit-reset.test.ts "the next instant the named zone reads the reset time, strictly after now; ..." | pass |
+| 2 | tests/core/limit-reset.test.ts "across the Pacific/Auckland daylight-saving start ..." (4am, 2am, 2:30am in the gap, 1am before it) | pass |
+| 3 | tests/core/limit-reset.test.ts "no zone, an unknown zone, an hour or minutes out of range, a date form or no phrase ..." | pass |
+| 4 | tests/surface/pre-review-limit-reset.test.ts "finalizeReview reads the reset time against the receipt finishedAt; ..." | pass |
+| 5 | tests/surface/pre-review-limit-reset.test.ts "docs/OPERATIONS.md names the reset form ..."; tests/core/parse-guard.test.ts and tests/core/review-policy.test.ts unchanged and green | pass |
+
+Revert table, each run on the two new files and restored: offsets a day either side replaced by the day-before offset alone (a fixed offset): 1 test red (acceptance 2); `at > now` changed to `at >= now`: 1 test red (the exact-instant row); the `retryAfterMs === undefined` condition dropped from `finalizeReview`: 1 test red (the 30000 row).
+
+Other suites that run `finalizeReview` or carry quota holds, run once on Windows: pre-review, r2-pass-notes, review-bench (5 files), r2-billing-hold, r2-fallback: 189 tests, 189 pass.
+
+DoD (Windows): `npm run typecheck` clean; `node --test tests/core/limit-reset.test.ts tests/surface/pre-review-limit-reset.test.ts tests/core/parse-guard.test.ts tests/core/review-policy.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts`: 113 tests, 113 pass, 0 fail.
+
+Attempt 2 (repair of R3 decision 1, F1 class skipped-fold-occurrence, F2 class non-iana-reset-zone). F1: a time a daylight-saving end repeats has two exact candidates; the earliest strictly after now decides, and when both have passed the next day does, where attempt 1 took the first exact candidate and, when it had passed, skipped to the next day. A time with no exact candidate is still the end of the gap. F2: the zone in `RESET` must open with a letter and has no `:` (`[A-Za-z][\w+-]*(?:/[\w+-]+)*`), so a numeric offset Intl accepts (`+05:00`, `-0800`, `+05`) reads no delay.
+
+Input forms the repair handles, in tests/core/limit-reset.test.ts: `resets 2:30am (Pacific/Auckland)` across the 2026-04-05 fall-back with the first occurrence ahead (30 min), between the two (45 min, F1) and at the second (24 h); `resets 1pm (<zone>)` for `+05:00`, `-0800`, `+05`, `05:00`, `UTC+5`, `GMT+05:00` (no delay, F2) and `Etc/GMT-5` (8 h, an IANA name). On the attempt 1 code (8d7c5e5e) the between-occurrences row and the numeric-offset rows fail; all pass now.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | as attempt 1, plus "across the Pacific/Auckland daylight-saving end a time that occurs twice ..." | pass |
+| 2 | as attempt 1 | pass |
+| 3 | as attempt 1, plus "a numeric offset or other non-IANA zone text reads no delay ..." | pass |
+| 4 | as attempt 1 | pass |
+| 5 | as attempt 1 | pass |
+
+DoD (Windows): typecheck clean; 115 tests, 115 pass, 0 fail.
+
+Attempt 3 (repair of R3 decision 3, F3 class non-iana-reset-zone, F4 class reset-substring-match). F3: the zone must also be an IANA zone or link name, in any letter case: an `Area/Location` whose area is an IANA area (`Africa` ... `Pacific`, `Etc`, and the `backward` areas `US`, `Canada`, `Mexico`, `Brazil`, `Chile`) or one of the IANA names with no area (`UTC`, `GMT`, `EST5EDT`, `Japan`, `NZ` ... `W-SU`), and Intl must accept it; ICU-only aliases (`ACT`, `PST`, `IST`, `SystemV/AST4`) read no delay. This is every site of the class: the zone is read in one place, `RESET` plus `isIanaName`. F4: `RESET` has the boundary the quota rule keeps, no letter or digit of any script directly before `resets`.
+
+Input forms the repair hunks handle, in tests/core/limit-reset.test.ts: ICU-only aliases `ACT`, `PST`, `pst`, `IST`, `JST`, `CST`, `AET`, `BST`, `SystemV/AST4`, an unknown area `Mars/Olympus` and an unknown location in a listed area `Pacific/Nowhere` (no delay); `UTC`, `utc`, `Etc/UTC`, `Japan`, the link `US/Pacific`, three segments `America/Argentina/Buenos_Aires`, `EST5EDT`, `Pacific/Auckland` and `PACIFIC/AUCKLAND` (their delays); `presets`, `Presets`, `éresets`, `9resets` (no delay); `·`, `(`, a line feed or the start of the text before `resets`, and `Resets` (13 h). On the attempt 2 code (73aa816f) the `ACT` row and the `presets` row fail; all pass now. docs/OPERATIONS.md names the two rules.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | as attempt 2, plus "`resets` joined to a letter or digit before it reads no delay; ..." | pass |
+| 2 | as attempt 1 | pass |
+| 3 | as attempt 2, plus "an ICU-only alias reads no delay; IANA names, links and the slash-less IANA names do ..." | pass |
+| 4 | as attempt 1 | pass |
+| 5 | as attempt 1 | pass |
+
+DoD (Windows): typecheck clean; 117 tests, 117 pass, 0 fail.
