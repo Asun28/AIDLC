@@ -344,3 +344,39 @@ describe('runCliInProcess, R3 decision 1 repairs', () => {
     assert.equal(authorOf(actual.stdout), 'inherited-session', actual.stderr);
   });
 });
+
+describe('runCliInProcess, R3 decision 2 repairs', () => {
+  it('T1-TEST-CLI-INPROC-2 acceptance 2: an env entry named __proto__ reaches the call as it reaches a bin/aidlc.js child, and the caller\'s entry is restored', async () => {
+    // Scaffold `card start` runs pwsh with the environment of the process, which prints the entry.
+    const { repo, env } = fixture();
+    mkdirSync(path.join(repo, 'scripts'));
+    writeFileSync(path.join(repo, 'scripts', 'task.ps1'), 'param([string]$TaskId, [string]$Phase, [string]$Base, [switch]$Local)\nWrite-Output "proto=$([Environment]::GetEnvironmentVariable(\'__proto__\'))"\nexit 0\n');
+    writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ shipPath: 'scaffold', base: 'main' }));
+    const callEnv: NodeJS.ProcessEnv = { ...env };
+    Object.defineProperty(callEnv, '__proto__', { value: 'call-marker', enumerable: true, configurable: true, writable: true });
+    const argv = ['card', 'start', 'T1-FOO'];
+    const expected = child(argv, { cwd: repo, env: callEnv });
+    assert.match(expected.stdout, /proto=call-marker/, expected.stderr);
+    process.env['__proto__'] = 'caller-marker';
+    try {
+      assert.deepEqual(await runCliInProcess(argv, { cwd: repo, env: callEnv }), expected);
+      assert.deepEqual(Object.getOwnPropertyDescriptor(process.env, '__proto__')?.value, 'caller-marker');
+    } finally {
+      delete process.env['__proto__'];
+    }
+  });
+
+  it('T1-TEST-CLI-INPROC-2 acceptance 2: a call whose setup throws rejects, restores the caller\'s state and leaves the helper free for the next call', async () => {
+    const { repo, env } = fixture();
+    const before = processState();
+    const throwing: NodeJS.ProcessEnv = { ...env };
+    Object.defineProperty(throwing, 'AIDLC_THROWING', { enumerable: true, get: () => { throw new Error('env getter throws'); } });
+    await assert.rejects(runCliInProcess(['--help'], { cwd: repo, env: throwing }), /env getter throws/);
+    assert.deepEqual(processState(), before);
+    await assert.rejects(runCliInProcess(['--help'], { cwd: path.join(repo, 'no-such-dir'), env }), /ENOENT|no such file/);
+    assert.deepEqual(processState(), before);
+    const r = await runCliInProcess(['--help'], { cwd: repo, env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(processState(), before);
+  });
+});
