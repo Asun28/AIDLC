@@ -8,6 +8,7 @@ import { DEFAULT_HOOK_CONFIG } from '../../src/hooks/index.ts';
 import * as init from '../../src/scaffold/init.ts';
 import { tmpDir } from '../infra/helpers.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
+import { runCliInProcess } from '../infra/cli-inprocess.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const HOOK_ENTRY = path.join(root, 'bin', 'aidlc-hook.js');
@@ -110,9 +111,10 @@ describe('T1-INIT-HOOK-PATH: the command init writes', () => {
 
 describe('T1-INIT-HOOK-PATH: a real hook process', () => {
   /** A target laid by the real CLI, so the path of the running CLI reaches the settings file. */
-  function initialisedByCli(): string {
+  async function initialisedByCli(): Promise<string> {
     const target = tempDir();
-    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'init', target, '--json'], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
+    // In this process: src/cli/main.ts names the same bin/aidlc-hook.js from its own location as the child does.
+    const r = await runCliInProcess(['init', target, '--json'], { cwd: root });
     assert.equal(r.status, 0, r.stderr);
     return target;
   }
@@ -127,15 +129,15 @@ describe('T1-INIT-HOOK-PATH: a real hook process', () => {
     return spawnSync(written, { shell: true, input, cwd: target, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
   }
 
-  test('acceptance 2: the written command exits 2 on a production command with no approval [R1] [R2]', () => {
+  test('acceptance 2: the written command exits 2 on a production command with no approval [R1] [R2]', async () => {
     const command = ['kubectl', 'apply', '-f', ['pr', 'od/'].join('')].join(' ');
     assert.ok(DEFAULT_HOOK_CONFIG.productionPatterns.some((p) => new RegExp(p, 'i').test(command)), 'the command matches a default pattern');
-    const r = runWritten(initialisedByCli(), command);
+    const r = runWritten(await initialisedByCli(), command);
     assert.equal(r.status, 2, r.stderr);
   });
 
-  test('acceptance 2: the written command exits 0 on echo hello [R1] [R2]', () => {
-    const r = runWritten(initialisedByCli(), 'echo hello');
+  test('acceptance 2: the written command exits 0 on echo hello [R1] [R2]', async () => {
+    const r = runWritten(await initialisedByCli(), 'echo hello');
     assert.equal(r.status, 0, r.stderr);
   });
 });
@@ -224,8 +226,12 @@ describe('T1-INIT-HOOK-PATH: isDispatcherCommand', () => {
 });
 
 describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
-  function doctorLine(cwd: string): string {
-    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd, env: { ...process.env, AIDLC_STATE_DIR: path.join(cwd, 'state') }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
+  /** The hookCommand line of `aidlc doctor --json` run in `cwd`: in this process, or through bin/aidlc.js with `child`. */
+  async function doctorLine(cwd: string, child = false): Promise<string> {
+    const env = { ...process.env, AIDLC_STATE_DIR: path.join(cwd, 'state') };
+    const r = child
+      ? spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd, env, encoding: 'utf8', timeout: 120_000, windowsHide: true })
+      : await runCliInProcess(['doctor', '--json'], { cwd, env });
     assert.equal(r.status, 0, r.stderr);
     return (JSON.parse(r.stdout) as { hookCommand: string }).hookCommand;
   }
@@ -251,29 +257,29 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
   ];
 
   for (const { name, file, command } of CHECKED) {
-    test(`acceptance 6: ${name} with its file present reports ok and the file does not run [R5]`, () => {
+    test(`acceptance 6: ${name} with its file present reports ok and the file does not run [R5]`, async () => {
       const target = withPlantedFile(file);
       wired(command(target), target);
-      assert.equal(doctorLine(target), `ok: ${command(target)}`);
+      assert.equal(await doctorLine(target), `ok: ${command(target)}`);
       assert.equal(existsSync(path.join(target, 'ran.marker')), false);
     });
 
-    test(`acceptance 6: ${name} with its file missing, or a directory in its place, reports the FAILED text [R5]`, () => {
+    test(`acceptance 6: ${name} with its file missing, or a directory in its place, reports the FAILED text [R5]`, async () => {
       const missing = tempDir();
       wired(command(missing), missing);
-      assert.equal(doctorLine(missing), `FAILED: every guard is off until this command runs: ${command(missing)}`);
+      assert.equal(await doctorLine(missing), `FAILED: every guard is off until this command runs: ${command(missing)}`);
       const directory = tempDir();
       mkdirSync(path.join(directory, file), { recursive: true });
       wired(command(directory), directory);
-      assert.equal(doctorLine(directory), `FAILED: every guard is off until this command runs: ${command(directory)}`);
+      assert.equal(await doctorLine(directory), `FAILED: every guard is off until this command runs: ${command(directory)}`);
     });
   }
 
-  test('acceptance 6: a working dispatcher reports ok [R5]', () => {
-    assert.equal(doctorLine(wired(ABSOLUTE)), `ok: ${ABSOLUTE}`);
+  test('acceptance 6: a working dispatcher reports ok [R5]', async () => {
+    assert.equal(await doctorLine(wired(ABSOLUTE)), `ok: ${ABSOLUTE}`);
   });
 
-  test('acceptance 6: in a linked worktree a relative dispatcher file present only in the main checkout reports FAILED [R5]', () => {
+  test('acceptance 6: in a linked worktree a relative dispatcher file present only in the main checkout reports FAILED [R5]', async () => {
     const main = wired('node bin/aidlc-hook.js');
     const git = (...args: string[]): void => {
       const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: main, encoding: 'utf8', windowsHide: true });
@@ -286,26 +292,27 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
     writeFileSync(path.join(main, 'bin', 'aidlc-hook.js'), '');
     const linked = path.join(tempDir(), 'linked');
     git('worktree', 'add', '-q', linked);
-    assert.equal(doctorLine(main), 'ok: node bin/aidlc-hook.js');
-    assert.equal(doctorLine(linked), 'FAILED: every guard is off until this command runs: node bin/aidlc-hook.js');
+    assert.equal(await doctorLine(main), 'ok: node bin/aidlc-hook.js');
+    assert.equal(await doctorLine(linked), 'FAILED: every guard is off until this command runs: node bin/aidlc-hook.js');
   });
 
-  test('acceptance 6: no settings file, or one that does not parse, reports not wired [R5]', () => {
-    assert.equal(doctorLine(tempDir()), 'not wired');
-    assert.equal(doctorLine(targetWithSettings('{ not json')), 'not wired');
+  test('acceptance 6: no settings file, or one that does not parse, reports not wired [R5]', async () => {
+    assert.equal(await doctorLine(tempDir()), 'not wired');
+    assert.equal(await doctorLine(targetWithSettings('{ not json')), 'not wired');
   });
 
-  test('acceptance 6: a hook command that is not a string reports not wired and doctor keeps exit 0 [R5]', () => {
+  test('acceptance 6: a hook command that is not a string reports not wired and doctor keeps exit 0 [R5]', async () => {
     for (const command of [['node "/a/bin/aidlc-hook.js"'], 5, null]) {
-      assert.equal(doctorLine(targetWithSettings({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command }] }] } })), 'not wired', JSON.stringify(command));
+      assert.equal(await doctorLine(targetWithSettings({ hooks: { PreToolUse: [{ hooks: [{ type: 'command', command }] }] } })), 'not wired', JSON.stringify(command));
     }
   });
 
-  test('acceptance 6: a foreign hook, or an absolute dispatcher with & in its path, reports not wired and runs nothing [R5]', () => {
+  test('acceptance 6: a foreign hook, or an absolute dispatcher with & in its path, reports not wired and runs nothing [R5]', async () => {
     const ampersand = `node "${tempDir().replace(/\\/g, '/')}/x&mkdir ran.marker&/bin/aidlc-hook.js"`;
     for (const command of ['mkdir ran.marker', ampersand]) {
       const target = wired(command);
-      const line = doctorLine(target);
+      // child (R1, the output bin/aidlc.js prints): this case checks the hookCommand line printed through bin/aidlc.js.
+      const line = await doctorLine(target, true);
       assert.equal(existsSync(path.join(target, 'ran.marker')), false, `ran: ${command}`);
       assert.equal(line, 'not wired', command);
     }
