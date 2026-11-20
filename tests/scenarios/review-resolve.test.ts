@@ -327,10 +327,11 @@ interface Row { name: string; args: string[]; stderr: string; preload?: boolean;
 const aidlc = (message: string): string => `aidlc: ${message}\n`;
 
 /** One refusal: exit 1, the whole message on stderr, nothing written or journaled. */
-function assertRefused(r: Rig, row: Row): void {
+async function assertRefused(r: Rig, row: Row): Promise<void> {
   const before = snapshot(r.fx);
-  // Child process: called from an R3-protected synchronous helper declaration, so every refusal row runs through bin/aidlc.js.
-  const res = cliChild(r, row.args, { preload: row.preload, env: row.env });
+  // In-process (T1-TEST-INPROC-REST): the owner's follow-up of the T1-TEST-INPROC-A-2/B-2 exception; a row with `preload` stays a
+  // child process in `cli` (R1: a module preloaded with --import), and cliAsync keeps the child-process case of review resolve (R2).
+  const res = await cli(r, row.args, { preload: row.preload, env: row.env });
   assert.equal(res.status, 1, `${row.name}: ${res.stderr}`);
   assert.equal(res.stderr, row.stderr, row.name);
   assert.deepEqual(snapshot(r.fx), before, `${row.name}: the state changed`);
@@ -381,11 +382,11 @@ function optionRows(r: Rig, key: string, queuedKey: string): Row[] {
 }
 
 test('every refusal of review resolve writes nothing and journals nothing', async (t) => {
-  await t.test('an unknown key and a request that is not lost', (t) => {
+  await t.test('an unknown key and a request that is not lost', async (t) => {
     const r = rig(t);
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
-    assertRefused(r, { name: 'unknown key', args: ['review', 'resolve', 'o/r|none|main|p|r', '--no-result', ...LOOKED], stderr: aidlc('unknown review request o/r|none|main|p|r') });
-    assertRefused(r, { name: 'queued, upper-case alias', args: ['review', 'resolve', upper(queued.key), '--no-result', ...LOOKED], stderr: aidlc(`request ${upper(queued.key)} is not lost`) });
+    await assertRefused(r, { name: 'unknown key', args: ['review', 'resolve', 'o/r|none|main|p|r', '--no-result', ...LOOKED], stderr: aidlc('unknown review request o/r|none|main|p|r') });
+    await assertRefused(r, { name: 'queued, upper-case alias', args: ['review', 'resolve', upper(queued.key), '--no-result', ...LOOKED], stderr: aidlc(`request ${upper(queued.key)} is not lost`) });
   });
 
   const states: Array<[string, (r: Rig, key: string) => void]> = [
@@ -396,12 +397,12 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
     ['cancelled', (r, key) => void r.fx.queue.cancel(key, 'cancelled by the test', r.fx.now())],
   ];
   for (const [state, setup] of states) {
-    await t.test(`a ${state} request`, (t) => {
+    await t.test(`a ${state} request`, async (t) => {
       const r = rig(t);
       const key = r.fx.queue.enqueue(enqueueInput(state, `${r.one.id}:${HELD}`)).request.key;
       setup(r, key);
       assert.equal(r.fx.queue.get(key)?.state, state);
-      assertRefused(r, { name: state, args: ['review', 'resolve', key, '--no-result', ...LOOKED], stderr: aidlc(`request ${key} is not lost`) });
+      await assertRefused(r, { name: state, args: ['review', 'resolve', key, '--no-result', ...LOOKED], stderr: aidlc(`request ${key} is not lost`) });
     });
   }
 
@@ -443,13 +444,13 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
     mkdirSync(path.join(r.cwd, 'a-directory'));
     const rows = optionRows(r, lost.key, queued.key);
-    for (const row of rows) assertRefused(r, row);
+    for (const row of rows) await assertRefused(r, row);
     writeFileSync(path.join(r.cwd, 'aidlc.config.json'), '{ not json');
     const control = await resolve(r, lost.key, ['--no-result', ...LOOKED]);
     assert.equal(control.status, 1);
     assert.ok(control.stderr.startsWith('aidlc: ') && !control.stderr.includes('--verdict'), control.stderr);
     assert.ok(!control.stderr.includes('review resolve:'), `the configuration error is none of M1 to M6: ${control.stderr}`);
-    for (const row of rows) assertRefused(r, { ...row, name: `${row.name}, bad configuration` });
+    for (const row of rows) await assertRefused(r, { ...row, name: `${row.name}, bad configuration` });
   });
 });
 
@@ -962,14 +963,14 @@ test('--verdict is read as T0-CLI-CWD-FILE-ARGS-2 reads a file argument, and ver
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, path.join(r.cwd, 'verdict.json'));
   });
 
-  await t.test('Windows: a drive-relative and a network value are refused', { skip: windows }, (t) => {
+  await t.test('Windows: a drive-relative and a network value are refused', { skip: windows }, async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const rows: Array<[string, string]> = [
       ['C:verdict.json', '--verdict "C:verdict.json": a drive letter without a separator names the current directory of that drive; pass C:\\ and the full path, or a path relative to the -C directory'],
       ['\\\\x', '--verdict "\\\\\\\\x": a network path needs a server and a share; pass \\\\server\\share\\path, or a path relative to the -C directory'],
     ];
-    for (const [value, message] of rows) assertRefused(r, { name: value, args: ['review', 'resolve', lost.key, '--verdict', value, ...LOOKED], stderr: aidlc(message) });
+    for (const [value, message] of rows) await assertRefused(r, { name: value, args: ['review', 'resolve', lost.key, '--verdict', value, ...LOOKED], stderr: aidlc(message) });
   });
 });
 

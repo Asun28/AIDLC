@@ -22,7 +22,7 @@ interface Fixture {
   cli: (args: string[], cwd?: string) => ReturnType<typeof spawnSync>;
   run: (args: string[], cwd?: string) => Promise<{ status: number; stdout: string; stderr: string }>;
   git: (args: string[]) => void;
-  lastAuthorizations: (goalId: string, n: number) => Authorization[];
+  lastAuthorizations: (goalId: string, n: number) => Promise<Authorization[]>;
   journal: (goalId: string) => Journal;
   cleanup: () => void;
 }
@@ -53,10 +53,11 @@ function fixture(): Fixture {
   };
   const cli = (args: string[], cwd = repo) => spawnSync(process.execPath, [bin, ...args], { cwd, encoding: 'utf8', env: env(), windowsHide: true });
   const run = (args: string[], cwd = repo) => runCliInProcess(args, { cwd, env: env() });
-  const lastAuthorizations = (goalId: string, n: number): Authorization[] => {
-    // child: result indexed on an R4-protected line; await would need parentheses R4 forbids: `f.lastAuthorizations(goalId, 3).map(...)`
-    // and `f.lastAuthorizations(goalId, 100).length`.
-    const r = cli(['goal', 'status', goalId]);
+  let statusCalls = 0;
+  const lastAuthorizations = async (goalId: string, n: number): Promise<Authorization[]> => {
+    // In-process (T1-TEST-INPROC-REST): the owner's follow-up of the T1-TEST-INPROC-A-2/B-2 exception. Child process (R2): the
+    // first call of each fixture runs through bin/aidlc.js, the child-process case of goal status.
+    const r = statusCalls++ === 0 ? cli(['goal', 'status', goalId]) : await run(['goal', 'status', goalId]);
     assert.equal(r.status, 0, String(r.stderr));
     return (JSON.parse(String(r.stdout)) as { authorizations: Authorization[] }).authorizations.slice(-n);
   };
@@ -93,7 +94,7 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       assert.deepEqual(planAccepted.map((e) => e.data), [{}], 'intent-accepted records no by');
 
       await approveThreeWays(f, goalId, []);
-      assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => ({ kind: a.kind, grantedBy: a.grantedBy })), [
+      assert.deepEqual((await f.lastAuthorizations(goalId, 3)).map((a) => ({ kind: a.kind, grantedBy: a.grantedBy })), [
         { kind: 'plan-checkpoint', grantedBy: 'approver@example.com' },
         { kind: 'development', grantedBy: 'approver@example.com' },
         { kind: 'development', grantedBy: 'approver@example.com' },
@@ -102,34 +103,35 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       // Run from outside the repository with -C: the identity is the one of the repository named, not of the cwd.
       const outside = await f.run(['-C', f.repo, 'authorize', 'development', '--goal', goalId], f.tmp);
       assert.equal(outside.status, 0, String(outside.stderr));
-      assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['approver@example.com'], '-C names the repository');
+      assert.deepEqual((await f.lastAuthorizations(goalId, 1)).map((a) => a.grantedBy), ['approver@example.com'], '-C names the repository');
 
       await approveThreeWays(f, goalId, ['--by', 'release manager']);
-      assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => a.grantedBy), ['release manager', 'release manager', 'release manager']);
+      assert.deepEqual((await f.lastAuthorizations(goalId, 3)).map((a) => a.grantedBy), ['release manager', 'release manager', 'release manager']);
       const viaData = await f.run(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":"data approver"}']);
       assert.equal(viaData.status, 0, String(viaData.stderr));
-      assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['data approver'], 'a by in --data is recorded as given');
+      assert.deepEqual((await f.lastAuthorizations(goalId, 1)).map((a) => a.grantedBy), ['data approver'], 'a by in --data is recorded as given');
       const nullData = await f.run(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":null}']);
       assert.equal(nullData.status, 0, String(nullData.stderr));
-      assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['user'], 'a by key in --data is given, so the git identity is not read');
+      assert.deepEqual((await f.lastAuthorizations(goalId, 1)).map((a) => a.grantedBy), ['user'], 'a by key in --data is given, so the git identity is not read');
 
       // An empty --by is given too: each command passes it on and the empty approver is refused, never replaced.
-      const before = f.lastAuthorizations(goalId, 100).length;
-      // child: result indexed on an R4-protected line; await would need parentheses R4 forbids: the refusal check of `f.cli(args).status` below.
+      const before = (await f.lastAuthorizations(goalId, 100)).length;
+      // Child process (R2): the child-process cases of plan approve, authorize and report; the owner's exception of T1-TEST-INPROC-A-2/B-2
+      // is followed up in-process in lastAuthorizations (T1-TEST-INPROC-REST), and these three rows are each command's only child case.
       for (const args of [
         ['plan', 'approve', goalId, '--by', ''],
         ['authorize', 'development', '--goal', goalId, '--by', ''],
         ['report', '--goal', goalId, '--result', 'approved', '--by', ''],
       ]) assert.notEqual(f.cli(args).status, 0, `aidlc ${args.join(' ')} refuses the empty approver`);
-      assert.equal(f.lastAuthorizations(goalId, 100).length, before, 'no authorization recorded for an empty --by');
+      assert.equal((await f.lastAuthorizations(goalId, 100)).length, before, 'no authorization recorded for an empty --by');
 
       f.git(['config', '--unset', 'user.email']);
       await approveThreeWays(f, goalId, []);
-      assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => a.grantedBy), ['Approver Name', 'Approver Name', 'Approver Name']);
+      assert.deepEqual((await f.lastAuthorizations(goalId, 3)).map((a) => a.grantedBy), ['Approver Name', 'Approver Name', 'Approver Name']);
 
       f.git(['config', '--unset', 'user.name']);
       await approveThreeWays(f, goalId, []);
-      assert.deepEqual(f.lastAuthorizations(goalId, 3).map((a) => a.grantedBy), ['user', 'user', 'user']);
+      assert.deepEqual((await f.lastAuthorizations(goalId, 3)).map((a) => a.grantedBy), ['user', 'user', 'user']);
     } finally {
       f.cleanup();
     }
