@@ -502,9 +502,9 @@ export class GoalController {
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
-    // The lease is settled before DONE is saved: a refused takeover throws with the goal still in CLOSE.
-    this.releaseGoalLease(goal, now);
-    this.store.saveGoal(next);
+    // The lease is settled and DONE saved under the goal lease lock (issue 387): a refused takeover throws with the goal still
+    // in CLOSE, and a takeover that re-reads the goal inside its lease section sees DONE once that section can run.
+    this.releaseGoalLease(goal, now, () => this.store.saveGoal(next));
     this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
@@ -517,8 +517,12 @@ export class GoalController {
    * bound to the acquisition it precedes. The session's own lease is then released, after `GOAL_TAKEOVER` is journaled for
    * an acquisition whose intent has none yet, so a close interrupted between the steps completes the event on the next call.
    * A lease taken over is completed the same way first, so a takeover whose taker never called again keeps its event.
+   * `saveDone` runs last, in a section under the goal lease lock that writes no lease and first checks that the lease record
+   * is still the one this close left (absent, or released at the same generation): a takeover that ran in between leaves the
+   * goal in CLOSE with a `FencedError`, and one that runs after it reads DONE inside its own section (card
+   * T0-TAKEOVER-DONE-RACE, issue 387).
    */
-  private releaseGoalLease(goal: Goal, now: string): void {
+  private releaseGoalLease(goal: Goal, now: string, saveDone: () => void): void {
     const key = resourceKeys.goal(this.repo.key, goal.id);
     const me = currentActor();
     const j = this.journal(goal.id);
@@ -544,11 +548,15 @@ export class GoalController {
       j.append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { kind: 'goal-close-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: next.acquiredAt } });
       return next;
     });
-    if (!held || held.released || !mine(held)) return;
-    this.leases.update(key, (existing) => {
+    const left = !held || held.released || !mine(held) ? held : this.leases.update(key, (existing) => {
       if (!existing || existing.released || existing.generation !== held.generation || !mine(existing)) throw new FencedError(key, held.generation, 'the goal lease changed hands before the close released it');
       completeTakeover(existing);
       return { ...existing, released: true };
+    });
+    this.leases.update(key, (existing) => {
+      if (existing?.generation !== left?.generation || existing?.released !== left?.released) throw new FencedError(key, left?.generation ?? -1, 'the goal lease changed hands before the close saved DONE');
+      saveDone();
+      return existing;
     });
   }
 
