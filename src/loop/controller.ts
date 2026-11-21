@@ -517,10 +517,9 @@ export class GoalController {
    * bound to the acquisition it precedes. The session's own lease is then released, after `GOAL_TAKEOVER` is journaled for
    * an acquisition whose intent has none yet, so a close interrupted between the steps completes the event on the next call.
    * A lease taken over is completed the same way first, so a takeover whose taker never called again keeps its event.
-   * `saveDone` runs last, in a section under the goal lease lock that writes no lease and first checks that the lease record
-   * is still the one this close left (absent, or released at the same generation): a takeover that ran in between leaves the
-   * goal in CLOSE with a `FencedError`, and one that runs after it reads DONE inside its own section (card
-   * T0-TAKEOVER-DONE-RACE, issue 387).
+   * `saveDone` runs under the goal lease lock (card T0-TAKEOVER-DONE-RACE, issue 387): in the section that leaves an absent
+   * or released lease as it is, and in the release section right after the release write lands, so a failed release write
+   * leaves the goal in CLOSE; a takeover whose section runs after it reads DONE there.
    */
   private releaseGoalLease(goal: Goal, now: string, saveDone: () => void): void {
     const key = resourceKeys.goal(this.repo.key, goal.id);
@@ -540,7 +539,11 @@ export class GoalController {
       j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, previousOwner, previousGeneration: intent.data['previousGeneration'], acquirer: lease.owner.session } });
     };
     const held = this.leases.update(key, (existing) => {
-      if (!existing || existing.released || mine(existing)) return existing;
+      if (!existing || existing.released) {
+        saveDone();
+        return existing;
+      }
+      if (mine(existing)) return existing;
       const next = this.leases.successor(key, existing, { operation: 'close', now });
       const unresolved = this.ops.unresolved(goal.id).map((o) => o.id);
       if (unresolved.length) throw new Error(`takeover refused: old owner effects not reconciled (${unresolved.join(',')}); reconcile with \`aidlc ops reconcile\` first`);
@@ -548,15 +551,16 @@ export class GoalController {
       j.append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { kind: 'goal-close-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: next.acquiredAt } });
       return next;
     });
-    const left = !held || held.released || !mine(held) ? held : this.leases.update(key, (existing) => {
+    if (!held || held.released) return;
+    // The section above saved DONE or left the lease to this session; a lease of another session here would close without DONE.
+    if (!mine(held)) throw new FencedError(key, held.generation, 'the goal lease is held by another session after the close section');
+    this.leases.update(key, (existing) => {
       if (!existing || existing.released || existing.generation !== held.generation || !mine(existing)) throw new FencedError(key, held.generation, 'the goal lease changed hands before the close released it');
       completeTakeover(existing);
       return { ...existing, released: true };
-    });
-    this.leases.update(key, (existing) => {
-      if (existing?.generation !== left?.generation || existing?.released !== left?.released) throw new FencedError(key, left?.generation ?? -1, 'the goal lease changed hands before the close saved DONE');
+    }, (write) => {
+      write();
       saveDone();
-      return existing;
     });
   }
 

@@ -9,6 +9,7 @@ import { setActorForTests } from '../../src/state/journal.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
 import { MINUTE_MS } from '../../src/core/types.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import type { Lease } from '../../src/core/types.ts';
 import { doneGoalTakeover } from '../../src/core/card-goal.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
@@ -135,3 +136,34 @@ for (const lease of ['own', 'foreign', 'released', 'absent'] as const) {
     }
   });
 }
+
+test('T0-TAKEOVER-DONE-RACE R3 decision 1 F2: a goal takeover run right after the close releases its own lease sees DONE, takes no lease and journals nothing, and the close completes [R1]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, lockFile } = closableGoal(fx);
+    const leaseFile = lockFile.slice(0, -'.lock'.length);
+    const update = fx.leases.update.bind(fx.leases);
+    let takeover: ReturnType<typeof spawnSync> | undefined;
+    // At the boundary of the release section: the moment its lock is gone, another session runs `goal takeover`.
+    fx.leases.update = (...args: Parameters<typeof update>): Lease | undefined => {
+      const result = update(...args);
+      if (!takeover && result?.released && result.owner.session === actorA.session) {
+        takeover = spawnSync(process.execPath, [MAIN, 'goal', 'takeover', goalId, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-Z' }, encoding: 'utf8', timeout: 60_000 });
+      }
+      return result;
+    };
+    const { directive } = fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} });
+    assert.ok(takeover, 'the takeover ran at the release boundary');
+    assert.equal(takeover.status, 0, String(takeover.stderr));
+    assert.deepEqual(JSON.parse(String(takeover.stdout)), { goalId, state: 'DONE', takenOver: false, detail: doneGoalTakeover({ id: goalId, state: 'DONE' }) });
+    assert.equal(directive.kind, 'done', directive.narration);
+    assert.equal(fx.goal(goalId).state, 'DONE');
+    const lease = JSON.parse(readFileSync(leaseFile, 'utf8')) as Lease;
+    assert.equal(lease.owner.session, actorA.session, 'the lease still belongs to the closing session');
+    assert.equal(lease.released, true);
+    assert.equal(lease.generation, 0);
+    assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_TAKEOVER'), 'no GOAL_TAKEOVER');
+  } finally {
+    fx.cleanup();
+  }
+});

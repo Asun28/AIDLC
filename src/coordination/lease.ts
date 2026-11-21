@@ -41,9 +41,12 @@ export class LeaseStore {
     this.lock = lock;
   }
 
-  /** One lease section: `change` receives the record under the lease's lock (`updateJson`); every lease write goes through it. */
-  update(resourceKey: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
-    return updateJson(this.file(resourceKey), Lease, change, this.lock);
+  /**
+   * One lease section: `change` receives the record under the lease's lock (`updateJson`); every lease write goes through it.
+   * `within`, when given, runs the write and is `updateJson`'s: a caller does more after the write lands, still under the lock.
+   */
+  update(resourceKey: string, change: (existing: Lease | undefined) => Lease | undefined, within?: (write: () => void) => void): Lease | undefined {
+    return updateJson(this.file(resourceKey), Lease, change, within ? { ...this.lock, within } : this.lock);
   }
 
   file(resourceKey: string): string {
