@@ -2,13 +2,13 @@
 slug: card-preflight
 title: Find why cards are replaced, on 15 replaced cards and 5 controls, before a reader or an amendment rule is built
 author: asun28 (owner)
-status: draft
+status: accepted
 created: 2026-11-16T02:30:00Z
 source: human
 ---
 
 # Intent: find why cards are replaced, on 15 replaced cards and 5 controls, before a reader or an amendment rule is built
-Author: asun28 (owner). Status: draft.
+Author: asun28 (owner). Status: accepted.
 
 ## Problem
 `docs/reliability/baseline.md` (commit e74113d): 93 of 324 card attempts were replaced by a
@@ -75,7 +75,8 @@ option and no configuration key changes in this study.
   (`docs/reliability/baseline.md`: the adjudicator's error rate on the owner's sample was 85%).
 - The reader runs read-only (Codex with `--sandbox read-only`) from a detached worktree at the
   card's base. At most 20 runs and their repeats, on the Codex subscription.
-- No card and no code in this study. What it leads to is planned afterwards.
+- No card and no code in this study. A measurement script kept under `_local/`, which is
+  gitignored, is neither. What the study leads to is planned afterwards.
 
 ## Open questions
 - (none)
