@@ -1,7 +1,7 @@
 ---
 id: T0-TAKEOVER-DONE-RACE
 title: "aidlc goal takeover and aidlc card takeover decide DONE inside the goal lease section, and goal close saves DONE inside that section, so a DONE saved by another session after the takeover's goal read leaves no lease and no journal event (issue 387)"
-status: todo
+status: merged
 branch: T0-TAKEOVER-DONE-RACE
 allow_paths:
   - src/loop/controller.ts
