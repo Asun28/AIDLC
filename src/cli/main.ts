@@ -210,10 +210,17 @@ function parseData(raw: string | undefined): Record<string, unknown> {
   }
 }
 
-function cardOf(c: Ctx, cardId: string): ParsedCard {
+/** The card from the registry, or nothing: a lookup that never exits, for a caller that holds a lock. */
+function findCard(c: Ctx, cardId: string): ParsedCard | undefined {
   const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
-  const hit = registry.cards.find((p) => p.card.id === cardId);
-  if (!hit) fail(`card ${cardId} not found in ${c.config.cardsDir}`);
+  return registry.cards.find((p) => p.card.id === cardId);
+}
+
+const cardMissing = (c: Ctx, cardId: string): string => `card ${cardId} not found in ${c.config.cardsDir}`;
+
+function cardOf(c: Ctx, cardId: string): ParsedCard {
+  const hit = findCard(c, cardId);
+  if (!hit) fail(cardMissing(c, cardId));
   return hit;
 }
 
@@ -842,14 +849,20 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
       // The card takeover runs inside the goal lease section, where goal close saves DONE, and re-reads the goal there first:
       // a goal saved DONE after the read above writes no card lease, run or event. The goal lease lock is taken before the
-      // card-run and card lease locks; the section returns the goal lease record as it is, so the file is not written.
+      // card-run and card lease locks; the section returns the goal lease record as it is, so the file is not written. Nothing
+      // in it exits the process (an exit would skip the lock release): a missing card is reported once the section has ended.
       let taken: ReturnType<CardRunner['takeover']> | undefined;
       let doneNow = false;
+      let missing = false;
       new LeaseStore(c.paths.leases).update(resourceKeys.goal(c.repo.key, id), (existing) => {
         doneNow = doneReport(c.store.getGoal(id));
-        if (!doneNow) taken = runnerFor(c).takeover(goalRec, cardOf(c, cardId).card, run);
+        if (doneNow) return existing;
+        const hit = findCard(c, cardId);
+        if (!hit) missing = true;
+        else taken = runnerFor(c).takeover(goalRec, hit.card, run);
         return existing;
       });
+      if (missing) fail(cardMissing(c, cardId));
       if (doneNow || !taken) return;
       const r = taken;
       c.controller.writeBoard(goalRec);

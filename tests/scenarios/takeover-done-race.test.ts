@@ -167,3 +167,18 @@ test('T0-TAKEOVER-DONE-RACE R3 decision 1 F2: a goal takeover run right after th
     fx.cleanup();
   }
 });
+
+test('T0-TAKEOVER-DONE-RACE R3 decision 3 F3: card takeover of a run whose card is gone from the registry fails after the goal lease section, leaving no goal lease lock and writing nothing', () => {
+  const { fx, goalId, cli, goalLease, snapshot } = setup();
+  try {
+    unlinkSync(path.join(fx.cardsDir, `${CARD}.md`));
+    const before = snapshot();
+    const r = cli(false, 'card', 'takeover', CARD, '--goal', goalId);
+    assert.notEqual(r.status, 0, 'the missing card fails the command');
+    assert.match(r.stderr, new RegExp(`card ${CARD} not found`));
+    assert.ok(!existsSync(`${goalLease}.lock`), 'no goal lease lock is left behind');
+    assert.deepEqual(snapshot(), before, 'leases, the card run and journals are byte-identical');
+  } finally {
+    fx.cleanup();
+  }
+});
