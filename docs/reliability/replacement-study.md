@@ -2,12 +2,12 @@
 
 The study of `intent/card-preflight.md`, run on 2026-11-21 on main at 62bfa646: 15 replaced cards drawn with a recorded seed, 5 first-pass controls, the cause and the termination labelled apart, one reader prompt run on all 20 cards.
 
-Status of the labels: Claude and Codex labelled independently and gave the same label in 39 of 45 cases (15 cards, three labels each). The owner ruled the 6 differences in the session on 2026-11-21 ("The owner's rulings"). The 39 labels both models give, and the adjudication of the 20 reader findings, remain model labels. The owner delegated the sample check of those rows to the coordinator in the session; it compared 9 of the 39 labels and 2 of the 20 adjudications with the run records, git and the CI logs ("Sample check"). That check changed no label, corrected two per-card accounts and left one point to the owner. It is a model's check, not an owner's.
+Status of the labels: Claude and Codex labelled independently and gave the same label in 39 of 45 cases (15 cards, three labels each). The owner ruled the 6 differences in the session on 2026-11-21 ("The owner's rulings"). The 39 labels both models give, and the adjudication of the 20 reader findings, remain model labels. The owner delegated the sample check of those rows to the coordinator in the session; it compared 9 of the 39 labels and 2 of the 20 adjudications with the run records, git and the CI logs ("Sample check"). That check changed no label and corrected two per-card accounts. It raised one point, which the owner then ruled: the stop of T0-HOOK-LAZY on a re-raised finding stays `allowance`. It is a model's check, not an owner's.
 
 ## Result
 
 1. Cause: 5 cards were replaced for a cause outside the card, 7 because the card's contract was wrong, 3 for a code defect inside the contract. Both labellers gave 12 of these labels; the owner ruled 3 as contract where Codex had said code.
-2. Termination: a review stop ended 7 runs, a CI stop 3, an owner decision 2, a card stop 1 and a risk stop 2. All 7 review stops are labelled `allowance`: 6 name a count limit and 1 a re-raised finding with one decision left (T0-HOOK-LAZY). The owner ruled the two risk stops as `other`, where Codex had said `ci`.
+2. Termination: a review stop ended 7 runs, a CI stop 3, an owner decision 2, a card stop 1 and a risk stop 2. All 7 review stops are labelled `allowance`: 6 name a count limit and 1 a re-raised finding with one decision left (T0-HOOK-LAZY), which the owner ruled `allowance`, as both models had labelled it. The owner ruled the two risk stops as `other`, where Codex had said `ci`.
 3. The reader fails the screen. It gave no finding that would have prevented a replacement: 0 of 15 cards against a threshold of 5. 18 of its 20 findings are correct (90%, threshold 80%). It returned `change-first` on 3 of the 5 controls; by the protocol's rule 1 of them is a false flag (threshold: at most 1).
 4. Amendment: an amendment that kept the card's work would plausibly have avoided the replacement on 6 of 15 cards (5 by both labellers, 1 by the owner's ruling). On 4 of the 6 the stopped run would also have had to continue.
 5. From git, not from a label: the successor's candidate descends from the replaced card's last candidate in 10 of 15 cases (3 do not, 2 cannot be checked), and 12 of the 15 successors merged.
@@ -22,7 +22,6 @@ Status of the labels: Claude and Codex labelled independently and gave the same 
 ## Still open
 
 - No person has checked an agreed row. The coordinator's check covers the sample this section named before the check was run, in draw order: the labels of T0-DOD-SCAFFOLD-SHELL-3, T1-RUN-CONTEXT-PACK and T0-HOOK-LAZY, and the adjudication of the first two reader findings (T1-RUN-CONTEXT-PACK `dod_command`, T0-CLI-CWD-FILE-ARGS R1). The other 30 agreed labels and 18 agreed adjudications were not compared again. Each card's records are in `_local/replacement-study/packets/<card>.md`.
-- One ruling: T0-HOOK-LAZY stopped at decision 3 of 4 on a re-raised finding, and both models label the stop `allowance`. The label brief defines `allowance` as "the review allowance was used up". Ruled `other`, the termination tally is allowance 6, ci 3, owner 2, other 4.
 - The decision of `intent/card-preflight.md`, outcome 5: a prospective trial of the reader, a ruling on amendments, both, or neither.
 
 ## Inputs and frame
@@ -110,7 +109,7 @@ Cause: `contract` (the card's contract was wrong), `code` (a code defect inside 
 | Amendment | yes | 6 | 5 | 5 | 6 |
 | Amendment | no | 9 | 10 | 9 | 9 |
 
-Agreement between the two models: cause 12 of 15, termination 13 of 15, amendment 14 of 15. Every termination label matches the stop the machine recorded: `allowance` is a review stop, `ci` a ci stop, `owner` a run with no stop, `other` the card stop and the two risk stops. The 7 review stops by their recorded detail: "second substantive block" 3, "fourth decision blocked: the 4-decision allowance for repairs is used" 2, "exceeds the two-decision allowance" 1, and "third substantive block re-raised unresolved finding(s) F3" 1. The last is T0-HOOK-LAZY, stopped at decision 3 where the limit was 4.
+Agreement between the two models: cause 12 of 15, termination 13 of 15, amendment 14 of 15. Every termination label matches the stop the machine recorded: `allowance` is a review stop, `ci` a ci stop, `owner` a run with no stop, `other` the card stop and the two risk stops. The 7 review stops by their recorded detail: "second substantive block" 3, "fourth decision blocked: the 4-decision allowance for repairs is used" 2, "exceeds the two-decision allowance" 1, and "third substantive block re-raised unresolved finding(s) F3" 1. The last is T0-HOOK-LAZY, stopped at decision 3 where the limit was 4; the owner ruled that stop `allowance`.
 
 ### What the records show, per card
 
@@ -165,6 +164,8 @@ The owner ruled the 6 differences on 2026-11-21 in the session, in five question
 | T1-INIT-HOOK-PATH | Cause | `contract (code)`. Most findings came from the launch that R5 and the notes prescribed; 5 commits rewrote the requirements; the budget went from 220 to 500. | `code (contract)`. The finding at the stop, F12, is a wrong root in `src/cli/main.ts`, and the successor fixed that call. | `contract (code)` |
 | T1-TEST-AUDIT-LIST | Cause | `contract (code)`. R1 and R4 made a hand-written Markdown table the source, and each repair closed one Markdown form of the same class. | `code`. The candidate broke the existing coverage and validation requirements; the records do not show the contract was contradictory or unachievable. | `contract (code)` |
 | T0-CLI-CWD-FILE-ARGS | Amendment | `yes`, with one more review decision admitted. | `no`. A card change neither repairs the guard nor reopens the allowance. | `yes`, with one more decision |
+
+A sixth ruling followed the sample check and concerns a label both models gave. T0-HOOK-LAZY stopped on a re-raised finding at decision 3 where the limit was 4, and the label brief defines `allowance` as "the review allowance was used up". The coordinator put the two readings to the owner (`allowance`, or `other` with the tally allowance 6, ci 3, owner 2, other 4) and the owner ruled `allowance` in the session on 2026-11-21. The termination tally stands.
 
 ## Reader
 
@@ -253,12 +254,12 @@ The consensus plan left the agreed rows provisional until the owner had checked 
 | T1-RUN-CONTEXT-PACK, termination `ci` | the stop record | Holds: reason `ci`. |
 | T1-RUN-CONTEXT-PACK, amendment `yes` | the successor card at 8ae4966d; pull requests 145 and 146 | Holds as far as records show. The successor names 2ff6099e as inherited, and against the replaced card as amended its contract has additions only: R4, acceptance 5 and 6, two `allow_paths` entries, budget 650 to 900. |
 | T0-HOOK-LAZY, cause `contract` | findings F3 to F5; the card at the base; commit 42de982f; the successor card | Holds. Four requirement lines of the base card name the stamp, F3 shows it cannot be tied to the schema the process loaded, and the successor forbids a stamp. |
-| T0-HOOK-LAZY, termination `allowance` | the stop record; `src/core/review-policy.ts:182-187` and `MAX_R3_DECISIONS` at the base | Depends on the definition. The stop is the rule for a re-raised finding, at decision 3 where the limit was 4. Left to the owner. |
+| T0-HOOK-LAZY, termination `allowance` | the stop record; `src/core/review-policy.ts:182-187` and `MAX_R3_DECISIONS` at the base | Depends on the definition. The stop is the rule for a re-raised finding, at decision 3 where the limit was 4. The owner ruled `allowance` after the check. |
 | T0-HOOK-LAZY, amendment `no` | the successor card; git ancestry | Holds: the successor starts from main and does not carry the candidate. |
 | Reader finding on T1-RUN-CONTEXT-PACK, `dod_command`: correct, does not prevent | the card at db566b9b, lines 18 and 28; `package.json`; the DoD receipt; the CI log | Both marks hold. The receipt records `npm run check` run locally with 1,276 passes. The failures came on the Windows runner only, and the successor keeps the same `dod_command`. |
 | Reader finding on T0-CLI-CWD-FILE-ARGS, R1: correct, does not prevent | the card at 6c1a6cfd; `src/cli/main.ts:1380`; the last candidate 04fccad1; the run record | Both marks hold. Of the 8 acceptance items only item 4 names a hook, and it gives an invalid `-C`. The last candidate already held the test the reader asks for (`tests/surface/cli-cwd-paths.test.ts:528-542`), and the run still stopped at decision 4 on F8. |
 
-- 8 of the 9 labels and all 4 adjudication marks hold against the records. The ninth label depends on a definition. No label was changed.
+- 8 of the 9 labels and all 4 adjudication marks hold against the records. The ninth label depends on a definition, and the owner ruled it as labelled. No label was changed.
 - Two accounts in "What the records show, per card" were corrected: the second failing test of T0-DOD-SCAFFOLD-SHELL-3, from the CI log, and pull request 145 of T1-RUN-CONTEXT-PACK, which was closed while the work merged as 146.
 - What the check is not. The coordinator is the Claude side, built the packets and had read every label. An amendment label is a judgement that records can support and cannot prove. The check gives no error rate for model labels of the kind an owner's check would give.
 
@@ -289,7 +290,7 @@ The consensus plan left the agreed rows provisional until the owner had checked 
 | Coordinator session | 01:52Z to 04:00Z, about 50 minutes of it work and the rest waiting for the owner's answers; the sample check from 06:38Z to 08:10Z, about 40 minutes of it work; cap 4 hours |
 | Codex runs | 49 runs, 2,934 s summed: reader 20 runs 1,648 s, labels 15 runs 641 s, adjudication 14 runs 645 s |
 | Claude subagents | 10 runs, 5,423 s summed, 2.04 million tokens: labels 5 runs 3,638 s, adjudication 5 runs 1,785 s |
-| Owner | the frame ruling and five rulings on the 6 differences, by question in the session; the sample check delegated to the coordinator |
+| Owner | the frame ruling and five rulings on the 6 differences, by question in the session; the sample check delegated to the coordinator; one ruling on the point that check raised |
 
 ## Files
 
