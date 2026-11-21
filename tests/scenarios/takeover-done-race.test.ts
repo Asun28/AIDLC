@@ -19,17 +19,17 @@ const CARD = 'T1-HELLO';
 /**
  * A RUN goal that projects T1-HELLO with its card run claimed at PREPARE by the fixture's session at the fixture clock, so the
  * goal lease and the card lease are held by that session and long expired on the real clock the CLI runs on. The CLI runs as
- * session win-Z; with `race`, the preload saves the goal DONE right after the command's first goal read.
+ * session win-Z; `race` sets the preload's environment (none: the CLI without the preload).
  */
 function setup() {
   const fx = makeFixture();
   writeCard(fx, { id: CARD, title: 'say hello' });
   const goal = goalForCards(fx, [CARD]);
   fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
-  const cli = (race: boolean, ...args: string[]) =>
+  const cli = (race: Record<string, string> | false, ...args: string[]) =>
     spawnSync(process.execPath, [...(race ? ['--import', PRELOAD] : []), MAIN, ...args, '--json'], {
       cwd: fx.tmp,
-      env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-Z', ...(race ? { AIDLC_TEST_DONE_AFTER_READ: goal.id } : {}) },
+      env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-Z', ...(race || {}) },
       encoding: 'utf8',
       timeout: 60_000,
     });
@@ -44,11 +44,23 @@ function setup() {
   return { fx, goalId: goal.id, cli, goalLease, cardLease, snapshot, generation };
 }
 
-test('T0-TAKEOVER-DONE-RACE acceptance 1: goal takeover on a goal saved DONE after its goal read takes no lease, appends no event and reports DONE [R2]', () => {
+test('T0-TAKEOVER-DONE-RACE acceptance 1a: goal takeover makes its one goal read while it holds the goal lease lock [R2]', () => {
+  const { fx, goalId, cli, goalLease } = setup();
+  try {
+    const log = path.join(fx.tmp, 'reads.log');
+    const r = cli({ AIDLC_TEST_LOCK_FILE: `${goalLease}.lock`, AIDLC_TEST_READ_LOG: log }, 'goal', 'takeover', goalId);
+    assert.equal(r.status, 0, `exits 0: ${r.stderr}`);
+    assert.deepEqual(readFileSync(log, 'utf8').split(/\r?\n/).filter(Boolean), ['getGoal true'], 'one goal read, under the goal lease lock');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-TAKEOVER-DONE-RACE acceptance 1b: goal takeover on a goal saved DONE right before its goal read takes no lease, appends no event and reports DONE [R2]', () => {
   const { fx, goalId, cli, snapshot } = setup();
   try {
     const before = snapshot();
-    const r = cli(true, 'goal', 'takeover', goalId);
+    const r = cli({ AIDLC_TEST_DONE_BEFORE_READ: goalId }, 'goal', 'takeover', goalId);
     assert.equal(r.status, 0, `exits 0: ${r.stderr}`);
     assert.deepEqual(JSON.parse(r.stdout), { goalId, state: 'DONE', takenOver: false, detail: doneGoalTakeover({ id: goalId, state: 'DONE' }) });
     assert.deepEqual(snapshot(), before, 'leases and journals are byte-identical');
@@ -62,7 +74,7 @@ for (const withGoal of [true, false]) {
     const { fx, goalId, cli, snapshot } = setup();
     try {
       const before = snapshot();
-      const r = cli(true, 'card', 'takeover', CARD, ...(withGoal ? ['--goal', goalId] : []));
+      const r = cli({ AIDLC_TEST_DONE_AFTER_READ: goalId }, 'card', 'takeover', CARD, ...(withGoal ? ['--goal', goalId] : []));
       assert.equal(r.status, 0, `exits 0: ${r.stderr}`);
       assert.deepEqual(JSON.parse(r.stdout), { cardId: CARD, goalId, state: 'DONE', takenOver: false, detail: doneGoalTakeover({ id: goalId, state: 'DONE' }) });
       assert.deepEqual(snapshot(), before, 'leases, the card run and journals are byte-identical');
