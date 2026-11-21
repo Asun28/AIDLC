@@ -176,8 +176,8 @@ export function createExclusive(file: string, text: string): boolean {
  * is gone is refused like any other, naming the file and the process id for the operator. The write is ownership-checked
  * (a writer whose lock changed hands refuses with `LOCK_LOST`) and runs inside `within` when given, so a caller holds
  * another lock until the record is on disk. The release removes only this writer's lock, and neither it nor an unreadable
- * lock replaces the change's result or error. The lock is not reentrant: nested sections take the card-run lock before the
- * lease lock.
+ * lock replaces the change's result or error. The lock is not reentrant: nested sections take the goal lease lock first, then
+ * the card-run lock, then the card lease lock (card T0-TAKEOVER-DONE-RACE: `card takeover` runs inside a goal lease section).
  */
 export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, opts: { timeoutMs?: number; within?: (write: () => void) => void } = {}): T | undefined {
   const lock = `${file}.lock`;

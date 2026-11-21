@@ -38,7 +38,7 @@ import { classifyCiFailure } from '../core/ci-policy.ts';
 import { detectDataImpact, buildMigrationPlan, checkMigrationOrdering, assessRecovery } from '../core/migrate.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
-import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
+import { LeaseStore, resourceKeys, type ReconcileReport } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { BoundsReadError, asciiJson, formatBounds, readBoundRecords, summarizeBounds } from '../state/bounds.ts';
@@ -210,10 +210,17 @@ function parseData(raw: string | undefined): Record<string, unknown> {
   }
 }
 
-function cardOf(c: Ctx, cardId: string): ParsedCard {
+/** The card from the registry, or nothing: a lookup that never exits, for a caller that holds a lock. */
+function findCard(c: Ctx, cardId: string): ParsedCard | undefined {
   const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
-  const hit = registry.cards.find((p) => p.card.id === cardId);
-  if (!hit) fail(`card ${cardId} not found in ${c.config.cardsDir}`);
+  return registry.cards.find((p) => p.card.id === cardId);
+}
+
+const cardMissing = (c: Ctx, cardId: string): string => `card ${cardId} not found in ${c.config.cardsDir}`;
+
+function cardOf(c: Ctx, cardId: string): ParsedCard {
+  const hit = findCard(c, cardId);
+  if (!hit) fail(cardMissing(c, cardId));
   return hit;
 }
 
@@ -472,17 +479,34 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('take over an expired goal lease after reconciling the previous owner\'s operations')
     .action((id: string) => {
       const c = ctx(g());
-      // A DONE goal has nothing to take over (card T0-TAKEOVER-DONE-GOAL): no lease, no event, exit 0.
-      const goalRec = c.controller.mustGoal(id);
-      const done = doneGoalTakeover(goalRec);
-      if (done) return out(c, { goalId: id, state: goalRec.state, takenOver: false, detail: done }, () => done);
       const leases = new LeaseStore(c.paths.leases);
       const ops = new OperationLedger(c.paths.operations);
       const key = resourceKeys.goal(c.repo.key, id);
-      const result = leases.takeover(key, () => {
+      // A DONE goal has nothing to take over (cards T0-TAKEOVER-DONE-GOAL, -2): no lease, no event, exit 0. The command's one
+      // goal read runs inside the goal lease section, where goal close saves DONE (card T0-TAKEOVER-DONE-RACE, issue 387), so a
+      // DONE saved by another session cannot land between the read and the lease write. The section is `LeaseStore.takeover`'s
+      // (the successor, then the reconciliation) behind that read; on a DONE goal it returns the lease record as it is.
+      let done: { state: string; detail: string } | undefined;
+      let report: ReconcileReport | undefined;
+      const lease = leases.update(key, (existing) => {
+        const goalRec = c.store.getGoal(id);
+        if (!goalRec) throw new Error(`unknown goal ${id}`);
+        const detail = doneGoalTakeover(goalRec);
+        if (detail) {
+          done = { state: goalRec.state, detail };
+          return existing;
+        }
+        const next = leases.successor(key, existing, { operation: 'coordinate' });
         const unresolved = ops.unresolved(id).map((o) => o.id);
-        return { reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined };
-      }, { operation: 'coordinate' });
+        report = { reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined };
+        if (!report.reconciled) throw new Error(`takeover refused: old owner effects not reconciled (${report.unresolvedOperations.join(',') || report.note || 'unknown'})`);
+        return next;
+      });
+      if (done) {
+        const { state, detail } = done;
+        return out(c, { goalId: id, state, takenOver: false, detail }, () => detail);
+      }
+      const result = { lease: lease!, report: report! };
       Journal.forGoal(c.paths.journal, id).append({ type: 'GOAL_TAKEOVER', goalId: id, data: { leaseGeneration: result.lease.generation, report: result.report } });
       out(c, result, () => `took over ${id} at lease generation ${result.lease.generation}`);
     });
@@ -806,7 +830,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       // A card of a DONE goal has nothing to take over (cards T0-TAKEOVER-DONE-GOAL, -2): no lease, no event, exit 0, decided on
       // one read of the goal records that the command then uses; a named DONE goal is reported before `holdsRun` reads a card
-      // run, the resolved one before the stored run is read. A DONE saved by another session after this read is issue 387.
+      // run, the resolved one before the stored run is read. A DONE saved by another session after this read is caught by the
+      // re-read inside the goal lease section below (card T0-TAKEOVER-DONE-RACE, issue 387).
       const goals = c.store.listGoals();
       const doneReport = (goalRec: Goal | undefined): boolean => {
         const done = goalRec ? doneGoalTakeover(goalRec) : undefined;
@@ -822,7 +847,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       // The stored run only: a takeover owns an existing run, it never creates one.
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
-      const r = runnerFor(c).takeover(goalRec, cardOf(c, cardId).card, run);
+      // The card takeover runs inside the goal lease section, where goal close saves DONE, and re-reads the goal there first:
+      // a goal saved DONE after the read above writes no card lease, run or event. The goal lease lock is taken before the
+      // card-run and card lease locks; the section returns the goal lease record as it is, so the file is not written. Nothing
+      // in it exits the process (an exit would skip the lock release): a missing card is reported once the section has ended.
+      let taken: ReturnType<CardRunner['takeover']> | undefined;
+      let doneNow = false;
+      let missing = false;
+      new LeaseStore(c.paths.leases).update(resourceKeys.goal(c.repo.key, id), (existing) => {
+        doneNow = doneReport(c.store.getGoal(id));
+        if (doneNow) return existing;
+        const hit = findCard(c, cardId);
+        if (!hit) missing = true;
+        else taken = runnerFor(c).takeover(goalRec, hit.card, run);
+        return existing;
+      });
+      if (missing) fail(cardMissing(c, cardId));
+      if (doneNow || !taken) return;
+      const r = taken;
       c.controller.writeBoard(goalRec);
       // A completed takeover finished the run update of one this session had already taken (the lease was already its own).
       const from = r.previousOwner && r.previousGeneration !== undefined ? { session: r.previousOwner.session, host: r.previousOwner.host, generation: r.previousGeneration } : undefined;
