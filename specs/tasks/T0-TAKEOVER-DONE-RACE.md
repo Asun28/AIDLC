@@ -7,6 +7,7 @@ allow_paths:
   - src/loop/controller.ts
   - src/cli/main.ts
   - src/state/store.ts
+  - src/coordination/lease.ts
   - tests/scenarios/takeover-done-race.test.ts
   - tests/scenarios/takeover-done-race.preload.ts
   - docs/OPERATIONS.md
@@ -39,7 +40,7 @@ diagnosis:
 sweep: "grep -n \"leases.takeover\\|leases.update\\|leases.claim\\|resourceKeys.goal\" src/cli/main.ts src/loop/controller.ts src/loop/card-runner.ts at 67a7e760: card-runner.ts never takes the goal lease key, so R4 adds no lock cycle there."
 forbid: [weakening or skipping a test to go green, editing .aidlc state by hand, refusing either takeover on a goal in STOP, a goal-record lock or any lock beyond the existing goal lease lock (issue 300), changing `LeaseStore.takeover`'s signature or `CardRunner.takeover`, changing `doneGoalTakeover` text, changing the verifier]
 non_goals: ["serializing goal writes in general (issue 300)", "the DONE race in `controller.next`'s goal-lease claim", "`aidlc audit verify` flagging a GOAL_TAKEOVER or LEASE_ACQUIRED after GOAL_DONE", "a guard inside CardRunner.takeover for library callers"]
-hygiene: "Owner ruling 2026-11-21 in session 5b6d1260 during the run: R2 and acceptance 1 amended to one goal read under the goal lease lock (the first text needed a second read, which T0-TAKEOVER-DONE-GOAL-2 acceptance 5 forbids). Issue 387, raised by R3 decision 2 on T0-TAKEOVER-DONE-GOAL; owner ruling 2026-11-21 in session 5b6d1260: T0-bugfix with an in-lease DONE check, not a goal-record lock. Pass --goal on every card and review command."
+hygiene: "Owner instruction 2026-11-21 after R3 decision 1: allow_paths adds src/coordination/lease.ts so LeaseStore.update can pass updateJson's within hook (DONE saved after the release write, in the same section). Owner ruling 2026-11-21 in session 5b6d1260 during the run: R2 and acceptance 1 amended to one goal read under the goal lease lock (the first text needed a second read, which T0-TAKEOVER-DONE-GOAL-2 acceptance 5 forbids). Issue 387, raised by R3 decision 2 on T0-TAKEOVER-DONE-GOAL; owner ruling 2026-11-21 in session 5b6d1260: T0-bugfix with an in-lease DONE check, not a goal-record lock. Pass --goal on every card and review command."
 doc_sync: docs/OPERATIONS.md, changelog.d/T0-TAKEOVER-DONE-RACE.md
 ---
 

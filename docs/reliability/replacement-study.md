@@ -2,12 +2,12 @@
 
 The study of `intent/card-preflight.md`, run on 2026-11-21 on main at 62bfa646: 15 replaced cards drawn with a recorded seed, 5 first-pass controls, the cause and the termination labelled apart, one reader prompt run on all 20 cards.
 
-Status of the labels: Claude and Codex labelled independently and gave the same label in 39 of 45 cases (15 cards, three labels each). The owner ruled the 6 differences in the session on 2026-11-21 ("The owner's rulings"). The 39 labels both models give, and the adjudication of the 20 reader findings, are provisional until the owner has checked a sample of those rows.
+Status of the labels: Claude and Codex labelled independently and gave the same label in 39 of 45 cases (15 cards, three labels each). The owner ruled the 6 differences in the session on 2026-11-21 ("The owner's rulings"). The 39 labels both models give, and the adjudication of the 20 reader findings, remain model labels. The owner delegated the sample check of those rows to the coordinator in the session; it compared 9 of the 39 labels and 2 of the 20 adjudications with the run records, git and the CI logs ("Sample check"). That check changed no label and corrected two per-card accounts. It raised one point, which the owner then ruled: the stop of T0-HOOK-LAZY on a re-raised finding stays `allowance`. It is a model's check, not an owner's.
 
 ## Result
 
 1. Cause: 5 cards were replaced for a cause outside the card, 7 because the card's contract was wrong, 3 for a code defect inside the contract. Both labellers gave 12 of these labels; the owner ruled 3 as contract where Codex had said code.
-2. Termination: the review allowance ended 7 runs, a CI stop 3, an owner decision 2, a card stop 1 and a risk stop 2. The owner ruled the two risk stops as `other`, where Codex had said `ci`.
+2. Termination: a review stop ended 7 runs, a CI stop 3, an owner decision 2, a card stop 1 and a risk stop 2. All 7 review stops are labelled `allowance`: 6 name a count limit and 1 a re-raised finding with one decision left (T0-HOOK-LAZY), which the owner ruled `allowance`, as both models had labelled it. The owner ruled the two risk stops as `other`, where Codex had said `ci`.
 3. The reader fails the screen. It gave no finding that would have prevented a replacement: 0 of 15 cards against a threshold of 5. 18 of its 20 findings are correct (90%, threshold 80%). It returned `change-first` on 3 of the 5 controls; by the protocol's rule 1 of them is a false flag (threshold: at most 1).
 4. Amendment: an amendment that kept the card's work would plausibly have avoided the replacement on 6 of 15 cards (5 by both labellers, 1 by the owner's ruling). On 4 of the 6 the stopped run would also have had to continue.
 5. From git, not from a label: the successor's candidate descends from the replaced card's last candidate in 10 of 15 cases (3 do not, 2 cannot be checked), and 12 of the 15 successors merged.
@@ -21,7 +21,8 @@ Status of the labels: Claude and Codex labelled independently and gave the same 
 
 ## Still open
 
-The owner's sample check of the agreed rows. A sample that follows the draw order: the labels of T0-DOD-SCAFFOLD-SHELL-3, T1-RUN-CONTEXT-PACK and T0-HOOK-LAZY, and the adjudication of the first two reader findings (T1-RUN-CONTEXT-PACK `dod_command`, T0-CLI-CWD-FILE-ARGS R1). Each card's records are in `_local/replacement-study/packets/<card>.md`.
+- No person has checked an agreed row. The coordinator's check covers the sample this section named before the check was run, in draw order: the labels of T0-DOD-SCAFFOLD-SHELL-3, T1-RUN-CONTEXT-PACK and T0-HOOK-LAZY, and the adjudication of the first two reader findings (T1-RUN-CONTEXT-PACK `dod_command`, T0-CLI-CWD-FILE-ARGS R1). The other 30 agreed labels and 18 agreed adjudications were not compared again. Each card's records are in `_local/replacement-study/packets/<card>.md`.
+- The decision of `intent/card-preflight.md`, outcome 5: a prospective trial of the reader, a ruling on amendments, both, or neither.
 
 ## Inputs and frame
 
@@ -108,7 +109,7 @@ Cause: `contract` (the card's contract was wrong), `code` (a code defect inside 
 | Amendment | yes | 6 | 5 | 5 | 6 |
 | Amendment | no | 9 | 10 | 9 | 9 |
 
-Agreement between the two models: cause 12 of 15, termination 13 of 15, amendment 14 of 15. Every termination label matches the stop the machine recorded: `allowance` is a review stop, `ci` a ci stop, `owner` a run with no stop, `other` the card stop and the two risk stops.
+Agreement between the two models: cause 12 of 15, termination 13 of 15, amendment 14 of 15. Every termination label matches the stop the machine recorded: `allowance` is a review stop, `ci` a ci stop, `owner` a run with no stop, `other` the card stop and the two risk stops. The 7 review stops by their recorded detail: "second substantive block" 3, "fourth decision blocked: the 4-decision allowance for repairs is used" 2, "exceeds the two-decision allowance" 1, and "third substantive block re-raised unresolved finding(s) F3" 1. The last is T0-HOOK-LAZY, stopped at decision 3 where the limit was 4; the owner ruled that stop `allowance`.
 
 ### What the records show, per card
 
@@ -116,8 +117,8 @@ The accounts are the labellers' reading of the records, condensed. The label fil
 
 | Card | Why it was replaced | Amendment |
 |---|---|---|
-| T0-DOD-SCAFFOLD-SHELL-3 | CI failed on a pid-reuse race in `tests/scenarios/review-release.test.ts` (issue 312), a file outside the card. The effort ladder stopped the card on the same cause twice. The successor merged the same candidate with the contract unchanged. | No: nothing in the card to change. The run needed a way to continue after main held the fix. |
-| T1-RUN-CONTEXT-PACK | Windows CI failed on path canonicalization and a 15 s helper timeout in `src/loop/context-pack.ts`, the file the card delivers. | Yes: the successor inherited the candidate and the pull request and only added items. The repaired file needs a new review. |
+| T0-DOD-SCAFFOLD-SHELL-3 | CI failed two tests in files outside the card: a pid-reuse race in `tests/scenarios/review-release.test.ts` (issue 312) and a process-listing timeout in `tests/infra/stray-processes.test.ts`. The run's note names only the first; the second is from the CI log. The effort ladder stopped the card on the same cause twice. The successor merged the same candidate with the contract unchanged. | No: nothing in the card to change. The run needed a way to continue after main held the fix. |
+| T1-RUN-CONTEXT-PACK | On the Windows runner 8 tests failed, each with the error the candidate throws in `src/loop/context-pack.ts`, the file the card delivers. The successor's card names short-name canonicalization and the helper's start-up, and its fix changes the path resolution and raises the helper timeout from 15 s to 60 s. | Yes: the successor inherited the candidate and only added items. Pull request 145 was closed and the work merged as 146. The repaired file needs a new review. |
 | T0-CLI-CWD-FILE-ARGS | Three blocks on candidate defects used the four decisions. The card was changed in 8 commits during the run. | Yes, by the owner's ruling, with one more review decision admitted: the successor carried the change with the requirements word for word and changed one acceptance item. Codex said no: a card change neither repairs the test guard nor reopens the allowance. |
 | T1-FINDING-REPRO | The Gitleaks job failed at its install step before any scan, and the loop read the red check as a security finding. R3 had passed twice. | No: no card item was wrong. The run needed the false stop cleared. |
 | T0-HOOK-LAZY | R2, R3 and acceptance 3 prescribed a config stamp that cannot be tied to the schema the process loaded (F3 re-raised at decision 3). The successor dropped the stamp and started from main. | No: the fix removes the card's main deliverable. |
@@ -163,6 +164,8 @@ The owner ruled the 6 differences on 2026-11-21 in the session, in five question
 | T1-INIT-HOOK-PATH | Cause | `contract (code)`. Most findings came from the launch that R5 and the notes prescribed; 5 commits rewrote the requirements; the budget went from 220 to 500. | `code (contract)`. The finding at the stop, F12, is a wrong root in `src/cli/main.ts`, and the successor fixed that call. | `contract (code)` |
 | T1-TEST-AUDIT-LIST | Cause | `contract (code)`. R1 and R4 made a hand-written Markdown table the source, and each repair closed one Markdown form of the same class. | `code`. The candidate broke the existing coverage and validation requirements; the records do not show the contract was contradictory or unachievable. | `contract (code)` |
 | T0-CLI-CWD-FILE-ARGS | Amendment | `yes`, with one more review decision admitted. | `no`. A card change neither repairs the guard nor reopens the allowance. | `yes`, with one more decision |
+
+A sixth ruling followed the sample check and concerns a label both models gave. T0-HOOK-LAZY stopped on a re-raised finding at decision 3 where the limit was 4, and the label brief defines `allowance` as "the review allowance was used up". The coordinator put the two readings to the owner (`allowance`, or `other` with the tally allowance 6, ci 3, owner 2, other 4) and the owner ruled `allowance` in the session on 2026-11-21. The termination tally stands.
 
 ## Reader
 
@@ -238,6 +241,28 @@ Thresholds of `intent/card-preflight.md:65-69`. The three ways of counting (Clau
 - N1 could not exceed 10: 5 of the 15 cards have a cause outside the card.
 - The stop rule did not cut the work short: every finding was adjudicated before N1 was known.
 
+## Sample check
+
+The consensus plan left the agreed rows provisional until the owner had checked a sample. On 2026-11-21 the owner delegated that check to the coordinator in the session ("can you help to finish the test I will not be at the computer"). The sample is the one "Still open" named before the check. The coordinator compared each row with the frozen run records, with git and with two CI logs read from GitHub on 2026-11-21. The CI logs were not in the packets the labellers had.
+
+| Row | Compared with | Result |
+|---|---|---|
+| T0-DOD-SCAFFOLD-SHELL-3, cause `outside` | CI run 44010710725; the card's `allow_paths` at the base; the files candidate a5b8a63d changes | Holds. Two tests failed, in `tests/scenarios/review-release.test.ts` and `tests/infra/stray-processes.test.ts`. The card allows neither file and the candidate changes neither. |
+| T0-DOD-SCAFFOLD-SHELL-3, termination `other: card stop` | the stop record | Holds: reason `card`, the same cause twice. |
+| T0-DOD-SCAFFOLD-SHELL-3, amendment `no` | the changed lines of a5b8a63d against its merge-base, and of the merged successor 959d3153 (pull request 364) | Holds. Under `src` the 27 changed lines are the same. Under `tests` 6 of 200 differ and under `docs` 2 of 4, each in the card id or in the list of replaced cards. |
+| T1-RUN-CONTEXT-PACK, cause `code` | CI run 37192764034 on pull request 145; candidate 2ff6099e; the merged successor 71341f85 | Holds. On the Windows runner 8 of 1,281 tests failed, each with the error the candidate throws at `src/loop/context-pack.ts:47`; the Ubuntu job passed. The fix changes that file by 24 added and 15 removed lines. |
+| T1-RUN-CONTEXT-PACK, termination `ci` | the stop record | Holds: reason `ci`. |
+| T1-RUN-CONTEXT-PACK, amendment `yes` | the successor card at 8ae4966d; pull requests 145 and 146 | Holds as far as records show. The successor names 2ff6099e as inherited, and against the replaced card as amended its contract has additions only: R4, acceptance 5 and 6, two `allow_paths` entries, budget 650 to 900. |
+| T0-HOOK-LAZY, cause `contract` | findings F3 to F5; the card at the base; commit 42de982f; the successor card | Holds. Four requirement lines of the base card name the stamp, F3 shows it cannot be tied to the schema the process loaded, and the successor forbids a stamp. |
+| T0-HOOK-LAZY, termination `allowance` | the stop record; `src/core/review-policy.ts:182-187` and `MAX_R3_DECISIONS` at the base | Depends on the definition. The stop is the rule for a re-raised finding, at decision 3 where the limit was 4. The owner ruled `allowance` after the check. |
+| T0-HOOK-LAZY, amendment `no` | the successor card; git ancestry | Holds: the successor starts from main and does not carry the candidate. |
+| Reader finding on T1-RUN-CONTEXT-PACK, `dod_command`: correct, does not prevent | the card at db566b9b, lines 18 and 28; `package.json`; the DoD receipt; the CI log | Both marks hold. The receipt records `npm run check` run locally with 1,276 passes. The failures came on the Windows runner only, and the successor keeps the same `dod_command`. |
+| Reader finding on T0-CLI-CWD-FILE-ARGS, R1: correct, does not prevent | the card at 6c1a6cfd; `src/cli/main.ts:1380`; the last candidate 04fccad1; the run record | Both marks hold. Of the 8 acceptance items only item 4 names a hook, and it gives an invalid `-C`. The last candidate already held the test the reader asks for (`tests/surface/cli-cwd-paths.test.ts:528-542`), and the run still stopped at decision 4 on F8. |
+
+- 8 of the 9 labels and all 4 adjudication marks hold against the records. The ninth label depends on a definition, and the owner ruled it as labelled. No label was changed.
+- Two accounts in "What the records show, per card" were corrected: the second failing test of T0-DOD-SCAFFOLD-SHELL-3, from the CI log, and pull request 145 of T1-RUN-CONTEXT-PACK, which was closed while the work merged as 146.
+- What the check is not. The coordinator is the Claude side, built the packets and had read every label. An amendment label is a judgement that records can support and cannot prove. The check gives no error rate for model labels of the kind an owner's check would give.
+
 ## Deviations from the intent and the protocol
 
 1. Base. The protocol first took the merge-base of the first recorded candidate and main. That commit is later than the run's start for 8 of the 20 cards, because the card was amended or main was merged into the branch before the first review. The rule was changed after the draw and before any label or reader run to the last first-parent commit of main at or before `startedAt`. The draw did not change.
@@ -246,10 +271,12 @@ Thresholds of `intent/card-preflight.md:65-69`. The three ways of counting (Clau
 4. An added mark. The adjudication brief asked for "later change" as well. It is not in the protocol and enters no threshold.
 5. Evidence packets. The coordinator's script built one packet per card from the registry, the state copy and git. It cut long diffs (9,000 characters per commit, 30,000 for the successor); one labeller read the cut parts from git.
 6. Leak check. A pattern scan over the commands in each Codex log: 147 reader commands, none read outside its worktree or a git object not reachable from the base (two hits were search strings holding the word "origin"); 47 label and 103 adjudication commands, none read the other party's output. Claude's subagents were instructed the same way and their transcripts were not scanned.
+7. Sample check. The consensus plan has the owner check a sample of the agreed rows. The owner delegated the check to the coordinator ("Sample check"). The check read two CI logs from GitHub, which are outside the frozen inputs.
 
 ## Limits
 
-- Model labels. The owner ruled the 6 differences from the two reasons as the coordinator put them, and has not yet checked a sample of the 39 agreed labels or of the 20 agreed adjudications.
+- Model labels. The owner ruled the 6 differences from the two reasons as the coordinator put them. No person has checked the 39 agreed labels or the 20 agreed adjudications; the sample check was the coordinator's.
+- The labellers had the run's own notes on a CI failure, not the CI log. In one of the two sampled cards with a CI failure the note left out a failing test (T0-DOD-SCAFFOLD-SHELL-3). The CI logs of the other cards were not read.
 - The adjudicators knew which cards were replaced and how each run ended.
 - A numeric suffix or a title "(replaces ...)" tells the reader that a card is a successor, and the control frame holds no successor.
 - The frame leaves out 25 of 121 replaced cards, 21 of them replaced before any review.
@@ -260,11 +287,11 @@ Thresholds of `intent/card-preflight.md:65-69`. The three ways of counting (Clau
 
 | Item | Value |
 |---|---|
-| Coordinator session | 01:52Z to 04:00Z, about 50 minutes of it work and the rest waiting for the owner's answers; cap 4 hours |
+| Coordinator session | 01:52Z to 04:00Z, about 50 minutes of it work and the rest waiting for the owner's answers; the sample check from 06:38Z to 08:10Z, about 40 minutes of it work; cap 4 hours |
 | Codex runs | 49 runs, 2,934 s summed: reader 20 runs 1,648 s, labels 15 runs 641 s, adjudication 14 runs 645 s |
 | Claude subagents | 10 runs, 5,423 s summed, 2.04 million tokens: labels 5 runs 3,638 s, adjudication 5 runs 1,785 s |
-| Owner | the frame ruling and five rulings on the 6 differences, by question in the session; the sample check of agreed rows is still to come, within the 2-hour cap |
+| Owner | the frame ruling and five rulings on the 6 differences, by question in the session; the sample check delegated to the coordinator; one ruling on the point that check raised |
 
 ## Files
 
-Not committed, under `_local/replacement-study/` in the main checkout: the protocol and its corrections (sha256 `25f446d3c816ae50`, `6f0ca09e33c69399`), `frame.json`, `draw.json`, the evidence packets, the reader prompt (`2b37d6535406cd1c`), the label and adjudication briefs (`2ebfc6009ef74e25`, `7f0a5aa71ceecb0f`), the 20 reader outputs with their logs, both sets of labels and adjudications, `summary.json`, and the scripts `01-frame.mjs` to `09-facts.mjs` that produced every table here.
+Not committed, under `_local/replacement-study/` in the main checkout: the protocol and its corrections (sha256 `25f446d3c816ae50`, `6f0ca09e33c69399`), `frame.json`, `draw.json`, the evidence packets, the reader prompt (`2b37d6535406cd1c`), the label and adjudication briefs (`2ebfc6009ef74e25`, `7f0a5aa71ceecb0f`), the 20 reader outputs with their logs, both sets of labels and adjudications, `summary.json`, the scripts `01-frame.mjs` to `09-facts.mjs` that produced every table above "Sample check", and for the sample check `sample-check.md` (the commands and the records compared) with the two CI logs under `ci-logs/`.
