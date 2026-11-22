@@ -203,7 +203,7 @@ Additive fields on the card-run record, each optional or with a default. No migr
 ## Non-goals
 - Lifting a `tool`, `card`, `risk`, `time` or any other stop with `aidlc card continue`; a review stop after a missing verdict; a review stop under a ship-path reviewer.
 - Resetting a counter, moving a deadline, or changing an allowance constant.
-- A gate that refuses a review or a ship while the card differs from the recorded contract, and a report of that difference in `aidlc card status`.
+- A gate that refuses a review or a ship while the card differs from the recorded contract, and a report of that difference in `aidlc card status`. The gate was outside this spec's goal; after the owner's ruling of 2026-11-22 card T0-CONTRACT-GATE builds it in a goal of its own. The report in `aidlc card status` stays a non-goal.
 - A record or a check of the owner's delegation.
 - Amending a merged card, and editing the card file: the act records a change that a commit already made.
 - A command that prints the count of the intent's outcome 6.
