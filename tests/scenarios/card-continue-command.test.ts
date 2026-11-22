@@ -25,13 +25,13 @@ type Act = { by?: string; decisions?: number };
 const block = (file: string, text: string, reasons = [`[spec] 6 tests @ ${file}:1: ${text} -> add one`]) => JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
 
 /** A one-card goal under a command reviewer, the moves of the loop on it, the command through the CLI and readers of the files it may not write. */
-function setup(fx: ReturnType<typeof makeFixture>) {
+function setup(fx: ReturnType<typeof makeFixture>, ids = [CARD]) {
   const verdicts: string[] = [];
   const file = `src/${CARD.toLowerCase()}.ts`;
   const script = scriptedRunner({ 'git diff --name-only': () => ({ stdout: `${file}\u0000` }), 'git diff': () => ({ stdout: `diff --git a/${file} b/${file}\n+export const x = 1;\n` }), 'fake-r3': () => ({ stdout: verdicts.shift()! }) });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
-  writeCard(fx, { id: CARD, title: 'card continue command', allowPaths: [file] });
-  const goal = goalForCards(fx, [CARD]);
+  for (const id of ids) writeCard(fx, { id, title: 'card continue command', allowPaths: [`src/${id.toLowerCase()}.ts`] });
+  const goal = goalForCards(fx, ids);
   // The CLI reads the configuration from the main root: the command reviewer of the fixture, which `continueStop` requires.
   writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ cardsDir: 'specs/tasks', shipPath: 'dry-run', worktreeRoot: path.join(fx.tmp, 'wt'), ...(fx.config.formalReview.command.length ? CONFIG.config : {}) }));
   const g = () => fx.goal(goal.id);
@@ -63,10 +63,10 @@ function setup(fx: ReturnType<typeof makeFixture>) {
   return { goal, g, persisted, stopCard, stopGoal, stopped, deadline, bytes, cli, continueCli };
 }
 /** `body` on a fresh fixture and its setup, with the fixture removed after it. */
-async function scenario(body: (s: ReturnType<typeof setup>, fx: ReturnType<typeof makeFixture>) => Promise<void>, config: { config?: Record<string, unknown> } = CONFIG) {
+async function scenario(body: (s: ReturnType<typeof setup>, fx: ReturnType<typeof makeFixture>) => Promise<void>, config: { config?: Record<string, unknown> } = CONFIG, ids = [CARD]) {
   const fx = makeFixture(config);
   try {
-    await body(setup(fx), fx);
+    await body(setup(fx, ids), fx);
   } finally {
     fx.cleanup();
   }
@@ -78,7 +78,8 @@ test('acceptance 1: on a goal aidlc next stopped for the card\'s review stop, ca
   const r = s.continueCli();
   assert.equal(r.status, 0, r.stderr);
   const report = JSON.parse(r.stdout) as Stored;
-  assert.deepEqual([report['state'], report['continuation']?.by, report['continuation']?.admits, report['continued'], report['readmitted']], ['BUILD', BY, 5, true, true]);
+  assert.deepEqual([report['state'], report['continuation']?.by, report['continuation']?.admits, report['continued'], report['readmitted'], report['next']], ['BUILD', BY, 5, true, true, `\`aidlc card next ${CARD}\`; goal ${s.goal.id} is re-admitted (CARDS)`]);
+  assert.deepEqual(report['continuation'], s.persisted().continuations.at(-1));
   assert.equal(s.g().state, 'CARDS');
   const next = s.cli('card', 'next', CARD);
   assert.deepEqual([next.status, (JSON.parse(next.stdout || '{}') as Stored)['directive']?.kind], [0, 'build'], next.stderr);
@@ -124,3 +125,16 @@ test('acceptance 4: card continue run again on the continued run, with the goal 
   const again = s.continueCli();
   assert.deepEqual([again.status, /the card run is in BUILD, not in STOP/.test(again.stderr), s.persisted().continuations.length], [1, true, 1], again.stderr);
 }));
+
+test('R3 decision 1, F1: the human line states the run\'s state, the whole continuation, continued and readmitted as true or false, and the next command, on a re-admitted goal and on a two-card goal that is not stopped [R4]', async () => {
+  for (const [ids, readmitted] of [[[CARD], true], [[CARD, 'T1-CD'], false]] as const) {
+    await scenario(async (s) => {
+      if (readmitted) await s.stopped(); else await s.stopCard();
+      s.deadline(FAR);
+      const r = s.cli('--no-json', 'card', 'continue', CARD, '--by', BY, '--reason', 'one more repair round');
+      assert.equal(r.status, 0, r.stderr);
+      const c = s.persisted().continuations.at(-1)!;
+      for (const part of ['state=BUILD', 'continued=true', `readmitted=${readmitted}`, `continuation at ${c.at} by ${BY}: one more repair round`, `lifted stop review at ${c.stop.at}: ${c.stop.detail}`, 'decisions=1 admits=5', `aidlc card next ${CARD}`]) assert.ok(r.stdout.includes(part), `${part} in ${r.stdout}`);
+    }, CONFIG, [...ids]);
+  }
+});
