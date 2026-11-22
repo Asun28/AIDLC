@@ -32,13 +32,14 @@ before(() => {
 });
 after(() => { Object.assign(fs, real); syncBuiltinESMExports(); });
 
-/** `body` on a one-card goal under a command reviewer that answers with `verdicts` in order. */
-async function scenario(verdicts: string[], body: (s: S) => Promise<void> | void, ship = new InjectedShipPath(['merged'], '')) {
-  const fx = makeFixture({ config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, secondPass: false } } });
-  try { await body(setup(fx, [...verdicts], ship)); } finally { Object.assign(fault, { record: false, append: false }); fx.cleanup(); }
+/** `body` on a one-card goal under a command reviewer that answers with `verdicts` in order, and an R2 reviewer answering with `r2` when given. */
+async function scenario(verdicts: string[], body: (s: S) => Promise<void> | void, ship = new InjectedShipPath(['merged'], ''), r2?: string[]) {
+  const preReview = r2 ? { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } : {};
+  const fx = makeFixture({ config: { gateRequired: true, ...preReview, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, secondPass: false } } });
+  try { await body(setup(fx, [...verdicts], ship, [...(r2 ?? [])])); } finally { Object.assign(fault, { record: false, append: false }); fx.cleanup(); }
 }
-function setup(fx: ReturnType<typeof makeFixture>, verdicts: string[], ship: InjectedShipPath) {
-  const script = scriptedRunner({ 'git diff --name-only': { stdout: `${FILE}\u0000` }, 'git diff': { stdout: `diff --git a/${FILE} b/${FILE}\n+export const x = 1;\n` }, 'fake-r3': () => ({ stdout: verdicts.shift()! }) });
+function setup(fx: ReturnType<typeof makeFixture>, verdicts: string[], ship: InjectedShipPath, r2: string[] = []) {
+  const script = scriptedRunner({ 'git diff --name-only': { stdout: `${FILE}\u0000` }, 'git diff': { stdout: `diff --git a/${FILE} b/${FILE}\n+export const x = 1;\n` }, 'fake-r3': () => ({ stdout: verdicts.shift()! }), 'fake-r2': () => ({ stdout: r2.shift()! }) });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
   writeCard(fx, SPEC);
   const goal = goalForCards(fx, [CARD]);
@@ -51,8 +52,9 @@ function setup(fx: ReturnType<typeof makeFixture>, verdicts: string[], ship: Inj
   /** A success; with no `sha` the dry-run path keeps the run's candidate. */
   const attempt = (sha?: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
   const review = () => runner.formalReview(g(), card, persisted());
+  const pre = () => runner.preReview(g(), card, persisted());
   return {
-    fx, ship, goal, persisted, stored, next, attempt, review, card: () => card,
+    fx, ship, goal, persisted, stored, next, attempt, review, pre, card: () => card,
     /** A success with candidate `sha`, its review directive and the R3 decision. */
     decide: async (sha: string) => { attempt(sha); assert.equal(next()['kind'], 'review'); await review(); },
     reconcile: () => runner.ciReconcile(g(), card, persisted(), '12345', () => ({ status: 'completed', conclusion: 'success', attempt: 2 })),
@@ -183,3 +185,33 @@ test('guard rows: a CI rerun of another candidate keeps its candidate, a second 
     });
   }
 });
+
+test('R3 decision 1, F1: with pre-review configured, a candidate holding an R2 and an R3 pass is amended in its requirements; card next asks for a new pre-review round, which is admitted and passes, R3 decides the amended candidate and the ship merges [R3] [R4]', () => scenario([PASS, PASS], async (s) => {
+  s.attempt('sha-1');
+  assert.equal(s.next()['kind'], 'pre-review'); await s.pre();
+  assert.equal(s.next()['kind'], 'review'); await s.review();
+  s.amend(REQUIREMENTS);
+  const amended = amendedDigest('sha-1', 1);
+  assert.equal(s.next()['kind'], 'pre-review');
+  await assert.doesNotReject(s.pre());
+  assert.deepEqual(s.persisted().preReview.rounds.map((r) => [r.candidateSha, r.candidateDigest, r.outcome]), [['sha-1', 'sha-1', 'pass'], ['sha-1', amended, 'pass']]);
+  assert.equal(s.next()['kind'], 'review'); await s.review();
+  assert.deepEqual([s.persisted().review.invocations.map((i) => [i.candidateSha, i.candidateDigest, i.outcome]), s.persisted().review.substantiveDecisions], [[['sha-1', 'sha-1', 'pass'], ['sha-1', amended, 'pass']], 2]);
+  assert.deepEqual([s.next()['kind'], s.persisted().mergeVerified, s.ship.requests.map((q) => q.candidateSha)], ['close', true, ['sha-1']]);
+}, undefined, [PASS, PASS]));
+
+test('R3 decision 1, F2: a candidate R3 blocked with an undisputed finding is amended in its requirements and recorded again on the same commit; R3 is admitted on the amended candidate, the old block and its finding stay as they were, the pass resolves the finding by the existing rule and ships [R3] [R4] [R5]', () => scenario([block('no RED'), PASS], async (s) => {
+  await s.decide('sha-1');
+  const was = s.stored();
+  assert.deepEqual([was['findings'].map((f: Stored) => [f.id, f.disposition, f.disputes.length]), was['review'].substantiveDecisions, was['review'].substantiveBlocks], [[['F1', 'open', 0]], 1, 1]);
+  s.amend(REQUIREMENTS);
+  s.attempt('sha-1');
+  assert.equal(s.next()['kind'], 'review');
+  await assert.doesNotReject(s.review());
+  const now = s.stored();
+  assert.deepEqual(now['review'].invocations[0], was['review'].invocations[0]);
+  assert.deepEqual(now['review'].invocations.map((i: Stored) => [i.candidateDigest, i.outcome]), [['sha-1', 'block'], [amendedDigest('sha-1', 1), 'pass']]);
+  assert.deepEqual([now['review'].substantiveDecisions, now['review'].substantiveBlocks], [2, 1]);
+  assert.deepEqual(now['findings'], [{ ...was['findings'][0], resolvedAt: T0, revision: was['findings'][0].revision + 1 }], 'the pass resolves F1 (recordFindings)');
+  assert.deepEqual([s.next()['kind'], s.persisted().mergeVerified], ['close', true]);
+}));
