@@ -18,6 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
+import { admittedDecisions, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys, type ClaimResult } from '../coordination/lease.ts';
@@ -676,6 +677,25 @@ export class CardRunner {
   }
 
   /**
+   * The owner's continuation of a run stopped for review (card T1-CONTINUE-REVIEW-2): one locked update of the record read inside the
+   * lock (`continueReviewStop`), state BUILD for `selectCardState`, no counter, finding, receipt or deadline moved, and one owed
+   * CARD_STATE event with the continuation in its persisted data (`deliverOwed`). A refusal writes and appends nothing.
+   */
+  continueStop(goal: Goal, card: Card, act: Omit<ContinuationAct, 'at'>): CardRun {
+    const at = this.clock();
+    let owed: OwedEvent[] = [];
+    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to continue`);
+      const { continuation, review } = continueReviewStop(persisted, { ...act, at }, this.config.formalReview.command.length > 0);
+      const { by, reason, decisions, admits } = continuation;
+      owed = [this.owe(goal, 'CARD_STATE', { from: 'STOP', to: 'readmitted', continuation: { by, reason, stop: continuation.stop.reason, decisions, admits } })];
+      return { ...persisted, review, continuations: [...persisted.continuations, continuation], state: 'BUILD', stop: undefined, blocker: undefined, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+    });
+    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key) });
+    return next;
+  }
+
+  /**
    * A disposition changes the persisted run under the card-run lock (`GoalStore.updateCardRun`), never the
    * caller's snapshot: the record is read inside the lock, a stop saved meanwhile refuses, the lease is
    * fenced at the run's generation, and only the changed finding is written back into that record, so no
@@ -854,7 +874,7 @@ export class CardRunner {
     // behind a newer candidate (card T1-EFF-R3-PROGRESS-2).
     const recordedStop = run.review.invocations.find((i) => i.stopReview && !i.stopLifted)?.stopReview;
     const reviewExhausted = recordedStop !== undefined || (this.config.formalReview.command.length
-      ? run.review.noVerdictRetriesUsed > 1 || (run.state === 'REVIEW_FIX' && run.review.substantiveBlocks > 0 && run.review.substantiveDecisions >= MAX_R3_DECISIONS)
+      ? run.review.noVerdictRetriesUsed > 1 || (run.state === 'REVIEW_FIX' && run.review.substantiveBlocks > 0 && run.review.substantiveDecisions >= (admittedDecisions(run.continuations) ?? MAX_R3_DECISIONS))
       : run.review.substantiveBlocks >= 2 || run.review.noVerdictRetriesUsed > 1 || (run.review.substantiveDecisions >= 2 && run.review.substantiveBlocks > 0 && run.state === 'REVIEW_FIX'));
     const episode = run.effort;
     const repairExhausted = episode?.terminal && episode.terminal !== 'succeeded' ? `effort episode ${episode.terminal}` : undefined;
@@ -1795,10 +1815,19 @@ export class CardRunner {
    */
   private formalAllowance(run: CardRun, card: Card): number {
     if (!this.config.formalReview.command.length) return MAX_SUBSTANTIVE_REVIEW_DECISIONS;
+    // A continuation's admitted count replaces both allowances from the act on (card T1-CONTINUE-REVIEW-2).
+    const admitted = admittedDecisions(run.continuations);
+    if (admitted !== undefined) return admitted;
     if (this.secondPassDue(run)) return MAX_R3_DECISIONS;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     const last = decided[decided.length - 1];
     return last?.outcome === 'block' && this.invocationBlocking(run, card, last) ? MAX_R3_DECISIONS : MAX_SUBSTANTIVE_REVIEW_DECISIONS;
+  }
+
+  /** The allowance a stop detail or a refusal names: the continuation's admitted count, the one for repairs, or the two decisions. */
+  private allowanceName(run: CardRun, allowance: number, noun: string): string {
+    if (admittedDecisions(run.continuations) !== undefined) return `the continuation's admitted count of ${allowance} decisions`;
+    return allowance === MAX_R3_DECISIONS ? `the ${MAX_R3_DECISIONS}-decision ${noun} for repairs` : `the two-decision ${noun}`;
   }
 
   /**
@@ -1861,7 +1890,7 @@ export class CardRunner {
     const baseSyncDecision = this.baseSyncDue(run);
     const allowance = this.formalAllowance(run, card);
     if (run.review.substantiveDecisions >= allowance && !baseSyncDecision) {
-      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision allowance for repairs` : 'two-decision allowance'} (${run.review.substantiveDecisions} used)`, this.reviewNextAction(card.id, run.review, 'return the retained verdict evidence for human adjudication; no counter reset'), { at: now, global: false });
+      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds ${this.allowanceName(run, allowance, 'allowance')} (${run.review.substantiveDecisions} used)`, this.reviewNextAction(card.id, run.review, 'return the retained verdict evidence for human adjudication; no counter reset'), { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -1941,7 +1970,7 @@ export class CardRunner {
    * which can only stop the card. A no-verdict or a quota hold decides nothing, so it stays due.
    */
   private secondPassDue(run: CardRun): boolean {
-    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS - 1) return false;
+    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= (admittedDecisions(run.continuations) ?? MAX_R3_DECISIONS) - 1) return false;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     if (decided.some((i) => i.secondPass)) return false;
     const last = [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest);
@@ -2083,7 +2112,7 @@ export class CardRunner {
     const baseSyncDecision = cfg === this.config.formalReview.baseSync;
     const allowance = this.formalAllowance(current, card);
     if (ledger.substantiveDecisions + pendingDecisions >= allowance && !baseSyncDecision) {
-      throw new Error(`the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision review allowance for repairs` : 'two-decision review allowance'} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+      throw new Error(`${this.allowanceName(current, allowance, 'review allowance')} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
     if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
       throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
@@ -2590,7 +2619,7 @@ export class CardRunner {
         // Only the pending reservation is ever released: a decision already committed under this invocation stays with its counters.
         release: (latest) => ({ ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }),
         decide: (latest) => {
-          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, ...(r.secondPass ? { secondPass: true } : {}), verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest));
+          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, ...(r.secondPass ? { secondPass: true } : {}), verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest), admittedDecisions(latest.continuations));
           decision = rec.decision;
           // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
           // A routed skip is not a decision on the findings: it records and resolves nothing.

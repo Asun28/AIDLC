@@ -55,20 +55,20 @@ in `npm test` on every push.
   writes to the lease, review-queue, operation-ledger and `.review/` files.
 - More than one fault per run, a crash inside a single write, a process
   that dies mid-command, a torn journal line.
-- Card-run commands the check does not drive: `CardRunner.takeover`,
+- Commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's
   `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`),
-  `CardRunner.withdrawCandidate` and `CardRunner.adoptMerge` (fault
-  rows: `tests/scenarios/candidate-withdraw.test.ts`, `adopt-merge.test.ts`),
-  `aidlc review repro`
-  (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
-  `GoalStore.updateCardRun` write of the finding's `repro` after both runs
-  and no journal append, so a failed write exits 1 and changes
-  neither), failed and
-  not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
-  BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
-  and no worktree path, card T0-PREPARE-WORKTREE).
+  `CardRunner.continueStop`, `CardRunner.withdrawCandidate`,
+  `CardRunner.adoptMerge` (fault rows:
+  `tests/scenarios/card-continue.test.ts`, `candidate-withdraw.test.ts`,
+  `adopt-merge.test.ts`), `aidlc review repro` (`runRepro`,
+  `src/review/repro.ts`, T1-FINDING-REPRO-2: one `GoalStore.updateCardRun`
+  write of the finding's `repro` after both runs, no journal append: a
+  failed write exits 1, changes neither), failed and not-counted attempts,
+  R2/R3 blocks, no-verdict results, `card next` PREPARE, BUILD and CLOSE
+  steps (T0-PREPARE-WORKTREE: PREPARE start writes PREPARE, no worktree
+  path).
 - A confirmed violation the current code shows is not a pass: it is
   pinned in `KNOWN_VIOLATIONS` with its counterexample and filed as a
   T0-bugfix card, so those fault points are known defects, not covered

@@ -81,7 +81,7 @@
     "cli.start": {
       "entry": "dist",
       "ceilings": {
-        "modules": 241,
+        "modules": 254,
         "depBytes": 1267883,
         "startFsCalls": 113,
         "fsCalls": 6,
