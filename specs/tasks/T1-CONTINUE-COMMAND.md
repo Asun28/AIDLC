@@ -1,7 +1,7 @@
 ---
 id: T1-CONTINUE-COMMAND
 title: "`aidlc card continue` records the owner's continuation of a stopped card from the command line"
-status: todo
+status: merged
 branch: T1-CONTINUE-COMMAND
 worktree: D:\wt\AIDLC\T1-CONTINUE-COMMAND
 plan_ref: plans/card-continuation.md#order-of-work
