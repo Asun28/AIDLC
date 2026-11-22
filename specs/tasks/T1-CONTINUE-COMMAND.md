@@ -56,3 +56,25 @@ npm run typecheck && node --test tests/scenarios/card-continue-command.test.ts t
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error, every test of the four files passes, the build succeeds and every benchmark count is within its ceiling.
+
+## Attempt evidence
+Attempts 1 and 2. RED `6fb8b7cc` (`acceptance 1: ...`: `error: unknown command 'continue'`, all 4 tests).
+
+| Item | Proof in `tests/scenarios/card-continue-command.test.ts` | Result |
+|---|---|---|
+| 1 | `acceptance 1`: exit 0; `state` BUILD, `continuation` equal to the stored one (`by`, `admits` 5), `continued` and `readmitted` true, `next` by value; goal CARDS; `card next` exit 0, kind `build`; runs `[T1-CC]` | pass |
+| 2 | `acceptance 2`: 5 rows (time names `aidlc goal extend`, DONE, no run, `--decisions 0`, blank `--by`), exit 1, cause, three files byte-identical | pass |
+| 3 | `acceptance 3`: PAST names `aidlc goal extend` and `aidlc card next`; FAR names `aidlc card next` only; deadline unchanged | pass |
+| 4 | `acceptance 4`: second call on a CARDS goal exits 1 with `the card run is in BUILD, not in STOP`, one continuation | pass |
+| 1, 3 | `R3 decision 1, F1`: `--no-json` line holds state, continued, readmitted (true, and false on a two-card goal not stopped), `at`, `by`, `reason`, the stop, decisions and admits, `aidlc card next` | pass |
+| 5 | DoD: the three files unchanged, build and bench exit 0 | pass |
+| 6 | docs/OPERATIONS.md Continuations paragraph and `review` row, README Limits row, `changelog.d/T1-CONTINUE-COMMAND.md` | reviewer |
+
+Guard sweep (each loosened in `src/cli/main.ts`, this file run, restored):
+- G1 `continue` exception dropped from `checkedGoal` (`guard === 'rule'` only): acceptance 1 to 4 and F1 fail.
+- G2 `late` forced false: acceptance 3 fails. G3 `--decisions` passed when absent (`Number(undefined)`): acceptance 1 to 4 and F1 fail. G5 the `decisions` clause of the human line dropped: F1 fails.
+- equivalent: G2b `<=` to `<`: differs only when the deadline equals the real clock to the millisecond. G4 `checkedGoal` guard `false`: `continueCard` makes the same `terminalGoalRefusal(goal, 'continue')` check with the same message before any read. G5b that clause printed always: every continuation the runner records lifts a review stop and carries `decisions`.
+
+R3 decision 1 (candidate eee70721, block), repair attempt 2. RED: commit 2ea2774e; test "R3 decision 1, F1" failed on `continued=true` absent from the human line.
+- F1 (incomplete-human-continuation-output): the human line states the state, `continued` and `readmitted` as true or false, the whole continuation and `next`.
+- F2 (recovery-assumes-stopped-goal): the failure bullet of Continuations states the stopped and the not-stopped goal apart; the two sentences that called `aidlc review rule` the one command on a stopped goal name `aidlc card continue` beside it.
