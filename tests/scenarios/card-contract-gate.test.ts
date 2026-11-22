@@ -121,6 +121,8 @@ test('1 [R1] [R2] [R4] [R6] BUILD with an attempt running: next and recordAttemp
     s.changeCard(REQUIREMENTS);
     assert.throws(() => s.record('success'), refusal(['requirements']), 'recordAttempt');
     assert.deepEqual(s.events('NOTE').filter((e) => e['data']['eventKey'] === 'owed-gate').map((e) => e['data']['completed']), [true], 'the owed event is delivered before the refusal');
+    // Directly after: the refusals that follow (here a success that reports lost checks) do not answer first.
+    assert.throws(() => s.runner.recordAttempt(s.g(), s.card(), s.persisted(), { outcome: 'success', dodReceipt: 'dod:sha-1', redReceipt: 'red:1', candidateSha: 'sha-1', checksLost: ['a check'] }), refusal(['requirements']), 'a success with lost checks');
     assert.deepEqual(s.outcomes(), ['running']);
   });
 });
@@ -167,6 +169,16 @@ test('3 [R3] [R4] SHIP: next, formalReview and preReview refuse before any reser
     await assert.rejects(s.pre(), refusal(['requirements']), 'preReview');
     assert.deepEqual([s.persisted().preReview.rounds.length, s.calls.r2], [0, 0]);
     assert.deepEqual(s.bytes(), held, 'preReview');
+  }, PRE);
+  // R3: the gate comes directly after the stop refusal, so the guards after it (here a dirty candidate) do not answer first.
+  await scenario(async (s) => {
+    s.started(); s.record('success');
+    s.seed((r) => { r['candidate'].dirty = true; });
+    s.changeCard(REQUIREMENTS);
+    const held = s.bytes();
+    await assert.rejects(s.pre(), refusal(['requirements']), 'preReview, dirty candidate');
+    await assert.rejects(s.review(), refusal(['requirements']), 'formalReview, dirty candidate');
+    assert.deepEqual([s.calls.r2, s.calls.r3, s.queued(), s.bytes()], [0, 0, [], held]);
   }, PRE);
 });
 
@@ -219,7 +231,7 @@ test('4 [R1] [R2] [R3] [R4] [R7] where amendCard refuses, the gate refuses all t
   });
 });
 
-test('5 [R1] no contract, mergeVerified or DONE: next returns what it returns for the unchanged card, and with no contract an attempt is recorded', async () => {
+test('5 [R1] no contract, mergeVerified or DONE: next and recordAttempt do what they do for the unchanged card, and with no contract an attempt is recorded', async () => {
   const rows: Array<[string, (s: S) => void]> = [
     ['no contract', (s) => s.seed((r) => { delete r['contract']; })],
     ['mergeVerified', (s) => s.seed((r) => { r['mergeVerified'] = true; })],
@@ -227,6 +239,19 @@ test('5 [R1] no contract, mergeVerified or DONE: next returns what it returns fo
   ];
   for (const [name, arrange] of rows) {
     assert.deepEqual(await kinds(arrange), ['close', 'close'], name);
+  }
+  // recordAttempt on a merged or DONE run does with the changed card what it does with the unchanged one.
+  for (const [name, arrange] of rows.slice(1)) {
+    const outcomes: string[] = [];
+    for (const changed of [false, true]) {
+      await scenario(async (s) => {
+        s.started(); await s.decide('sha-1', PASS); arrange(s);
+        if (changed) s.changeCard(REQUIREMENTS);
+        try { s.record('fail'); outcomes.push('recorded'); } catch (e) { outcomes.push((e as Error).message); }
+      });
+    }
+    assert.match(outcomes[0]!, /^episode already succeeded; ship the candidate instead/, `recordAttempt, ${name}, unchanged card`);
+    assert.equal(outcomes[1], outcomes[0], `recordAttempt, ${name}`);
   }
   for (const changed of [false, true]) {
     await scenario((s) => {
