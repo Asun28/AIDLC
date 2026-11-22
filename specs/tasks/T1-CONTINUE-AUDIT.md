@@ -55,3 +55,20 @@ npm run typecheck && node --test tests/core/card-goal.test.ts tests/surface/veri
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error and every test of the four files passes.
+
+## Attempt evidence
+Build attempt 1. RED `b37568ca` (`continue lifts the refusal for a goal stopped for review or ci ...`: ci refused; acceptance 2: `review: continuation with a string cardId and by` kept `WORK_AFTER_TERMINAL`).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `terminalGoalRefusal with the continue flag (T1-CONTINUE-AUDIT)`, both tests, in `tests/core/card-goal.test.ts`: exact refusal or `undefined` per goal and flag | pass (failed at RED) |
+| 2 | `T1-CONTINUE-AUDIT acceptance 2` in `tests/surface/verifier.test.ts`: `WORK_AFTER_TERMINAL` detail or `undefined` per row | pass (failed at RED) |
+| 3 | typecheck; existing tests of both files, `review-rule-goal` and `audit` scenarios, no line changed | pass, DoD 54 of 54 |
+| 4 | docs/OPERATIONS.md Audit, `changelog.d/T1-CONTINUE-AUDIT.md` | reviewer |
+
+Guard sweep (each loosened, test file run, restored):
+- card-goal `ruling === 'continue'` to `ruling`: R2 row ci with `true` fails.
+- `reason === 'review' || 'ci'` (continue): dropping either fails R1.
+- `goal.state === 'STOP'` (continue): DONE goal with a stop record for ci fails R1 (row added in GREEN).
+- equivalent: `ruling === true` to `ruling`: `'continue'` differs only on a goal in STOP for review, where the next line returns no refusal too.
+- verifier `(review || ci)` for continuation: dropping ci, or any reason, fails acceptance 2; `typeof cardId`/`typeof by` dropped fail it; ruling widened to ci fails the `ci: ruling` row.

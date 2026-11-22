@@ -109,6 +109,8 @@ describe('terminalGoalRefusal with the continue flag (T1-CONTINUE-AUDIT)', () =>
     ['time', stopped('time'), refusal('STOP (stop reason: time)', EXTEND), refusal('STOP (stop reason: time)', EXTEND), refusal('STOP (stop reason: time)', EXTEND)],
     ...['card', 'tool', 'risk', 'cancelled'].map((reason): [string, Parameters<typeof terminalGoalRefusal>[0], string, string, string] => [reason, stopped(reason), refusal(`STOP (stop reason: ${reason})`, RESUME), refusal(`STOP (stop reason: ${reason})`, RESUME), refusal(`STOP (stop reason: ${reason})`, RESUME)]),
     ['DONE', { id: 'g-1', state: 'DONE', terminal: true }, refusal('DONE', RESUME), refusal('DONE', RESUME), refusal('DONE', RESUME)],
+    // Guard sweep: the exception needs the goal in STOP, not only a stop record for review or ci.
+    ['DONE with a stop record for ci', { id: 'g-1', state: 'DONE', terminal: true, stop: { reason: 'ci' } }, refusal('DONE (stop reason: ci)', RESUME), refusal('DONE (stop reason: ci)', RESUME), refusal('DONE (stop reason: ci)', RESUME)],
   ];
 
   test('continue lifts the refusal for a goal stopped for review or ci and keeps it for time, card, tool, risk, cancelled and DONE [R1]', () => {
