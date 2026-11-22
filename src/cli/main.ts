@@ -768,6 +768,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       out(c, { cardId, state: run.state, continuation, continued, readmitted, next }, () => `${cardId} state=${run.state} continued=${continued} readmitted=${readmitted}; continuation at ${continuation.at} by ${continuation.by}: ${continuation.reason}; lifted stop ${continuation.stop.reason} at ${continuation.stop.at}: ${continuation.stop.detail}${continuation.decisions === undefined ? '' : `; decisions=${continuation.decisions} admits=${continuation.admits}`}; next: ${next}`);
     });
   card
+    .command('amend <cardId>')
+    .description("record the owner's amendment of a started card: the contract fields changed in the card file of the main checkout since the run's contract, and the evidence they invalidate (card T1-AMEND-COMMAND); starts no run and lifts no stop")
+    .requiredOption('--by <who>', 'who amends the card, as recorded')
+    .requiredOption('--reason <text>', 'why the card changed')
+    .option('--goal <id>')
+    .action((cardId: string, o: { by: string; reason: string; goal?: string }) => {
+      const c = ctx(g());
+      // The existing run only, never created, on a goal in any state; every write and every refusal of the act are the runner's.
+      const goalRec = checkedGoal(c, cardId, o.goal, false);
+      const run = runnerFor(c).amendCard(goalRec, cardOf(c, cardId).card, { by: o.by, reason: o.reason });
+      const amendment = run.amendments.at(-1)!;
+      const next = run.stop ? `the run stays in STOP for ${run.stop.reason}; on the owner's instruction run \`aidlc card continue ${cardId} --by <who> --reason <text>\`` : `\`aidlc card next ${cardId}\``;
+      out(c, { cardId, state: run.state, amendment, next }, () => `${cardId} state=${run.state}; amendment revision ${amendment.revision} at ${amendment.at} by ${amendment.by}: ${amendment.reason}; changed=${amendment.changed.join(',')} invalidated=${amendment.invalidated.join(',') || 'none'}; next: ${next}`);
+    });
+  card
     .command('close <cardId>')
     .description('do the cleanup and metadata steps and record the closure predicates')
     .option('--goal <id>')
