@@ -1,7 +1,7 @@
 ---
 id: T1-CARD-CONTRACT-2
 title: "A card run is created only for a card the registry holds and records one digest for each contract field of it, and pure rules give the fields that changed, the evidence they touch and the digest of an amended candidate (replaces T1-CARD-CONTRACT: carries its code, states the parser's rule for a list item and refuses a run for a card the registry lacks)"
-status: todo
+status: merged
 branch: T1-CARD-CONTRACT-2
 worktree: D:\wt\AIDLC\T1-CARD-CONTRACT-2
 plan_ref: plans/card-continuation.md#order-of-work
