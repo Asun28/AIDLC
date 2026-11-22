@@ -1,5 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as continuation from '../../src/core/continuation.ts';
 import { admittedDecisions, continueReviewStop } from '../../src/core/continuation.ts';
 import { CardRun } from '../../src/core/types.ts';
 import { cardRun, T0 } from './_fixtures.ts';
@@ -58,6 +59,42 @@ describe('continueReviewStop (card T1-CONTINUE-CORE)', () => {
     test(`acceptance 2: ${cause} is refused with a message that names it, and the run is unchanged [R3]`, () => {
       const before = structuredClone(run);
       assert.throws(() => continueReviewStop(run, a, command), message);
+      assert.deepEqual(run, before);
+    });
+  }
+});
+
+describe('continueCiStop (card T1-CONTINUE-CI)', () => {
+  const done = (n: number, outcome: 'success' | 'fail', cause?: string) => ({ n, effort: 'medium', startedAt: T0, finishedAt: T0, outcome, ...(cause ? { cause, evidence: cause } : {}), progress: false, checksGained: [], checksLost: [] });
+  const episode = (attempts: unknown[]) => ({ taskId: 'T1-A', role: 'implementer', baseline: 'medium', ladder: ['medium', 'high'], attempts, terminal: 'succeeded' });
+  const ciStopped = (effort?: unknown) => cardRun({ state: 'STOP', stop: stopFor('ci', 'unclassified failure: diagnose before any rerun'), ...(effort ? { effort } : {}) });
+  const CAUSE = 'continuation by owner: flaky fixture fixed';
+  const act = { at: AT, by: ' owner ', reason: 'flaky fixture fixed ' };
+
+  test('acceptance 6: the bound success is a failed attempt with the act as its cause, the episode reopens, the ladder names attempt 2, and the entry has no decisions or admits [R1]', () => {
+    const run = ciStopped(episode([done(1, 'success')]));
+    const before = structuredClone(run);
+    const out = continuation.continueCiStop(run, act, true);
+    assert.deepEqual(out.continuation, { at: AT, by: 'owner', reason: 'flaky fixture fixed', stop: { reason: 'ci', detail: 'unclassified failure: diagnose before any rerun', at: STOP_AT } });
+    assert.deepEqual(out.step.episode, { ...run.effort, terminal: undefined, attempts: [{ ...done(1, 'fail', CAUSE) }] });
+    assert.deepEqual([out.step.action, out.step.refuted?.n], [{ action: 'attempt', effort: 'medium', n: 2, escalated: false }, 1]);
+    assert.deepEqual(run, before, 'the run passed in is unchanged');
+  });
+
+  const ok = ciStopped(episode([done(1, 'success')]));
+  const rows: Array<[string, CardRun, Record<string, unknown>, RegExp]> = [
+    ['state BUILD', { ...ok, state: 'BUILD' }, {}, /is in BUILD, not in STOP/],
+    ['stop reason review', { ...ok, stop: stopFor('review') } as CardRun, {}, /stop reason review is not ci/],
+    ['decisions given', ok, { decisions: 1 }, /decisions 1 is given: a continuation of a ci stop admits a repair attempt, not R3 decisions/],
+    ['blank by', ok, { by: ' ' }, /by is blank/],
+    ['blank reason', ok, { reason: '\t' }, /reason is blank/],
+    ['no effort episode', ciStopped(), {}, /no effort episode/],
+    ['a ladder stop', ciStopped(episode([done(1, 'fail', CAUSE), done(2, 'success')])), {}, /the effort ladder admits no repair attempt: same-cause-stop: two consecutive failures/],
+  ];
+  for (const [cause, run, change, message] of rows) {
+    test(`acceptance 6: ${cause} is refused with a message that names it, and the run is unchanged [R3]`, () => {
+      const before = structuredClone(run);
+      assert.throws(() => continuation.continueCiStop(run, { ...act, ...change }, true), message);
       assert.deepEqual(run, before);
     });
   }
