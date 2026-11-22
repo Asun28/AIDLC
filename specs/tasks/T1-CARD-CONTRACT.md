@@ -14,7 +14,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - changelog.d/T1-CARD-CONTRACT.md
   - specs/tasks/T1-CARD-CONTRACT.md
-dod_command: npm run typecheck && node --test tests/core/contract.test.ts tests/scenarios/card-contract.test.ts tests/core/amendments.test.ts tests/scenarios/fault-points.test.ts
+dod_command: npm run typecheck && node --test tests/core/contract.test.ts tests/scenarios/card-contract.test.ts tests/core/amendments.test.ts tests/scenarios/fault-points.test.ts && npm run build && npm run bench -- --check
 dod_exit: 0
 review_gate: codex {verdict:pass}
 requirements:
@@ -30,14 +30,14 @@ acceptance:
   - 2. Same file. `changedContractFields` returns the differing fields in the order of R1, and none for equal contracts. `invalidatedBy` gives the row of R4 for each of the nine fields alone and `dod` and `review` for `budget` with `acceptance`. [R3] [R4] [dod arm 2]
   - 3. Same file. `amendedDigest(d, 0)` is `d`; `amendedDigest(d, 1)` is the SHA-256 hex digest of `d`, a line feed and `amended`; `amendedDigest(d, 2)` equals `amendedDigest(amendedDigest(d, 1), 1)` and differs from both. [R5] [dod arm 2]
   - 4. `tests/scenarios/card-contract.test.ts`. A run that `ensureCardRun` creates holds `contract` equal to `contractDigests` of its card; after the card file changes on disk a second `ensureCardRun` returns the run with the same `contract`. `CardRun.parse` of a record without `contract` and without `amendments` gives undefined and an empty array, and a record with one amendment round-trips. [R2] [R6] [dod arm 2]
-  - 5. The typecheck passes, and `tests/core/amendments.test.ts` and `tests/scenarios/fault-points.test.ts` pass with no line changed. [dod arm 1] [dod arm 2]
+  - 5. The typecheck passes, and `tests/core/amendments.test.ts` and `tests/scenarios/fault-points.test.ts` pass with no line changed, and `npm run build && npm run bench -- --check` exits 0. [dod arm 1] [dod arm 2] [dod arm 3]
   - 6. The docs state R1 to R6 (reviewer-verified against the diff). [R7]
 depends_on: [T1-CONTINUE-CI]
-budget: 185
+budget: 200
 sweep: "On main at f51534d2. src/loop/controller.ts:770 is where `ensureCardRun` writes `cardRevision` on a new run, the one place a run is created. src/core/types.ts:901-902 holds `cardRevision` and its comment 'Nothing in src reads it'. src/core/amendments.ts holds `routeAmendment` and `mapRevision` (goal revisions) and is not changed. `canonicalJson` is the function src/audit/manifest.ts:159 uses; read where it is defined before writing another. The card schema with its defaults is `Card` in src/core/types.ts, and src/artifacts/card.ts parses a card file into it."
 forbid: [weakening or skipping a test to go green, a digest over the card file's bytes, a change to `candidate.digest` of any run, editing .aidlc state by hand]
 non_goals: [the act that records an amendment and the use of `amendedDigest` in `recordAttempt` (T1-CARD-AMEND), a `contract` for a run created before this card, a report or a gate when the card differs from the recorded contract, a change to `routeAmendment` or to goal revisions]
-hygiene: "Line numbers are from main at f51534d2; read them again at PREPARE. The schema gains fields, so every parsed run holds `amendments`: run `npm test` once before the attempt is recorded, because a test outside the DoD may compare a whole run record. The fault-point check drives `card next`, which creates the run: when its expected record changes, follow the verify-card-run-writes skill before SHIP and at CLOSE."
+hygiene: "Line numbers are from main at f51534d2; read them again at PREPARE. The schema gains fields, so every parsed run holds `amendments`: run `npm test` once before the attempt is recorded, because a test outside the DoD may compare a whole run record. The fault-point check drives `card next`, which creates the run: when its expected record changes, follow the verify-card-run-writes skill before SHIP and at CLOSE. src/core/contract.ts is a new module that src/loop/controller.ts imports, so the `cli.start` module count of the loop benchmark rises by one; the DoD runs the benchmark after the build, and T1-CONTINUE-REVIEW-2 moved the ceiling to the count it measured. Name the module in docs/ARCHITECTURE.md (tests/surface/module-map.test.ts) and run every test file that reads that document."
 doc_sync: docs/ARCHITECTURE.md
 ---
 
@@ -56,7 +56,7 @@ Each new card run records what its card's contract was when the run started, and
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/core/contract.test.ts tests/scenarios/card-contract.test.ts tests/core/amendments.test.ts tests/scenarios/fault-points.test.ts
+npm run typecheck && node --test tests/core/contract.test.ts tests/scenarios/card-contract.test.ts tests/core/amendments.test.ts tests/scenarios/fault-points.test.ts && npm run build && npm run bench -- --check
 ```
 - Expected exit code: 0
-- Assertion: the typecheck reports no error and every test of the four files passes.
+- Assertion: the typecheck reports no error, every test of the four files passes, the build succeeds and every benchmark count is within its ceiling.
