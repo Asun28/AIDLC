@@ -24,13 +24,13 @@ const TRANSIENT = '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRE
 const UNCLASSIFIED = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/555 ... the runner lost contact';
 const CONFIG = { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, secondPass: false } };
 
-/** The faults of tests/scenarios/fault-points.test.ts: a throw from fs.renameSync onto the card-run record, and from fs.appendFileSync onto the goal journal. */
-const fault = { record: false, append: false };
+/** The faults of tests/scenarios/fault-points.test.ts: a throw from fs.renameSync onto the card-run record, and from fs.appendFileSync onto the goal journal (`promoted`: onto a promoted ATTEMPT_STARTED line only). */
+const fault = { record: false, append: false, promoted: false };
 const real = { appendFileSync: fs.appendFileSync, renameSync: fs.renameSync };
 const eio = () => Object.assign(new Error('EIO: injected'), { code: 'EIO' });
 before(() => {
   Object.assign(fs, {
-    appendFileSync: (...a: Parameters<typeof fs.appendFileSync>) => { if (fault.append && String(a[0]).endsWith('.jsonl')) throw eio(); return real.appendFileSync(...a); },
+    appendFileSync: (...a: Parameters<typeof fs.appendFileSync>) => { if (String(a[0]).endsWith('.jsonl') && (fault.append || (fault.promoted && String(a[1]).includes('"promoted":true')))) throw eio(); return real.appendFileSync(...a); },
     renameSync: (from: fs.PathLike, to: fs.PathLike) => { if (fault.record && String(to).endsWith(`${CARD}.json`)) throw eio(); return real.renameSync(from, to); },
   });
   syncBuiltinESMExports();
@@ -43,7 +43,7 @@ async function scenario(body: (s: Awaited<ReturnType<typeof setup>>) => Promise<
   try {
     await body(await setup(fx));
   } finally {
-    Object.assign(fault, { record: false, append: false });
+    Object.assign(fault, { record: false, append: false, promoted: false });
     fx.cleanup();
   }
 }
@@ -60,7 +60,7 @@ async function setup(fx: ReturnType<typeof fixture>) {
   const next = () => runner.next(g(), card, persisted()).directive as Stored;
   const runFile = fx.store.cardFile(goal.id, CARD);
   const journalFile = path.join(fx.paths.journal, `${goal.id}.jsonl`);
-  const events = (type: string): Stored[] => readFileSync(journalFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e['type'] === type);
+  const events = (type?: string): Stored[] => readFileSync(journalFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => !type || e['type'] === type);
   const attempt = (sha: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
   /** The R3 pass and the ship: returns the directive after the ship. */
   const reviewed = async () => { await runner.formalReview(g(), card, persisted()); return next(); };
@@ -77,8 +77,15 @@ async function setup(fx: ReturnType<typeof fixture>) {
   const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: SESSION };
   const cli = (...args: string[]) => spawnSync(process.execPath, [MAIN, ...args, '--goal', goal.id], { cwd: fx.tmp, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
   const stored = (): Stored => JSON.parse(readFileSync(runFile, 'utf8'));
+  /** `aidlc audit verify` on the goal: a clean exit, the goal's report with a verified, non-empty journal chain and no WORK_AFTER_TERMINAL. */
+  const audited = () => {
+    const r = cli('audit', 'verify', '--json');
+    assert.deepEqual([r.status, r.signal, r.error], [0, null, undefined], `${r.stdout}${r.stderr}`);
+    const reports = JSON.parse(r.stdout) as Stored[];
+    assert.deepEqual(reports.map((x) => [x['goalId'], x['journal'].ok, x['journal'].events > 0, x['findings'].filter((f: Stored) => f['code'] === 'WORK_AFTER_TERMINAL')]), [[goal.id, true, true, []]]);
+  };
   return {
-    goal, g, persisted, next, attempt, reviewed, events, cli, stored,
+    goal, g, persisted, next, attempt, reviewed, events, cli, stored, audited,
     continueCli: (...extra: string[]) => cli(...extra, 'card', 'continue', CARD, '--by', BY, '--reason', REASON),
     go: () => runner.continueStop(g(), card, { by: BY, reason: REASON }),
     seed: (change: (run: Stored) => void) => { const run = stored(); change(run); writeFileSync(runFile, JSON.stringify(run, null, 2), 'utf8'); },
@@ -89,7 +96,7 @@ const R2 = ['ci', 'review', 'findings', 'candidate', 'redReceipt', 'deadline'];
 const pick = (run: Stored) => R2.map((k) => run[k]);
 const strip = (e: Stored) => { const { eventKey: _key, ...data } = e['data']; return data; };
 /** The run's effort attempts rebuilt from its first one, one per [outcome, cause, progress]; the episode is open unless the last is a success. */
-const reshape = (run: Stored, ...rows: Array<[string, string?, boolean?]>) => { const a = run['effort'].attempts[0]; run['effort'].attempts = rows.map(([outcome, cause, progress], i) => ({ ...a, n: i + 1, outcome, cause, progress: !!progress })); if (rows.at(-1)![0] !== 'success') delete run['effort'].terminal; };
+const reshape = (run: Stored, ...rows: Array<[string, string?, boolean?]>) => { const a = run['effort'].attempts[0]; run['effort'].attempts = rows.map(([outcome, cause, progress], i) => ({ ...a, n: i + 1, outcome, cause, progress: !!progress, ...(outcome === 'running' ? { finishedAt: undefined } : {}) })); if (rows.at(-1)![0] !== 'success') delete run['effort'].terminal; };
 
 test('acceptance 1, 2, 3 and 5: card continue on a ci stop counts the bound success as a failed attempt with the act as its cause, keeps every R2 field, re-admits the goal; card next builds attempt 2, the repair is reviewed, and a second unclassified failure stops for ci with the rerun ledger kept [R1] [R2] [R4]', () => scenario(async (s) => {
   const was = s.stored();
@@ -109,8 +116,7 @@ test('acceptance 1, 2, 3 and 5: card continue on a ci stop counts the bound succ
   assert.equal(JSON.parse(s.cli('card', 'next', CARD).stdout)['directive'].kind, 'review');
   assert.equal((await s.reviewed())['kind'], 'stop');
   assert.deepEqual([s.persisted().stop?.reason, s.persisted().ci.reruns.slice(0, 1)], ['ci', was['ci'].reruns]);
-  const audit = s.cli('audit', 'verify');
-  assert.ok(!`${audit.stdout}${audit.stderr}`.includes('WORK_AFTER_TERMINAL'), audit.stdout);
+  s.audited();
 }));
 
 test('acceptance 4: a ladder that admits no attempt, --decisions 1 and a run with no effort episode are each refused with their cause, the goal file, the card-run file and the journal byte-identical [R3]', async () => {
@@ -148,6 +154,28 @@ test('guard rows: inside the deadline the ladder escalates the repair, and a run
       s.seed((run) => reshape(run, ...shape));
       s.go();
       assert.deepEqual([s.next()['effort'], s.events('ATTEMPT_FINISHED').filter((e) => e['data'].refutedBy === 'continuation').length], [effort, refuted]);
+    });
+  }
+});
+
+test('R3 decision 1, F1 and F2: a running repair the ladder promotes is owed its ATTEMPT_STARTED by the act and appended once by the next card next, after the GOAL_STATE re-admission, also when that append failed once; the audit is clean [R4]', async () => {
+  for (const failFirst of [false, true]) {
+    await scenario((s) => {
+      // No public path builds a run stopped for ci with a running repair: the record is seeded through the store.
+      s.seed((run) => reshape(run, ['fail', 'a'], ['fail', 'b'], ['success', undefined, true], ['running']));
+      assert.equal(s.continueCli().status, 0);
+      const promoted = (e: Stored) => e['type'] === 'ATTEMPT_STARTED' && e['data'].promoted === true;
+      const data = { n: 4, effort: 'high', escalated: true, promoted: true, from: 'medium', reason: 'ship-failure' };
+      const now = s.stored();
+      assert.deepEqual([now['effort'].attempts.map((a: Stored) => [a.n, a.outcome, a.cause, a.effort]), now['effort'].escalationUsed, now['effort'].terminal], [[[1, 'fail', 'a', 'medium'], [2, 'fail', 'b', 'medium'], [3, 'fail', CAUSE, 'medium'], [4, 'running', undefined, 'high']], true, undefined]);
+      assert.deepEqual(now['journalOwed'].filter(promoted).map(strip), [data]);
+      assert.equal(s.events().filter(promoted).length, 0, 'the act leaves the promotion owed');
+      if (failFirst) { fault.promoted = true; assert.throws(() => s.next(), /EIO: injected/); fault.promoted = false; assert.equal(s.events().filter(promoted).length, 0); }
+      assert.equal(s.cli('card', 'next', CARD).status, 0);
+      assert.deepEqual(s.events().filter(promoted).map(strip), [{ ...data, completed: true }]);
+      const ours = s.events().filter((e) => e['data'].continuation || e['data'].refutedBy === 'continuation' || promoted(e)).map((e) => e['type']);
+      assert.deepEqual(ours, ['CARD_STATE', 'ATTEMPT_FINISHED', 'GOAL_STATE', 'ATTEMPT_STARTED']);
+      s.audited();
     });
   }
 });
