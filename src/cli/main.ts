@@ -765,7 +765,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       // No deadline moves: the deadline is read on the real clock.
       const late = Date.parse(run.deadline) <= Date.parse(nowIso());
       const next = `${late ? `the card deadline ${run.deadline} has passed, so run \`aidlc goal extend ${goalRec.id} --until <iso> --by <who> --reason <text>\` and then ` : ''}\`aidlc card next ${cardId}\`${readmitted ? `; goal ${goalNow.id} is re-admitted (${goalNow.state})` : ''}`;
-      out(c, { cardId, state: run.state, continuation, continued, readmitted, next }, () => `${cardId} ${continued ? 'continued' : 'was already continued'} by ${continuation.by}: ${continuation.decisions ?? 0} further R3 decision(s), up to ${continuation.admits ?? '-'}; state=${run.state}; next: ${next}`);
+      out(c, { cardId, state: run.state, continuation, continued, readmitted, next }, () => `${cardId} state=${run.state} continued=${continued} readmitted=${readmitted}; continuation at ${continuation.at} by ${continuation.by}: ${continuation.reason}; lifted stop ${continuation.stop.reason} at ${continuation.stop.at}: ${continuation.stop.detail}${continuation.decisions === undefined ? '' : `; decisions=${continuation.decisions} admits=${continuation.admits}`}; next: ${next}`);
     });
   card
     .command('close <cardId>')
