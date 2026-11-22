@@ -10,11 +10,12 @@ allow_paths:
   - src/loop/card-runner.ts
   - tests/core/continuation.test.ts
   - tests/scenarios/card-continue-ci.test.ts
+  - tests/scenarios/card-continue.test.ts
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - changelog.d/T1-CONTINUE-CI.md
   - specs/tasks/T1-CONTINUE-CI.md
-dod_command: npm run typecheck && node --test tests/core/continuation.test.ts tests/scenarios/card-continue-ci.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts
+dod_command: npm run typecheck && node --test tests/core/continuation.test.ts tests/scenarios/card-continue-ci.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts && npm run build && npm run bench -- --check
 dod_exit: 0
 review_gate: codex {verdict:pass}
 requirements:
@@ -29,14 +30,14 @@ acceptance:
   - 3. Same file. A second unclassified CI failure, of the repaired candidate, stops the run for `ci` again, and `ci.reruns` holds every entry it held before the continuation. [R2] [dod arm 2]
   - 4. Same file. Each refusal names its cause and leaves the card-run file, the goal file and the journal byte-identical: a run whose ladder admits no further attempt (the message holds the ladder's reason), `--decisions 1` on a ci stop, a run with no effort episode. [R3] [dod arm 2]
   - 5. Same file. The journal gains exactly one `CARD_STATE` event with `continuation` whose stop reason is `ci` and one `ATTEMPT_FINISHED` with `refutedBy` `continuation`. Fault rows: a throw from `fs.renameSync` onto the card-run record leaves the card-run file and the journal byte-identical; a throw from `fs.appendFileSync` onto the goal journal leaves the continuation in the run, and after one `aidlc card next` the journal holds each owed event exactly once. [R4] [dod arm 2]
-  - 6. `tests/core/continuation.test.ts` holds the rows of the ci rule (the patch of R1 and each refusal of R3) beside the rows of T1-CONTINUE-CORE, which pass unchanged except the row that expected a refusal for stop reason `ci`. `tests/scenarios/card-continue.test.ts` passes and changes only its row that expected a run stopped for `ci` to be refused. `tests/scenarios/card-continue-goal.test.ts`, `ci-rerun.test.ts` and `fault-points.test.ts` pass with no line changed. [dod arm 1] [dod arm 2]
+  - 6. `tests/core/continuation.test.ts` holds the rows of the ci rule (the patch of R1 and each refusal of R3) beside the rows of T1-CONTINUE-CORE, which pass unchanged except the row that expected a refusal for stop reason `ci`. `tests/scenarios/card-continue.test.ts` passes and changes only its row that expected a run stopped for `ci` to be refused. `tests/scenarios/card-continue-goal.test.ts`, `ci-rerun.test.ts` and `fault-points.test.ts` pass with no line changed, and `npm run build && npm run bench -- --check` exits 0. [dod arm 1] [dod arm 2] [dod arm 3]
   - 7. The docs state R1 to R4 (reviewer-verified against the diff). [R5]
 depends_on: [T1-CONTINUE-GOAL]
-budget: 190
-sweep: "On main at f51534d2. src/loop/card-runner.ts:3238-3255 makes the ci stop; :3167-3172 (`refutePatch`) and :3173-3184 (`refuteDirective`) are what a CI code defect does and journals, inside the closure of `applyShipResult`; :1404 (`withdrawCandidate`) is the other caller of `afterShipFailure` outside a ship. src/core/effort.ts:150 defines `afterShipFailure`. `CardRunner.continueStop` and `src/core/continuation.ts` come from T1-CONTINUE-REVIEW and T1-CONTINUE-CORE and are read again at PREPARE. The goal re-admission and the audit rule of T1-CONTINUE-GOAL already take the stop reason `ci`."
+budget: 240
+sweep: "On main at f51534d2. src/loop/card-runner.ts:3238-3255 makes the ci stop; :3167-3172 (`refutePatch`) and :3173-3184 (`refuteDirective`) are what a CI code defect does and journals, inside the closure of `applyShipResult`; :1404 (`withdrawCandidate`) is the other caller of `afterShipFailure` outside a ship. src/core/effort.ts:150 defines `afterShipFailure`. `CardRunner.continueStop` and `src/core/continuation.ts` come from T1-CONTINUE-REVIEW-2 and T1-CONTINUE-CORE and are read again at PREPARE. The goal re-admission and the audit rule of T1-CONTINUE-GOAL already take the stop reason `ci`."
 forbid: [weakening or skipping a test to go green, removing or changing an entry of `ci.reruns`, a rerun of the stopped candidate's CI, lifting a `risk` stop, moving a deadline, a change to tests/scenarios/fault-points.test.ts, editing .aidlc state by hand]
 non_goals: [a ci stop of class `security` (it is a `risk` stop and stays), a continuation that ships the unchanged candidate again, a change to `card ci-reconcile` or to the CI classifier, a ci continuation among the commands tests/scenarios/fault-points.test.ts drives]
-hygiene: "Line numbers are from main at f51534d2; read them again at PREPARE. `limitsPermit` is `checkAdmission(run.deadline, now).phase === 'open'`, as in `refutePatch`. This card changes a file the verify-card-run-writes coverage record names, so that skill runs before SHIP and at CLOSE; the record already names `CardRunner.continueStop`."
+hygiene: "Line numbers are from main at f51534d2; read them again at PREPARE. `limitsPermit` is `checkAdmission(run.deadline, now).phase === 'open'`, as in `refutePatch`. This card changes a file the verify-card-run-writes coverage record names, so that skill runs before SHIP and at CLOSE; the record already names `CardRunner.continueStop`. The DoD runs the loop benchmark after the build. Run every test file that reads docs/OPERATIONS.md or docs/ARCHITECTURE.md before the attempt is recorded."
 doc_sync: docs/OPERATIONS.md (the command, STOP reasons), docs/ARCHITECTURE.md
 ---
 
@@ -55,7 +56,7 @@ A run stopped for `ci` goes back to BUILD on the same card by the owner's record
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/core/continuation.test.ts tests/scenarios/card-continue-ci.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts
+npm run typecheck && node --test tests/core/continuation.test.ts tests/scenarios/card-continue-ci.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts && npm run build && npm run bench -- --check
 ```
 - Expected exit code: 0
-- Assertion: the typecheck reports no error and every test of the six files passes.
+- Assertion: the typecheck reports no error, every test of the six files passes, the build succeeds and every benchmark count is within its ceiling.

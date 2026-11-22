@@ -34,6 +34,7 @@ acceptance:
   - 8. `tests/scenarios/review-rule.test.ts`, `review-rule-ship.test.ts`, `second-pass.test.ts`, `review-block.test.ts` and `fault-points.test.ts` pass with no line changed. The record of `.claude/skills/verify-card-run-writes/SKILL.md` names `CardRunner.continueStop` among the commands the check does not drive, with `tests/scenarios/card-continue.test.ts`, and the file stays within 8000 bytes (`tests/surface/templates.test.ts`). [dod arm 1] [dod arm 2]
   - 9. The docs state R1 to R6 (reviewer-verified against the diff). [R7]
 depends_on: [T1-CONTINUE-CORE]
+superseded_by: T1-CONTINUE-REVIEW-2
 budget: 240
 sweep: "git grep -n 'MAX_R3_DECISIONS\\|MAX_SUBSTANTIVE_REVIEW_DECISIONS' -- src on main at f51534d2. Readers this card changes, all in src/loop/card-runner.ts: :857 (the reviewExhausted evidence), :1797 to :1801 (formalAllowance), :1864 (the gate's stop detail), :1944 (secondPassDue), :2086 (the admission's refusal), :2201 (the decision limit of the reviewer prompt). Callers of recordReviewOutcome: :2593 (formalReview) takes the count; :3018 (the ship-path reviewer) does not. Not sites of this card: :1933 (baseSyncDue: the one base-sync decision stays outside the allowance), :3032 (the ship-path reviewer), src/state/bounds.ts:46, src/review/bench.ts:28 and :383."
 forbid: [weakening or skipping a test to go green, changing a review counter or an allowance constant, moving a deadline, a change to tests/scenarios/fault-points.test.ts or tests/scenarios/journal-owed.test.ts, a change to REVIEW.md, editing .aidlc state by hand]

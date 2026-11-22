@@ -21,11 +21,11 @@ for the count of the intent's outcome 6. Success criteria: the seven cards merge
 main the tests of "Proof" pass.
 
 ## 2. Minimal acceptable loop
-T1-CONTINUE-CORE, T1-OWED-EVENT-TYPES, T1-CONTINUE-REVIEW and T1-CONTINUE-GOAL give a
-continued review stop from the command line. T1-CONTINUE-CI adds the ci stop.
-T1-CARD-CONTRACT and T1-CARD-AMEND give the amendment. Each card leaves main consistent:
-until T1-CONTINUE-GOAL no command reaches the runner's act, and until T1-CARD-AMEND no run
-holds an amendment.
+T1-CONTINUE-CORE, T1-OWED-EVENT-TYPES, T1-CONTINUE-REVIEW-2, T1-CONTINUE-AUDIT and
+T1-CONTINUE-GOAL give a continued review stop from the command line. T1-CONTINUE-CI adds
+the ci stop. T1-CARD-CONTRACT, T1-CARD-AMEND and T1-AMEND-COMMAND give the amendment. Each
+card leaves main consistent: until T1-CONTINUE-GOAL no command reaches the runner's act, and
+until T1-AMEND-COMMAND no command records an amendment.
 
 ## 3. Tech stack
 none this version
@@ -33,16 +33,18 @@ none this version
 ## 4. Directory structure
 - `src/core/continuation.ts` (new): the pure rule of a continuation.
 - `src/core/contract.ts` (new): the contract digests, the changed fields, the evidence each field touches, the derived candidate digest.
-- Eight new test files, named under "Files that change".
+- Nine new test files, named under "Files that change".
 
 ## 4.5 Module design
 - `src/core/types.ts`: `Continuation`, `Amendment`, the fields `continuations`, `amendments` and `contract` of `CardRun`, and the two owed event types `CARD_STATE` and `NOTE` (T1-OWED-EVENT-TYPES).
 - `src/core/continuation.ts`: what a continuation requires of a run and what it changes, for a `review` stop (T1-CONTINUE-CORE) and a `ci` stop (T1-CONTINUE-CI).
 - `src/core/review-policy.ts`: `recordReviewOutcome` and `decideFromLedger` take the admitted count in place of `MAX_R3_DECISIONS`.
-- `src/loop/card-runner.ts`: `CardRunner.continueStop` and the readers of the allowance (T1-CONTINUE-REVIEW), its ci branch (T1-CONTINUE-CI), `CardRunner.amendCard` and the derived digest in `recordAttempt` (T1-CARD-AMEND).
+- `src/loop/card-runner.ts`: `CardRunner.continueStop` and the readers of the allowance (T1-CONTINUE-REVIEW-2), its ci branch (T1-CONTINUE-CI), `CardRunner.amendCard` and the derived digest in `recordAttempt` (T1-CARD-AMEND).
 - `src/loop/controller.ts`: the goal re-admission after a continuation (T1-CONTINUE-GOAL); `ensureCardRun` records `contract` (T1-CARD-CONTRACT).
-- `src/core/card-goal.ts`, `src/audit/verifier.ts`, `src/cli/main.ts`: the command on a stopped goal, the audit rule, the command lines (T1-CONTINUE-GOAL and T1-CARD-AMEND).
-- `CLAUDE.md`, `templates/CLAUDE.aidlc.md`: the hard limit on a started card (T1-CARD-AMEND).
+- `src/core/card-goal.ts`, `src/audit/verifier.ts`: the refusal's exception for a continuation and the audit rule (T1-CONTINUE-AUDIT).
+- `src/cli/main.ts`: the two command lines (T1-CONTINUE-GOAL and T1-AMEND-COMMAND).
+- `bench/baseline.json`: the `modules` ceiling of the journey `cli.start` (T1-CONTINUE-REVIEW-2).
+- `CLAUDE.md`, `templates/CLAUDE.aidlc.md`: the hard limit on a started card (T1-AMEND-COMMAND).
 
 ## 5. Data model and state machine
 `CardRun` gains `continuations` and `amendments`, both empty by default, and an optional
@@ -75,7 +77,9 @@ the evidence (the DoD receipt, the candidate digest).
 - tests/scenarios/card-continue-ci.test.ts (new)
 - tests/scenarios/card-contract.test.ts (new)
 - tests/scenarios/card-amend.test.ts (new)
+- tests/scenarios/card-amend-command.test.ts (new)
 - tests/surface/verifier.test.ts
+- bench/baseline.json
 - docs/OPERATIONS.md
 - docs/ARCHITECTURE.md
 - README.md
@@ -84,51 +88,65 @@ the evidence (the DoD receipt, the candidate digest).
 - .claude/skills/verify-card-run-writes/SKILL.md
 - changelog.d/T1-CONTINUE-CORE.md (new)
 - changelog.d/T1-OWED-EVENT-TYPES.md (new)
-- changelog.d/T1-CONTINUE-REVIEW.md (new)
+- changelog.d/T1-CONTINUE-REVIEW-2.md (new)
+- changelog.d/T1-CONTINUE-AUDIT.md (new)
 - changelog.d/T1-CONTINUE-GOAL.md (new)
 - changelog.d/T1-CONTINUE-CI.md (new)
 - changelog.d/T1-CARD-CONTRACT.md (new)
 - changelog.d/T1-CARD-AMEND.md (new)
+- changelog.d/T1-AMEND-COMMAND.md (new)
 
 ## Order of work
 1. T1-CONTINUE-CORE: the record and the pure rule for a review stop, and the admitted count in the ledger decision.
 2. T1-OWED-EVENT-TYPES: the owed event list admits `CARD_STATE` and `NOTE`. Added on 2026-11-22 after T1-CONTINUE-CORE merged: the first dispatch of T1-CONTINUE-REVIEW found that its owed `CARD_STATE` event is refused by the schema, in a file that card may not change. Its run has started, so its card is not edited; this card merges first and the work on T1-CONTINUE-REVIEW resumes on a branch that holds it.
-3. T1-CONTINUE-REVIEW: the runner's act and the readers of the allowance.
-4. T1-CONTINUE-GOAL: the command, the goal re-admission and the audit rule.
-5. T1-CONTINUE-CI: the ci stop.
-6. T1-CARD-CONTRACT: the contract digests on a new run and the pure rules of an amendment.
-7. T1-CARD-AMEND: the act, the derived digest in `recordAttempt`, the command and the rule text.
+3. T1-CONTINUE-REVIEW-2: the runner's act and the readers of the allowance. It replaces T1-CONTINUE-REVIEW, which stopped for ci on 2026-11-22 after R3 had passed its repaired candidate: the `bench` job failed on `cli.start modules 254`, one above what the ceiling of `bench/baseline.json` admits, in a file the card could not change, and no command lifts a ci stop on the same card until T1-CONTINUE-CI. The successor carries the first candidate (e28b2aef), raises that ceiling to the measured count, and states what `aidlc card next` returns in REVIEW_FIX, where acceptance 2 of the replaced card named a directive the loop does not return (R3 decision 1, F1).
+4. T1-CONTINUE-AUDIT: the refusal's exception for a continuation on a stopped goal, and the audit rule.
+5. T1-CONTINUE-GOAL: the command and the goal re-admission.
+6. T1-CONTINUE-CI: the ci stop.
+7. T1-CARD-CONTRACT: the contract digests on a new run and the pure rules of an amendment.
+8. T1-CARD-AMEND: the runner's act and the derived digest in `recordAttempt`.
+9. T1-AMEND-COMMAND: the command and the rule text.
 
-The cards run one after the other: five of them edit `src/loop/card-runner.ts` or
-`src/core/types.ts`, and six edit `docs/`.
+T1-CONTINUE-AUDIT and T1-AMEND-COMMAND were split from T1-CONTINUE-GOAL and T1-CARD-AMEND
+on 2026-11-22, before either started: the three cards built by then came to 214, 64 and 313
+changed lines against budgets of 150, 40 and 240, so the two would have passed the 250-line
+limit.
+
+The cards run one after the other: most of them edit `src/loop/card-runner.ts`,
+`src/cli/main.ts` or `docs/`.
 
 ## 7. Task split (dependencies and parallel windows)
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-CONTINUE-CORE | MUST | a card run holds `continuations`; a pure rule says what a continuation of a review stop requires and changes; the ledger decision compares with the admitted count | - | - | - |
 | T1-OWED-EVENT-TYPES | MUST | a card-run write can owe a `CARD_STATE` and a `NOTE` event to the goal journal | - | - | - |
-| T1-CONTINUE-REVIEW | MUST | `CardRunner.continueStop` lifts a review stop in one locked update, and the gate, the admission, the assessment and the second pass read the admitted count | T1-CONTINUE-CORE | - | - |
-| T1-CONTINUE-GOAL | MUST | `aidlc card continue` runs on a goal stopped for review, re-admits it with an event that carries `continuation`, and the audit accepts that event | T1-CONTINUE-REVIEW | - | - |
+| T1-CONTINUE-REVIEW-2 | MUST | `CardRunner.continueStop` lifts a review stop in one locked update, the gate, the admission, the assessment and the second pass read the admitted count, and the `cli.start` module ceiling of the loop benchmark is the measured count | T1-CONTINUE-CORE, T1-OWED-EVENT-TYPES | - | - |
+| T1-CONTINUE-AUDIT | MUST | the stopped-goal refusal lets a continuation through for review and ci, and the audit ends a goal stop on an event that carries `continuation` | T1-CONTINUE-REVIEW-2 | - | - |
+| T1-CONTINUE-GOAL | MUST | `aidlc card continue` runs on a goal stopped for the card's stop and re-admits it with an event that carries `continuation` | T1-CONTINUE-REVIEW-2, T1-CONTINUE-AUDIT | - | - |
 | T1-CONTINUE-CI | MUST | `aidlc card continue` returns a run stopped for ci to BUILD with a counted repair attempt and re-admits its goal | T1-CONTINUE-GOAL | - | - |
 | T1-CARD-CONTRACT | MUST | a new card run holds one digest per contract field; pure rules give the changed fields, the evidence they touch and the derived candidate digest | T1-CONTINUE-CI | - | - |
-| T1-CARD-AMEND | MUST | `aidlc card amend` records an amendment, clears the DoD receipt and re-derives the candidate digest by the changed fields; `CLAUDE.md` and its template name both commands | T1-CARD-CONTRACT | - | - |
+| T1-CARD-AMEND | MUST | `CardRunner.amendCard` records an amendment, clears the DoD receipt and re-derives the candidate digest by the changed fields | T1-CARD-CONTRACT | - | - |
+| T1-AMEND-COMMAND | MUST | `aidlc card amend` records the amendment from the command line; `CLAUDE.md` and its template name both commands | T1-CARD-AMEND | - | - |
 
-Budgets: 150, 40, 240, 230, 190, 185 and 230 changed lines, 1265 in total, tests included.
-Each is at or under 250, the limit for a card that changes `src/` (card T0-CARD-SIZE).
-T1-CONTINUE-CORE merged at 214 changed lines against its 150.
+Budgets of the seven cards still to run: 250, 130, 240, 240, 200, 240 and 140 changed lines,
+tests and each card's evidence table included. Each is at or under 250, the limit for a card
+that changes `src/` (card T0-CARD-SIZE). Merged: T1-CONTINUE-CORE at 214 against 150,
+T1-OWED-EVENT-TYPES at 64 against 40. Replaced: T1-CONTINUE-REVIEW, at 313 against 240.
 
 ## Risks
-- Seven cards, where `intent/card-continuation.md` says at most five. The continuation of a
-  review stop is about 360 changed lines with its scenario tests, and one card of that size
-  needs a size exception that only the owner gives. It is split into a core card and a
-  runner card. The seventh, T1-OWED-EVENT-TYPES, is a gap in the first plan: the plan did
-  not check that the owed event list is a closed enum. The owner is told in the session
-  report.
-- The seven cards run one after the other, and the arc deadline is 12 hours from intake. A
+- Nine cards and one replaced card, where `intent/card-continuation.md` says at most five.
+  Three causes, all in the first plan. It did not check that the owed event list is a
+  closed enum (T1-OWED-EVENT-TYPES). It did not run the loop benchmark, whose `cli.start`
+  module ceiling main had already used up, and it gave one acceptance item a directive the
+  loop does not return (T1-CONTINUE-REVIEW replaced by T1-CONTINUE-REVIEW-2). Its line
+  estimates were 30 to 40 percent low, so the continuation and the amendment are each cut
+  into more cards to stay within the 250-line limit, where a larger card needs a size
+  exception that only the owner gives. The owner is told in the session report.
+- The cards run one after the other, and the arc deadline is 12 hours from intake. A
   card in this area took three R3 blocks before (T1-REVIEW-RULE-SHIP). When the deadline
   comes first the goal stops for time and the owner decides on `aidlc goal extend`.
 - The allowance is read in more places than the four of the spec if one was missed. The
-  sweep of T1-CONTINUE-REVIEW names every reader of `MAX_R3_DECISIONS` and
+  sweep of T1-CONTINUE-REVIEW-2 names every reader of `MAX_R3_DECISIONS` and
   `MAX_SUBSTANTIVE_REVIEW_DECISIONS` in `src/` and says for each whether it reads the
   admitted count. `baseSyncDue` and `src/state/bounds.ts` do not.
 - The derived candidate digest is correct only while `recordAttempt` is the one place that
@@ -138,9 +156,9 @@ T1-CONTINUE-CORE merged at 214 changed lines against its 150.
   carries the candidate's CI reruns to it and unsets the blocked receipt, so an unchanged
   blocked candidate runs its DoD once more. A run with a pending repair is refused.
 - `.claude/skills/verify-card-run-writes/SKILL.md` is 7994 of 8000 bytes.
-  T1-CONTINUE-REVIEW and T1-CARD-AMEND add a runner method to its list of commands the check does not drive and must shorten other
+  T1-CONTINUE-REVIEW-2 and T1-CARD-AMEND add a runner method to its list of commands the check does not drive and must shorten other
   words of that list to fit.
-- `CLAUDE.md` is 192 of 200 lines; T1-CARD-AMEND may add two.
+- `CLAUDE.md` is 192 of 200 lines; T1-AMEND-COMMAND may add two.
 - The table of which evidence each contract field touches is the coordinator's reading and
   is flagged in the spec for the owner.
 - Nothing refuses a card change that nobody records. The rule text tells a session to
