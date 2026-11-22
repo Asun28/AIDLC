@@ -236,3 +236,46 @@ describe('T0-GOAL-CARD-COUNT-3: ref= from the first known id, no registry, the k
     }
   });
 });
+
+describe('T0-GOAL-CARD-REASON: the reasons of a request that gives a card name that card', () => {
+  const known = ['T0-GATE', 'T0-GATE-2', 'T3-API'];
+  const DEVELOPMENT = 'target=development (default; hosting/deploy not authorised by this request)';
+  const textNames = (id: string) => `the text names card id ${id}; --card names the card of this request`;
+  const notResolved = (id: string) => `card id ${id} referenced (registry not consulted or id absent; verify before dispatch)`;
+
+  test('the request of issue 423: the given card is in ref= and in the card reason, and the known card of the text is noted [R1] [R2] [R3]', () => {
+    const r = classifyRequest({ text: 'Build the gate, successor of T0-GATE', ref: 'T0-GATE-2', knownCardIds: known });
+    assert.deepEqual(r.reasons, ['ref=T0-GATE-2', 'resolved card T0-GATE-2', textNames('T0-GATE'), 'kind=card-execute', 'size=T0 (inferred)', DEVELOPMENT]);
+    assert.equal(r.kind, 'card-execute');
+    assert.equal(r.cardCount, 1);
+  });
+
+  test('a text that names two known cards keeps its named cards and its unknown count, and is noted only where its first card id is another card [R1] [R2] [R3]', () => {
+    const second = classifyRequest({ text: 'T0-GATE then T0-GATE-2', ref: 'T0-GATE-2', knownCardIds: known });
+    for (const reason of ['ref=T0-GATE-2', 'resolved card T0-GATE-2', textNames('T0-GATE'), 'named cards: T0-GATE, T0-GATE-2 (count left to the projection)']) assert.ok(second.reasons.includes(reason), `${reason}: ${JSON.stringify(second.reasons)}`);
+    for (const reason of ['ref=T0-GATE', 'resolved card T0-GATE']) assert.ok(!second.reasons.includes(reason), `${reason}: ${JSON.stringify(second.reasons)}`);
+    assert.equal(second.cardCount, 'unknown');
+    for (const text of ['T0-GATE-2 then T0-GATE', 'implement T0-GATE-2']) {
+      const r = classifyRequest({ text, ref: 'T0-GATE-2', knownCardIds: known });
+      assert.ok(r.reasons.includes('ref=T0-GATE-2'), `${text}: ${JSON.stringify(r.reasons)}`);
+      assert.ok(r.reasons.includes('resolved card T0-GATE-2'), `${text}: ${JSON.stringify(r.reasons)}`);
+      assert.deepEqual(r.reasons.filter((reason) => reason.startsWith('the text names card id')), [], text);
+    }
+  });
+
+  test('the card reason says resolved only for an id the known card list holds, for the given card and for a card id of the text [R1] [R2]', () => {
+    const givenAbsent = classifyRequest({ text: 'implement T3-API', ref: 'T9-NEW', knownCardIds: known });
+    assert.deepEqual(givenAbsent.reasons, ['ref=T9-NEW', notResolved('T9-NEW'), textNames('T3-API'), 'kind=card-execute', 'size=T0 (inferred)', DEVELOPMENT]);
+    const noList = classifyRequest({ text: 'implement T1-A', ref: 'T0-GATE-2' });
+    assert.deepEqual(noList.reasons, ['ref=T0-GATE-2', notResolved('T0-GATE-2'), textNames('T1-A'), 'kind=card-execute', 'size=T0 (inferred)', DEVELOPMENT]);
+    const textAbsent = classifyRequest({ text: 'implement T9-UNKNOWN', ref: 'T3-API', knownCardIds: known });
+    assert.deepEqual(textAbsent.reasons, ['ref=T3-API', 'resolved card T3-API', textNames('T9-UNKNOWN'), 'kind=card-execute', 'size=T0 (inferred)', DEVELOPMENT]);
+  });
+
+  test('a ref that is not a card id, and a given card with a text that names no card id, keep their reasons [R3]', () => {
+    const issue = classifyRequest({ text: 'implement T3-API', ref: '#12', knownCardIds: known });
+    assert.deepEqual(issue.reasons, ['ref=T3-API', 'resolved card T3-API', 'kind=card-execute', 'size=T0 (inferred)', DEVELOPMENT]);
+    const noCardInText = classifyRequest({ text: 'Fix a typo in the README', ref: 'T3-API', knownCardIds: known });
+    assert.deepEqual(noCardInText.reasons, ['ref=T3-API', 'kind=change', 'size=T0 (inferred)', DEVELOPMENT]);
+  });
+});

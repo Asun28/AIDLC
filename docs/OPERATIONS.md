@@ -68,6 +68,8 @@ While a goal that is not terminal, `DONE` or `STOP` has an operation that is `in
 
 Intake refuses a goal on a merged card (card T0-GOAL-MERGED-CARD): when the goal's card, from `--card` or the one card the request text resolves to, has `status: merged` in the registry, `aidlc goal new` fails before it writes a goal, lease or journal record, and the message names the card and says to put the new requirement on a successor card passed with `--card`. Such a goal would have nothing to run and could close as done. A request routed as a card-text amendment (`card-amendment`) still opens its goal. A card whose PR merged but whose close has not yet written `status: merged` passes.
 
+With `--card`, the routing reasons of the goal name that card (card T0-GOAL-CARD-REASON). When the request text names a card id, `ref=` and the card reason are those of the card `--card` gives: `resolved card <id>` when the registry holds it, and `card id <id> referenced (registry not consulted or id absent; verify before dispatch)` when it does not. When the first card id of the text is another id, the next reason is `the text names card id <that id>; --card names the card of this request`; the first card id of the text is the first one the registry holds, or the first card id token where the registry holds none of them. The rule under Sessions, that `ref=` is the first known card id of the text, is the rule for a request that gives no card. With `--card` and a text that names no card id, the reasons hold `ref=<id>` and no card reason.
+
 ### T0 bugfix
 
 ```bash

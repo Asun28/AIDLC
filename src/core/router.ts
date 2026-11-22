@@ -115,14 +115,16 @@ export function classifyRequest(input: RouterInput): RoutingResult {
       ambiguity = `bare number ${n} does not uniquely identify a card or issue`;
     }
   }
-  if (knownCard) {
+  // The first card id of the text: the first registered one, else the first token while no kind is set.
+  const textCard = knownCard ?? (kind ? undefined : cardMatch?.[0]);
+  if (textCard) {
     kind = CARD_TEXT_ONLY.test(text) ? 'card-amendment' : 'card-execute';
-    ref = knownCard;
-    reasons.push(`resolved card ${knownCard}`);
-  } else if (cardMatch && !kind) {
-    kind = CARD_TEXT_ONLY.test(text) ? 'card-amendment' : 'card-execute';
-    ref = cardMatch[0];
-    reasons.push(`card id ${cardMatch[0]} referenced (registry not consulted or id absent; verify before dispatch)`);
+    // A card the request gives (`--card`, its `ref`) is the request's card: the reasons name it, and a first card id of the
+    // text that is another id is only noted (card T0-GOAL-CARD-REASON, issue 423).
+    const givenCard = input.ref !== undefined && CARD_ID_REGEX.test(input.ref) ? input.ref : undefined;
+    ref = givenCard ?? textCard;
+    reasons.push(known?.includes(ref) ? `resolved card ${ref}` : `card id ${ref} referenced (registry not consulted or id absent; verify before dispatch)`);
+    if (ref !== textCard) reasons.push(`the text names card id ${textCard}; --card names the card of this request`);
   }
   if (issue && !kind) {
     kind = 'issue';
