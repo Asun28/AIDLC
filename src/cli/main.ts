@@ -657,10 +657,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
    * `cardGoalId` does and, with `guard`, refused when it is stopped or done; a named terminal goal is refused before
    * `holdsRun` reads a run. The command then uses this record, never a reload, up to its first card-run access.
    */
-  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard: boolean | 'rule' = true): Goal => {
+  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard: boolean | 'rule' | 'continue' = true): Goal => {
     const goals = c.store.listGoals();
     const refuse = (goalRec: Goal | undefined) => {
-      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec, guard === 'rule') : undefined;
+      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec, guard === 'continue' ? guard : guard === 'rule') : undefined;
       if (refusal) fail(refusal);
     };
     if (explicit !== undefined) refuse(goals.find((x) => x.id === explicit));
@@ -747,6 +747,25 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       c.controller.writeBoard(goalRec);
       const report = adoptMergeReport(cardId, goalRec.id, updated);
       out(c, report.json, () => report.text);
+    });
+  card
+    .command('continue <cardId>')
+    .description("record the owner's continuation of a run stopped for review: the stop is lifted with further R3 decisions, and a goal stopped for that stop is re-admitted (card T1-CONTINUE-COMMAND)")
+    .requiredOption('--by <who>', 'who continues the run, as recorded')
+    .requiredOption('--reason <text>', 'why the run goes on')
+    .option('--decisions <n>', 'the further R3 decisions admitted, 1 to 4 (default 1)')
+    .option('--goal <id>')
+    .action((cardId: string, o: { by: string; reason: string; decisions?: string; goal?: string }) => {
+      const c = ctx(g());
+      // The existing run only, never created; the command runs on a goal stopped for review or ci too. Every write is the controller's.
+      const goalRec = checkedGoal(c, cardId, o.goal, 'continue');
+      const act = { by: o.by, reason: o.reason, ...(o.decisions === undefined ? {} : { decisions: Number(o.decisions) }) };
+      const { run, goal: goalNow, continued, readmitted } = c.controller.continueCard(runnerFor(c), goalRec.id, cardOf(c, cardId).card, act);
+      const continuation = run.continuations.at(-1)!;
+      // No deadline moves: the deadline is read on the real clock.
+      const late = Date.parse(run.deadline) <= Date.parse(nowIso());
+      const next = `${late ? `the card deadline ${run.deadline} has passed, so run \`aidlc goal extend ${goalRec.id} --until <iso> --by <who> --reason <text>\` and then ` : ''}\`aidlc card next ${cardId}\`${readmitted ? `; goal ${goalNow.id} is re-admitted (${goalNow.state})` : ''}`;
+      out(c, { cardId, state: run.state, continuation, continued, readmitted, next }, () => `${cardId} ${continued ? 'continued' : 'was already continued'} by ${continuation.by}: ${continuation.decisions ?? 0} further R3 decision(s), up to ${continuation.admits ?? '-'}; state=${run.state}; next: ${next}`);
     });
   card
     .command('close <cardId>')
