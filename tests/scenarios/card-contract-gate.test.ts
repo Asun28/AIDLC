@@ -3,7 +3,7 @@
 // recorded or the card text is restored; an amendment recorded during a call refuses the reservation or the ship.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -300,6 +300,58 @@ test('6 [R2] [R3] [R4] PREPARE, WAIT and STOP return as for the unchanged card; 
     s.changeCard(REQUIREMENTS);
     await assert.rejects(s.pre(), /preReview\.command is not configured/);
   });
+});
+
+/**
+ * Makes `write` during the call: right after the second read of the operation ledger, else when the call ends. On the candidate
+ * R3 decision 1 blocked, the second read is the last of the dry assessment of the gate, so the write lands between that
+ * assessment and the one that is executed. The returned function ends the call.
+ */
+function duringTheCall(s: S, write: () => void): () => void {
+  const real = s.fx.ops.unresolved.bind(s.fx.ops);
+  let [reads, done] = [0, false];
+  const once = () => { if (!done) { done = true; s.fx.ops.unresolved = real; write(); } };
+  s.fx.ops.unresolved = (goalId: string, cardId?: string) => { const value = real(goalId, cardId); reads += 1; if (reads === 2) once(); return value; };
+  return once;
+}
+
+test('6 [R4] R3 decision 1 F1: an operation or a worktree that changes during next leaves the selection the gate judged, which next executes', async () => {
+  // The operation `issued` completes during the call: `next` waits on the evidence it read, starts no attempt, and the next call refuses.
+  await scenario((s) => {
+    s.started(); s.record('fail');
+    op('issued')(s);
+    assert.equal(s.next()['kind'], 'wait', 'the unchanged card waits on the operation');
+    s.changeCard(REQUIREMENTS);
+    const [started, id] = [s.events('ATTEMPT_STARTED').length, s.fx.ops.list({ cardId: CARD })[0]!.id];
+    const end = duringTheCall(s, () => s.fx.ops.markResult(id, 'succeeded', {}, T0));
+    let kind: unknown;
+    try { kind = s.next()['kind']; } finally { end(); }
+    assert.equal(kind, 'wait', 'next during the completion');
+    assert.deepEqual([s.outcomes(), s.events('ATTEMPT_STARTED').length], [['fail'], started], 'no attempt is started');
+    assert.equal(s.fx.ops.list({ cardId: CARD })[0]!.status, 'succeeded', 'the operation completed during the call');
+    assert.throws(() => s.next(), refusal(['requirements']), 'next after the completion');
+  });
+  // The recorded worktree appears during the call (a ship path that checks it): `next` does what it does for the unchanged card
+  // with no worktree, and starts no attempt.
+  const absent = async (changed: boolean, appears: boolean): Promise<[unknown, unknown, number]> => {
+    let result: [unknown, unknown, number] = [undefined, undefined, 0];
+    await scenario((s) => {
+      s.started(); s.record('fail');
+      const worktree = s.persisted().worktree!;
+      rmSync(worktree, { recursive: true, force: true });
+      const scaffold = new CardRunner({ paths: s.fx.paths, repo: s.fx.repo, config: { ...s.fx.config, shipPath: 'scaffold' }, store: s.fx.store, leases: s.fx.leases, queue: s.fx.queue, ops: s.fx.ops, shipPath: s.ship, now: s.fx.now, runner: scriptedRunner({}) });
+      if (changed) s.changeCard(REQUIREMENTS);
+      const started = s.events('ATTEMPT_STARTED').length;
+      const end = appears ? duringTheCall(s, () => mkdirSync(worktree, { recursive: true })) : () => undefined;
+      let kind: unknown;
+      try { kind = (scaffold.next(s.g(), s.card(), s.persisted()).directive as Stored)['kind']; } catch (e) { kind = (e as Error).message; } finally { end(); }
+      result = [kind, s.outcomes(), s.events('ATTEMPT_STARTED').length - started];
+    });
+    return result;
+  };
+  const unchanged = await absent(false, false);
+  assert.deepEqual(await absent(true, true), unchanged, 'the worktree that appears during the call');
+  assert.equal(unchanged[2], 0);
 });
 
 test('7 [R7] after the amendment or with the card text restored the refused calls proceed', async () => {
