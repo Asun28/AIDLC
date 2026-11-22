@@ -68,3 +68,17 @@ npm run typecheck && node --test tests/core/contract.test.ts tests/scenarios/car
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error, every test of the five files passes, the build succeeds and every benchmark count is within its ceiling.
+
+## Attempt evidence
+| Item | Evidence |
+|---|---|
+| RED | commit 230b652b holds the two test files alone; both fail on main with `ERR_MODULE_NOT_FOUND` for `src/core/contract.ts` |
+| 1 | `tests/core/contract.test.ts`: nine keys in R1 order, each equal to the test's own SHA-256 of the value; nine single-field rows; absent `requirements`, `forbid`, `non_goals` = digest of `[]` = that of an empty list; absent `budget` = digest of `null`, not that of a budget |
+| 2 | four layout rows through `parseCardText` (key order, block against flow list, CRLF, an indented continuation line after an item), each with equal values and nine equal digests; a folded item parses to `['R1. The x shall']` and changes `requirements` alone |
+| 3 | nine rows give `changedContractFields` = `[field]` and the R6 row of `invalidatedBy`; order `['requirements','budget','tdd']`; equal = `[]`; recorded `{}` = all nine; `budget`+`acceptance` = `['dod','review']`; `[]` = `[]` |
+| 4 | R7 test: counts 0, 1, 2 against the test's own chain; 2 = 1 applied twice; differs from `d` and from count 1 |
+| 5 | `tests/scenarios/card-contract.test.ts`: `contract` deep-equals `contractDigests`; after the card file changes and is removed the same `contract`, run file bytes unchanged; absent card: throws naming T1-L, no run file, journal bytes unchanged; R8 parse, round trip, six rejected amendments |
+| 6 | `seedRun` writes a card file for a row with no registry entry, creates the run and removes the file; no assertion changed; 5 of 5 pass |
+| 7, 8 | DoD exit 0, 64 tests; `cli.start` modules 255/254; docs/ARCHITECTURE.md bullet (module, R1 to R8) and the changelog line |
+
+Guard sweep (each loosened, the two card test files run, restored; every one fails a test): `?? []` and each `LISTS` member, `: null`, the `recorded[f] !== current[f]` filter, each member of `TOUCHES_DOD` and `TOUCHES_REVIEW`, `i < count`; in `ensureCardRun` the refusal (removed, and without the card's name), the digests (to `undefined`) and the existing-run return; `amendments` default, `contract` optional and each `CardAmendment` constraint.
