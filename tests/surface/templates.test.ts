@@ -445,6 +445,17 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
     }
   });
 
+  test('T0-VERIFY-SYNC-CMD: Keeping in sync names the commit of the Sync commit: line, carries no sha of its own and diffs exactly the coverage record files', () => {
+    const text = read(SKILL);
+    const sync = section(text, 'Keeping in sync');
+    assert.doesNotMatch(sync, /\b[0-9a-f]{7,40}\b/, 'Keeping in sync holds no commit sha; the Sync commit: line is the only one');
+    assert.ok(sync.replace(/\s+/g, ' ').includes('`Sync commit:`'), 'Keeping in sync names the `Sync commit:` line as the start of the diff');
+    const commands = spansOf(sync).filter((s) => s.startsWith('git diff --name-only '));
+    assert.equal(commands.length, 1, 'one git diff --name-only command');
+    const files = commands[0]!.split(' -- ')[1]?.trim().split(/\s+/) ?? [];
+    assert.deepEqual(files, coverage(section(text, 'Coverage')).map((l) => l.file), 'the command diffs the coverage record files, in order');
+  });
+
   test('acceptance 4: Shown failing names an existing src/ file and a covered function and holds a TAP excerpt with a not ok line of the check [R10]', () => {
     const text = read(SKILL);
     const shown = section(text, 'Shown failing');

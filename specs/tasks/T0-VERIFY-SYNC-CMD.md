@@ -46,3 +46,10 @@ npm run typecheck && node --test tests/surface/templates.test.ts tests/surface/p
 ```
 - Expected exit code: 0
 - Assertion: the new Keeping in sync test and the existing skill tests pass; the changelog fragment is well formed.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/templates.test.ts`, test `T0-VERIFY-SYNC-CMD: Keeping in sync names the commit of the Sync commit: line, ...`; RED before the fix: `Keeping in sync holds no commit sha; the Sync commit: line is the only one` | pass after the fix |
+| 2 | Same test (the command and the `Sync commit:` reference); acceptance 1 and 2 tests of `T1-VERIFY-SKILL` (ASCII, 7994 <= 8000 bytes, four outcomes) | pass |
+| 3 | `tests/surface/changelog-fragments.test.ts`; `git diff --numstat origin/main...HEAD -- src templates` | pass; empty |
