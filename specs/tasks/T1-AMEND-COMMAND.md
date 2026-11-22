@@ -1,7 +1,7 @@
 ---
 id: T1-AMEND-COMMAND
 title: "`aidlc card amend` records the owner's amendment from the command line, and the hard limit on a started card names both recorded acts"
-status: todo
+status: merged
 branch: T1-AMEND-COMMAND
 worktree: D:\wt\AIDLC\T1-AMEND-COMMAND
 plan_ref: plans/card-continuation.md#order-of-work
