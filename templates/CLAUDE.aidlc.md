@@ -47,9 +47,12 @@ refuses SHIP without a DoD receipt; the Stop hook only reminds.
 - Review a candidate only through the configured gates (`aidlc review r3`,
   and `aidlc review pre` first where `preReview.command` is set); run no
   other review of it.
-- After a card run starts, do not edit the card's requirements, acceptance
-  or budget. A point the card does not cover becomes a follow-up issue, not
-  a ruling in the card.
+- After a card run starts, a session does not change the card's contract on
+  its own. The owner's amendment is recorded with `aidlc card amend` and a
+  stopped run continues with `aidlc card continue`, each only on the owner's
+  instruction in the session or under a delegation the owner gave and the
+  record names. A point the card does not cover and the owner does not amend
+  becomes a follow-up issue.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
 - Never feed a script to an interpreter on standard input (`python -`, a
   heredoc into `node`): write it to a file outside the worktree and run the

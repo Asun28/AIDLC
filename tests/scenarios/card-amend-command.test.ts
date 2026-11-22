@@ -173,3 +173,21 @@ test('acceptance 7: when the NOTE append fails after the write, card amend exits
   const again = s.amendCli();
   assert.deepEqual([again.status, /the run's contract equals the card's/.test(again.stderr), s.amendmentNotes().length, s.persisted().amendments.length], [1, true, 1, 1], again.stderr);
 }));
+
+test('guard rows: a second amendment, of the budget alone, prints revision 2 and invalidated none in the human line and [] in the JSON output [R4]', async () => {
+  for (const human of [false, true]) {
+    await scenario(async (s) => {
+      s.started();
+      s.changeCard(REQUIREMENTS);
+      assert.equal(s.amendCli().status, 0);
+      s.changeCard({ ...REQUIREMENTS, budget: 120 });
+      const r = s.amendCli(BY, human);
+      assert.equal(r.status, 0, r.stderr);
+      const a = s.persisted().amendments[1]!;
+      const expected = { at: a.at, by: BY, reason: REASON, revision: 2, changed: ['budget'], invalidated: [] };
+      assert.deepEqual(s.persisted().amendments.length, 2);
+      if (human) for (const part of humanParts('BUILD', expected)) assert.ok(r.stdout.includes(part), `${part} in ${r.stdout}`);
+      else assert.deepEqual([(JSON.parse(r.stdout) as Stored)['state'], (JSON.parse(r.stdout) as Stored)['amendment']], ['BUILD', expected]);
+    });
+  }
+});

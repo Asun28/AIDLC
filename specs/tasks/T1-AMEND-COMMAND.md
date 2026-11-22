@@ -60,3 +60,45 @@ npm run typecheck && node --test tests/scenarios/card-amend-command.test.ts test
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error, every test of the six files passes, the build succeeds and every benchmark count is within its ceiling.
+
+## Attempt evidence
+
+RED: ff9cab23, `tests/scenarios/card-amend-command.test.ts` alone; 4 tests ran, 4 failed on an assertion (`unknown command 'amend'`: exit 1 against 0, or the cause test false).
+
+| Acceptance | Proof | Result |
+| --- | --- | --- |
+| 1 | card-amend-command.test.ts, acceptance 1 (JSON and `--no-json`) | pass |
+| 2 | acceptance 2 (BUILD and STOP for ci, both modes) | pass |
+| 3 | acceptance 3 (three rows) | pass |
+| 4 | claude-md-size, command-lines, mirror, templates tests; CLAUDE.md 195 lines | pass |
+| 5 | card-amend.test.ts unchanged; build and bench --check exit 0 | pass |
+| 6 | docs/OPERATIONS.md, Amendments; changelog.d/T1-AMEND-COMMAND.md | reviewer |
+| 7 | acceptance 7 (in-process run, NOTE append fails once) | pass |
+
+Clauses (test names shortened to the acceptance number):
+
+| Clause | Assertion that fails when it is not met |
+| --- | --- |
+| R1 calls amendCard on the existing run | acc 1, 2: `amendments` equal the literal entry |
+| R1 with the card of the main checkout | acc 1: `changed` is `['requirements']`, the field changed on disk |
+| R1 starts no run | acc 3 no-run row: `listCardRuns` is `[]`; acc 1: only `[CARD]` |
+| R2 any goal state | acc 1: exit 0 on a goal in STOP for review, goal stays STOP |
+| R3 exit non-zero with the cause | acc 3: `[status, cause]` is `[1, true]` per row |
+| R3 records as they were | acc 3: run file and journal byte-identical per row |
+| R4 state, whole amendment, JSON | acc 1, 2, guard rows: `state` and `amendment` deepEqual by value |
+| R4 state, whole amendment, human | acc 1, 2, guard rows: each part of `humanParts` by value |
+| R4 continue for review / ci, both modes | acc 1 / acc 2 ci row |
+| R4 no continue otherwise, both modes | acc 2 BUILD row: `includes('aidlc card continue')` is false |
+| R7 exit non-zero with the cause | acc 7: `[1, true]` on `EIO: injected` |
+| R7 undo nothing: amendment and owed event stay | acc 7: `amendments`, `journalOwed` NOTE data |
+| R7 journal without, then one event | acc 7: 0 NOTE with `amendment`, then exactly `[data]` after `card next` |
+| R7 command again refused | acc 7: `[1, true, 1, 1]` |
+| R5, R6 | text, reviewer-verified |
+
+Guard sweep (each loosened in src/cli/main.ts, test file run, restored):
+- `run.stop ?` to `false ?`: acc 1, acc 2 fail. To `true ?`: acc 2, guard rows fail.
+- `checkedGoal(..., false)` to `true`: acc 1 fails.
+- `|| 'none'` removed: guard rows fail.
+- `amendments.at(-1)` to `[0]`: guard rows fail.
+
+Stale text outside allow_paths (reported, not changed): docs/ARCHITECTURE.md:226-227 say the command "arrives with T1-AMEND-COMMAND".
