@@ -1034,7 +1034,12 @@ export class CardRunner {
         // The attempt and its owed ATTEMPT_STARTED land in one write; the event is appended after it (card T0-JOURNAL-FAULT-EVENTS).
         next = write.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
         if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
-        // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
+        // The handoff (`review-fix`) was returned by the ship or `review r3`; from here on the repair is BUILD work. After a
+        // continuation the session got a `stop` for that decision instead, so the call that opens its repair hands it back (card
+        // T1-CONTINUE-REVIEW): the block pending on the candidate carries the `stopLifted` of the run's last review continuation.
+        const pending = this.lastFormalInvocation(next.review.invocations, next.candidate?.digest);
+        const continuedAt = next.continuations.filter((c) => c.stop.reason === 'review').at(-1)?.at;
+        const handoff = started !== undefined && pending?.outcome === 'block' && continuedAt !== undefined && pending.stopLifted?.at === continuedAt;
         const running = episode?.attempts.find((a) => a.outcome === 'running');
         const reasons = run.review.lastVerdict?.reasons ?? [];
         const open = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }).open : [];
@@ -1044,6 +1049,9 @@ export class CardRunner {
           : !commandReviewer && run.candidate?.sha && findingsOfBlock(run.findings, { stage: 'formal', candidateSha: run.candidate.sha }).length
             ? ' The ship-path reviewer re-reads a verdict file and receives no notes: the disputes are recorded for the human adjudicator; repair the candidate to ship again.'
             : '';
+        const remainingDecisions = Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions);
+        const narration = `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${remainingDecisions} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`;
+        if (handoff) return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons, remainingDecisions, narration } };
         return {
           run: next,
           directive: {
@@ -1056,7 +1064,7 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running && episode ? ladderNumber(episode, episode.attempts.indexOf(running)) : episode ? episode.attempts.length : 1,
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
+            narration,
           },
         };
       }

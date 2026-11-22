@@ -64,23 +64,38 @@ npm run typecheck && node --test tests/scenarios/card-continue.test.ts tests/sce
 - Assertion: the typecheck reports no error and every test of the seven files passes.
 
 ## Attempt evidence
+Tests are named by their acceptance numbers in `tests/scenarios/card-continue.test.ts`.
+
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `card-continue.test.ts` test 1: no stop, state BUILD, one continuation, `admits` 5, `stopLifted` on the stopping decision, R2 fields deep-equal | pass |
-| 2 | test 1: two `card next` calls in REVIEW_FIX name 1 decision left (the repair directive's kind is `build`, not `review-fix`), then `review` 5 of 5, a pass closes with no second pass | pass |
-| 3 | test 1, block row: STOP/review, detail names the continuation and 5; review of a newer candidate refused naming it | pass |
-| 4 | test 2: decision 3 of 3; a block stops and decision 4 is refused; a pass ships, a further review is refused naming the admitted count | pass |
-| 5 | test 3: gate stop, continuation, `review` 3 of 3; a later gate stop names the continuation's count | pass |
-| 6 | test 1 (one `CARD_STATE` with `from`, `to`, `continuation`); test 4 fault rows | pass |
-| 7 | test 5: ship-path reviewer, BUILD, ci stop, no run: each throws its cause, bytes identical | pass |
-| 8 | DoD: the five named suites unchanged and green; skill record names `CardRunner.continueStop` with `tests/scenarios/card-continue.test.ts`, 7998 bytes, ASCII | pass |
-| 9 | `docs/ARCHITECTURE.md` (R1 to R6, T1-CONTINUE-GOAL), `changelog.d/T1-CONTINUE-REVIEW.md` | reviewer |
-| Guard sweep | each loosened in turn, test file run, restored | |
-| `formalAllowance` returns the count | line removed | tests 1, 2, 3 fail |
-| `reviewExhausted` reads the count | `MAX_R3_DECISIONS` | test 1 fails |
-| `secondPassDue` reads count - 1 | `MAX_R3_DECISIONS - 1` | test 1 (5 of 8 row) fails |
-| `allowanceName` continuation branch | never taken | tests 2, 3 fail |
-| `formalReview` passes the count | argument dropped | tests 1, 2 fail |
-| no-run refusal; command-reviewer flag | check removed; `true` | test 5 fails |
-| state BUILD; `stop` and `blocker` cleared | each left as persisted | tests 1 (and 2, 3 for `stop`) fail |
-| Prompt limit (:2201/:2223) | set from `formalAllowance` inside the lock on every path that reaches the prompt | no separate branch |
+| RED | commit 048dbb5f holds the test file alone; all 5 tests failed with `runner.continueStop is not a function`. Changed before GREEN: test "acceptance 5" asserted `review-fix` from the first `card next` after a decision-1 block with no continuation, which the unchanged REVIEW_FIX case answers with `build` (kept by the repair rule below), and it reused one CI failure text, which the effort ladder stops as a same-cause failure before decision 3 on any implementation inside allow_paths; the second failure now has another cause | fail as expected |
+| 1 | test "acceptance 1, 2, 3 and 6": no stop, state BUILD, one continuation, `admits` 5 (8 in the third row), `stopLifted` on the stopping decision, R2 fields deep-equal | pass |
+| 2 | same test: the first `card next` is `review-fix` with `remainingDecisions` 1 and the block's reasons, the second is `build` of attempt 5, both naming 1 decision left; then `review` 5 of 5, and a pass closes with no second pass. Test "acceptance 2, the handoff edges" | pass |
+| 3 | test "acceptance 1, 2, 3 and 6", block row: STOP/review, detail names the continuation and 5; a review of a newer candidate behind the recorded stop is refused naming it | pass |
+| 4 | test "acceptance 4": decision 3 of 3; a block stops and decision 4 is refused; a pass ships, and a further review is refused naming the admitted count | pass |
+| 5 | test "acceptance 5": gate stop, continuation, `review` 3 of 3; a later gate stop names the continuation's count | pass |
+| 6 | test "acceptance 1, 2, 3 and 6" (one `CARD_STATE` with `from`, `to`, `continuation`); test "acceptance 6, fault rows" | pass |
+| 7 | test "acceptance 7": ship-path reviewer, BUILD, ci stop, no run: each throws its cause, bytes identical | pass |
+| 8 | DoD: the five named suites unchanged and green; the skill record names `CardRunner.continueStop` with `tests/scenarios/card-continue.test.ts`, 7998 bytes, ASCII | pass |
+| 9 | `docs/ARCHITECTURE.md` (R1 to R6, T1-CONTINUE-GOAL), `changelog.d/T1-CONTINUE-REVIEW.md` | reviewer-verified |
+
+Guard sweep: each guard loosened in turn, the test file run, then restored.
+
+| Guard | Loosened form | Failing test |
+|---|---|---|
+| `formalAllowance` returns the count | line removed | acceptance 1, 2, 3 and 6; 4; 5 |
+| `reviewExhausted` reads the count | `MAX_R3_DECISIONS` | acceptance 1, 2, 3 and 6 |
+| `secondPassDue` reads count - 1 | `MAX_R3_DECISIONS - 1` | acceptance 1, 2, 3 and 6 (5 of 8 row) |
+| `allowanceName` continuation branch | never taken | acceptance 4; 5 |
+| `formalReview` passes the count | argument dropped | acceptance 1, 2, 3 and 6; 4 |
+| no-run refusal; command-reviewer flag | check removed; `true` | acceptance 7 |
+| state BUILD; `stop` and `blocker` cleared | each left as persisted | acceptance 1, 2, 3 and 6 (and 4, 5, the handoff edges for `stop`) |
+| handoff only on the call that opens the attempt | `started` check removed | acceptance 1, 2, 3 and 6; the handoff edges |
+| handoff only after a continuation | `continuedAt !== undefined` removed | the handoff edges |
+| handoff only for the block pending on the current candidate | any invocation with `stopLifted` | the handoff edges |
+| pending invocation is a block | check removed | equivalent: `stopLifted` is written only on an invocation with `stopReview`, which a block or a no-verdict decision records, and `continueReviewStop` refuses a stop after a missing verdict |
+| `stopLifted.at` is the last review continuation's | any `stopLifted` | equivalent: a ruling lift ships the candidate (state SHIP, never REVIEW_FIX), and a later continuation needs a new stop, recorded on a newer decision that becomes the pending invocation |
+| prompt limit (:2201/:2223) | none added | set from `formalAllowance` inside the lock on every path that reaches the prompt |
+
+R3 decision 1 (candidate e28b2aef, block), repair attempt 2. RED: commit d8efe188; test "acceptance 1, 2, 3 and 6" failed on the first `card next` after the continuation (`build`, no `remainingDecisions`, in place of `review-fix`, 1 and the block's reasons), and test "acceptance 2, the handoff edges" on the same row (`build` in place of `review-fix`, 2).
+- F1 (weakened-continuation-assertion): the REVIEW_FIX case of `CardRunner.next` returns the `review-fix` directive (reasons of the last verdict, `remainingDecisions` from `formalAllowance`) on the call that opens the repair attempt when the block pending on the candidate carries the `stopLifted` of the run's last review continuation; that call still opens the attempt and owes its ATTEMPT_STARTED, and every other call of the case returns `build`.
