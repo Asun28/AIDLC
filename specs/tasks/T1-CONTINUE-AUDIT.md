@@ -1,7 +1,7 @@
 ---
 id: T1-CONTINUE-AUDIT
 title: "The stopped-goal refusal lets a continuation through for review and ci, and the audit ends a goal stop on an event that carries the continuation"
-status: todo
+status: merged
 branch: T1-CONTINUE-AUDIT
 worktree: D:\wt\AIDLC\T1-CONTINUE-AUDIT
 plan_ref: plans/card-continuation.md#order-of-work
