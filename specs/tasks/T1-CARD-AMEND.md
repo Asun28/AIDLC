@@ -63,16 +63,32 @@ npm run typecheck && node --test tests/scenarios/card-amend.test.ts tests/scenar
 - Assertion: the typecheck reports no error, every test of the five files passes, the build succeeds and every benchmark count is within its ceiling.
 
 ## Attempt evidence
-Build attempt 1. RED `3ad8200c`: the 5 tests of `tests/scenarios/card-amend.test.ts` ran against a stub `amendCard` that returns the run; 5 of 5 failed on an assertion (`acceptance 4`: `Missing expected exception: no run`). One arrangement fix after RED, no assertion changed: `acceptance 3` passes `scenario` a copy of the verdicts, because the scripted reviewer shifts the array and the row loop stopped after two decisions; on the stub the 5 tests still fail on an assertion.
+Attempts 1 and 2. RED `3ad8200c`: the 5 tests of `tests/scenarios/card-amend.test.ts` ran against a stub `amendCard` that returns the run; 5 of 5 failed on an assertion (`acceptance 4`: `Missing expected exception: no run`). One arrangement fix after RED, no assertion changed: `acceptance 3` passes `scenario` a copy of the verdicts, because the scripted reviewer shifts the array and the row loop stopped after two decisions; on the stub the 5 tests still fail on an assertion.
 
 | Item | Proof (`tests/scenarios/card-amend.test.ts`) | Result |
 |---|---|---|
 | 1 | `acceptance 1 and 2` | pass (failed at RED) |
-| 2 | `acceptance 1 and 2`, `acceptance 2, second row` | pass (failed at RED) |
+| 2 | `acceptance 1 and 2`, `acceptance 2, second row`; repair of R3 decision 1: `R3 decision 1, F1` (pre-review configured) and `R3 decision 1, F2` (after a block) | pass (failed at RED) |
 | 3 | `acceptance 3`: budget, dod_command, requirements, STOP for review | pass (failed at RED) |
 | 4 | `acceptance 4`: 13 refusal rows | pass (failed at RED) |
 | 5 | `acceptance 5`: clean row, record and append fault rows | pass (failed at RED) |
-| 6 | skill record 7998 bytes, ASCII; card-contract, card-continue, fault-points unchanged; DoD exit 0, 82 of 82, bench within ceilings | pass |
+| 6 | skill record 7998 bytes, ASCII; card-contract, card-continue, fault-points unchanged; DoD exit 0, 85 of 85 at attempt 2, bench within ceilings | pass |
 | 7 | `docs/ARCHITECTURE.md` item after the contract item; `changelog.d/T1-CARD-AMEND.md` | reviewer |
 
-Guard sweep (each loosened alone, the test file run, restored). `acceptance 4` failed for: no DONE, no `mergeVerified`, each operation status dropped, no in-flight check, no pending repair, no contract, equal contract, `by` or `reason` untrimmed, blank `by`, blank `reason`. `dod` branch or its DoD unset removed: acceptance 1 to 3. `review` branch removed: acceptance 1, 3. R4 counting every amendment: acceptance 3; R4 removed: acceptance 1, 2. `guard rows` failed for: blocked receipt kept (dod or review branch), any episode reopened, every CI rerun rewritten, R4 capped at 1, R4 applied to a kept candidate. equivalent: `old === undefined` (no candidate, so no candidate or rerun to rewrite) and `amendments ?? []` (a parsed run holds the array).
+Guard sweep (each loosened alone, the test file run, restored). `acceptance 4` failed for: no DONE, no `mergeVerified`, each operation status dropped, no in-flight check, no pending repair, no contract, equal contract, `by` or `reason` untrimmed, blank `by`, blank `reason`. `dod` branch or its DoD unset removed: acceptance 1 to 3. `review` branch removed: acceptance 1, 3. R4 counting every amendment: acceptance 3; R4 removed: acceptance 1, 2. `guard rows` failed for: blocked receipt kept (dod or review branch), any episode reopened, every CI rerun rewritten, R4 capped at 1, R4 applied to a kept candidate. The rule of `ofCurrentCandidate`, test `guard rows of the same-candidate rule` failed for: the digest match removed, the commit match removed, any amendment in place of one that invalidated `review`; the amendment condition removed failed `R3 decision 1, F1` and `F2` too. equivalent: `old === undefined` (no candidate, so no candidate or rerun to rewrite) and `amendments ?? []` (a parsed run holds the array).
+
+R3 decision 1 (candidate de43c581, block), repair attempt 2. RED: commit f3e4a816; test "R3 decision 1, F1" failed on `assert.doesNotReject` with "candidate sha-1 already holds a pre-review pass", test "R3 decision 1, F2" on `assert.doesNotReject` with "candidate sha-1 was blocked by its last formal decision and is unchanged".
+- F1 and F2 (amended-review-sha-alias): `ofCurrentCandidate` decides for `preReviewAdmission` and the same-candidate block check of `formalAdmission` whether a round or an invocation is of the current candidate: its digest is the candidate's, or its commit is and no amendment of the run invalidated `review`. No record is rewritten; F2's finding F1 stays keyed by commit and the pass on the amended candidate resolves it (`recordFindings`).
+
+Readers that match an invocation, a round or a finding by commit (src/loop/card-runner.ts, src/core/review-policy.ts), for an amended candidate on the same commit:
+
+| Reader | Reached | What it does |
+|---|---|---|
+| `formalAdmission` same-candidate check, `preReviewAdmission` | yes | `ofCurrentCandidate`: earlier digests of the commit do not count |
+| `blockAnswered`, `sameCandidateRefusal` | only after a block of the amended candidate | findings of the commit, old ones included, must be answered |
+| `advisoryNotesFor` | yes | returns the newest decided round of the commit; with pre-review configured that is the amended candidate's pass, which R3 needs first |
+| `lastReviewedSha` (`collectDelta`, `shipBindings`) | yes | empty delta, so a new R3 finding is marked `outsideDelta` ("first-round miss" in `card findings` and the review stats); no gate reads it |
+| `reusableReceipt` | no | the amendment unsets `blockedReceipt` |
+| `publishRuled`, `ruleFinding`/`stoppingDecision`/`heldFindings` (`findingsOfCandidate`) | on a stop or ruling of the amended candidate | findings of the commit, old ones included |
+| `repairCanonical`, pending recovery (`candidateSha` of the pending entry), `keepReceipt` | yes | keyed by the entry's own commit; unchanged |
+| `classifyVerdict` stale check, `recordFindings` | yes | same commit, not stale; raise, re-raise and resolve by commit |

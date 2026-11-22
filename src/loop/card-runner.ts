@@ -2165,9 +2165,9 @@ export class CardRunner {
     const active = this.formalReviewerNow(current, candidateDigest, now);
     if (active.waitUntil) throw new Error(`formal reviewer ${active.cfg.reviewer} is on a quota hold until ${active.waitUntil}; do not re-run before it clears`);
     if (active.cfg.reviewer !== cfg.reviewer) throw new Error(`the formal reviewer changed since the review was prepared (${cfg.reviewer} prepared, ${active.cfg.reviewer} due now); run the command again`);
-    // Same-candidate rule, keyed by the committed sha and independent of the reviewer's name: a blocked, unchanged
+    // Same-candidate rule, keyed by the committed sha (`ofCurrentCandidate`) and independent of the reviewer's name: a blocked, unchanged
     // candidate (an advisory block included) is re-decided only with every finding of the block disputed.
-    const lastDecided = [...ledger.invocations].reverse().find((i) => ((i.candidateSha ?? i.candidateDigest) === candidateSha || i.candidateDigest === candidateDigest) && (i.outcome === 'pass' || i.outcome === 'block'));
+    const lastDecided = [...ledger.invocations].reverse().find((i) => this.ofCurrentCandidate(current, i, candidateSha, candidateDigest) && (i.outcome === 'pass' || i.outcome === 'block'));
     if (lastDecided?.outcome === 'block') {
       const answered = this.blockAnswered(current, { stage: 'formal', candidateSha });
       if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, 'its last formal decision', answered.open));
@@ -2823,6 +2823,16 @@ export class CardRunner {
     return Date.parse(fallbackHold) < Date.parse(primaryHold) ? { cfg: fallbackCfg, waitUntil: fallbackHold } : { cfg: primary, waitUntil: primaryHold };
   }
 
+  /**
+   * Whether a review invocation or pre-review round is a decision of the current candidate in the same-candidate rules (card
+   * T1-CARD-AMEND): its digest is the candidate's, or its commit is and no amendment of the run invalidated `review`; once one
+   * has, a record under an earlier digest of the same commit belongs to an earlier candidate. No record is rewritten.
+   */
+  private ofCurrentCandidate(run: CardRun, entry: { candidateSha?: string; candidateDigest: string }, candidateSha: string, candidateDigest: string): boolean {
+    if (entry.candidateDigest === candidateDigest) return true;
+    return (entry.candidateSha ?? entry.candidateDigest) === candidateSha && !run.amendments.some((a) => a.invalidated.includes('review'));
+  }
+
   /** The R2 guards over one record: stop, an in-flight round, a quota hold, exhausted rounds, the same-candidate rule. Returns the round numbering and the pre-reviewer to run. */
   private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number; reviewer: PreReviewer } {
     const cfg = this.config.preReview;
@@ -2830,7 +2840,7 @@ export class CardRunner {
     // As for R3 (`formalAdmission`): a candidate that passed by ruling takes no pre-review round, so none can be in flight or block it (card T1-REVIEW-RULE-SHIP).
     if (this.ruledPass(current)) throw new Error(`candidate ${candidateSha.slice(0, 12)} passed by ruling; no review may run: ship it with \`aidlc card next ${card.id}\``);
     const cycle = current.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
-    const forCandidate = current.preReview.rounds.filter((r) => (r.candidateSha ?? r.candidateDigest) === candidateSha || r.candidateDigest === candidateDigest);
+    const forCandidate = current.preReview.rounds.filter((r) => this.ofCurrentCandidate(current, r, candidateSha, candidateDigest));
     const inFlight = this.inFlight(current, 'pre');
     if (inFlight) throw new Error(inFlight);
     const rounds = current.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
@@ -2840,7 +2850,7 @@ export class CardRunner {
     // The rounds cap holds whatever the dispositions: exhausted rounds are decided by the gate (STOP, or the hand-off to R3).
     const blocksSoFar = rounds.filter((r) => r.outcome === 'block').length;
     if (blocksSoFar >= cfg.rounds) throw new Error(`the pre-review rounds of cycle ${cycle} are exhausted (${blocksSoFar}/${cfg.rounds} blocks); run \`aidlc card next ${card.id}\`: the gate stops the card or hands the residual findings to R3, it never dispatches another round`);
-    // Same-candidate rule, keyed by the committed sha: a pass stays valid; a block is re-reviewed unchanged only with every finding disputed.
+    // Same-candidate rule, keyed by the committed sha (`ofCurrentCandidate`): a pass stays valid; a block is re-reviewed unchanged only with every finding disputed.
     const lastDecided = [...forCandidate].reverse().find((r) => r.outcome === 'pass' || r.outcome === 'block');
     if (lastDecided?.outcome === 'pass') throw new Error(`candidate ${candidateSha.slice(0, 12)} already holds a pre-review pass (round ${lastDecided.round} of cycle ${lastDecided.cycle}); run \`aidlc card next ${card.id}\` instead of another round`);
     if (lastDecided?.outcome === 'block') {

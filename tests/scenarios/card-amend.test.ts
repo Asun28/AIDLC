@@ -215,3 +215,17 @@ test('R3 decision 1, F2: a candidate R3 blocked with an undisputed finding is am
   assert.deepEqual(now['findings'], [{ ...was['findings'][0], resolvedAt: T0, revision: was['findings'][0].revision + 1 }], 'the pass resolves F1 (recordFindings)');
   assert.deepEqual([s.next()['kind'], s.persisted().mergeVerified], ['close', true]);
 }));
+
+test('guard rows of the same-candidate rule: a pre-review pass on the amended digest still refuses another round; without a review amendment a block recorded under another digest of the same commit still refuses R3 [R3]', async () => {
+  await scenario([PASS], async (s) => {
+    s.attempt('sha-1'); s.next(); await s.pre(); s.next(); await s.review();
+    s.amend(REQUIREMENTS); s.next(); await s.pre();
+    await assert.rejects(s.pre(), /already holds a pre-review pass \(round 2 of cycle 0\)/);
+  }, undefined, [PASS, PASS]);
+  await scenario([block('no RED')], async (s) => {
+    await s.decide('sha-1');
+    s.seed((r) => { r['review'].invocations[0].candidateDigest = 'dg-earlier'; });
+    s.amend(DOD); s.attempt('sha-1');
+    await assert.rejects(s.review(), /candidate sha-1 was blocked by its last formal decision and is unchanged; open finding\(s\): F1/);
+  });
+});
