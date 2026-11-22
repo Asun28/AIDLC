@@ -327,8 +327,8 @@ a different measure; each card sets both.
 | T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W5 | - |
 | T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W6 | - |
 | T1-RUN-DRIVER | SHOULD | aidlc run, board --watch, per-card context pack | T1-README-SCOPE, T1-BOUND-TELEMETRY | W7 | - |
-| T1-BASELINE-HARNESS | COULD | W0 harness, task list, analysis, one-task pilot per arm (released 2026-11-09) | - | - | - |
-| T1-BASELINE-REPORT | COULD | REPORT.md with paired differences and the MDE (released 2026-11-09) | T1-BASELINE-HARNESS | - | - |
+| T1-BASELINE-HARNESS | COULD | W0 harness, task list, analysis, one-task pilot per arm (released 2026-11-09; amended 2026-11-23: each run record carries the task-list digest) | - | - | - |
+| T1-BASELINE-REPORT | COULD | REPORT.md with paired differences and the MDE (released 2026-11-09; amended 2026-11-23: the report names the task-list digest, and a CI job runs its check) | T1-BASELINE-HARNESS | - | - |
 | T1-BOUND-STATS | SHOULD | W4 redesign: `aidlc bounds`, firings derived read-only from goal and card-run records | - | - | - |
 | T1-BOARD-WATCH | SHOULD | W5 (b): read-only `aidlc board --watch` under a stated output contract | - | - | - |
 
@@ -499,3 +499,5 @@ On 2026-11-09 the user asked for cards, before any run, for the three lines this
 Shared budget: W2 (+96) and W5 so far (+283: context pack +140, run driver core +143) are merged. T1-BOUND-STATS at most +130 and T1-BOARD-WATCH at most +110 bring the shared W2+W4+W5 total to at most +619, inside the last ceiling the user approved (+1350). Section 1's +400 was raised for the telemetry repairs only, so approving these cards approves the +619 ceiling for them.
 
 Approved by the user on 2026-11-09: the four cards, the changes from 4.5 stated above (no board `Bounds:` line, extension-lifted time STOPs not counted, the `Next:` pointer in place of the directive, the coded intake error left out) and the +619 shared ceiling.
+
+Amended on 2026-11-23, before either baseline card ran, by the owner's decision in the session (`intent/auto-ontology-study.md`, Decisions, Q1). T1-BASELINE-HARNESS and T1-BASELINE-REPORT each record their change in their own file under `changelog.d/` and no longer edit CHANGELOG.md, so that file no longer orders them. Each run record carries the SHA-256 of the task list it ran, and REPORT.md names it. A job `baseline-report` of the `ci` workflow runs `node evals/baseline/analyze.ts --check`; it is not a required check. Decisions D1-D3 and the caps are unchanged.

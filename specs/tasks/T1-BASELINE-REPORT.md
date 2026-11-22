@@ -8,7 +8,8 @@ plan_ref: docs/plans/PLAN-v5.1-hardening.md#2026-11-09-follow-up-cards
 allow_paths:
   - evals/baseline/results/
   - evals/baseline/REPORT.md
-  - CHANGELOG.md
+  - .github/workflows/ci.yml
+  - changelog.d/T1-BASELINE-REPORT.md
   - specs/tasks/T1-BASELINE-REPORT.md
 dod_command: node evals/baseline/analyze.ts --check
 dod_exit: 0
@@ -16,26 +17,30 @@ requirements:
   - R1. `evals/baseline/results/` shall hold one record per run, 72 or the number the spend cap allowed, and REPORT.md shall state the count and name every run stopped by a cap.
   - R2. REPORT.md shall be the text `analyze.ts` generates from those records, with per-task paired differences for resolved, tokens, cost, wall clock and interventions, the bounds that fired, and the minimum detectable difference per axis.
   - R3. REPORT.md shall state in plain words every axis on which aidlc does worse than plain Claude Code.
-  - R4. REPORT.md shall name the pinned aidlc SHA, the task repository, the model, the effort and the caps, and shall state that the token and cost axes count each arm's driving session only, so the review commands arm B starts are outside them.
+  - R4. REPORT.md shall name the pinned aidlc SHA, the task repository, the task-list digest the run records carry, the model, the effort and the caps, and shall state that the token and cost axes count each arm's driving session only, so the review commands arm B starts are outside them.
+  - R5. The `ci` workflow shall run `node evals/baseline/analyze.ts --check` in a job of its own on every pull request and every push it builds.
 acceptance:
   - 1. `node evals/baseline/analyze.ts --check` exits 0: REPORT.md equals the regeneration from `evals/baseline/results/`. [R2] [dod arm 1]
   - 2. The results directory holds one record per run that parses under the harness's run schema; REPORT.md states the record count and names each run whose `boundFired` is a cap. [R1] [dod arm 1]
   - 3. REPORT.md has a table per axis with one row per task (arm A mean, arm B mean, difference) and the across-task mean, SD, 95% interval, permutation p-value and MDE. [R2] [dod arm 1]
   - 4. REPORT.md has a section `Where aidlc loses` listing each axis whose mean difference favours arm A, or stating that there is none. [R3] [dod arm 1]
-  - 5. REPORT.md names the pinned aidlc SHA, the task repository (`Asun28/MyInspection`), the model, the effort and the caps ($10 per run, $500 in total), and states that arm B's review commands are outside the token and cost axes. [R4] [dod arm 1]
-  - 6. `CHANGELOG.md` Unreleased carries the entry under this card id; `git diff --numstat origin/main...HEAD -- src` is empty. [R2]
+  - 5. REPORT.md names the pinned aidlc SHA, the task repository (`Asun28/MyInspection`), the `tasksDigest` the run records share, the model, the effort and the caps ($10 per run, $500 in total), and states that arm B's review commands are outside the token and cost axes. [R4] [dod arm 1]
+  - 6. `changelog.d/T1-BASELINE-REPORT.md` holds the entry under this card id followed by one line feed; `git diff --numstat origin/main...HEAD -- src` is empty. [R2]
+  - 7. `.github/workflows/ci.yml` gains one job, `baseline-report`, on `ubuntu-latest`, with the checkout, setup-node and `npm ci` steps of the `bench` job followed by one step that runs `node evals/baseline/analyze.ts --check`; `git diff origin/main...HEAD -- .github/workflows/ci.yml` holds added lines only; the job is green on the card's pull request. [R5]
 depends_on: [T1-BASELINE-HARNESS]
 budget: 3000
 tdd: false
-forbid: [any change under src/, editing a run record by hand, dropping a run from the results, a claim in REPORT.md not computed from the records]
-non_goals: [re-running a task to improve a result, a change to analyze.ts (a harness fix is a successor of T1-BASELINE-HARNESS), W5 measurements]
-hygiene: "Plan decisions D1-D3, decided again by the user on 2026-11-09 (task repository Asun28/MyInspection, private sandbox Asun28/aidlc-baseline-sandbox, $10 per run and $500 in total). Data and generated text only: the analysis is tested in T1-BASELINE-HARNESS; this card commits the records and the regenerated report. The budget covers the result records."
-doc_sync: CHANGELOG.md
+forbid: [any change under src/, editing a run record by hand, dropping a run from the results, a claim in REPORT.md not computed from the records, a change to an existing job of `.github/workflows/ci.yml`]
+non_goals: [re-running a task to improve a result, a change to analyze.ts (a harness fix is a successor of T1-BASELINE-HARNESS), W5 measurements, making `baseline-report` a required check (the ruleset `main required checks` and `github.requiredChecks` of aidlc.config.json are the owner's to change)]
+hygiene: "Plan decisions D1-D3, decided again by the user on 2026-11-09 (task repository Asun28/MyInspection, private sandbox Asun28/aidlc-baseline-sandbox, $10 per run and $500 in total). Data and generated text only: the analysis is tested in T1-BASELINE-HARNESS; this card commits the records and the regenerated report. The budget covers the result records. tests/surface/ci-shard.test.ts pins the run steps of the `check` and `check-windows-shard` jobs whole, so the report check is a job of its own and no existing job gains a step; tests/surface/bench.test.ts reads the `bench` job only."
+doc_sync: changelog.d/T1-BASELINE-REPORT.md
 ---
 
 # T1-BASELINE-REPORT
 
 Deferred on 2026-09-26 and released on 2026-11-09, when the user decided plan decisions D1-D3 again. It starts after T1-BASELINE-HARNESS merges and the operator has run the measurement runs within the caps.
+
+Amended on 2026-11-23, before any run, by the owner's decision in the session (`intent/auto-ontology-study.md`, Decisions, Q1). The changelog entry is the card's own file under `changelog.d/`. The report names the task-list digest the run records carry (R4, acceptance 5). A job of the `ci` workflow runs the check that is this card's DoD (R5, acceptance 7), so a report edited by hand, or run records changed without regenerating it, turns that job red. The job is not a required check, as `bench` is not.
 
 ## Deliverable
 The first comparison of aidlc against plain Claude Code on real tasks, judged by an external oracle, reported as per-task paired differences with the smallest difference the design could detect, including every axis on which aidlc loses.
