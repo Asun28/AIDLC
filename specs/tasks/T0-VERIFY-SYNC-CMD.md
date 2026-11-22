@@ -46,3 +46,12 @@ npm run typecheck && node --test tests/surface/templates.test.ts tests/surface/p
 ```
 - Expected exit code: 0
 - Assertion: the new Keeping in sync test and the existing skill tests pass; the changelog fragment is well formed.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/templates.test.ts`, test `T0-VERIFY-SYNC-CMD: Keeping in sync names the commit of the Sync commit: line, ...`; RED before the fix: `Keeping in sync holds no commit sha; the Sync commit: line is the only one` | pass after the fix |
+| 2 | Same test (the command and the `Sync commit:` reference); acceptance 1 and 2 tests of `T1-VERIFY-SKILL` (ASCII, 7994 <= 8000 bytes, four outcomes) | pass |
+| 3 | `tests/surface/changelog-fragments.test.ts`; `git diff --numstat origin/main...HEAD -- src templates` | pass; empty |
+
+Repair after R3 decision 1 (F1 hex check, F2 revision link): the test now refuses any hexadecimal run of 7 or more characters in either case and of any length, takes the revision word from the command and requires the text right after the command to define that word as the sha on the `Sync commit:` line. Mutants of the skill each fail the test: `SYNC` replaced by `HEAD`, the defining sentence reworded, an uppercase 7-character run, a 41-character run.

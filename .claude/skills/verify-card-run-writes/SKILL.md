@@ -125,8 +125,9 @@ A new command is added to `COVERED` with its stage and named end.
 
 ## Keeping in sync
 Tell whether a change touches covered code:
-`git diff --name-only 402a07f3d10eb0e90396a3cc3d9293eb045b4f0a -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
-(the sync commit and the record's files). Then exactly one outcome:
+`git diff --name-only SYNC -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
+(SYNC is the sha on the `Sync commit:` line; the files are the record's).
+Then exactly one outcome:
 - **in sync**: covered files unchanged, or changed without a change to a
   write or its order, and the check passes; the sync commit may move.
 - **updated**: the check and the record were changed to match the code
