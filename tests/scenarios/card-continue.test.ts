@@ -91,9 +91,10 @@ test('acceptance 1, 2, 3 and 6: a run stopped on R3 decision 4 is continued, kee
       assert.deepEqual([was['state'], now['state'], 'stop' in now, 'blocker' in now, now['continuations'].length, now['review'].invocations[stopping].stopLifted?.by], ['STOP', 'BUILD', false, false, 1, BY.by]);
       assert.deepEqual(kept(now), kept(was));
       assert.deepEqual(d.readmitted().map((e) => [e['cardId'], e['data'].from, e['data'].continuation]), [['T1-CC', 'STOP', { ...BY, stop: 'review', decisions, admits }]]);
-      // The run is in REVIEW_FIX on every call until the repair; the repair directive (kind build) names the decisions left.
-      for (const _ of [1, 2]) assert.match(d.next()['narration'], left(decisions));
-      assert.equal(d.persisted().state, 'REVIEW_FIX');
+      // Acceptance 2: the call that opens the repair attempt hands the block back as review-fix; the next call is the build of that attempt.
+      const [handoff, build] = [d.next(), d.next()];
+      assert.deepEqual([handoff['kind'], handoff['remainingDecisions'], handoff['reasons'], build['kind'], build['attempt'], d.persisted().state], ['review-fix', decisions, was['review'].lastVerdict.reasons, 'build', 5, 'REVIEW_FIX']);
+      for (const directive of [handoff, build]) assert.match(directive['narration'], left(decisions));
       d.attempt('sha-5');
       assert.deepEqual([d.next()['kind'], d.next()['decision'], d.next()['maxDecisions']], ['review', 5, admits]);
       await d.review();
@@ -126,6 +127,24 @@ test('acceptance 4: a run stopped on decision 2 by a re-raise and continued with
       await assert.rejects(d.review(), /continuation/);
     }, { secondPass: true });
   }
+});
+
+test('acceptance 2, the handoff edges: only the call that opens the repair of the block a continuation lifted is review-fix; a block with no continuation, the next call and a later block under the same continuation get build', async () => {
+  await scenario([...RERAISE, block('no doc row')], async (d) => {
+    const seen: Array<[string, unknown, unknown]> = [];
+    const row = (name: string, x: Stored) => { seen.push([name, x['kind'], x['remainingDecisions']]); return x; };
+    row('decision 1 blocked', await d.cycle('sha-1'));
+    await d.cycle('sha-2', 'F1');
+    d.go({ decisions: 2 });
+    const handoff = row('first after the continuation', d.next());
+    const build = row('second after the continuation', d.next());
+    d.attempt('sha-3');
+    assert.equal(d.next()['kind'], 'review');
+    await d.review();
+    row('decision 3 blocked below the count', d.next());
+    assert.deepEqual(seen, [['decision 1 blocked', 'build', undefined], ['first after the continuation', 'review-fix', 2], ['second after the continuation', 'build', undefined], ['decision 3 blocked below the count', 'build', undefined]]);
+    assert.match(handoff['narration'], new RegExp(`Attempt ${build['attempt']} at effort`));
+  });
 });
 
 test('acceptance 5: a run the gate stopped with no decision left is continued and gets decision 3 of 3; after a further CI code defect the gate stop names the continuation [R4] [R5]', async () => {
