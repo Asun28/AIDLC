@@ -23,6 +23,7 @@ import { classifyRequest, formatRouting } from '../core/router.ts';
 import { parseIntent } from '../artifacts/intent.ts';
 import { makeStop } from '../core/stop.ts';
 import { terminalGoalRefusal } from '../core/card-goal.ts';
+import type { ContinuationAct } from '../core/continuation.ts';
 import { findingsOfCandidate } from '../core/review-policy.ts';
 import { approvalPacket, requireAuthority } from '../core/authorization.ts';
 import { resolveRoleProfile, assessTaskEffort } from '../core/roles.ts';
@@ -35,6 +36,7 @@ import {
   GoalRequest,
   IsoTimestamp,
   MAX_INTEGRATION_REPAIR_CYCLES,
+  MAX_R3_DECISIONS,
   MAX_PLANNING_INVOCATIONS,
   ReleaseAttempt,
   StopReason,
@@ -992,8 +994,46 @@ export class GoalController {
     const run = rerun ? before! : runner.ruleFinding(goal, card, findingId, ruling);
     if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
+    return { run, ...this.readmitAfterLift(goal, card.id, 'review', 'ruling', `ruling on ${card.id} by ${by}`, by), ruled: !rerun };
+  }
+
+  /**
+   * The continuation of a card (card T1-CONTINUE-GOAL-2) through `runner` (`CardRunner.continueStop`) on the existing run, on a goal
+   * that admits card work or is in STOP for `review` or `ci` (`terminalGoalRefusal` with `continue`). A refused goal, a blank `by`
+   * or `reason` and a `decisions` outside 1 to 4 are refused before the card run is read, on every path; they and a throw of the
+   * runner before its write leave every record as it was. When the goal is in STOP for the reason of the lifted stop, it is
+   * re-admitted as `ruleFinding` re-admits it, with one `GOAL_STATE` from STOP to CARDS whose `continuation` names the card and
+   * `by`. A run out of STOP whose last continuation lifted a stop of the goal's stop reason, while the goal is still in STOP for it,
+   * gets no second continuation (`continued: false`): the call completes the re-admission with the `by` of the recorded one. A
+   * failure after the runner's write is thrown and nothing is undone: an event not appended stays owed for `aidlc card next`.
+   */
+  continueCard(runner: { continueStop(goal: Goal, card: Card, act: Omit<ContinuationAct, 'at'>): CardRun }, goalId: string, card: Card, act: Omit<ContinuationAct, 'at'>): { run: CardRun; goal: Goal; continued: boolean; readmitted: boolean } {
+    const goal = this.mustGoal(goalId);
+    const refusal = terminalGoalRefusal(goal, 'continue');
+    if (refusal) throw new Error(refusal);
+    // The act is refused here, with the runner's causes, on every path: the rerun below calls no runner.
+    if (!act.by.trim()) throw new Error('by is blank: name who continues the run');
+    if (!act.reason.trim()) throw new Error('reason is blank: say why the run goes on');
+    if (act.decisions !== undefined && !(Number.isInteger(act.decisions) && act.decisions >= 1 && act.decisions <= MAX_R3_DECISIONS)) throw new Error(`decisions ${act.decisions} is not a whole number from 1 to ${MAX_R3_DECISIONS}`);
+    const reason = goal.state === 'STOP' ? goal.stop?.reason : undefined;
+    const before = this.store.getCardRun(goal.id, card.id);
+    const last = reason && before && before.state !== 'STOP' ? before.continuations.at(-1) : undefined;
+    const rerun = Boolean(last && last.stop.reason === reason);
+    const run = rerun ? before! : runner.continueStop(goal, card, act);
+    if (!reason) return { run, goal, continued: true, readmitted: false };
+    // The section re-admits only a goal in STOP for the reason of the lifted stop.
+    const lifted = run.continuations.at(-1)!;
+    return { run, ...this.readmitAfterLift(goal, card.id, lifted.stop.reason, 'continuation', `continuation of ${card.id} by ${lifted.by}`, lifted.by), continued: !rerun };
+  }
+
+  /**
+   * The re-admission of a goal whose card's stop was lifted by `ruleFinding` or `continueCard`: the goal read, its checks (STOP for
+   * `reason`, terminal, the generation of `goal`, the card run out of STOP), the journal scan for a `GOAL_STATE` from STOP to CARDS
+   * with `key` after the goal's last `GOAL_STOPPED`, the append and the goal write, in one section of the goal lock.
+   */
+  private readmitAfterLift(goal: Goal, cardId: string, reason: StopReason, key: 'ruling' | 'continuation', text: string, by: string): { goal: Goal; readmitted: boolean } {
     // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: a resume, a
-    // cancellation or any other goal write that landed since is kept, and an overlapping ruling waits here.
+    // cancellation or any other goal write that landed since is kept, and an overlapping re-admission waits here.
     let readmitted = false;
     let seen: Goal | undefined;
     const changedSince = (current: Goal): boolean => {
@@ -1001,19 +1041,19 @@ export class GoalController {
       return !seen || seen.state !== current.state || seen.terminal !== current.terminal || seen.generation !== current.generation || seen.updatedAt !== current.updatedAt || JSON.stringify(seen.stop) !== JSON.stringify(current.stop);
     };
     const saved = updateJson(this.store.goalFile(goal.id), Goal, (current) => {
-      if (!current || current.state !== 'STOP' || !current.terminal || current.stop?.reason !== 'review' || current.generation !== goal.generation) return current;
-      if (this.store.getCardRun(goal.id, card.id)?.state === 'STOP') return current;
+      if (!current || current.state !== 'STOP' || !current.terminal || current.stop?.reason !== reason || current.generation !== goal.generation) return current;
+      if (this.store.getCardRun(goal.id, cardId)?.state === 'STOP') return current;
       const events = this.journal(goal.id).readAll();
-      const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data['ruling']));
+      const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data[key]));
       if (changedSince(current)) return current;
-      if (!journaled) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: current.generation, data: { from: 'STOP', to: 'CARDS', reason: `ruling on ${card.id} by ${by}`, ruling: { cardId: card.id, by } } });
+      if (!journaled) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: current.generation, data: { from: 'STOP', to: 'CARDS', reason: text, [key]: { cardId, by } } });
       if (changedSince(current)) return current;
       readmitted = true;
       // Re-entry runs through CARDS: the projection is re-validated before `aidlc next` reads the card run.
       return Goal.parse({ ...current, terminal: false, stop: undefined, state: 'CARDS', updatedAt: nowIso() });
     })!;
     if (readmitted) this.writeBoard(saved);
-    return { run, goal: readmitted ? saved : (seen ?? saved), ruled: !rerun, readmitted };
+    return { goal: readmitted ? saved : (seen ?? saved), readmitted };
   }
 
   /** `owners` is the dispatch's decision from `liveOwners`; a caller without it gets that decision at the board's clock. */

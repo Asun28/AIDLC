@@ -158,16 +158,18 @@ test('acceptance 4: a failed append of the continuation\'s CARD_STATE throws wit
   try { assert.throws(() => s.go(), /EIO: injected/); } finally { fault.cardState = false; }
   const run = s.persisted();
   const owed = run.journalOwed?.filter((o) => o.type === 'CARD_STATE' && o.data['continuation']).map((o) => o.data);
-  const data = { from: 'STOP', to: 'readmitted', continuation: { by: BY, reason: 'one more repair round', stop: 'review', decisions: 1, admits: 5 } };
+  const data = { from: 'STOP', to: 'readmitted', continuation: { by: BY, reason: 'one more repair round', stop: 'review', decisions: 1, admits: 5 }, eventKey: owed?.[0]?.['eventKey'] };
+  assert.equal(typeof data.eventKey, 'string');
   assert.deepEqual([run.state, run.continuations.length, owed, s.cardStates(), s.g().state, s.g().stop?.reason, s.readmissions()], ['BUILD', 1, [data], [], 'STOP', 'review', []]);
   const again = s.go();
   assert.deepEqual([again.continued, again.readmitted, s.persisted().continuations, s.g().state, s.readmissions(), s.cardStates()], [false, true, run.continuations, 'CARDS', [readmission()], []]);
   assert.equal(s.cardNext(), 'build');
-  assert.deepEqual(s.cardStates(), [data]);
+  // `aidlc card next` delivers the owed event once, marked as completed after its act.
+  assert.deepEqual(s.cardStates(), [{ ...data, completed: true }]);
 }));
 
 test('acceptance 5: each refusal throws with its cause and leaves the goal file, the card-run file and the journal byte-identical, on a stopped goal and on a goal a failed re-admission left in STOP [R1] [R3]', async () => {
-  const inBuild = async (s: ReturnType<typeof setup>, fx: ReturnType<typeof makeFixture>) => { s.runner.next(s.g(), fx.card(CARD), fx.controller.ensureCardRun(s.g(), CARD)); assert.deepEqual([s.persisted().state, s.g().state], ['BUILD', 'CARDS']); };
+  const inBuild = async (s: ReturnType<typeof setup>, fx: ReturnType<typeof makeFixture>) => { s.runner.next(s.g(), fx.card(CARD), fx.controller.ensureCardRun(s.g(), CARD)); assert.deepEqual([s.persisted().state, s.g().state, s.g().terminal], ['BUILD', 'RUN', false]); };
   const rows: Array<[name: string, prepare: (s: ReturnType<typeof setup>, fx: ReturnType<typeof makeFixture>) => Promise<unknown>, act: Act, cause: RegExp]> = [
     ['a goal stopped for time', async (s, fx) => { await s.stopCard(); fx.advance(90 * 86_400_000); s.stopGoal('time'); }, {}, /is STOP \(stop reason: time\);.*aidlc goal extend/],
     ['a DONE goal', async (s, fx) => { driveCardToDone(fx, s.goal.id, CARD); fx.controller.next(s.goal.id); fx.controller.report({ goalId: s.goal.id, generation: 0, result: 'arc-verified', data: { evidence: ['dod:ok'] } }); assert.equal(s.g().state, 'DONE'); }, {}, /is DONE; card commands do no card work on it/],
