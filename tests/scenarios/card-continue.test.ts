@@ -92,7 +92,7 @@ test('acceptance 1, 2, 3 and 6: a run stopped on R3 decision 4 is continued, kee
       assert.deepEqual(kept(now), kept(was));
       assert.deepEqual(d.readmitted().map((e) => [e['cardId'], e['data'].from, e['data'].continuation]), [['T1-CC', 'STOP', { ...BY, stop: 'review', decisions, admits }]]);
       // The run is in REVIEW_FIX on every call until the repair; the repair directive (kind build) names the decisions left.
-      for (const _ of [1, 2]) assert.match(d.next()['narration'], left(decisions));
+      for (const _ of [1, 2]) { const fix = d.next(); assert.equal(fix['kind'], 'build'); assert.match(fix['narration'], left(decisions)); }
       assert.equal(d.persisted().state, 'REVIEW_FIX');
       d.attempt('sha-5');
       assert.deepEqual([d.next()['kind'], d.next()['decision'], d.next()['maxDecisions']], ['review', 5, admits]);
@@ -100,6 +100,7 @@ test('acceptance 1, 2, 3 and 6: a run stopped on R3 decision 4 is continued, kee
       const last = d.next();
       if (admits === 8) return assert.match(last['narration'], /^Second R3 pass/);
       if (fifth === PASS) { assert.deepEqual([last['kind'], d.ship.requests.map((q) => q.candidateSha), d.persisted().review.invocations.some((i) => i.secondPass)], ['close', ['sha-5'], false]); d.further('sha-6'); return assert.rejects(d.review(), /continuation's admitted count of 5 decisions is used/); }
+      assert.deepEqual([last['kind'], d.persisted().stop?.reason], ['stop', 'review']);
       assert.match(d.persisted().stop!.detail, /continuation.*\b5\b/);
       d.further('sha-6');
       await assert.rejects(d.review(), /continuation/);
@@ -112,7 +113,9 @@ test('acceptance 4: a run stopped on decision 2 by a re-raise and continued with
     await scenario([...RERAISE, third], async (d) => {
       await d.reraised();
       d.go({ decisions: 1 });
-      assert.match(d.next()['narration'], left(1));
+      const fix = d.next();
+      assert.deepEqual([fix['kind'], d.persisted().state], ['build', 'REVIEW_FIX']);
+      assert.match(fix['narration'], left(1));
       d.attempt('sha-3');
       assert.deepEqual([d.next()['kind'], d.next()['decision'], d.next()['maxDecisions']], ['review', 3, 3]);
       await d.review();

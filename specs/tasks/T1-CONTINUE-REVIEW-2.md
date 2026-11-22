@@ -75,9 +75,9 @@ npm run typecheck && node --test tests/scenarios/card-continue.test.ts tests/sce
 | Item | Proof (`tests/scenarios/card-continue.test.ts` unless named) | Result |
 |---|---|---|
 | 1 | test 1: STOP to BUILD, no stop or blocker, one continuation, `admits` 5, `stopLifted` on decision 4, R2 fields deep-equal | pass |
-| 2 | test 1: two `card next` in REVIEW_FIX (the `build` directive) name 1 decision left; then `review` 5 of 5; a pass ships with no second pass | pass |
-| 3 | test 1: block row stops for review, detail holds `continuation` and 5; pass row: review of a further candidate refused naming the count of 5 | pass |
-| 4 | test 2: re-raise stop, `decisions` 1, decision 3 of 3; block stops, pass ships | pass |
+| 2 | test 1: each of two `card next` in REVIEW_FIX returns kind `build` (asserted) whose narration names 1 decision left; then `review` 5 of 5; a pass ships with no second pass | pass |
+| 3 | test 1: block row: `card next` returns kind `stop`, reason review, detail holds `continuation` and 5; pass row: review of a further candidate refused naming the count of 5 | pass |
+| 4 | test 2: re-raise stop, `decisions` 1, `card next` returns kind `build` in REVIEW_FIX, then `review` 3 of 3; block: kind `stop`, reason review; pass ships | pass |
 | 5 | test 3: stop detail before the act names the two-decision allowance; after it `review` 3 of 3 | pass |
 | 6 | test 1 (one `CARD_STATE` STOP to `readmitted`); test 4 rename and append fault rows | pass |
 | 7 | test 5: ship-path reviewer, BUILD, ci stop, no run: each throws its cause, bytes identical | pass |
@@ -95,3 +95,7 @@ Guard sweep (each loosened alone in `src/loop/card-runner.ts`, test file run, re
 | `formalReview` passes the count | argument dropped | 1, 2 |
 | no-run refusal; command-reviewer flag | `if (false)`; `true` | 5; 5 |
 | state BUILD; `stop`, `blocker` cleared | each kept as persisted | 1; 1, 2, 3; 1 |
+| REVIEW_FIX directive kind (`src/loop/card-runner.ts:1050`, not changed) | scratch: `kind: 'review-fix'` | 1, 2 (`expected 'build', actual 'review-fix'`) |
+
+R3 decision 1 (candidate 8db88095, block), repair attempt 2. No RED commit: the new assertions pass on the candidate's code; the scratch break of the sweep row above shows they fail when the REVIEW_FIX case returns `review-fix`.
+- F1 (missing-build-directive-assertion): test 1 asserts kind `build` on both `card next` calls in REVIEW_FIX (`:95`) and kind `stop` on the block row (`:103`); test 2 asserts kind `build` and state REVIEW_FIX after the continuation (`:117`). Rows 2, 3 and 4 above.
