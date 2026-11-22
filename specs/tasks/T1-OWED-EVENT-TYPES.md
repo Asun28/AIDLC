@@ -1,7 +1,7 @@
 ---
 id: T1-OWED-EVENT-TYPES
 title: "A card-run write can owe a CARD_STATE and a NOTE event to the goal journal"
-status: todo
+status: merged
 branch: T1-OWED-EVENT-TYPES
 worktree: D:\wt\AIDLC\T1-OWED-EVENT-TYPES
 plan_ref: plans/card-continuation.md#order-of-work
