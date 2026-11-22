@@ -1,7 +1,7 @@
 ---
 id: T0-VERIFY-SYNC-CMD
 title: The Keeping in sync command of the verify-card-run-writes skill names the sync commit through the `Sync commit:` line, not a sha of its own
-status: todo
+status: merged
 branch: T0-VERIFY-SYNC-CMD
 worktree: D:\wt\AIDLC\T0-VERIFY-SYNC-CMD
 allow_paths:
