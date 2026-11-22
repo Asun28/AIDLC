@@ -169,7 +169,7 @@ test('acceptance 7: a run under a ship-path reviewer, a run in BUILD, a run stop
   const rows: Array<[string, (run: Stored, config: Stored) => void, RegExp]> = [
     ['ship-path reviewer', (_run, config) => { config['formalReview'].command = []; }, /formal reviewer is not a command/],
     ['BUILD', (run) => { run['state'] = 'BUILD'; delete run['stop']; }, /is in BUILD, not in STOP/],
-    ['ci', (run) => { run['stop'].reason = 'ci'; }, /stop reason ci is not review/],
+    ['ci with no effort episode', (run) => { run['stop'].reason = 'ci'; delete run['effort']; }, /no effort episode/],
     ['no run', () => {}, /T1-NONE has no card run/],
   ];
   for (const [name, change, cause] of rows) {

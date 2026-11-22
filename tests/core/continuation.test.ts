@@ -76,7 +76,7 @@ describe('continueCiStop (card T1-CONTINUE-CI)', () => {
     const before = structuredClone(run);
     const out = continuation.continueCiStop(run, act, true);
     assert.deepEqual(out.continuation, { at: AT, by: 'owner', reason: 'flaky fixture fixed', stop: { reason: 'ci', detail: 'unclassified failure: diagnose before any rerun', at: STOP_AT } });
-    assert.deepEqual(out.step.episode, { ...run.effort, terminal: undefined, attempts: [{ ...done(1, 'fail', CAUSE) }] });
+    assert.deepEqual(out.step.episode, { ...run.effort, terminal: undefined, attempts: [done(1, 'fail', CAUSE)] });
     assert.deepEqual([out.step.action, out.step.refuted?.n], [{ action: 'attempt', effort: 'medium', n: 2, escalated: false }, 1]);
     assert.deepEqual(run, before, 'the run passed in is unchanged');
   });

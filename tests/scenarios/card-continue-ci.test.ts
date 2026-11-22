@@ -88,6 +88,8 @@ async function setup(fx: ReturnType<typeof fixture>) {
 const R2 = ['ci', 'review', 'findings', 'candidate', 'redReceipt', 'deadline'];
 const pick = (run: Stored) => R2.map((k) => run[k]);
 const strip = (e: Stored) => { const { eventKey: _key, ...data } = e['data']; return data; };
+/** The run's effort attempts rebuilt from its first one, one per [outcome, cause, progress]; the episode is open unless the last is a success. */
+const reshape = (run: Stored, ...rows: Array<[string, string?, boolean?]>) => { const a = run['effort'].attempts[0]; run['effort'].attempts = rows.map(([outcome, cause, progress], i) => ({ ...a, n: i + 1, outcome, cause, progress: !!progress })); if (rows.at(-1)![0] !== 'success') delete run['effort'].terminal; };
 
 test('acceptance 1, 2, 3 and 5: card continue on a ci stop counts the bound success as a failed attempt with the act as its cause, keeps every R2 field, re-admits the goal; card next builds attempt 2, the repair is reviewed, and a second unclassified failure stops for ci with the rerun ledger kept [R1] [R2] [R4]', () => scenario(async (s) => {
   const was = s.stored();
@@ -113,7 +115,8 @@ test('acceptance 1, 2, 3 and 5: card continue on a ci stop counts the bound succ
 
 test('acceptance 4: a ladder that admits no attempt, --decisions 1 and a run with no effort episode are each refused with their cause, the goal file, the card-run file and the journal byte-identical [R3]', async () => {
   const rows: Array<[string, (run: Stored) => void, string[], RegExp]> = [
-    ['ladder', (run) => { const a = run['effort'].attempts[0]; run['effort'].attempts = [{ ...a, outcome: 'fail', cause: CAUSE }, { ...a, n: 2 }]; }, [], /the effort ladder admits no repair attempt: same-cause-stop/],
+    ['ladder', (run) => reshape(run, ['fail', CAUSE], ['success']), [], /the effort ladder admits no repair attempt: same-cause-stop/],
+    ['escalation past the deadline', (run) => { reshape(run, ['fail', 'a'], ['fail', 'b'], ['success', undefined, true]); run['deadline'] = '2020-01-01T00:00:00.000Z'; }, [], /the effort ladder admits no repair attempt: exhausted: escalation requires/],
     ['decisions', () => {}, ['--decisions', '1'], /decisions 1 is given/],
     ['no effort episode', (run) => { delete run['effort']; }, [], /no effort episode/],
   ];
@@ -130,17 +133,24 @@ test('acceptance 4: a ladder that admits no attempt, --decisions 1 and a run wit
 
 test('acceptance 5, fault rows: a failed card-run write changes no byte; a failed journal append keeps the continuation and the next card next appends each owed event once [R4]', () => scenario((s) => {
   const held = s.bytes();
-  fault.record = true;
-  assert.throws(() => s.go(), /EIO: injected/);
-  fault.record = false;
+  fault.record = true; assert.throws(() => s.go(), /EIO: injected/); fault.record = false;
   assert.deepEqual(s.bytes().slice(1), held.slice(1));
-  fault.append = true;
-  assert.throws(() => s.go(), /EIO: injected/);
-  fault.append = false;
+  fault.append = true; assert.throws(() => s.go(), /EIO: injected/); fault.append = false;
   assert.deepEqual([s.persisted().continuations.length, s.events('CARD_STATE').filter((e) => e['data'].continuation).length], [1, 0]);
   s.next();
   assert.deepEqual([s.events('CARD_STATE').filter((e) => e['data'].continuation).length, s.events('ATTEMPT_FINISHED').filter((e) => e['data'].refutedBy === 'continuation').length], [1, 1]);
 }));
+
+test('guard rows: inside the deadline the ladder escalates the repair, and a run whose last settled attempt failed owes no ATTEMPT_FINISHED [R1] [R4]', async () => {
+  const rows: Array<[Array<[string, string?, boolean?]>, string, number]> = [[[['fail', 'a'], ['fail', 'b'], ['success', undefined, true]], 'high', 1], [[['fail', 'a']], 'medium', 0]];
+  for (const [shape, effort, refuted] of rows) {
+    await scenario((s) => {
+      s.seed((run) => reshape(run, ...shape));
+      s.go();
+      assert.deepEqual([s.next()['effort'], s.events('ATTEMPT_FINISHED').filter((e) => e['data'].refutedBy === 'continuation').length], [effort, refuted]);
+    });
+  }
+});
 
 test('acceptance 8: the JSON output and the human line hold the state, the continuation with no decisions or admits, continued, readmitted and the next command; --help names review and ci [R6]', async () => {
   for (const human of [false, true]) {
