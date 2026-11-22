@@ -750,10 +750,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   card
     .command('continue <cardId>')
-    .description("record the owner's continuation of a run stopped for review: the stop is lifted with further R3 decisions, and a goal stopped for that stop is re-admitted (card T1-CONTINUE-COMMAND)")
+    .description("record the owner's continuation of a run stopped for review or ci: a review stop is lifted with further R3 decisions, a ci stop returns the run to BUILD with the failure counted as a failed attempt, and a goal stopped for that stop is re-admitted (cards T1-CONTINUE-COMMAND, T1-CONTINUE-CI)")
     .requiredOption('--by <who>', 'who continues the run, as recorded')
     .requiredOption('--reason <text>', 'why the run goes on')
-    .option('--decisions <n>', 'the further R3 decisions admitted, 1 to 4 (default 1)')
+    .option('--decisions <n>', 'the further R3 decisions admitted, 1 to 4 (default 1); a review stop only')
     .option('--goal <id>')
     .action((cardId: string, o: { by: string; reason: string; decisions?: string; goal?: string }) => {
       const c = ctx(g());

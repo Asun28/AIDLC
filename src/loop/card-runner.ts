@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { admittedDecisions, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
+import { admittedDecisions, continueCiStop, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys, type ClaimResult } from '../coordination/lease.ts';
@@ -680,18 +680,36 @@ export class CardRunner {
    * The owner's continuation of a run stopped for review (card T1-CONTINUE-REVIEW-2): one locked update of the record read inside the
    * lock (`continueReviewStop`), state BUILD for `selectCardState`, no counter, finding, receipt or deadline moved, and one owed
    * CARD_STATE event with the continuation in its persisted data (`deliverOwed`). A refusal writes and appends nothing.
+   *
+   * A run stopped for ci (card T1-CONTINUE-CI, `continueCiStop`) takes what a CI code defect does in `refutePatch`: the episode
+   * `afterShipFailure` returns, no DoD or blocked receipt, the CI ledger, review, findings, candidate and deadline as they were. The
+   * update also owes the ATTEMPT_FINISHED of the refuted success (`refutedBy` `continuation`) and the ATTEMPT_STARTED of a promoted
+   * running repair, with the data `refuteDirective` journals. The act appends the first two; the promotion stays owed and the next
+   * `card next` appends it, after the controller's GOAL_STATE re-admission, so the audit counts no work after the goal's stop.
    */
   continueStop(goal: Goal, card: Card, act: Omit<ContinuationAct, 'at'>): CardRun {
     const at = this.clock();
     let owed: OwedEvent[] = [];
+    let hold: string[] = [];
     const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
       if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to continue`);
+      if (persisted.state === 'STOP' && persisted.stop?.reason === 'ci') {
+        const { continuation, step } = continueCiStop(persisted, { ...act, at }, checkAdmission(persisted.deadline, at).phase === 'open');
+        owed = [this.owe(goal, 'CARD_STATE', { from: 'STOP', to: 'readmitted', continuation: { by: continuation.by, reason: continuation.reason, stop: 'ci' } })];
+        if (step.refuted) owed.push(this.owe(goal, 'ATTEMPT_FINISHED', { n: step.refuted.n, outcome: 'fail', cause: step.refuted.cause, refutedBy: 'continuation' }));
+        if (step.promoted && step.action.action === 'attempt') {
+          const started = this.owe(goal, 'ATTEMPT_STARTED', { n: step.promoted.n, effort: step.promoted.effort, escalated: step.action.escalated, promoted: true, from: step.promoted.from, reason: 'ship-failure' });
+          owed.push(started);
+          hold = [started.key];
+        }
+        return { ...persisted, effort: step.episode, continuations: [...persisted.continuations, continuation], state: 'BUILD', stop: undefined, blocker: undefined, dodReceipt: undefined, blockedReceipt: undefined, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+      }
       const { continuation, review } = continueReviewStop(persisted, { ...act, at }, this.config.formalReview.command.length > 0);
       const { by, reason, decisions, admits } = continuation;
       owed = [this.owe(goal, 'CARD_STATE', { from: 'STOP', to: 'readmitted', continuation: { by, reason, stop: continuation.stop.reason, decisions, admits } })];
       return { ...persisted, review, continuations: [...persisted.continuations, continuation], state: 'BUILD', stop: undefined, blocker: undefined, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
     });
-    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key) });
+    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key), hold });
     return next;
   }
 
@@ -781,16 +799,18 @@ export class CardRunner {
   /**
    * R2 and R4: append each owed event the goal journal does not hold, in one card-run lock section that writes nothing, once
    * `read` (the run as the command read it) shows one due. The entries named in `own` are the calling command's commit,
-   * appended with `extra`; every other one is completed for an earlier command (`completed: true`).
+   * appended with `extra`; every other one is completed for an earlier command (`completed: true`). The entries named in `hold`
+   * stay owed for a later call (`continueStop`, card T1-CONTINUE-CI).
    */
-  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown> } = { keys: [] }): void {
+  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown>; hold?: string[] } = { keys: [] }): void {
     const journal = this.journal(goal.id);
     const seen = read.journalOwed?.length ? journal.readAll() : [];
-    if (!(read.journalOwed ?? []).some((o) => this.owedDue(o, seen))) return;
+    const held = (o: OwedEvent) => own.hold?.includes(o.key) ?? false;
+    if (!(read.journalOwed ?? []).some((o) => !held(o) && this.owedDue(o, seen))) return;
     this.store.updateCardRun(goal.id, card.id, (current) => {
       const events = journal.readAll();
       for (const owed of current?.journalOwed ?? []) {
-        if (!this.owedDue(owed, events)) continue;
+        if (held(owed) || !this.owedDue(owed, events)) continue;
         const data = own.keys.includes(owed.key) ? { ...owed.data, ...own.extra } : { ...owed.data, completed: true };
         events.push(journal.append({ type: owed.type, goalId: goal.id, cardId: card.id, generation: owed.generation, data }));
       }
