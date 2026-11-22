@@ -22,8 +22,12 @@ Status of the labels: Claude and Codex labelled independently and gave the same 
 ## Still open
 
 - No person has checked an agreed row. The coordinator's check covers the sample this section named before the check was run, in draw order: the labels of T0-DOD-SCAFFOLD-SHELL-3, T1-RUN-CONTEXT-PACK and T0-HOOK-LAZY, and the adjudication of the first two reader findings (T1-RUN-CONTEXT-PACK `dod_command`, T0-CLI-CWD-FILE-ARGS R1). The other 30 agreed labels and 18 agreed adjudications were not compared again. Each card's records are in `_local/replacement-study/packets/<card>.md`.
-- The decision of `intent/card-preflight.md`, outcome 5: a prospective trial of the reader, a ruling on amendments, both, or neither. Codex, asked by the owner, recommends the ruling on amendments with medium confidence, with the continuation of a stopped run decided apart from the amendment (`_local/replacement-study/decision/codex.json`). The coordinator recommends the same.
-- What follows the study. On 2026-11-21 at about 19:40Z the owner told the session to continue and to finish this with aidlc. The coordinator read that as the instruction to plan the ruling through the loop, not as the decision, and drafted `intent/card-continuation.md` (status draft). Its first open question asks the owner for the decision. No goal, card or code was started.
+
+## The decision
+
+- The question of `intent/card-preflight.md`, outcome 5: a prospective trial of the reader, a ruling on amendments, both, or neither. Codex, asked by the owner, recommends the ruling on amendments with medium confidence, with the continuation of a stopped run decided apart from the amendment (`_local/replacement-study/decision/codex.json`). The coordinator recommends the same.
+- What follows the study. On 2026-11-21 at about 19:40Z the owner told the session to continue and to finish this with aidlc. The coordinator read that as the instruction to plan the ruling through the loop, not as the decision, and drafted `intent/card-continuation.md` (status draft). Its first open question asked the owner for the decision. No goal, card or code was started before the answer.
+- The decision. On 2026-11-22 at about 00:15Z the owner accepted the five recommendations of that draft in the session: the ruling on amendments and no trial of the reader; the continuation of a stopped run planned with the amendment; a recorded act that lifts `review` and `ci` stops only; one continuation of a review stop admits the further R3 decisions it names, 1 by default; and, in the owner's words for the fifth, a session under the owner's recorded delegation records the acts. `intent/card-continuation.md` is accepted and carries what follows. Outcome 5 of `intent/card-preflight.md` is decided.
 
 ## Inputs and frame
 

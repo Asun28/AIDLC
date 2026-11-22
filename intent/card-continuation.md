@@ -2,13 +2,13 @@
 slug: card-continuation
 title: A stopped card run continues on the same card by the owner's recorded act, and an amendment of a running card keeps its findings
 author: asun28 (owner); drafted by the coordinator session
-status: draft
+status: accepted
 created: 2026-11-21T19:50:00Z
 source: human
 ---
 
 # Intent: a stopped card run continues on the same card by the owner's recorded act, and an amendment of a running card keeps its findings
-Author: asun28 (owner); drafted by the coordinator session. Status: draft.
+Author: asun28 (owner); drafted by the coordinator session. Status: accepted.
 
 ## Problem
 `docs/reliability/baseline.md` (commit e74113d): 93 of 324 card attempts were replaced by a
@@ -71,8 +71,10 @@ The amendment of a running card is practised and has no stated effect:
    run keeps its findings, its review decisions and its counters. The act names the evidence
    the amendment touches, and that evidence no longer counts; the rest stands.
 2. The owner can continue a stopped run on the same card by one recorded act that names the
-   stop it lifts and what it admits, as `aidlc goal extend` does for a deadline. The review
-   allowance is not reset.
+   stop it lifts and what it admits, as `aidlc goal extend` does for a deadline. The act lifts
+   a `review` stop or a `ci` stop. For a review stop it admits the number of further R3
+   decisions it names, 1 when it names none, and a block on the last of them stops the run
+   again. The review allowance is not reset.
 3. `aidlc card status` and the journal show each such act: who, when, why, and what it
    admitted or invalidated.
 4. The rule texts say one thing about a card whose run has started: who may change it, by
@@ -90,7 +92,17 @@ files and their template copies, `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`. D
 repositories receive the rule text through `aidlc init`.
 
 ## Constraints
-- Authority: both acts are the owner's, recorded with who, when and why. `aidlc audit verify`
+- The owner's decisions, given in the session on 2026-11-22 at about 00:15Z in answer to the
+  five open questions of the draft (commit 934bae07): the ruling on amendments and no trial of
+  the reader, which is the decision of `intent/card-preflight.md`, outcome 5; the continuation
+  of a stopped run belongs to this intent; the recorded act lifts `review` and `ci` stops and
+  no `tool`, `card` or `risk` stop; one continuation of a review stop admits the number of
+  further R3 decisions it names, 1 when it names none; a session under the owner's recorded
+  delegation records the two acts.
+- Authority: both acts carry the owner's authority, recorded with who, when and why. A session
+  records one only on the owner's instruction in the session or under a delegation the owner
+  gave, and the record names that instruction or delegation. A session's own edit of a started
+  card stays forbidden. `aidlc audit verify`
   accepts a re-admission after a stop only from the event that carries the act, as it does for
   a ruled review stop (card T1-REVIEW-RULE-GOAL).
 - No gate is bypassed. SHIP still needs a DoD receipt and an R3 pass on the current candidate.
@@ -106,8 +118,4 @@ repositories receive the rule text through `aidlc init`.
 - Size T1, at most 5 cards. The allowance constants do not change.
 
 ## Open questions
-- The decision of `intent/card-preflight.md`, outcome 5: Codex (medium confidence) and the coordinator recommend the ruling on amendments and no trial of this reader. Does the owner decide so?
-- Does this intent cover the continuation of a stopped run together with the amendment? Recommended: yes. On the sample no amendment avoided a replacement without a continuation.
-- Which stops may the recorded act lift? Recommended: `review` and `ci` (issue 326). Not `tool` (issue 109, closed as rare), not `card` (1 of 15), and not `risk`: both risk stops of the sample were false, and a false stop of a security gate needs its own answer.
-- What does one continuation of a review stop admit? Recommended: the number of further R3 decisions the act names, 1 when it names none; a block on the last of them stops the run again.
-- Who may record the two acts? Recommended: the owner by an instruction in the session, or a session under the owner's recorded delegation, as in commits 74dba070 and c04e294c. A session's own edit of a started card stays forbidden.
+- (none)
