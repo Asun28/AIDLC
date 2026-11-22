@@ -290,6 +290,16 @@ function pathKind(p: string): 'directory' | 'other' | 'absent' | 'unknown' {
   }
 }
 
+/**
+ * The inputs of a card's state selection that are read outside its run record: the unresolved operations of the card and the
+ * kind of a worktree path (read only off the dry-run ship path). Each is read on its first use and kept, so the assessments
+ * that share one `SelectionFacts` select on the same reads (card T0-CONTRACT-GATE-2 R4, R3 decision 1 F1).
+ */
+interface SelectionFacts {
+  unresolved: () => OperationRecord[];
+  worktree: (p: string) => ReturnType<typeof pathKind>;
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -758,6 +768,46 @@ export class CardRunner {
     return undefined;
   }
 
+  /** The inputs of the selection of `card` read outside its run record, each read on first use and kept (`SelectionFacts`). */
+  private selectionFacts(goal: Goal, card: Card): SelectionFacts {
+    let unresolved: OperationRecord[] | undefined;
+    const kinds = new Map<string, ReturnType<typeof pathKind>>();
+    return {
+      unresolved: () => (unresolved ??= this.ops.unresolved(goal.id, card.id)),
+      worktree: (p) => {
+        const kind = kinds.get(p) ?? pathKind(p);
+        kinds.set(p, kind);
+        return kind;
+      },
+    };
+  }
+
+  /**
+   * The contract gate (card T0-CONTRACT-GATE-2 R1): the contract fields, in the order of `CONTRACT_FIELDS`, in which `card`
+   * differs from the contract `run` recorded, when the run holds a `contract`, no `mergeVerified` and is not DONE; empty on
+   * every other record. It reads the card and that one record and nothing else (no operation, no review in flight, no
+   * pending repair), so it does not depend on whether `amendmentRefusal` would admit the owner's amendment.
+   */
+  private contractChanged(card: Card, run: CardRun): string[] {
+    return !run.contract || run.mergeVerified || run.state === 'DONE' ? [] : changedContractFields(run.contract, card);
+  }
+
+  /**
+   * The gate on the record locked where `preReview` reserves its round or `formalReview` its decision (card T0-CONTRACT-GATE-2
+   * R5): the call holds the card it read, so a change found here is an amendment another caller recorded during the call.
+   */
+  private refuseAmendedContract(card: Card, locked: CardRun): void {
+    const changed = this.contractChanged(card, locked);
+    if (changed.length) throw new Error(`the contract of card ${card.id} was amended after this command read the run (${changed.join(', ')}); run the command again`);
+  }
+
+  /** The refusal of `next`, `recordAttempt`, `preReview` and `formalReview` while the gate applies (card T0-CONTRACT-GATE-2 R6). */
+  private contractGate(card: Card, run: CardRun): string | undefined {
+    const changed = this.contractChanged(card, run);
+    if (!changed.length) return undefined;
+    return `card ${card.id} differs from the contract its run recorded in ${changed.join(', ')}: nothing is recorded, reviewed, shipped or built on it until the owner's amendment is recorded with \`aidlc card amend ${card.id} --by <who> --reason <text>\` or the card text is restored to the recorded contract, which is the way on where the amendment is refused`;
+  }
+
   /**
    * A disposition changes the persisted run under the card-run lock (`GoalStore.updateCardRun`), never the
    * caller's snapshot: the record is read inside the lock, a stop saved meanwhile refuses, the lease is
@@ -870,9 +920,12 @@ export class CardRunner {
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it. A dispatch
    * under another session's live card lease never reaches it: `next` returns that stop first and writes nothing.
    * `read` hands in the lease `next` read, so the dispatch decides on one read; `dry` makes no save and no journal
-   * append and only selects the state (`next` runs it only on a lease this session does not hold, so no renewal).
+   * append and only selects the state; on a lease this session holds it claims nothing and selects as the renewal would.
+   * `record` and `facts` are the run and the other inputs a dry assessment selects on, read by its caller, so it reads none.
+   * `gated` (the dispatch of `next`) applies the contract gate to the selection this assessment makes, before any write of it
+   * (card T0-CONTRACT-GATE-2 R4).
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter; record?: CardRun; facts?: SelectionFacts; gated?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     const dry = read?.dry ?? false;
     if (dry) save = (run) => run;
     const append = (event: Parameters<Journal['append']>[0]): void => {
@@ -883,10 +936,22 @@ export class CardRunner {
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
     // takeover, a blocking stop or a review decision landed) writes nothing back, and a stop already persisted there
     // stays. The caller's copy stands in only when no record exists yet.
-    let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
+    let run: CardRun = (dry ? read?.record : undefined) ?? this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = read ? read.lease : this.leases.read(key);
+    // The selection's inputs from outside the record, each read once, where the selection first needs it; a dry assessment
+    // takes its caller's.
+    const facts: SelectionFacts = read?.facts ?? this.selectionFacts(goal, card);
+    // The contract gate (card T0-CONTRACT-GATE-2 R4) refuses BUILD, REVIEW_FIX and SHIP on the record just read, which every
+    // save below is fenced against (`saveCardRun`, by revision). The dry assessment it asks shares this assessment's record,
+    // lease, clock and `facts`, so the state it selects is the state selected below (R3 decision 1 F1: an operation that
+    // completed between two ledger reads let a BUILD through). It assumes the lease renewal, the one input it cannot have
+    // before the refusal; a renewal that does not land keeps an ownership stop, which selects STOP (WAIT on an unknown
+    // operation), never a gated state. It saves nothing, appends nothing and renews no lease; in every other state the
+    // dispatch goes on as before.
+    const gate = read?.gated && !dry ? this.contractGate(card, run) : undefined;
+    if (gate && ['BUILD', 'REVIEW_FIX', 'SHIP'].includes(this.assess(goal, card, run, now, undefined, { lease, dry: true, record: run, facts }).decision.state)) throw new Error(gate);
     // A merged card stopped for ownership is reconciled once the blocking lease is gone (released, expired or ours):
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
@@ -906,7 +971,8 @@ export class CardRunner {
     let revalidatedStop = false;
     if (lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host && run.ownerGeneration === lease.generation) {
       const wasExpired = Date.parse(lease.expiresAt) < Date.parse(now);
-      const renewal = this.leases.claim(key, { operation: lease.operation, now });
+      // A dry assessment renews nothing: it selects the state as the renewal would leave it.
+      const renewal: ClaimResult = dry ? { status: 'renewed', lease } : this.leases.claim(key, { operation: lease.operation, now });
       if (renewal.status === 'renewed') {
         read?.writer?.own();
         lease = renewal.lease;
@@ -931,8 +997,8 @@ export class CardRunner {
       run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
       if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
     }
-    const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
-    const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
+    const unknownOps = facts.unresolved().filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
+    const runningOp = facts.unresolved().find((o) => o.status === 'running' || o.status === 'issued');
     // A command reviewer's second block alone stops nothing (card T1-EFF-R3-PROGRESS): its ledger decision stops the run on a
     // re-raised finding or the fourth decision; this predicate backs a run left in REVIEW_FIX with no decision left, and a
     // decision recorded as a stop, which stops the card with its own detail even when its commit landed only as history
@@ -956,7 +1022,7 @@ export class CardRunner {
     // A recorded worktree counts only while it is a directory, so a run whose worktree was never made, is gone or is a file
     // goes back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record
     // alone counts, as before (R3).
-    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || pathKind(run.worktree) === 'directory' : false;
+    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || facts.worktree(run.worktree) === 'directory' : false;
     const evidence: CardEvidence = {
       now,
       deadline: run.deadline,
@@ -1060,7 +1126,7 @@ export class CardRunner {
         if (claimed.status !== 'expired') write.own();
       }
     }
-    const assessed = this.assess(goal, card, run, now, write.save, { lease, writer: write });
+    const assessed = this.assess(goal, card, run, now, write.save, { lease, writer: write, gated: true });
     run = assessed.run;
     // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
     // run as it stands now, before any action.
@@ -1405,6 +1471,10 @@ export class CardRunner {
     if (markerStat) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
     // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
+    // The contract gate (card T0-CONTRACT-GATE-2 R2) on the record read above, before the one write; an amendment recorded
+    // after that read refuses the write as stale.
+    const gate = this.contractGate(card, run);
+    if (gate) throw new Error(gate);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
     if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
     // A success on a tdd card binds the candidate and ends the episode; without a RED receipt the card could never ship, so
@@ -1724,6 +1794,10 @@ export class CardRunner {
     // An adoption committed after this ship read the run (card T0-ADOPT-EXTERNAL-MERGE-3 R10): the merge is done, nothing ships.
     if (armed.mergeVerified) return 'the merge of the card was verified meanwhile (adopt-merge)';
     if (armed.stop || armed.state === 'STOP') return `the card run was stopped (${armed.stop?.reason ?? 'STOP'})`;
+    // The contract gate on the record re-read under the lock (card T0-CONTRACT-GATE-2 R5): the ship holds the card it read,
+    // so a change found here is an amendment another caller recorded after the dispatch read the run.
+    const amended = this.contractChanged(card, armed);
+    if (amended.length) return `the contract of the card was amended meanwhile (${amended.join(', ')})`;
     if ((armed.candidate?.digest ?? 'unknown') !== (issued.candidate?.digest ?? 'unknown')) return `the candidate changed (${(issued.candidate?.digest ?? 'unknown').slice(0, 12)} admitted, ${(armed.candidate?.digest ?? 'none').slice(0, 12)} recorded meanwhile)`;
     if (!armed.dodReceipt || (card.tdd && !armed.redReceipt) || armed.candidate?.dirty) return 'the candidate is no longer ready (a receipt was cleared meanwhile)';
     const round = armed.preReview.rounds.find((r) => r.outcome === 'pending');
@@ -2217,6 +2291,10 @@ export class CardRunner {
       persisted = this.store.getCardRun(goal.id, card.id) ?? committed.run;
     }
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
+    // The contract gate (card T0-CONTRACT-GATE-2 R3) after the commit of a retained result and the stop refusal, before any
+    // reservation or pool request; it is asked again on the record locked for the reservation (R5).
+    const gate = this.contractGate(card, persisted);
+    if (gate) throw new Error(gate);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
     this.refuseDirtyCandidate(persisted, cwd);
@@ -2303,6 +2381,7 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
       this.store.updateCardRun(goal.id, card.id, (locked) => {
         const current = locked ?? persisted;
+        this.refuseAmendedContract(card, current);
         this.refuseReplacedCandidate(current, card, 'formal', candidateSha, candidateDigest);
         this.refuseChangedCheckout(current, cwd, candidateSha);
         this.formalAdmission(current, card, candidateSha, candidateDigest, now, cfg);
@@ -2869,6 +2948,10 @@ export class CardRunner {
     this.deliverOwed(goal, card, persisted);
     if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
+    // The contract gate (card T0-CONTRACT-GATE-2 R3) after the stop refusal, before the round is reserved; it is asked again
+    // on the record locked for the reservation (R5).
+    const gate = this.contractGate(card, persisted);
+    if (gate) throw new Error(gate);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
     this.refuseDirtyCandidate(persisted, cwd);
@@ -2913,6 +2996,7 @@ export class CardRunner {
     let seen: Record<string, FindingSnapshot> = {};
     this.store.updateCardRun(goal.id, card.id, (locked) => {
       const current = locked ?? persisted;
+      this.refuseAmendedContract(card, current);
       this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
       this.refuseChangedCheckout(current, cwd, candidateSha);
       const admitted = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);

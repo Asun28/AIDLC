@@ -71,3 +71,117 @@ npm run typecheck && node --test tests/scenarios/card-contract-gate.test.ts test
 - Assertion: the typecheck reports no error, every test of the eight files passes, the build succeeds and every benchmark count is within its ceiling.
 
 ## Attempt evidence
+
+### Attempt 1
+
+RED receipt: `737e1aea:tests/scenarios/card-contract-gate.test.ts`. On that commit (base d08ffdd2, no source change) the file fails on assertions: 9 tests, 1 pass (item 5, whose rows the gate does not apply to), 8 fail, each with `ERR_ASSERTION` (missing expected exception or rejection, or an unexpected CLI exit); no import or type error, and `npm run typecheck` reports none. After RED the guard sweep added assertions to the same file (test 1: the owed event and the lost-checks success; test 3: the dirty-candidate scenario; test 5: `recordAttempt` on merged and DONE runs); no assertion of the RED commit was changed or removed.
+
+DoD: the dod_command from the worktree, exit 0: typecheck no error; node --test over the eight files: 200 tests, 200 pass, 0 fail; build ok; bench: every count within its ceiling (6 journeys). Also `node --test tests/surface/*.test.ts`: exit 0, 1289 tests, 1275 pass, 0 fail, 14 skipped; `npm test`: exit 0, 4052 tests, 4020 pass, 0 fail, 32 skipped.
+
+Guard sweep. Script outside the worktree (`sweep.mjs` in the session scratchpad): each row loosens one guard in `src/loop/card-runner.ts`, runs `node --test tests/scenarios/card-contract-gate.test.ts`, and restores the file. Every row exits 1.
+
+| Guard | Loosened form | Failing tests | First failing assertion |
+| --- | --- | --- | --- |
+| R1 the record holds a `contract` | no-contract check removed (absent contract read as `{}`) | 5 | next on the no-contract row refused with all nine fields |
+| R1 no `mergeVerified` | condition removed | 5 | `recordAttempt, mergeVerified` (the R6 message instead of the run's own refusal) |
+| R1 not DONE | condition removed | 5 | next on the DONE row refused with the R6 message |
+| R1 at least one field changed | `if (!changed.length) return undefined` removed | 1 to 9 | every unchanged-card call refused with an empty field list |
+| R2 head site in `recordAttempt` | gate removed | 1, 4, 6 | `Missing expected exception: success` |
+| R2 position after the owed events | gate moved before `deliverOwed` | 1 | `the owed event is delivered before the refusal` |
+| R2 directly after the owed events | gate moved after the lost-checks refusal | 1 | `a success with lost checks` |
+| R3 head site in `formalReview` | gate removed | 3, 4, 6 | `formalReview` |
+| R3 head site in `preReview` | gate removed | 3 | `preReview` |
+| R3 position after the stop refusal, `formalReview` | gate moved before the stop refusal | 6 | `formalReview` (R6 message instead of `card run is stopped (review)`) |
+| R3 position after the stop refusal, `preReview` | gate moved before the stop refusal | 6 | `preReview` |
+| R3 directly after the stop refusal, `formalReview` | gate moved after `refuseDirtyCandidate` | 3 | `formalReview, dirty candidate` |
+| R3 directly after the stop refusal, `preReview` | gate moved after `refuseDirtyCandidate` | 3 | `preReview, dirty candidate` |
+| R4 head site in the state selection of `next` | `gated` ignored | 1 to 4, 6 to 9 | `Missing expected exception: next` |
+| R4 gated state BUILD | BUILD left out of the list | 1, 4, 6, 7, 8, 9 | `Missing expected exception: next` |
+| R4 gated state REVIEW_FIX | REVIEW_FIX left out | 2, 6 | `Missing expected exception.` (test 2, next) |
+| R4 gated state SHIP | SHIP left out | 3, 4, 7 | `Missing expected exception: next` |
+| R4 dry renewal (no lease claim in a dry assessment) | the dry assessment claims the lease | 1 | `the card lease is not renewed` |
+| R5 locked record of `formalReview` | `refuseAmendedContract` removed from the reservation | 9 | `Missing expected rejection.` (formalReview) |
+| R5 locked record of `preReview` | `refuseAmendedContract` removed from the reservation | 9 | `Missing expected rejection.` (preReview) |
+| R5 re-read before the ship | the `shipDrift` check disabled | 9 | the `wait` / `record-changed` directive deep-equal |
+
+No row is `equivalent:`. The first sweep found the `mergeVerified` row undetected (a merged run selects CLOSE, which R4 does not gate); test 5 gained the `recordAttempt` comparison on merged and DONE runs, which detects it. The two "directly after" rows of R3 and the lost-checks row of R2 were added with their assertions in the same way.
+
+Clauses (docs/LESSONS.md, T1-AMEND-COMMAND): each clause and the assertion that fails without it.
+
+| Req | Clause | Assertion (test: message or value) |
+| --- | --- | --- |
+| R1 | one gate of the card and one record, reading nothing else (no operation, review in flight, pending repair) | 4: `next` refused with the R6 message in each of the three cases where `amendCard` refuses (repair, `intended` operation, review in flight), and `formalReview` in the third |
+| R1 | applies only with a `contract` | 5: `no contract` kinds `['close','close']`, and the no-contract `recordAttempt` recorded (`outcomes` `['success']`) |
+| R1 | applies only with no `mergeVerified` | 5: `recordAttempt, mergeVerified` |
+| R1 | applies only when not DONE | 5: `DONE` kinds `['close','close']` |
+| R1 | applies only when a field differs (`changedContractFields`) | 7: next returns `build` with the card text restored, `amendments` `[]`; sweep row "at least one field changed" fails every test |
+| R1 | applies to no other record | 5: the three rows and the two `recordAttempt` rows |
+| R2 | asked on the record `recordAttempt` reads | 1: `success`, `fail`, `not-counted` |
+| R2 | directly after the owed events | 1: `the owed event is delivered before the refusal`; `a success with lost checks` |
+| R2 | an attempt of any outcome refused | 1: the three outcomes |
+| R2 | with the R6 message, before the write | 1: `refusal(['requirements'])` and the byte comparison after each outcome |
+| R3 | `preReview` asks on the record it reads | 3: `preReview`; `preReview, dirty candidate` |
+| R3 | `formalReview` asks on the record it reads | 3: `formalReview`; 4: `formalReview` with a review in flight |
+| R3 | directly after the refusal of a stopped run | 6: `formalReview` and `preReview` reject with `card run is stopped (review)`; 3: the two dirty-candidate rejections |
+| R3 | no round, no decision reserved | 3: `preReview.rounds.length` 0, `review.invocations.length` 0 |
+| R3 | no request to the review pool | 3: `queued()` `[]` after `formalReview` (and in the dirty-candidate scenario) |
+| R3 | no reviewer run | 3: `calls.r3` 0, `calls.r2` 0; 4: `calls.r3` stays 1 |
+| R4 | asked on the record the state selection reads | 9: the amendment between the first read and the selection refused with `refusal(['budget'])` |
+| R4 | before any write of the selection | 1, 2, 3: the byte comparisons after `next` |
+| R4 | refused in BUILD | 1: `next` |
+| R4 | refused in REVIEW_FIX | 2: `refusal(['requirements'])` |
+| R4 | refused in SHIP (stored BUILD with a bound candidate, and after a pass) | 3: `next`, `next after the pass` |
+| R4 | before saving the run or appending its own journal event | 1, 2, 3: byte comparisons; 3: `events('CARD_STATE').length` unchanged |
+| R4 | before renewing the card lease | 1: `the card lease is not renewed` |
+| R4 | before starting an attempt | 2: attempts unchanged; 9: `no attempt is started`, `no event after the amendment` |
+| R4 | before dispatching a ship | 3: `ship.requests.length` 0 and no operation; 4: no ship request with an `intended` operation |
+| R4 | every other state as for the unchanged card | 6: `prepare`; `operation issued/running/UNKNOWN` `['wait','wait']`; `stop` with its stop; 5: `close` |
+| R4 | the state the gate judges is the state `next` executes: the operation ledger read once (attempt 2, F1) | 6 F1: `next during the completion` (`wait`), `no attempt is started`, `next after the completion` refused; `next during the renewal`; `next with an operation issued during the call` refused |
+| R4 | the same for the worktree read (attempt 2, F1) | 6 F1: `the worktree that appears during the call`, `the worktree that appears during the renewal` (equal to the unchanged card with no worktree) |
+| R4 | the same for the run record (attempt 2, class sweep) | 6 F1: `next with the record changed after its read` refused, the card lease not renewed |
+| R5 | asked again on the record locked for the pre-review round | 9: `preReview` rejects with `amended(['budget'])`, no round, `calls.r2` 0 |
+| R5 | asked again on the record locked for the formal decision | 9: `formalReview` rejects with `amended(['budget'])`, no invocation, `calls.r3` 0 |
+| R5 | asked again on the record re-read before the ship | 9: `wait` on `record-changed`, `ship.requests.length` 0 |
+| R5 | with the card the call holds | 9: the message names `budget`, the field the amendment recorded meanwhile |
+| R5 | the reservation refused; the ship withdrawn as for any other change | 9: `the pool request is cancelled`; operation `['cancelled']`, queue `['completed','cancelled']` |
+| R5 | message names the fields, that the contract was amended after the call read the run, and to run again | 9: `amended(['budget'])` exact text; the ship narration exact text |
+| R5 | the call made again proceeds (rule) | 9: `the call made again records a decision`, `next made again ships`, `next` returns `build` |
+| R6 | one message for R2, R3 and R4 | 1, 3: the same `refusal()` for `recordAttempt`, `next`, `formalReview`, `preReview` |
+| R6 | names the card, the fields in `CONTRACT_FIELDS` order | 1: `next, two fields` (`requirements, acceptance`) |
+| R6 | names `aidlc card amend <card> --by <who> --reason <text>`, the restoring, and that restoring is the way where the amendment is refused | 1: exact message text |
+| R6 | `aidlc card next <card>` exits non-zero with the message | 8: `[r.status, r.stderr]` equal to `[1, 'aidlc: <message>\n']`, bytes unchanged |
+| R7 | after the amendment the calls proceed | 7: `build`, outcomes `['success']`; `review` and `formalReview records a decision`; 4: `next after the amendment` returns `review` |
+| R7 | with the card text restored the calls proceed | 7: `build`, `amendments` `[]`; 4: `build` and the repair ended, `next ships with the card text restored`, `next with the card text restored` returns `review` |
+| R7 | a later change is refused again | 7: `the second change` refused with `refusal(['acceptance'])` |
+| R8 | OPERATIONS, ARCHITECTURE, changelog texts | reviewer-verified (item 11); the changelog line passes `tests/surface/changelog-fragments.test.ts` |
+
+### R3 decision 1
+
+Candidate d9bddb59, blocked on one finding, F1: "[spec] [P1] 14 scope fidelity (class: contract-gate-selection-drift) @ src/loop/card-runner.ts:922: [Bugs] R4 is bypassed when a concurrent operation completes between the dry assessment and the actual assessment. [...]" It holds: the dry assessment of the gate and the executed assessment each read the operation ledger (`this.ops.unresolved`, twice per pass) and the worktree kind (`pathKind`) themselves, so an operation that completed between the passes let the dry pass select WAIT and the executed pass select BUILD, renew the lease and start an attempt.
+
+Repair: `assess` reads each input of the selection that lies outside the run record once, through `SelectionFacts` (the unresolved operations of the card and the worktree kind off the dry-run ship path), on its first use, and keeps it; the dry assessment of the gate takes the same `SelectionFacts` with the record, lease and clock of the assessment it guards. The reads stay where the selection first needs them: a first version read them at the head of `assess`, before the reusable-receipt save, and `tests/scenarios/t0-flow.test.ts` (`T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-off reload ...`, which writes the run at the first ledger read) failed with CARD_RUN_STALE; on an unchanged card the ledger is now read where it was before. The other inputs of the selection were checked: `reusableReceipt`, `blockAnswered`, `invocationBlocking`, `withContest`, `reviewNextAction`, `admittedDecisions` and `selectCardState` read only the run, the card and the configuration; `currentActor()` and `now` are the same for both passes. The lease claim is the one input the dry pass cannot have before the refusal; it assumes `renewed`. A claim that is not `renewed` either throws (`held`, the foreign dispatch, which writes nothing) or leaves the lease and the run as read (`acquired`, `expired`), and then differs from the dry pass only in keeping an ownership stop, which selects WAIT on an unknown operation or STOP, never BUILD, REVIEW_FIX or SHIP.
+
+### Attempt 2
+
+RED receipt: `aa3d09b6:tests/scenarios/card-contract-gate.test.ts`. On that commit, with the candidate's source, the new test `6 [R4] R3 decision 1 F1` fails for F1's reason: `next during the completion` expected `'wait'`, actual `'build'`; the other 9 tests pass. After RED the same test gained the renewal, first-read and record scenarios below, which the guard sweep needed; no earlier assertion changed.
+
+DoD: the dod_command from the worktree, exit 0: typecheck no error; node --test over the eight files: 201 tests, 201 pass, 0 fail; build ok; bench: every count within its ceiling (6 journeys). `npm test`: exit 0, 4053 tests, 4021 pass, 0 fail, 32 skipped. The full guard sweep (25 rows of attempt 1 and these) reran on the repair: every row exits 1.
+
+Guard sweep rows added (same script; every row exits 1):
+
+| Guard | Loosened form | Failing test | First failing assertion |
+| --- | --- | --- | --- |
+| F1 the executed assessment selects on the facts read once | it reads the ledger again at the selection | 6 F1 | `next during the completion` |
+| F1 the ledger read is kept | read again on each use | 6 F1 | `next during the completion` |
+| F1 the worktree kind is kept | read again on each use | 6 F1 | `the worktree that appears during the renewal` |
+| F1 the dry assessment takes the caller's facts | it reads the ledger and the worktree itself | 6 F1 | `the worktree that appears during the call` |
+| F1 the worktree kind is read once | `pathKind` read at the selection | 6 F1 | `the worktree that appears during the renewal` |
+| R4 the dry assessment takes the caller's record | it reads the run record itself | 6 F1 | `next with the record changed after its read` |
+| R4 dry renewal (rerun) | the dry assessment claims the lease | 1 | `the card lease is not renewed` |
+
+Class sweep (contract-gate-selection-drift: the gate's answer and the work admitted after it resting on different reads):
+- `next`: the run record, the operation ledger, the worktree kind and the lease are now each read once for the gate and the executed selection; the lease renewal is covered by the reasoning above.
+- The dry assessment of `dispatch` on a lease this session does not hold (which decides only whether to claim the lease for PREPARE): its selection and the gated one that follows both run with `prepared` false on the lease read once, and PREPARE precedes REVIEW_FIX, BUILD and SHIP in `selectCardState`, so neither can select a gated state. `equivalent:` sharing facts there changes no gated decision.
+- `recordAttempt`: the gate does not depend on a selection; it reads the record once and the write is a compare-and-set on that record's revision.
+- `preReview`, `formalReview` and the ship: the gate reads the record once and is asked again on the locked record (R5); no selection is involved.
+- `takeover` calls `assess` without `gated`; the card names no gate there.
