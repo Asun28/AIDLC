@@ -28,6 +28,7 @@ import { findingsOfCandidate } from '../core/review-policy.ts';
 import { approvalPacket, requireAuthority } from '../core/authorization.ts';
 import { resolveRoleProfile, assessTaskEffort } from '../core/roles.ts';
 import { mapRevision } from '../core/amendments.ts';
+import { contractDigests } from '../core/contract.ts';
 import {
   AuthorizationRecord,
   Card,
@@ -762,11 +763,15 @@ export class GoalController {
   ensureCardRun(goal: Goal, cardId: string): CardRun {
     const existing = this.store.getCardRun(goal.id, cardId);
     if (existing) return existing;
+    // The contract the run starts under (card T1-CARD-CONTRACT-2): the card as the registry of the main checkout holds it now.
+    const card = this.cardRegistry().cards.find((c) => c.card.id === cardId)?.card;
+    if (!card) throw new Error(`card ${cardId} is not in the card registry: no run is created`);
     const now = this.clock();
     const deadline = computeCardDeadline(now, goal.deadlines, this.config.userLimitMs);
     const key = randomUUID();
     const dispatched: OwedEvent = { key, type: 'CARD_DISPATCHED', generation: goal.generation, data: { startedAt: now, deadline, childRef: `card:${cardId}`, eventKey: key } };
     const run = CardRun.parse({
+      contract: contractDigests(card),
       goalId: goal.id,
       cardId,
       cardRevision: goal.cardRevisions[cardId] ?? 0,

@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { makeFixture, writeCard, driveCardToDone, goalForCards, type Fixture } from './_harness.ts';
 import { GoalController } from '../../src/loop/controller.ts';
 import { Goal, type CardRun, type DeliveryTarget } from '../../src/core/types.ts';
@@ -61,7 +61,10 @@ function verifyArcRecord(fx: Fixture, cards: string[], target: DeliveryTarget = 
 }
 
 function seedRun(fx: Fixture, goalId: string, cardId: string, mergeVerified: boolean, state: CardRun['state']): void {
+  // A run is created only for a card the registry holds (card T1-CARD-CONTRACT-2): a card with no entry gets a file for the call alone.
+  const file = fx.registry().cards.some((c) => c.card.id === cardId) ? undefined : writeCard(fx, { id: cardId, title: cardId.toLowerCase() });
   const run = fx.controller.ensureCardRun(fx.goal(goalId), cardId);
+  if (file) rmSync(file);
   fx.store.saveCardRun({ ...run, state, mergeVerified });
 }
 
