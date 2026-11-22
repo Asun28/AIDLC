@@ -1,7 +1,7 @@
 ---
 id: T1-CARD-AMEND
 title: "The runner records an amendment of a started card in one locked update, clears the DoD receipt and re-derives the candidate digest by the fields that changed"
-status: todo
+status: merged
 branch: T1-CARD-AMEND
 worktree: D:\wt\AIDLC\T1-CARD-AMEND
 plan_ref: plans/card-continuation.md#order-of-work
