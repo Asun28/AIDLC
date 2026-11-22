@@ -102,8 +102,9 @@ Contract (R10). Today nothing binds a run to its card text: the loop loads the c
 the main checkout on every command (`src/cli/main.ts:214-225`,
 `src/loop/controller.ts:131`), and the run's `cardRevision` is written once
 (`src/loop/controller.ts:770`). `ensureCardRun` records `contract`: for each field of R10
-the SHA-256 of its canonical JSON, an absent field as `null`. A run created before this
-version holds no `contract`.
+the SHA-256 of `JSON.stringify` of its value, an absent `requirements`, `forbid` or
+`non_goals` as an empty list and an absent `budget` as `null`. A run is created only for a
+card the registry holds. A run created before this version holds no `contract`.
 
 Amendment (R11 to R16). The act compares the recorded digests with the card of the main
 checkout. The fields that differ are `changed`, and the table of R12 gives `invalidated`:
@@ -120,10 +121,10 @@ episode as a review block does (`reopenAfterReviewBlock`, `src/core/effort.ts:39
 success that bound the candidate stays a success, no failure is counted, and the next
 attempt is admitted, so the run builds again.
 
-The review decisions stop counting through the candidate's digest, with no change to a
-reader. Every review rule asks whether a decision is one of the current candidate by
-comparing digests (`lastFormalInvocation`, `ruledPass`, `secondPassDue`, the pending-block
-evidence, the repeated-pass rule of `recordReviewOutcome`, the review request key). The
+The review decisions stop counting through the candidate's digest. Most review rules ask
+whether a decision is one of the current candidate by comparing digests
+(`lastFormalInvocation`, `ruledPass`, `secondPassDue`, the pending-block evidence, the
+repeated-pass rule of `recordReviewOutcome`, the review request key) and do not change. The
 digest is computed in one place, `recordAttempt` (`src/loop/card-runner.ts:1348-1349` from
 the checkout, `:1359` on the dry-run path). A pure function derives the digest of an
 amended candidate: SHA-256 of the digest and a fixed suffix, applied once for each amendment
@@ -136,9 +137,11 @@ digest it computes, so the same commit recorded again after the amendment has th
 digest. The invocations keep their digests, so each pass, ruled pass and block is a
 decision of an earlier candidate: the gate asks for a decision or stops for review when the
 allowance is used, as for any further required review, and the new decision counts. The
-same-candidate rule compares commits (`:2072-2078`), so a blocked commit that is unchanged
-is decided again only with each finding of that block disputed, as today. A pre-review
-round is keyed by digest too and is run again where R2 is configured.
+same-candidate block check of `formalAdmission` and `preReviewAdmission` compared commits:
+for a run that holds an amendment that invalidated the review decisions they compare
+digests, so an amended candidate on the same commit gets its new round and its new
+decision. Findings stay keyed by commit, and the new decision re-raises or resolves them by
+the existing rules.
 
 The act lifts no stop: a stopped run is amended first and continued second. It refuses a
 run with no `contract`, and a run whose contract equals the card's, so it records nothing
@@ -155,6 +158,32 @@ byte cap leaves 6 bytes. Each command's card writes its own paragraphs of
 The count of the intent's outcome 6 needs no command: `continuations` and `amendments` are
 on the run records and `superseded_by` is in the registry. It is taken after delivery, as
 the plan says.
+
+## Corrections made while the cards ran
+The first form of this design was wrong in six places. Each was found by a card's build or
+by R3, and the text above is the corrected form.
+
+- A card-run write owes its journal events through a closed list of types; `CARD_STATE` and
+  `NOTE` were added to it (T1-OWED-EVENT-TYPES).
+- After a continuation `aidlc card next` returns what it returns for any run in REVIEW_FIX,
+  the `build` directive of the repair attempt, not a `review-fix` directive
+  (T1-CONTINUE-REVIEW-2).
+- A refusal is decided before the runner's write and leaves every record as it was. A
+  failure after that write is not undone: the act stays recorded, an event that was not
+  appended stays owed for the next `aidlc card next`, and the command run again completes a
+  goal re-admission. A restore of the run record was tried and refused by R3: earlier owed
+  events stay appended and a concurrent record can be mistaken for the call's own
+  (T1-CONTINUE-GOAL-2).
+- On a ci stop, a running repair that the ladder promotes keeps its `ATTEMPT_STARTED` owed
+  until the next `aidlc card next`, so the audit sees it after the goal's re-admission
+  (T1-CONTINUE-CI).
+- A contract digest is over the parsed value, and the parser reads the first line of a list
+  item; no run is created for a card the registry lacks (T1-CARD-CONTRACT-2).
+- Two admission checks compared commits and compare digests after an amendment that
+  invalidated the review decisions (T1-CARD-AMEND).
+
+The work took ten cards and three replaced cards, where the intent says at most five;
+`plans/card-continuation.md`, Risks, gives the causes.
 
 ## Interfaces and contracts
 - New commands: `aidlc card continue <cardId> --by <who> --reason <text> [--decisions <n>] [--goal <id>]` and `aidlc card amend <cardId> --by <who> --reason <text> [--goal <id>]`. Both act on an existing run only and start none.
