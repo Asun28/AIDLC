@@ -1,7 +1,7 @@
 ---
 id: T1-CONTINUE-CORE
 title: "A card run holds its continuations, a pure rule says what a continuation of a review stop requires and changes, and the ledger decision compares with the admitted count"
-status: todo
+status: merged
 branch: T1-CONTINUE-CORE
 worktree: D:\wt\AIDLC\T1-CONTINUE-CORE
 plan_ref: plans/card-continuation.md#order-of-work
