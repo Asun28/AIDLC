@@ -136,6 +136,9 @@ Clauses (docs/LESSONS.md, T1-AMEND-COMMAND): each clause and the assertion that 
 | R4 | before starting an attempt | 2: attempts unchanged; 9: `no attempt is started`, `no event after the amendment` |
 | R4 | before dispatching a ship | 3: `ship.requests.length` 0 and no operation; 4: no ship request with an `intended` operation |
 | R4 | every other state as for the unchanged card | 6: `prepare`; `operation issued/running/UNKNOWN` `['wait','wait']`; `stop` with its stop; 5: `close` |
+| R4 | the state the gate judges is the state `next` executes: the operation ledger read once (attempt 2, F1) | 6 F1: `next during the completion` (`wait`), `no attempt is started`, `next after the completion` refused; `next during the renewal`; `next with an operation issued during the call` refused |
+| R4 | the same for the worktree read (attempt 2, F1) | 6 F1: `the worktree that appears during the call`, `the worktree that appears during the renewal` (equal to the unchanged card with no worktree) |
+| R4 | the same for the run record (attempt 2, class sweep) | 6 F1: `next with the record changed after its read` refused, the card lease not renewed |
 | R5 | asked again on the record locked for the pre-review round | 9: `preReview` rejects with `amended(['budget'])`, no round, `calls.r2` 0 |
 | R5 | asked again on the record locked for the formal decision | 9: `formalReview` rejects with `amended(['budget'])`, no invocation, `calls.r3` 0 |
 | R5 | asked again on the record re-read before the ship | 9: `wait` on `record-changed`, `ship.requests.length` 0 |
@@ -151,3 +154,34 @@ Clauses (docs/LESSONS.md, T1-AMEND-COMMAND): each clause and the assertion that 
 | R7 | with the card text restored the calls proceed | 7: `build`, `amendments` `[]`; 4: `build` and the repair ended, `next ships with the card text restored`, `next with the card text restored` returns `review` |
 | R7 | a later change is refused again | 7: `the second change` refused with `refusal(['acceptance'])` |
 | R8 | OPERATIONS, ARCHITECTURE, changelog texts | reviewer-verified (item 11); the changelog line passes `tests/surface/changelog-fragments.test.ts` |
+
+### R3 decision 1
+
+Candidate d9bddb59, blocked on one finding, F1: "[spec] [P1] 14 scope fidelity (class: contract-gate-selection-drift) @ src/loop/card-runner.ts:922: [Bugs] R4 is bypassed when a concurrent operation completes between the dry assessment and the actual assessment. [...]" It holds: the dry assessment of the gate and the executed assessment each read the operation ledger (`this.ops.unresolved`, twice per pass) and the worktree kind (`pathKind`) themselves, so an operation that completed between the passes let the dry pass select WAIT and the executed pass select BUILD, renew the lease and start an attempt.
+
+Repair: `assess` reads each input of the selection that lies outside the run record once, through `SelectionFacts` (the unresolved operations of the card and the worktree kind off the dry-run ship path), on its first use, and keeps it; the dry assessment of the gate takes the same `SelectionFacts` with the record, lease and clock of the assessment it guards. The reads stay where the selection first needs them: a first version read them at the head of `assess`, before the reusable-receipt save, and `tests/scenarios/t0-flow.test.ts` (`T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-off reload ...`, which writes the run at the first ledger read) failed with CARD_RUN_STALE; on an unchanged card the ledger is now read where it was before. The other inputs of the selection were checked: `reusableReceipt`, `blockAnswered`, `invocationBlocking`, `withContest`, `reviewNextAction`, `admittedDecisions` and `selectCardState` read only the run, the card and the configuration; `currentActor()` and `now` are the same for both passes. The lease claim is the one input the dry pass cannot have before the refusal; it assumes `renewed`. A claim that is not `renewed` either throws (`held`, the foreign dispatch, which writes nothing) or leaves the lease and the run as read (`acquired`, `expired`), and then differs from the dry pass only in keeping an ownership stop, which selects WAIT on an unknown operation or STOP, never BUILD, REVIEW_FIX or SHIP.
+
+### Attempt 2
+
+RED receipt: `aa3d09b6:tests/scenarios/card-contract-gate.test.ts`. On that commit, with the candidate's source, the new test `6 [R4] R3 decision 1 F1` fails for F1's reason: `next during the completion` expected `'wait'`, actual `'build'`; the other 9 tests pass. After RED the same test gained the renewal, first-read and record scenarios below, which the guard sweep needed; no earlier assertion changed.
+
+DoD: the dod_command from the worktree, exit 0: typecheck no error; node --test over the eight files: 201 tests, 201 pass, 0 fail; build ok; bench: every count within its ceiling (6 journeys). `npm test`: exit 0, 4053 tests, 4021 pass, 0 fail, 32 skipped. The full guard sweep (25 rows of attempt 1 and these) reran on the repair: every row exits 1.
+
+Guard sweep rows added (same script; every row exits 1):
+
+| Guard | Loosened form | Failing test | First failing assertion |
+| --- | --- | --- | --- |
+| F1 the executed assessment selects on the facts read once | it reads the ledger again at the selection | 6 F1 | `next during the completion` |
+| F1 the ledger read is kept | read again on each use | 6 F1 | `next during the completion` |
+| F1 the worktree kind is kept | read again on each use | 6 F1 | `the worktree that appears during the renewal` |
+| F1 the dry assessment takes the caller's facts | it reads the ledger and the worktree itself | 6 F1 | `the worktree that appears during the call` |
+| F1 the worktree kind is read once | `pathKind` read at the selection | 6 F1 | `the worktree that appears during the renewal` |
+| R4 the dry assessment takes the caller's record | it reads the run record itself | 6 F1 | `next with the record changed after its read` |
+| R4 dry renewal (rerun) | the dry assessment claims the lease | 1 | `the card lease is not renewed` |
+
+Class sweep (contract-gate-selection-drift: the gate's answer and the work admitted after it resting on different reads):
+- `next`: the run record, the operation ledger, the worktree kind and the lease are now each read once for the gate and the executed selection; the lease renewal is covered by the reasoning above.
+- The dry assessment of `dispatch` on a lease this session does not hold (which decides only whether to claim the lease for PREPARE): its selection and the gated one that follows both run with `prepared` false on the lease read once, and PREPARE precedes REVIEW_FIX, BUILD and SHIP in `selectCardState`, so neither can select a gated state. `equivalent:` sharing facts there changes no gated decision.
+- `recordAttempt`: the gate does not depend on a selection; it reads the record once and the write is a compare-and-set on that record's revision.
+- `preReview`, `formalReview` and the ship: the gate reads the record once and is asked again on the locked record (R5); no selection is involved.
+- `takeover` calls `assess` without `gated`; the card names no gate there.

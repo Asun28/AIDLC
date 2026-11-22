@@ -290,6 +290,16 @@ function pathKind(p: string): 'directory' | 'other' | 'absent' | 'unknown' {
   }
 }
 
+/**
+ * The inputs of a card's state selection that are read outside its run record: the unresolved operations of the card and the
+ * kind of a worktree path (read only off the dry-run ship path). Each is read on its first use and kept, so the assessments
+ * that share one `SelectionFacts` select on the same reads (card T0-CONTRACT-GATE-2 R4, R3 decision 1 F1).
+ */
+interface SelectionFacts {
+  unresolved: () => OperationRecord[];
+  worktree: (p: string) => ReturnType<typeof pathKind>;
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -758,6 +768,20 @@ export class CardRunner {
     return undefined;
   }
 
+  /** The inputs of the selection of `card` read outside its run record, each read on first use and kept (`SelectionFacts`). */
+  private selectionFacts(goal: Goal, card: Card): SelectionFacts {
+    let unresolved: OperationRecord[] | undefined;
+    const kinds = new Map<string, ReturnType<typeof pathKind>>();
+    return {
+      unresolved: () => (unresolved ??= this.ops.unresolved(goal.id, card.id)),
+      worktree: (p) => {
+        const kind = kinds.get(p) ?? pathKind(p);
+        kinds.set(p, kind);
+        return kind;
+      },
+    };
+  }
+
   /**
    * The contract gate (card T0-CONTRACT-GATE-2 R1): the contract fields, in the order of `CONTRACT_FIELDS`, in which `card`
    * differs from the contract `run` recorded, when the run holds a `contract`, no `mergeVerified` and is not DONE; empty on
@@ -897,10 +921,11 @@ export class CardRunner {
    * under another session's live card lease never reaches it: `next` returns that stop first and writes nothing.
    * `read` hands in the lease `next` read, so the dispatch decides on one read; `dry` makes no save and no journal
    * append and only selects the state; on a lease this session holds it claims nothing and selects as the renewal would.
-   * `record` is the run a dry assessment selects on, read by its caller, so it reads none. `gated` (the dispatch of `next`)
-   * applies the contract gate to the run this assessment read, before any write of it (card T0-CONTRACT-GATE-2 R4).
+   * `record` and `facts` are the run and the other inputs a dry assessment selects on, read by its caller, so it reads none.
+   * `gated` (the dispatch of `next`) applies the contract gate to the selection this assessment makes, before any write of it
+   * (card T0-CONTRACT-GATE-2 R4).
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter; record?: CardRun; gated?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter; record?: CardRun; facts?: SelectionFacts; gated?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     const dry = read?.dry ?? false;
     if (dry) save = (run) => run;
     const append = (event: Parameters<Journal['append']>[0]): void => {
@@ -915,11 +940,18 @@ export class CardRunner {
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = read ? read.lease : this.leases.read(key);
+    // The selection's inputs from outside the record, each read once, where the selection first needs it; a dry assessment
+    // takes its caller's.
+    const facts: SelectionFacts = read?.facts ?? this.selectionFacts(goal, card);
     // The contract gate (card T0-CONTRACT-GATE-2 R4) refuses BUILD, REVIEW_FIX and SHIP on the record just read, which every
-    // save below is fenced against (`saveCardRun`, by revision). A dry assessment of that record selects the state, so the
-    // refusal saves nothing, appends nothing and renews no lease; in every other state the dispatch goes on as before.
+    // save below is fenced against (`saveCardRun`, by revision). The dry assessment it asks shares this assessment's record,
+    // lease, clock and `facts`, so the state it selects is the state selected below (R3 decision 1 F1: an operation that
+    // completed between two ledger reads let a BUILD through). It assumes the lease renewal, the one input it cannot have
+    // before the refusal; a renewal that does not land keeps an ownership stop, which selects STOP (WAIT on an unknown
+    // operation), never a gated state. It saves nothing, appends nothing and renews no lease; in every other state the
+    // dispatch goes on as before.
     const gate = read?.gated && !dry ? this.contractGate(card, run) : undefined;
-    if (gate && ['BUILD', 'REVIEW_FIX', 'SHIP'].includes(this.assess(goal, card, run, now, undefined, { lease, dry: true, record: run }).decision.state)) throw new Error(gate);
+    if (gate && ['BUILD', 'REVIEW_FIX', 'SHIP'].includes(this.assess(goal, card, run, now, undefined, { lease, dry: true, record: run, facts }).decision.state)) throw new Error(gate);
     // A merged card stopped for ownership is reconciled once the blocking lease is gone (released, expired or ours):
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
@@ -965,8 +997,8 @@ export class CardRunner {
       run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
       if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
     }
-    const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
-    const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
+    const unknownOps = facts.unresolved().filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
+    const runningOp = facts.unresolved().find((o) => o.status === 'running' || o.status === 'issued');
     // A command reviewer's second block alone stops nothing (card T1-EFF-R3-PROGRESS): its ledger decision stops the run on a
     // re-raised finding or the fourth decision; this predicate backs a run left in REVIEW_FIX with no decision left, and a
     // decision recorded as a stop, which stops the card with its own detail even when its commit landed only as history
@@ -990,7 +1022,7 @@ export class CardRunner {
     // A recorded worktree counts only while it is a directory, so a run whose worktree was never made, is gone or is a file
     // goes back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record
     // alone counts, as before (R3).
-    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || pathKind(run.worktree) === 'directory' : false;
+    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || facts.worktree(run.worktree) === 'directory' : false;
     const evidence: CardEvidence = {
       now,
       deadline: run.deadline,

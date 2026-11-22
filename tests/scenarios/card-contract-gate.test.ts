@@ -303,15 +303,17 @@ test('6 [R2] [R3] [R4] PREPARE, WAIT and STOP return as for the unchanged card; 
 });
 
 /**
- * Makes `write` during the call: right after the second read of the operation ledger, else when the call ends. On the candidate
- * R3 decision 1 blocked, the second read is the last of the dry assessment of the gate, so the write lands between that
- * assessment and the one that is executed. The returned function ends the call.
+ * Makes `write` during the call: right after the `at`-th read of the operation ledger (default the second), or right after the
+ * claim of the card lease (`'renewal'`), else when the call ends. On the candidate R3 decision 1 blocked, the second read is the
+ * last of the dry assessment of the gate and the claim is the renewal of the assessment that is executed, so the write lands
+ * between the two assessments. The returned function ends the call.
  */
-function duringTheCall(s: S, write: () => void): () => void {
-  const real = s.fx.ops.unresolved.bind(s.fx.ops);
+function duringTheCall(s: S, write: () => void, at: number | 'renewal' = 2): () => void {
+  const [ops, leases] = [s.fx.ops.unresolved.bind(s.fx.ops), s.fx.leases.claim.bind(s.fx.leases)];
   let [reads, done] = [0, false];
-  const once = () => { if (!done) { done = true; s.fx.ops.unresolved = real; write(); } };
-  s.fx.ops.unresolved = (goalId: string, cardId?: string) => { const value = real(goalId, cardId); reads += 1; if (reads === 2) once(); return value; };
+  const once = () => { if (!done) { done = true; s.fx.ops.unresolved = ops; s.fx.leases.claim = leases; write(); } };
+  if (at === 'renewal') s.fx.leases.claim = (...args: Parameters<typeof leases>) => { const value = leases(...args); once(); return value; };
+  else s.fx.ops.unresolved = (goalId: string, cardId?: string) => { const value = ops(goalId, cardId); reads += 1; if (reads === at) once(); return value; };
   return once;
 }
 
@@ -333,7 +335,7 @@ test('6 [R4] R3 decision 1 F1: an operation or a worktree that changes during ne
   });
   // The recorded worktree appears during the call (a ship path that checks it): `next` does what it does for the unchanged card
   // with no worktree, and starts no attempt.
-  const absent = async (changed: boolean, appears: boolean): Promise<[unknown, unknown, number]> => {
+  const absent = async (changed: boolean, appears: boolean, at: number | 'renewal' = 2): Promise<[unknown, unknown, number]> => {
     let result: [unknown, unknown, number] = [undefined, undefined, 0];
     await scenario((s) => {
       s.started(); s.record('fail');
@@ -342,7 +344,7 @@ test('6 [R4] R3 decision 1 F1: an operation or a worktree that changes during ne
       const scaffold = new CardRunner({ paths: s.fx.paths, repo: s.fx.repo, config: { ...s.fx.config, shipPath: 'scaffold' }, store: s.fx.store, leases: s.fx.leases, queue: s.fx.queue, ops: s.fx.ops, shipPath: s.ship, now: s.fx.now, runner: scriptedRunner({}) });
       if (changed) s.changeCard(REQUIREMENTS);
       const started = s.events('ATTEMPT_STARTED').length;
-      const end = appears ? duringTheCall(s, () => mkdirSync(worktree, { recursive: true })) : () => undefined;
+      const end = appears ? duringTheCall(s, () => mkdirSync(worktree, { recursive: true }), at) : () => undefined;
       let kind: unknown;
       try { kind = (scaffold.next(s.g(), s.card(), s.persisted()).directive as Stored)['kind']; } catch (e) { kind = (e as Error).message; } finally { end(); }
       result = [kind, s.outcomes(), s.events('ATTEMPT_STARTED').length - started];
@@ -352,6 +354,42 @@ test('6 [R4] R3 decision 1 F1: an operation or a worktree that changes during ne
   const unchanged = await absent(false, false);
   assert.deepEqual(await absent(true, true), unchanged, 'the worktree that appears during the call');
   assert.equal(unchanged[2], 0);
+  // The same with the worktree made during the lease renewal, after the inputs of the selection are read.
+  assert.deepEqual(await absent(true, true, 'renewal'), unchanged, 'the worktree that appears during the renewal');
+  // The operation completes during the renewal: `next` still waits on the evidence it read.
+  await scenario((s) => {
+    s.started(); s.record('fail');
+    op('issued')(s);
+    s.changeCard(REQUIREMENTS);
+    const [started, id] = [s.events('ATTEMPT_STARTED').length, s.fx.ops.list({ cardId: CARD })[0]!.id];
+    const end = duringTheCall(s, () => s.fx.ops.markResult(id, 'succeeded', {}, T0), 'renewal');
+    let kind: unknown;
+    try { kind = s.next()['kind']; } finally { end(); }
+    assert.deepEqual([kind, s.outcomes(), s.events('ATTEMPT_STARTED').length], ['wait', ['fail'], started], 'next during the renewal');
+  });
+  // An operation issued right after the first ledger read: the gate judges the selection on that read (BUILD) and refuses,
+  // so no attempt starts on the evidence of a later read.
+  await scenario((s) => {
+    s.started(); s.record('fail');
+    s.changeCard(REQUIREMENTS);
+    const [held, started] = [s.bytes(), s.events('ATTEMPT_STARTED').length];
+    const end = duringTheCall(s, () => op('issued')(s), 1);
+    try { assert.throws(() => s.next(), refusal(['requirements']), 'next with an operation issued during the call'); } finally { end(); }
+    assert.deepEqual([s.bytes(), s.events('ATTEMPT_STARTED').length], [held, started]);
+  });
+  // The run record changes after the assessment read it (here its deadline passes): the gate judges the record the selection
+  // reads (BUILD) and refuses before the lease renewal, not a later read of the record.
+  await scenario((s) => {
+    s.started(); s.record('fail');
+    s.changeCard(REQUIREMENTS);
+    s.fx.advance(60_000);
+    const [g, card, caller, lease] = [s.g(), s.card(), s.persisted(), s.lease()];
+    const real = s.fx.store.getCardRun.bind(s.fx.store);
+    let reads = 0;
+    s.fx.store.getCardRun = (goalId: string, cardId: string) => { const value = real(goalId, cardId); reads += 1; if (reads === 2) { s.fx.store.getCardRun = real; s.fx.store.updateCardRun(goalId, cardId, (r) => ({ ...r!, deadline: '2000-01-01T00:00:00.000Z' })); } return value; };
+    try { assert.throws(() => s.runner.next(g, card, caller), refusal(['requirements']), 'next with the record changed after its read'); } finally { s.fx.store.getCardRun = real; }
+    assert.deepEqual(s.lease(), lease, 'the card lease is not renewed');
+  });
 });
 
 test('7 [R7] after the amendment or with the card text restored the refused calls proceed', async () => {
