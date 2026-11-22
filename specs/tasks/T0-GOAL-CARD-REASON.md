@@ -75,3 +75,32 @@ npm run typecheck && node --test tests/core/router.test.ts tests/scenarios/goal-
 ```
 - Expected exit code: 0
 - Assertion: the new router and scenario tests pass, the existing goal card tests pass unchanged, and the changelog fragment is well formed.
+
+## Attempt evidence
+RED commit 6a261537 holds the tests alone; the five tests marked RED fail there on assertions.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/router.test.ts`, describe `T0-GOAL-CARD-REASON`, test `the request of issue 423: ...`. RED at 6a261537: the reasons were `ref=T0-GATE`, `resolved card T0-GATE`, `kind=card-execute`, ... | pass after the fix |
+| 2 | Same describe, test `a text that names two known cards keeps its named cards and its unknown count, ...`. RED at 6a261537 on `ref=T0-GATE-2` | pass after the fix |
+| 3 | Same describe, test `the card reason says resolved only for an id the known card list holds, ...`. RED at 6a261537 | pass after the fix |
+| 4 | Same describe, test `a ref that is not a card id, and a given card with a text that names no card id, keep their reasons`. Passes at 6a261537 and after the fix: these are the requests R3 leaves as they are | pass |
+| 5 | `tests/scenarios/goal-card-reason.test.ts`, test `T0-GOAL-CARD-REASON acceptance 5: ...`, the CLI in this process. RED at 6a261537 on the printed reasons | pass after the fix |
+| 6 | Same file, test `T0-GOAL-CARD-REASON acceptance 6: ...`. RED at 6a261537: the goal's `cards` were `T0-GATE` | pass after the fix |
+| 7 | `git diff --numstat 0726654a -- tests/` lists `43 0 tests/core/router.test.ts` and `75 0 tests/scenarios/goal-card-reason.test.ts` and no other file; DoD arm 1 and arm 2 | pass |
+| 8 | `tests/surface/changelog-fragments.test.ts`; docs/OPERATIONS.md, Running a goal, the paragraph after the T0-GOAL-MERGED-CARD paragraph; docs/ARCHITECTURE.md, Goal state machine, the sentence after the goal deadline sentence | pass; the two documents are for the reviewer |
+
+Guards, each loosened in `src/core/router.ts` and run against the two test files of the card, then restored:
+
+| Guard | Loosened to | Test that fails |
+|---|---|---|
+| `CARD_ID_REGEX.test(input.ref)` | any `ref` gives a card | item 4, the `#12` request |
+| `known?.includes(ref)` | any known list holds the id | item 3, `T9-NEW` |
+| `known?.includes(ref)` | always resolved | item 3, the request with no list; `T0-GOAL-CARD-COUNT-3` [R2] |
+| `ref !== textCard` | noted for every given card | item 2, the texts whose first card id is the given card |
+| `ref !== textCard` | never noted | items 1, 2, 3 and 5 |
+| `givenCard ?? textCard` | the card of the text | items 1, 2, 3, 5 and 6 |
+
+Full suite, run once because the DoD names none of the test files that read the two documents: `npm test` in the worktree with the source, tests, documents and changelog fragment of this candidate, before this section was written, exit 0 with 4060 tests, 4028 pass, 0 fail, 32 skipped.
+
+equivalent: `kind ? undefined : cardMatch?.[0]` loosened to `cardMatch?.[0]`. A kind is set before that line only for a text that is a bare number, and such a text holds no card id token, so `cardMatch` is null there. The guard is the `!kind` of main's `else if (cardMatch && !kind)`, kept as it was.
