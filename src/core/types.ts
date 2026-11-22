@@ -911,15 +911,6 @@ export const Continuation = z.object({
 });
 export type Continuation = z.infer<typeof Continuation>;
 
-/** The contract fields of a card, in the order `src/core/contract.ts` digests and reports them (card T1-CARD-CONTRACT-2). */
-export const CONTRACT_FIELDS = ['requirements', 'acceptance', 'allow_paths', 'forbid', 'non_goals', 'dod_command', 'dod_exit', 'budget', 'tdd'] as const;
-export const ContractField = z.enum(CONTRACT_FIELDS);
-export type ContractField = z.infer<typeof ContractField>;
-
-/** One amendment of a run's card: who, when, why, the new card revision, the fields that changed and the evidence they invalidated. */
-export const CardAmendment = z.object({ at: IsoTimestamp, by: z.string().min(1), reason: z.string().min(1), revision: z.number().int().nonnegative(), changed: z.array(ContractField), invalidated: z.array(z.enum(['dod', 'review'])) });
-export type CardAmendment = z.infer<typeof CardAmendment>;
-
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
@@ -966,10 +957,6 @@ export const CardRun = z.object({
   stop: StopRecord.optional(),
   /** The continuations of this run, oldest first (card T1-CONTINUE-CORE); a run written before the field has none. */
   continuations: z.array(Continuation).default([]),
-  /** The SHA-256 of each contract field of the card when `ensureCardRun` created the run (card T1-CARD-CONTRACT-2); a run created before the field has none. */
-  contract: z.record(ContractField, z.string()).optional(),
-  /** The amendments of the run's card, oldest first; a run written before the field has none. */
-  amendments: z.array(CardAmendment).default([]),
   blocker: z.string().optional(),
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing', 'withdrawn']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional(), /** The candidate a `withdrawn` repair replaces: the repair's success must record another one (card T0-CANDIDATE-WITHDRAW). */ candidateDigest: z.string().optional() }).optional(),
