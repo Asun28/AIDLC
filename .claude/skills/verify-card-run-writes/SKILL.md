@@ -14,7 +14,7 @@ This repository only; `aidlc init` never installs it.
 
 ## Property
 Property: after any single failed card-run record write or goal journal append and the card's next step, the stored card run and the goal journal agree and the run reaches the end state of the fault-free run.
-Harm: a card that the journal reports in one state while the run record holds another, so the loop repeats or skips a ship, a review or an attempt.
+Harm: a card the journal reports in one state while the run record holds another, so the loop repeats or skips a ship, a review or an attempt.
 
 ## Coverage
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
@@ -36,7 +36,7 @@ Sync commit: `9923001473e04940544f4671bd8dad6b0ebd9a49`
 node --test tests/scenarios/fault-points.test.ts
 ```
 About 11 seconds on Windows at the sync commit (28 tests). CI runs it
-in `npm test` on every push.
+in `npm test` on each push.
 
 ## Bounds and assumptions
 - One fault per run, at each write index of the command as counted by a
@@ -53,16 +53,16 @@ in `npm test` on every push.
 ## Not covered
 - Two-session interleavings of the lease and the review queue, and
   writes to the lease, review-queue, operation-ledger and `.review/` files.
-- More than one fault per run, a crash inside a single write, a process
+- More than one fault per run, a crash inside one write, a process
   that dies mid-command, a torn journal line.
 - Commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's
   `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`),
   `CardRunner.continueStop`, `CardRunner.withdrawCandidate`,
-  `CardRunner.adoptMerge` (fault rows:
+  `CardRunner.adoptMerge`, `CardRunner.amendCard` (fault rows:
   `tests/scenarios/card-continue.test.ts`, `candidate-withdraw.test.ts`,
-  `adopt-merge.test.ts`), `aidlc review repro` (`runRepro`,
+  `adopt-merge.test.ts`, `card-amend.test.ts`), `aidlc review repro` (`runRepro`,
   `src/review/repro.ts`, T1-FINDING-REPRO-2: one `GoalStore.updateCardRun`
   write of the finding's `repro` after both runs, no journal append: a
   failed write exits 1, changes neither), failed and not-counted attempts,
@@ -79,7 +79,7 @@ Scratch break, never committed: in `src/loop/card-runner.ts`,
 `CardRunner.preReview`, the `PRE_REVIEW_DECIDED` journal append was moved
 from after `this.commitReviewed` (the store write that saves the R2 pass
 round) to before it. `git diff --name-only` against the sync commit listed
-`src/loop/card-runner.ts`; the check then failed (exit 1, 2 of 28 failed):
+`src/loop/card-runner.ts`; the check failed (exit 1, 2 of 28 failed):
 the record write after the early append failed, and the journal reported
 a pass the run did not hold. `git restore` dropped the change and the
 check passed (28 of 28). From
@@ -100,10 +100,10 @@ proves the check fails on the real code.
 ## Bug or modelling error
 Replay the counterexample against the real code step by step: the
 command, the write that failed, the stored run and the journal after it,
-each recovery step. If a step cannot happen in the code (a write the code
-never makes, an order the code never uses, a recovery move no directive
-names), the check is wrong: correct the check, show it failing once on a
-scratch break, and record the correction under Extending the check. If
+each recovery step. If a step cannot happen in the code (a write or an
+order the code never makes, a recovery move no directive names), the
+check is wrong: correct the check, show it failing once on a scratch
+break, and record the correction under Extending the check. If
 every step can happen, it is a bug.
 
 ## Findings
@@ -133,8 +133,8 @@ Tell whether a change touches covered code:
   (Extending the check); then the sync commit moves.
 - **bug**: the check fails on the real code and the replay confirms it;
   go to Findings.
-- **blocked**: the check cannot be brought in line without a decision;
+- **blocked**: the check cannot match the code without a decision;
   stop and ask.
-The sync commit moves only after confirming that the check describes the
-code at the new commit, and only to a commit on main, since a squash
+The sync commit moves only after confirming the check describes the
+code at the new commit, and only to a commit on main, as a squash
 merge drops branch commits.
