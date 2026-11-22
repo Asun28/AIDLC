@@ -63,7 +63,7 @@ npm run typecheck && node --test tests/scenarios/card-amend.test.ts tests/scenar
 - Assertion: the typecheck reports no error, every test of the five files passes, the build succeeds and every benchmark count is within its ceiling.
 
 ## Attempt evidence
-Attempts 1 and 2. RED `3ad8200c`: the 5 tests of `tests/scenarios/card-amend.test.ts` ran against a stub `amendCard` that returns the run; 5 of 5 failed on an assertion (`acceptance 4`: `Missing expected exception: no run`). One arrangement fix after RED, no assertion changed: `acceptance 3` passes `scenario` a copy of the verdicts, because the scripted reviewer shifts the array and the row loop stopped after two decisions; on the stub the 5 tests still fail on an assertion.
+Attempts 1 to 3. RED `3ad8200c`: the 5 tests of `tests/scenarios/card-amend.test.ts` ran against a stub `amendCard` that returns the run; 5 of 5 failed on an assertion (`acceptance 4`: `Missing expected exception: no run`). One arrangement fix after RED, no assertion changed: `acceptance 3` passes `scenario` a copy of the verdicts, because the scripted reviewer shifts the array and the row loop stopped after two decisions; on the stub the 5 tests still fail on an assertion.
 
 | Item | Proof (`tests/scenarios/card-amend.test.ts`) | Result |
 |---|---|---|
@@ -72,7 +72,7 @@ Attempts 1 and 2. RED `3ad8200c`: the 5 tests of `tests/scenarios/card-amend.tes
 | 3 | `acceptance 3`: budget, dod_command, requirements, STOP for review | pass (failed at RED) |
 | 4 | `acceptance 4`: 13 refusal rows | pass (failed at RED) |
 | 5 | `acceptance 5`: clean row, record and append fault rows | pass (failed at RED) |
-| 6 | skill record 7998 bytes, ASCII; card-contract, card-continue, fault-points unchanged; DoD exit 0, 85 of 85 at attempt 2, bench within ceilings | pass |
+| 6 | skill record 7998 bytes, ASCII; card-contract, card-continue, fault-points unchanged; DoD exit 0, 87 of 87 at attempt 3, bench within ceilings | pass |
 | 7 | `docs/ARCHITECTURE.md` item after the contract item; `changelog.d/T1-CARD-AMEND.md` | reviewer |
 
 Guard sweep (each loosened alone, the test file run, restored). `acceptance 4` failed for: no DONE, no `mergeVerified`, each operation status dropped, no in-flight check, no pending repair, no contract, equal contract, `by` or `reason` untrimmed, blank `by`, blank `reason`. `dod` branch or its DoD unset removed: acceptance 1 to 3. `review` branch removed: acceptance 1, 3. R4 counting every amendment: acceptance 3; R4 removed: acceptance 1, 2. `guard rows` failed for: blocked receipt kept (dod or review branch), any episode reopened, every CI rerun rewritten, R4 capped at 1, R4 applied to a kept candidate. The rule of `ofCurrentCandidate`, test `guard rows of the same-candidate rule` failed for: the digest match removed, the commit match removed, any amendment in place of one that invalidated `review`; the amendment condition removed failed `R3 decision 1, F1` and `F2` too. equivalent: `old === undefined` (no candidate, so no candidate or rerun to rewrite) and `amendments ?? []` (a parsed run holds the array).
@@ -92,3 +92,35 @@ Readers that match an invocation, a round or a finding by commit (src/loop/card-
 | `publishRuled`, `ruleFinding`/`stoppingDecision`/`heldFindings` (`findingsOfCandidate`) | on a stop or ruling of the amended candidate | findings of the commit, old ones included |
 | `repairCanonical`, pending recovery (`candidateSha` of the pending entry), `keepReceipt` | yes | keyed by the entry's own commit; unchanged |
 | `classifyVerdict` stale check, `recordFindings` | yes | same commit, not stale; raise, re-raise and resolve by commit |
+
+R3 decision 2 (candidate 74f2842f, pass). Second R3 pass (block), repair attempt 3. No RED commit: the new assertions (commit 3aabd1a9) pass on 74f2842f's source; the scratch breaks below made each fail.
+- F3 (amendment-reopen-evidence-untested): test "second R3 pass, F3" asserts the bound attempt's evidence by literal value, `review block: amendment 1` with none before and `dod green on sha-1; review block: amendment 1` after `dod green on sha-1`, then, after a second `dod` amendment of the re-succeeded episode, `review block: amendment 2` and `dod green on sha-1; review block: amendment 2` on the second success, both attempts still `success`. Breaks: the reason without its revision, and a reopen that leaves the evidence, each failed it.
+
+Clauses of R1 to R7 and the assertion that fails when each is not met (tests of `tests/scenarios/card-amend.test.ts`; break: the scratch edit that made it fail at attempt 3, else the sweep above):
+
+| Req | Clause | Test: assertion |
+|---|---|---|
+| R1 | `at`, `by`, `reason`, `changed`, `invalidated` | "acceptance 1 and 2", "acceptance 3": `amendments` deep-equal to literal entries |
+| R1 | `revision` one above `cardRevision` | "clause rows": `cardRevision` 3 gives revision 4 (break: revision from the amendment count) |
+| R1 | `cardRevision` set | "acceptance 1 and 2" `[0, 1]`, "second R3 pass, F3" 2 (break: not set) |
+| R1 | `contract` set | "acceptance 1 and 2", "acceptance 3", "second R3 pass, F3" after revision 2 (break: not set) |
+| R2 | `dodReceipt` unset | "acceptance 1 and 2", "acceptance 3" dod_command row |
+| R2 | `blockedReceipt` unset | "guard rows" (dod and review rows) |
+| R2 | succeeded episode reopened, reason with revision, success kept | "acceptance 1 and 2" `terminal`; "second R3 pass, F3" literal evidence and outcomes (break: reason without revision) |
+| R2 | an episode not succeeded stays | "guard rows": `effort` deep-equal |
+| R3 | `candidate.digest` | "acceptance 1 and 2", "acceptance 3" |
+| R3 | CI rerun of the digest; one of another digest stays | "acceptance 1 and 2"; "guard rows" `sha-0` |
+| R3 | `blockedReceipt` unset | "guard rows" requirements row |
+| R3 | invocations unchanged | "acceptance 1 and 2" `review` deep-equal and digests; "R3 decision 1, F2" first invocation |
+| R3 | pre-review rounds unchanged | "clause rows": `preReview` deep-equal with one `sha-1` pass round (break: rounds rewritten) |
+| R4 | n = 1 and 2, same commit | "acceptance 1 and 2", "guard rows" |
+| R4 | n = 1 and 2, new commit | "clause rows": candidate `sha-2` with `amendedDigest('sha-2', n)` (break: same commit only; capped at 1) |
+| R4 | only `review` amendments count; a kept candidate | "acceptance 3" dod_command row; "guard rows" no-sha row |
+| R5 | `state`, `stop`, `review`, `findings`, `redReceipt`, `deadline`, commit, attempt outcomes | `kept` in "acceptance 1 and 2" and "acceptance 3" (STOP row holds a stop and findings) |
+| R5 | `continuations` | "clause rows": a seeded continuation deep-equal (break: dropped) |
+| R5 | `effort` without `dod` | "acceptance 3" rows budget, requirements, STOP |
+| R6 | each refusal, cause, byte-identical files | "acceptance 4", 13 rows |
+| R7 | `NOTE` data field by field, appended once | "acceptance 5" clean row |
+| R7 | delivered once after a failed append | "acceptance 5" fault rows |
+
+Clauses that had no value assertion before attempt 3: the reopen reason and evidence (R2), `revision` one above a `cardRevision` other than 0 (R1), `cardRevision` and `contract` at a second amendment (R1), pre-review rounds kept (R3), R4 on a new commit (R4), a non-empty `continuations` kept (R5).
