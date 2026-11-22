@@ -97,6 +97,35 @@ describe('terminalGoalRefusal (T0-CARD-TERMINAL-GOAL)', () => {
   });
 });
 
+describe('terminalGoalRefusal with the continue flag (T1-CONTINUE-AUDIT)', () => {
+  const refusal = (head: string, command: string) => `goal g-1 is ${head}; card commands do no card work on it; re-admit it with \`${command}\``;
+  const EXTEND = 'aidlc goal extend g-1 --until <iso> --by <who> --reason "..."';
+  const RESUME = 'aidlc goal resume g-1 --reason "..."';
+  const stopped = (reason: string) => ({ id: 'g-1', state: 'STOP', terminal: true, stop: { reason } });
+  // [goal, what main answers for no flag and false, for true, for 'continue']
+  const rows: Array<[string, Parameters<typeof terminalGoalRefusal>[0], string, string | undefined, string | undefined]> = [
+    ['review', stopped('review'), refusal('STOP (stop reason: review)', RESUME), undefined, undefined],
+    ['ci', stopped('ci'), refusal('STOP (stop reason: ci)', RESUME), refusal('STOP (stop reason: ci)', RESUME), undefined],
+    ['time', stopped('time'), refusal('STOP (stop reason: time)', EXTEND), refusal('STOP (stop reason: time)', EXTEND), refusal('STOP (stop reason: time)', EXTEND)],
+    ...['card', 'tool', 'risk', 'cancelled'].map((reason): [string, Parameters<typeof terminalGoalRefusal>[0], string, string, string] => [reason, stopped(reason), refusal(`STOP (stop reason: ${reason})`, RESUME), refusal(`STOP (stop reason: ${reason})`, RESUME), refusal(`STOP (stop reason: ${reason})`, RESUME)]),
+    ['DONE', { id: 'g-1', state: 'DONE', terminal: true }, refusal('DONE', RESUME), refusal('DONE', RESUME), refusal('DONE', RESUME)],
+    // Guard sweep: the exception needs the goal in STOP, not only a stop record for review or ci.
+    ['DONE with a stop record for ci', { id: 'g-1', state: 'DONE', terminal: true, stop: { reason: 'ci' } }, refusal('DONE (stop reason: ci)', RESUME), refusal('DONE (stop reason: ci)', RESUME), refusal('DONE (stop reason: ci)', RESUME)],
+  ];
+
+  test('continue lifts the refusal for a goal stopped for review or ci and keeps it for time, card, tool, risk, cancelled and DONE [R1]', () => {
+    for (const [name, goal, , , expected] of rows) assert.equal(terminalGoalRefusal(goal, 'continue'), expected, name);
+  });
+
+  test('no flag, false and true answer as on main for each of those goals [R2]', () => {
+    for (const [name, goal, plain, ruling] of rows) {
+      assert.equal(terminalGoalRefusal(goal), plain, `${name}, no flag`);
+      assert.equal(terminalGoalRefusal(goal, false), plain, `${name}, false`);
+      assert.equal(terminalGoalRefusal(goal, true), ruling, `${name}, true`);
+    }
+  });
+});
+
 describe('doneGoalTakeover (T0-TAKEOVER-DONE-GOAL)', () => {
   test('a DONE goal gives a text naming the goal and DONE [R3]', () => {
     const text = doneGoalTakeover({ id: 'g-1', state: 'DONE' });
