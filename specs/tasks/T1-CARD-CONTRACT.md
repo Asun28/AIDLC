@@ -33,6 +33,7 @@ acceptance:
   - 5. The typecheck passes, and `tests/core/amendments.test.ts` and `tests/scenarios/fault-points.test.ts` pass with no line changed, and `npm run build && npm run bench -- --check` exits 0. [dod arm 1] [dod arm 2] [dod arm 3]
   - 6. Each of the two texts holds what R7 assigns to it and no more is required of it (reviewer-verified against the diff). [R7]
 depends_on: [T1-CONTINUE-CI]
+superseded_by: T1-CARD-CONTRACT-2
 budget: 200
 sweep: "On main at f51534d2. src/loop/controller.ts:770 is where `ensureCardRun` writes `cardRevision` on a new run, the one place a run is created. src/core/types.ts:901-902 holds `cardRevision` and its comment 'Nothing in src reads it'. src/core/amendments.ts holds `routeAmendment` and `mapRevision` (goal revisions) and is not changed. The card schema is `Card` in src/core/types.ts (:175 to :197 hold the nine fields: strings, whole numbers, a boolean and lists of strings, so `JSON.stringify` of a value is canonical), and src/artifacts/card.ts parses a card file into it. No file of src/core imports from src/state, where `canonicalJson` is; src/core/review-policy.ts:17 imports `createHash` from node:crypto."
 forbid: [weakening or skipping a test to go green, a digest over the card file's bytes, a change to `candidate.digest` of any run, editing .aidlc state by hand]

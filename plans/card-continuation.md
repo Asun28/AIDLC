@@ -23,7 +23,7 @@ main the tests of "Proof" pass.
 ## 2. Minimal acceptable loop
 T1-CONTINUE-CORE, T1-OWED-EVENT-TYPES, T1-CONTINUE-REVIEW-2, T1-CONTINUE-AUDIT,
 T1-CONTINUE-GOAL-2 and T1-CONTINUE-COMMAND give a continued review stop from the command line. T1-CONTINUE-CI adds
-the ci stop. T1-CARD-CONTRACT, T1-CARD-AMEND and T1-AMEND-COMMAND give the amendment. Each
+the ci stop. T1-CARD-CONTRACT-2, T1-CARD-AMEND and T1-AMEND-COMMAND give the amendment. Each
 card leaves main consistent: until T1-CONTINUE-COMMAND no command reaches the runner's act, and
 until T1-AMEND-COMMAND no command records an amendment.
 
@@ -40,7 +40,7 @@ none this version
 - `src/core/continuation.ts`: what a continuation requires of a run and what it changes, for a `review` stop (T1-CONTINUE-CORE) and a `ci` stop (T1-CONTINUE-CI).
 - `src/core/review-policy.ts`: `recordReviewOutcome` and `decideFromLedger` take the admitted count in place of `MAX_R3_DECISIONS`.
 - `src/loop/card-runner.ts`: `CardRunner.continueStop` and the readers of the allowance (T1-CONTINUE-REVIEW-2), its ci branch (T1-CONTINUE-CI), `CardRunner.amendCard` and the derived digest in `recordAttempt` (T1-CARD-AMEND).
-- `src/loop/controller.ts`: the goal re-admission after a continuation (T1-CONTINUE-GOAL-2); `ensureCardRun` records `contract` (T1-CARD-CONTRACT).
+- `src/loop/controller.ts`: the goal re-admission after a continuation (T1-CONTINUE-GOAL-2); `ensureCardRun` records `contract` and refuses a card the registry lacks (T1-CARD-CONTRACT-2).
 - `src/core/card-goal.ts`, `src/audit/verifier.ts`: the refusal's exception for a continuation and the audit rule (T1-CONTINUE-AUDIT).
 - `src/cli/main.ts`: the two command lines (T1-CONTINUE-COMMAND and T1-AMEND-COMMAND).
 - `bench/baseline.json`: the `modules` ceiling of the journey `cli.start` (T1-CONTINUE-REVIEW-2).
@@ -77,6 +77,7 @@ the evidence (the DoD receipt, the candidate digest).
 - tests/scenarios/card-continue-command.test.ts (new)
 - tests/scenarios/card-continue-ci.test.ts (new)
 - tests/scenarios/card-contract.test.ts (new)
+- tests/scenarios/arc-reentry.test.ts
 - tests/scenarios/card-amend.test.ts (new)
 - tests/scenarios/card-amend-command.test.ts (new)
 - tests/surface/verifier.test.ts
@@ -94,7 +95,7 @@ the evidence (the DoD receipt, the candidate digest).
 - changelog.d/T1-CONTINUE-GOAL-2.md (new)
 - changelog.d/T1-CONTINUE-COMMAND.md (new)
 - changelog.d/T1-CONTINUE-CI.md (new)
-- changelog.d/T1-CARD-CONTRACT.md (new)
+- changelog.d/T1-CARD-CONTRACT-2.md (new)
 - changelog.d/T1-CARD-AMEND.md (new)
 - changelog.d/T1-AMEND-COMMAND.md (new)
 
@@ -106,7 +107,7 @@ the evidence (the DoD receipt, the candidate digest).
 5. T1-CONTINUE-GOAL-2: the controller's method and the goal re-admission. It replaces T1-CONTINUE-GOAL, whose R3 said that a throw of the runner leaves every record as it was. The runner writes the run first and appends its journal events after, so a failed append comes after the write. R3 blocked three candidates on it: one that let the error through, one that exited 0 with the event owed, and one that restored the run record (older owed events stay appended, a concurrent command's record can be mistaken for this call's, and the old revision is reused). No code meets that requirement, so the successor states the two cases apart: a refusal writes nothing, and a failure after the write keeps what was written and is completed by the next command.
 6. T1-CONTINUE-COMMAND: the command line. Split from the replaced card, which came to 381 changed lines.
 7. T1-CONTINUE-CI: the ci stop.
-8. T1-CARD-CONTRACT: the contract digests on a new run and the pure rules of an amendment.
+8. T1-CARD-CONTRACT-2: the contract digests on a new run and the pure rules of an amendment. It replaces T1-CARD-CONTRACT, blocked twice by R3 on two points its text made unmeetable. Its acceptance 1 named a line break inside a list item among layouts that parse to the same values, and the first failing test expected a folded item to digest like the unfolded one; the parser reads only an item's first line, in a file the card could not change. And the review asked that no run be created for a card the registry lacks, which breaks the one test that creates such a run, in a file outside the card. The successor states the parser's rule, refuses that run, and owns that test file.
 9. T1-CARD-AMEND: the runner's act and the derived digest in `recordAttempt`.
 10. T1-AMEND-COMMAND: the command and the rule text.
 
@@ -128,20 +129,24 @@ The cards run one after the other: most of them edit `src/loop/card-runner.ts`,
 | T1-CONTINUE-GOAL-2 | MUST | `GoalController.continueCard` continues a card on a goal stopped for the card's stop and re-admits the goal with an event that carries `continuation` | T1-CONTINUE-REVIEW-2, T1-CONTINUE-AUDIT | - | - |
 | T1-CONTINUE-COMMAND | MUST | `aidlc card continue` records the continuation from the command line | T1-CONTINUE-GOAL-2 | - | - |
 | T1-CONTINUE-CI | MUST | `aidlc card continue` returns a run stopped for ci to BUILD with a counted repair attempt and re-admits its goal | T1-CONTINUE-COMMAND | - | - |
-| T1-CARD-CONTRACT | MUST | a new card run holds one digest per contract field; pure rules give the changed fields, the evidence they touch and the derived candidate digest | T1-CONTINUE-CI | - | - |
-| T1-CARD-AMEND | MUST | `CardRunner.amendCard` records an amendment, clears the DoD receipt and re-derives the candidate digest by the changed fields | T1-CARD-CONTRACT | - | - |
+| T1-CARD-CONTRACT-2 | MUST | a card run is created only for a card the registry holds and records one digest per contract field; pure rules give the changed fields, the evidence they touch and the derived candidate digest | T1-CONTINUE-CI | - | - |
+| T1-CARD-AMEND | MUST | `CardRunner.amendCard` records an amendment, clears the DoD receipt and re-derives the candidate digest by the changed fields | T1-CARD-CONTRACT-2 | - | - |
 | T1-AMEND-COMMAND | MUST | `aidlc card amend` records the amendment from the command line; `CLAUDE.md` and its template name both commands | T1-CARD-AMEND | - | - |
 
-Budgets of the six cards still to run: 240, 190, 240, 200, 240 and 160 changed lines, tests
-and each card's evidence table included. Each is at or under 250, the limit for a card that
+Budgets of the three cards still to run: 250, 240 and 160 changed lines, tests and each
+card's evidence table included. Each is at or under 250, the limit for a card that
 changes `src/` (card T0-CARD-SIZE). Merged: T1-CONTINUE-CORE at 214 against 150,
 T1-OWED-EVENT-TYPES at 64 against 40, T1-CONTINUE-REVIEW-2 at 280 against 250,
-T1-CONTINUE-AUDIT at 90 against 130. Replaced: T1-CONTINUE-REVIEW at 313 against 240 and
-T1-CONTINUE-GOAL at 381 against 240.
+T1-CONTINUE-AUDIT at 90 against 130, T1-CONTINUE-GOAL-2 at 298 against 240,
+T1-CONTINUE-COMMAND at 204 against 190, T1-CONTINUE-CI at 332 against 250. Replaced:
+T1-CONTINUE-REVIEW at 313 against 240, T1-CONTINUE-GOAL at 381 against 240 and
+T1-CARD-CONTRACT at 217 against 200.
 
 ## Risks
-- Ten cards and two replaced cards, where `intent/card-continuation.md` says at most five.
-  Four causes, all in the first plan. One requirement promised what the write protocol
+- Ten cards and three replaced cards, where `intent/card-continuation.md` says at most five.
+  Five causes, all in the first plan. One acceptance example was not checked against the
+  card parser, and one card left out a test file that the behaviour it asks for changes
+  (T1-CARD-CONTRACT replaced by T1-CARD-CONTRACT-2 after two R3 blocks). One requirement promised what the write protocol
   cannot give: that a failure of the runner leaves every record as it was (T1-CONTINUE-GOAL
   replaced by T1-CONTINUE-GOAL-2 after three R3 blocks). It did not check that the owed event list is a
   closed enum (T1-OWED-EVENT-TYPES). It did not run the loop benchmark, whose `cli.start`
