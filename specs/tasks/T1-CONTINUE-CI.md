@@ -63,3 +63,19 @@ npm run typecheck && node --test tests/core/continuation.test.ts tests/scenarios
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error, every test of the seven files passes, the build succeeds and every benchmark count is within its ceiling.
+
+## Attempt evidence
+RED db1b0d11 (tests alone): `card-continue-ci.test.ts` "acceptance 1, 2, 3 and 5: card continue on a ci stop ..." failed with `the stop reason ci is not review`; the ci rows of `continuation.test.ts` failed with `continueCiStop is not a function`.
+
+| Item | Evidence |
+|---|---|
+| 1 | card-continue-ci test 1: BUILD, attempt 1 `fail` with `continuation by the owner: diagnosed: a fixture leak`, no stop/blocker/receipts, one ci continuation, R2 fields deep-equal, goal CARDS, one `GOAL_STATE` with `continuation` |
+| 2 | test 1: CLI `card next` gives `build` attempt 2; after the repair (sha-2) CLI `card next` gives `review`; `audit verify` has no `WORK_AFTER_TERMINAL` |
+| 3 | test 1: second unclassified failure of sha-2 stops for ci; `ci.reruns` starts with the one entry held before |
+| 4 | test 2 (CLI): same-cause ladder stop, escalation past the deadline, `--decisions 1`, no effort episode; exit 1, cause matched, three files byte-identical |
+| 5 | test 1: exact `CARD_STATE` and `ATTEMPT_FINISHED` data, one each; test 3: rename fault leaves bytes, append fault keeps the continuation and one `card next` appends each event once |
+| 6 | continuation.test.ts: 8 ci rows; card-continue.test.ts changed only its ci row (now a ci stop with no effort episode, refused); continueReviewStop's ci row unchanged (that rule still refuses ci); other files unchanged |
+| 7 | OPERATIONS.md Continuations paragraph and STOP row `ci`, ARCHITECTURE.md `continueStop` bullet, changelog.d/T1-CONTINUE-CI.md |
+| 8 | test 5: JSON and `--no-json` fields by value, no `decisions`/`admits`/`undefined`; `--help` names review and ci |
+
+Guard sweep (each loosened, its file run, a test failed, restored): ci dispatch always (card-continue.test.ts acc 1); state/stop, reason ci, blank by, blank reason removed (continuation.test.ts); decisions, no effort, ladder stop removed and limitsPermit true (card-continue-ci acc 4); limitsPermit false and refuted always (card-continue-ci guard rows); promoted always (card-continue-ci acc 1). Equivalent: dropping `state === 'STOP'` from the runner's dispatch, since both rules refuse a run out of STOP with the same message.
