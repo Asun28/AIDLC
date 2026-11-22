@@ -1,7 +1,7 @@
 ---
 id: T0-GOAL-CARD-REASON
 title: "The routing reasons of a request that gives a card name that card, not a card id of the text"
-status: todo
+status: merged
 branch: T0-GOAL-CARD-REASON
 worktree: D:\wt\AIDLC\T0-GOAL-CARD-REASON
 allow_paths:
