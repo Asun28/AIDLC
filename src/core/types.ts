@@ -895,6 +895,20 @@ export const ReviewBenchCase = z
   .refine((c) => !c.confirmed || c.confirmedBy !== undefined, { message: 'a confirmed case names confirmedBy', path: ['confirmedBy'] });
 export type ReviewBenchCase = z.infer<typeof ReviewBenchCase>;
 
+/**
+ * A recorded act that lifts a stop for review or ci and lets the run go on (card T1-CONTINUE-CORE): who, when and why, the lifted
+ * stop, and for a review stop `decisions`, the further R3 decisions admitted, and `admits`, the decision count the run may reach.
+ */
+export const Continuation = z.object({
+  at: IsoTimestamp,
+  by: z.string().min(1),
+  reason: z.string().min(1),
+  stop: z.object({ reason: z.enum(['review', 'ci']), detail: z.string(), at: IsoTimestamp }),
+  decisions: z.number().int().nonnegative().optional(),
+  admits: z.number().int().nonnegative().optional(),
+});
+export type Continuation = z.infer<typeof Continuation>;
+
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
@@ -939,6 +953,8 @@ export const CardRun = z.object({
     .prefault({}),
   evidence: z.array(EvidenceRef).default([]),
   stop: StopRecord.optional(),
+  /** The continuations of this run, oldest first (card T1-CONTINUE-CORE); a run written before the field has none. */
+  continuations: z.array(Continuation).default([]),
   blocker: z.string().optional(),
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing', 'withdrawn']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional(), /** The candidate a `withdrawn` repair replaces: the repair's success must record another one (card T0-CANDIDATE-WITHDRAW). */ candidateDigest: z.string().optional() }).optional(),
