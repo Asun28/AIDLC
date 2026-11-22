@@ -713,6 +713,12 @@ export class CardRunner {
     return next;
   }
 
+  /** The owner's amendment of a started card (card T1-CARD-AMEND). */
+  amendCard(goal: Goal, card: Card, act: { by: string; reason: string }): CardRun {
+    void act;
+    return this.store.getCardRun(goal.id, card.id)!;
+  }
+
   /**
    * A disposition changes the persisted run under the card-run lock (`GoalStore.updateCardRun`), never the
    * caller's snapshot: the record is read inside the lock, a stop saved meanwhile refuses, the lease is
