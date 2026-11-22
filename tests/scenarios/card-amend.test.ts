@@ -11,12 +11,10 @@ import { amendedDigest, contractDigests } from '../../src/core/contract.ts';
 import type { Card } from '../../src/core/types.ts';
 
 type Stored = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-const CARD = 'T1-CA';
-const FILE = 'src/t1-ca.ts';
-const BY = 'the owner';
-const REASON = 'acceptance reworded';
+type S = ReturnType<typeof setup>;
+const [CARD, FILE, BY, REASON] = ['T1-CA', 'src/t1-ca.ts', 'the owner', 'acceptance reworded'];
 const SPEC: CardSpec = { id: CARD, title: 'card amend', allowPaths: [FILE], requirements: ['R1. The amend shall hold.'], acceptance: ['1. amend holds. [R1]'], budget: 80 };
-const ACCEPTANCE = { acceptance: ['1. amend holds twice. [R1]'] };
+const [ACCEPTANCE, REQUIREMENTS, DOD] = [{ acceptance: ['1. amend holds twice. [R1]'] }, { requirements: ['R1. The amend shall hold twice.'] }, { dodCommand: 'node --test tests/other.test.ts' }];
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 const TRANSIENT = '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}';
 const block = (text: string): string => { const reasons = [`[spec] 6 tests @ ${FILE}:1: ${text} -> add one`]; return JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } } }) + '\n'; };
@@ -30,20 +28,14 @@ before(() => {
   Object.assign(fs, {
     appendFileSync: (...a: Parameters<typeof fs.appendFileSync>) => { if (fault.append && String(a[0]).endsWith('.jsonl') && String(a[1]).includes('"type":"NOTE"')) throw eio(); return real.appendFileSync(...a); },
     renameSync: (from: fs.PathLike, to: fs.PathLike) => { if (fault.record && String(to).endsWith(`${CARD}.json`)) throw eio(); return real.renameSync(from, to); },
-  });
-  syncBuiltinESMExports();
+  }); syncBuiltinESMExports();
 });
 after(() => { Object.assign(fs, real); syncBuiltinESMExports(); });
 
 /** `body` on a one-card goal under a command reviewer that answers with `verdicts` in order. */
-async function scenario(verdicts: string[], body: (s: ReturnType<typeof setup>) => Promise<void> | void, ship = new InjectedShipPath(['merged'], '')) {
+async function scenario(verdicts: string[], body: (s: S) => Promise<void> | void, ship = new InjectedShipPath(['merged'], '')) {
   const fx = makeFixture({ config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, secondPass: false } } });
-  try {
-    await body(setup(fx, verdicts, ship));
-  } finally {
-    Object.assign(fault, { record: false, append: false });
-    fx.cleanup();
-  }
+  try { await body(setup(fx, [...verdicts], ship)); } finally { Object.assign(fault, { record: false, append: false }); fx.cleanup(); }
 }
 function setup(fx: ReturnType<typeof makeFixture>, verdicts: string[], ship: InjectedShipPath) {
   const script = scriptedRunner({ 'git diff --name-only': { stdout: `${FILE}\u0000` }, 'git diff': { stdout: `diff --git a/${FILE} b/${FILE}\n+export const x = 1;\n` }, 'fake-r3': () => ({ stdout: verdicts.shift()! }) });
@@ -51,24 +43,21 @@ function setup(fx: ReturnType<typeof makeFixture>, verdicts: string[], ship: Inj
   writeCard(fx, SPEC);
   const goal = goalForCards(fx, [CARD]);
   let card = fx.card(CARD);
-  const g = () => fx.goal(goal.id);
-  const persisted = () => fx.store.getCardRun(goal.id, CARD)!;
+  const [g, persisted] = [() => fx.goal(goal.id), () => fx.store.getCardRun(goal.id, CARD)!];
   runner.next(g(), card, fx.controller.ensureCardRun(g(), CARD));
-  const runFile = fx.store.cardFile(goal.id, CARD);
-  const journalFile = path.join(fx.paths.journal, `${goal.id}.jsonl`);
+  const [runFile, journalFile] = [fx.store.cardFile(goal.id, CARD), path.join(fx.paths.journal, `${goal.id}.jsonl`)];
   const stored = (): Stored => JSON.parse(readFileSync(runFile, 'utf8'));
   const next = () => runner.next(g(), card, persisted()).directive as Stored;
-  const attempt = (sha: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
+  /** A success; with no `sha` the dry-run path keeps the run's candidate. */
+  const attempt = (sha?: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
   const review = () => runner.formalReview(g(), card, persisted());
   return {
-    fx, ship, goal, persisted, stored, next, attempt, review,
-    card: () => card,
+    fx, ship, goal, persisted, stored, next, attempt, review, card: () => card,
     /** A success with candidate `sha`, its review directive and the R3 decision. */
     decide: async (sha: string) => { attempt(sha); assert.equal(next()['kind'], 'review'); await review(); },
     reconcile: () => runner.ciReconcile(g(), card, persisted(), '12345', () => ({ status: 'completed', conclusion: 'success', attempt: 2 })),
-    /** The card file as committed with `delta`, as the runner reads it from then on. */
-    change: (delta: Partial<CardSpec>) => { writeCard(fx, { ...SPEC, ...delta }); card = fx.card(CARD); },
-    amend: (act: { by?: string; reason?: string } = {}, c: Card = card) => runner.amendCard(g(), c, { by: BY, reason: REASON, ...act }),
+    /** The card file committed with `delta` and amended on the run. */
+    amend: (delta?: Partial<CardSpec>, act: { by?: string; reason?: string } = {}, c?: Card) => { if (delta) { writeCard(fx, { ...SPEC, ...delta }); card = fx.card(CARD); } return runner.amendCard(g(), c ?? card, { by: BY, reason: REASON, ...act }); },
     seed: (change: (run: Stored) => void) => { const run = stored(); change(run); writeFileSync(runFile, JSON.stringify(run, null, 2), 'utf8'); },
     bytes: () => [existsSync(runFile) ? readFileSync(runFile, 'utf8') : '', readFileSync(journalFile, 'utf8')],
     events: (type?: string): Stored[] => readFileSync(journalFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => !type || e['type'] === type),
@@ -82,10 +71,7 @@ test('acceptance 1 and 2: an R3-passed run not shipped, after its acceptance cha
   await s.decide('sha-1');
   assert.equal(s.next()['kind'], 'ship', 'the transient failure takes the rerun');
   s.reconcile();
-  const was = s.stored();
-  s.change(ACCEPTANCE);
-  s.amend();
-  const now = s.stored();
+  const was = s.stored(); s.amend(ACCEPTANCE); const now = s.stored();
   assert.deepEqual(now['amendments'], [amendment(['acceptance'], ['dod', 'review'])]);
   assert.deepEqual([was['cardRevision'], now['cardRevision']], [0, 1]);
   assert.deepEqual(now['contract'], contractDigests(s.card()));
@@ -95,44 +81,29 @@ test('acceptance 1 and 2: an R3-passed run not shipped, after its acceptance cha
   assert.deepEqual(now['review'].invocations.map((i: Stored) => i.candidateDigest), ['sha-1']);
   assert.deepEqual(kept(now), kept(was));
   const shipped = s.ship.requests.length;
-  assert.equal(s.next()['kind'], 'build');
-  s.attempt('sha-1');
+  assert.equal(s.next()['kind'], 'build'); s.attempt('sha-1');
   assert.equal(s.persisted().candidate!.digest, amendedDigest('sha-1', 1));
-  assert.equal(s.next()['kind'], 'review');
-  await s.review();
+  assert.equal(s.next()['kind'], 'review'); await s.review();
   assert.equal(s.persisted().review.substantiveDecisions, was['review'].substantiveDecisions + 1);
   assert.deepEqual([s.next()['kind'], s.persisted().mergeVerified, s.ship.requests.length], ['close', true, shipped + 1]);
 }, new InjectedShipPath(['ci-red', 'merged'], TRANSIENT)));
 
 test('acceptance 2, second row: a run that used its two decisions is amended, rebuilt on the same commit and stopped for review by card next [R3] [R4]', () => scenario([block('no RED'), PASS], async (s) => {
-  await s.decide('sha-1');
-  await s.decide('sha-2');
+  await s.decide('sha-1'); await s.decide('sha-2');
   assert.equal(s.persisted().review.substantiveDecisions, 2);
-  s.change(ACCEPTANCE);
-  s.amend();
-  assert.equal(s.next()['kind'], 'build');
-  s.attempt('sha-2');
+  s.amend(ACCEPTANCE);
+  assert.equal(s.next()['kind'], 'build'); s.attempt('sha-2');
   assert.deepEqual([s.next()['kind'], s.persisted().stop?.reason, s.ship.requests.length], ['stop', 'review', 0]);
   assert.match(s.persisted().stop!.detail, new RegExp(`${amendedDigest('sha-2', 1)} exceeds the two-decision allowance \\(2 used\\)`));
 }));
 
 test('acceptance 3: budget alone, dod_command alone, requirements alone and a run in STOP for review each lose only the evidence their fields touch [R1] [R2] [R3] [R5]', async () => {
-  const rows: Array<[string, string[], Partial<CardSpec>, string[], string[], (s: ReturnType<typeof setup>, was: Stored, now: Stored) => void]> = [
-    ['budget', [PASS], { budget: 120 }, ['budget'], [], (s, was, now) => {
-      assert.deepEqual([now['dodReceipt'], now['candidate'].digest], [was['dodReceipt'], 'sha-1']);
-      assert.deepEqual([s.next()['kind'], s.persisted().review.invocations.length, s.ship.requests.map((q) => q.candidateSha)], ['close', 1, ['sha-1']]);
-    }],
-    ['dod_command', [PASS], { dodCommand: 'node --test tests/other.test.ts' }, ['dod_command'], ['dod'], (s, _was, now) => {
-      assert.deepEqual(['dodReceipt' in now, now['candidate'].digest], [false, 'sha-1']);
-      assert.equal(s.next()['kind'], 'build');
-      s.attempt('sha-1');
-      assert.deepEqual([s.next()['kind'], s.persisted().review.invocations.length, s.ship.requests.map((q) => q.candidateSha)], ['close', 1, ['sha-1']]);
-    }],
-    ['requirements', [PASS], { requirements: ['R1. The amend shall hold twice.'] }, ['requirements'], ['review'], (s, was, now) => {
-      assert.deepEqual([now['dodReceipt'], now['candidate'].digest], [was['dodReceipt'], amendedDigest('sha-1', 1)]);
-      assert.equal(s.next()['kind'], 'review');
-    }],
-    ['STOP for review', ['a', 'b', 'c', 'd'].map(block), { requirements: ['R1. The amend shall hold twice.'] }, ['requirements'], ['review'], (_s, was, now) => {
+  const shipsUnreviewed = (s: S) => assert.deepEqual([s.next()['kind'], s.persisted().review.invocations.length, s.ship.requests.map((q) => q.candidateSha)], ['close', 1, ['sha-1']]);
+  const rows: Array<[string, string[], Partial<CardSpec>, string[], string[], (s: S, was: Stored, now: Stored) => void]> = [
+    ['budget', [PASS], { budget: 120 }, ['budget'], [], (s, was, now) => { assert.deepEqual([now['dodReceipt'], now['candidate'].digest], [was['dodReceipt'], 'sha-1']); shipsUnreviewed(s); }],
+    ['dod_command', [PASS], DOD, ['dod_command'], ['dod'], (s, _was, now) => { assert.deepEqual(['dodReceipt' in now, now['candidate'].digest, s.next()['kind']], [false, 'sha-1', 'build']); s.attempt('sha-1'); shipsUnreviewed(s); }],
+    ['requirements', [PASS], REQUIREMENTS, ['requirements'], ['review'], (s, was, now) => { assert.deepEqual([now['dodReceipt'], now['candidate'].digest, s.next()['kind']], [was['dodReceipt'], amendedDigest('sha-1', 1), 'review']); }],
+    ['STOP for review', ['a', 'b', 'c', 'd'].map(block), REQUIREMENTS, ['requirements'], ['review'], (_s, was, now) => {
       assert.deepEqual([was['state'], was['stop'].reason, now['state'], now['stop'], now['candidate'].digest], ['STOP', 'review', 'STOP', was['stop'], amendedDigest('sha-4', 1)]);
     }],
   ];
@@ -140,10 +111,7 @@ test('acceptance 3: budget alone, dod_command alone, requirements alone and a ru
     await scenario(verdicts, async (s) => {
       for (const n of verdicts.keys()) await s.decide(`sha-${n + 1}`);
       if (verdicts.length === 4) s.next();
-      const was = s.stored();
-      s.change(delta);
-      s.amend();
-      const now = s.stored();
+      const was = s.stored(); s.amend(delta); const now = s.stored();
       assert.deepEqual([now['amendments'], now['cardRevision'], now['contract']], [[amendment(changed, invalidated)], 1, contractDigests(s.card())], name);
       assert.deepEqual(kept(now), kept(was), name);
       if (!invalidated.includes('dod')) assert.deepEqual(now['effort'], was['effort'], name);
@@ -153,31 +121,26 @@ test('acceptance 3: budget alone, dod_command alone, requirements alone and a ru
 });
 
 test('acceptance 4: each refusal names its cause and leaves the card-run file and the journal byte-identical [R6]', async () => {
-  const op = (status: string) => (s: ReturnType<typeof setup>) => {
-    const { id } = s.fx.ops.recordIntent({ kind: 'merge', goalId: s.goal.id, cardId: CARD, target: 'main', candidateDigest: 'sha-1', ownerGeneration: 0, timeoutMs: 60_000, effects: ['merge'] }, T0);
+  const op = (status: string) => (s: S) => { const { id } = s.fx.ops.recordIntent({ kind: 'merge', goalId: s.goal.id, cardId: CARD, target: 'main', candidateDigest: 'sha-1', ownerGeneration: 0, timeoutMs: 60_000, effects: ['merge'] }, T0);
     if (status !== 'intended') s.fx.ops.markIssued(id, undefined, T0);
-    if (status === 'running') s.fx.ops.markRunning(id, T0);
-    if (status === 'UNKNOWN') s.fx.ops.markResult(id, 'UNKNOWN', {}, T0);
-  };
-  const rows: Array<[string, (s: ReturnType<typeof setup>) => void, RegExp, { by?: string; reason?: string }?]> = [
+    if (status === 'running') s.fx.ops.markRunning(id, T0); else if (status === 'UNKNOWN') s.fx.ops.markResult(id, 'UNKNOWN', {}, T0); };
+  const rows: Array<[string, (s: S) => void, RegExp, { by?: string; reason?: string }?]> = [
     ['no run', () => {}, /T1-NONE has no card run/],
     ['DONE', (s) => s.seed((r) => { r['state'] = 'DONE'; }), /is DONE/],
     ['mergeVerified', (s) => s.seed((r) => { r['mergeVerified'] = true; }), /is merged/],
-    ...['intended', 'issued', 'running', 'UNKNOWN'].map((status): [string, (s: ReturnType<typeof setup>) => void, RegExp] => [`operation ${status}`, op(status), /operation\(s\) of this card are unresolved/]),
+    ...['intended', 'issued', 'running', 'UNKNOWN'].map((status): [string, (s: S) => void, RegExp] => [`operation ${status}`, op(status), /operation\(s\) of this card are unresolved/]),
     ['pending invocation', (s) => s.seed((r) => { r['review'].invocations.push({ ...r['review'].invocations[0], invocationId: 'inv-pending', outcome: 'pending' }); }), /formal review of this card is in flight/],
     ['pending repair', (s) => s.seed((r) => { r['pendingRepair'] = { kind: 'red-missing', detail: 'no RED', at: T0 }; }), /red-missing repair is pending/],
     ['no contract', (s) => s.seed((r) => { delete r['contract']; }), /holds no contract/],
-    ['equal contract', (s) => s.seed((r) => { r['contract'] = contractDigests(s.card()); }), /contract equals the card's/],
+    ['equal contract', (s) => s.seed((r) => { r['contract'] = contractDigests({ ...s.card(), ...ACCEPTANCE }); }), /contract equals the card's/],
     ['blank by', () => {}, /by is blank/, { by: ' \t' }],
     ['blank reason', () => {}, /reason is blank/, { reason: '  ' }],
   ];
   for (const [name, arrange, cause, act] of rows) {
     await scenario([PASS], async (s) => {
-      await s.decide('sha-1');
-      s.change(ACCEPTANCE);
-      arrange(s);
+      await s.decide('sha-1'); arrange(s);
       const held = s.bytes();
-      assert.throws(() => s.amend(act, name === 'no run' ? { ...s.card(), id: 'T1-NONE' } : s.card()), cause, name);
+      assert.throws(() => s.amend(ACCEPTANCE, act, name === 'no run' ? { ...s.card(), id: 'T1-NONE' } : undefined), cause, name);
       assert.deepEqual(s.bytes(), held, name);
     });
   }
@@ -188,19 +151,35 @@ test('acceptance 5: the act appends exactly one NOTE event with the amendment; a
   for (const faulted of [false, true]) {
     await scenario([PASS], async (s) => {
       await s.decide('sha-1');
-      s.change(ACCEPTANCE);
       const count = s.events().length;
-      if (!faulted) {
-        s.amend();
-        return assert.deepEqual(s.events().slice(count).map((e) => [e['type'], strip(e)]), [['NOTE', data]]);
-      }
+      if (!faulted) { s.amend(ACCEPTANCE); return assert.deepEqual(s.events().slice(count).map((e) => [e['type'], strip(e)]), [['NOTE', data]]); }
       const held = s.bytes();
-      fault.record = true; assert.throws(() => s.amend(), /EIO: injected/); fault.record = false;
+      fault.record = true; assert.throws(() => s.amend(ACCEPTANCE), /EIO: injected/); fault.record = false;
       assert.deepEqual(s.bytes(), held, 'the card-run file and the journal are byte-identical');
-      fault.append = true; assert.throws(() => s.amend(), /EIO: injected/); fault.append = false;
+      fault.append = true; assert.throws(() => s.amend(ACCEPTANCE), /EIO: injected/); fault.append = false;
       assert.deepEqual([s.persisted().amendments, s.events().length], [[amendment(['acceptance'], ['dod', 'review'])], count]);
       s.next(); s.next();
       assert.deepEqual(s.events('NOTE').map(strip), [{ ...data, completed: true }]);
+    });
+  }
+});
+
+test('guard rows: a CI rerun of another candidate keeps its candidate, a second amendment applies the digest twice and a kept candidate is not amended again; after an R3 block a dod or a review amendment unsets the blocked receipt and leaves the reopened episode as it was [R2] [R3] [R4]', async () => {
+  for (const sha of ['sha-1', undefined]) {
+    await scenario([PASS], async (s) => {
+      await s.decide('sha-1');
+      s.seed((r) => { r['ci'].reruns = ['sha-0', 'sha-1'].map((candidate, i) => ({ runId: `${i}`, attempt: 1, candidate, requestedAt: T0, outcome: 'success' })); });
+      for (const n of [1, 2]) s.amend({ acceptance: [`1. amend holds ${n} times. [R1]`] });
+      assert.deepEqual([s.stored()['amendments'].map((a: Stored) => a.revision), s.stored()['ci'].reruns.map((r: Stored) => r.candidate), s.next()['kind']], [[1, 2], ['sha-0', amendedDigest('sha-1', 2)], 'build']);
+      s.attempt(sha);
+      assert.equal(s.persisted().candidate!.digest, amendedDigest('sha-1', 2), String(sha));
+    });
+  }
+  for (const delta of [DOD, REQUIREMENTS, ACCEPTANCE]) {
+    await scenario([block('no RED')], async (s) => {
+      await s.decide('sha-1');
+      const was = s.stored(); s.amend(delta);
+      assert.deepEqual([was['effort'].terminal, 'blockedReceipt' in was, 'blockedReceipt' in s.stored(), s.stored()['effort']], [undefined, true, false, was['effort']], JSON.stringify(delta));
     });
   }
 });

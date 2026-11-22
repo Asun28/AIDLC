@@ -61,3 +61,18 @@ npm run typecheck && node --test tests/scenarios/card-amend.test.ts tests/scenar
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error, every test of the five files passes, the build succeeds and every benchmark count is within its ceiling.
+
+## Attempt evidence
+Build attempt 1. RED `3ad8200c`: the 5 tests of `tests/scenarios/card-amend.test.ts` ran against a stub `amendCard` that returns the run; 5 of 5 failed on an assertion (`acceptance 4`: `Missing expected exception: no run`). One arrangement fix after RED, no assertion changed: `acceptance 3` passes `scenario` a copy of the verdicts, because the scripted reviewer shifts the array and the row loop stopped after two decisions; on the stub the 5 tests still fail on an assertion.
+
+| Item | Proof (`tests/scenarios/card-amend.test.ts`) | Result |
+|---|---|---|
+| 1 | `acceptance 1 and 2` | pass (failed at RED) |
+| 2 | `acceptance 1 and 2`, `acceptance 2, second row` | pass (failed at RED) |
+| 3 | `acceptance 3`: budget, dod_command, requirements, STOP for review | pass (failed at RED) |
+| 4 | `acceptance 4`: 13 refusal rows | pass (failed at RED) |
+| 5 | `acceptance 5`: clean row, record and append fault rows | pass (failed at RED) |
+| 6 | skill record 7998 bytes, ASCII; card-contract, card-continue, fault-points unchanged; DoD exit 0, 82 of 82, bench within ceilings | pass |
+| 7 | `docs/ARCHITECTURE.md` item after the contract item; `changelog.d/T1-CARD-AMEND.md` | reviewer |
+
+Guard sweep (each loosened alone, the test file run, restored). `acceptance 4` failed for: no DONE, no `mergeVerified`, each operation status dropped, no in-flight check, no pending repair, no contract, equal contract, `by` or `reason` untrimmed, blank `by`, blank `reason`. `dod` branch or its DoD unset removed: acceptance 1 to 3. `review` branch removed: acceptance 1, 3. R4 counting every amendment: acceptance 3; R4 removed: acceptance 1, 2. `guard rows` failed for: blocked receipt kept (dod or review branch), any episode reopened, every CI rerun rewritten, R4 capped at 1, R4 applied to a kept candidate. equivalent: `old === undefined` (no candidate, so no candidate or rerun to rewrite) and `amendments ?? []` (a parsed run holds the array).

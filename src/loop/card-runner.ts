@@ -18,6 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
+import { amendedDigest, changedContractFields, contractDigests, invalidatedBy } from '../core/contract.ts';
 import { admittedDecisions, continueCiStop, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
@@ -713,10 +714,48 @@ export class CardRunner {
     return next;
   }
 
-  /** The owner's amendment of a started card (card T1-CARD-AMEND). */
+  /**
+   * The owner's amendment of a started card (card T1-CARD-AMEND; docs/ARCHITECTURE.md): one locked update, every refusal decided
+   * before it, that records the changed contract fields and drops the evidence they invalidate; it owes one NOTE event.
+   */
   amendCard(goal: Goal, card: Card, act: { by: string; reason: string }): CardRun {
-    void act;
-    return this.store.getCardRun(goal.id, card.id)!;
+    const [at, by, reason] = [this.clock(), act.by.trim(), act.reason.trim()];
+    let owed: OwedEvent[] = [];
+    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to amend`);
+      const refusal = this.amendmentRefusal(card, persisted, by, reason);
+      if (refusal) throw new Error(refusal);
+      const changed = changedContractFields(persisted.contract!, card);
+      const invalidated = invalidatedBy(changed);
+      const revision = persisted.cardRevision + 1;
+      let run: CardRun = { ...persisted, cardRevision: revision, contract: contractDigests(card), amendments: [...persisted.amendments, { at, by, reason, revision, changed, invalidated }] };
+      if (invalidated.includes('dod')) run = { ...run, dodReceipt: undefined, blockedReceipt: undefined, effort: run.effort?.terminal === 'succeeded' ? reopenAfterReviewBlock(run.effort, `amendment ${revision}`) : run.effort };
+      if (invalidated.includes('review')) {
+        const old = run.candidate?.digest;
+        const digest = old === undefined ? undefined : amendedDigest(old, 1);
+        run = { ...run, blockedReceipt: undefined, candidate: run.candidate && digest ? { ...run.candidate, digest } : run.candidate, ci: { ...run.ci, reruns: run.ci.reruns.map((r) => (digest && r.candidate === old ? { ...r, candidate: digest } : r)) } };
+      }
+      owed = [this.owe(goal, 'NOTE', { amendment: { by, reason, revision, changed, invalidated } })];
+      return { ...run, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+    });
+    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key) });
+    return next;
+  }
+
+  /** Why the locked record admits no amendment (R6); undefined when it admits one. */
+  private amendmentRefusal(card: Card, run: CardRun, by: string, reason: string): string | undefined {
+    if (run.state === 'DONE') return `the card run of ${card.id} is DONE; a change to the card goes to a follow-up card`;
+    if (run.mergeVerified) return 'the candidate is merged; a change to the card goes to a follow-up card';
+    const open = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+    if (open.length) return `operation(s) of this card are unresolved (${open.join(', ')}); reconcile them first`;
+    const flight = this.inFlight(run, 'formal');
+    if (flight) return `${flight}; amend after its verdict lands`;
+    if (run.pendingRepair) return `a ${run.pendingRepair.kind} repair is pending (${run.pendingRepair.detail}); finish it first`;
+    if (!run.contract) return 'the card run holds no contract (it was created before T1-CARD-CONTRACT-2), so no amendment can be recorded';
+    if (!changedContractFields(run.contract, card).length) return "the run's contract equals the card's: no contract field changed";
+    if (!by) return 'by is blank: name who amends the card';
+    if (!reason) return 'reason is blank: say why the card changed';
+    return undefined;
   }
 
   /**
@@ -1404,6 +1443,8 @@ export class CardRunner {
       } else if (input.candidateSha) {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
+      // A digest this call computed takes `amendedDigest` once per amendment that invalidated `review` (card T1-CARD-AMEND R4).
+      if (candidate && candidate !== run.candidate) candidate = { ...candidate, digest: amendedDigest(candidate.digest, (run.amendments ?? []).filter((a) => a.invalidated.includes('review')).length) };
       // A withdrawn candidate takes a repair: nothing is recorded until the success brings another candidate (card T0-CANDIDATE-WITHDRAW).
       if (run.pendingRepair?.kind === 'withdrawn' && candidate?.digest === run.pendingRepair.candidateDigest) throw new Error(`candidate ${(candidate?.sha ?? 'none').slice(0, 12)} is the withdrawn one (${run.pendingRepair.detail}); commit the repair and record the attempt again`);
       // The success that clears a merge-conflict repair records the merge of a moved base: a base-sync candidate
