@@ -865,11 +865,13 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
  * A decision event a card-run write owes to the goal journal (card T0-JOURNAL-FAULT-EVENTS): the write that commits the
  * decision records it, and the command appends it after that write; an append that did not land is made by the next
  * `card next`, `card attempt`, `review pre` or `review r3` on the card. `FINDING_RULED` is the event the ruling write of
- * `aidlc review rule` owes (card T1-REVIEW-RULE-2).
+ * `aidlc review rule` owes (card T1-REVIEW-RULE-2). `CARD_STATE` is the event the write recording the continuation of a
+ * stopped run owes (card T1-CONTINUE-REVIEW), and `NOTE` the event the write recording the amendment of a started card
+ * owes (card T1-CARD-AMEND) (card T1-OWED-EVENT-TYPES).
  */
 export const OwedEvent = z.object({
   key: z.string().min(1),
-  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT', 'FINDING_RULED', 'MERGE_ADOPTED']),
+  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT', 'FINDING_RULED', 'MERGE_ADOPTED', 'CARD_STATE', 'NOTE']),
   generation: z.number().int().nonnegative(),
   data: z.record(z.string(), z.unknown()),
 });

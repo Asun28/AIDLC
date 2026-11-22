@@ -47,3 +47,12 @@ npm run typecheck && node --test tests/core/owed-event.test.ts tests/scenarios/j
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error and every test of the three files passes.
+
+## Attempt evidence
+| Item | Evidence |
+|---|---|
+| 1 [R1] | `tests/core/owed-event.test.ts`, suite "OwedEvent type": one test per type for the ten types, plus "refuses the type GOAL_STATE" and "refuses an empty type". RED at 071a67f9: "accepts an owed CARD_STATE event" and "accepts an owed NOTE event" failed with a zod `invalid_value` listing the eight types of main. |
+| 2 [R2] | Same file, suite "CardRun journalOwed": "a run owing a CARD_STATE and a NOTE event parses with both entries unchanged" (failed at RED for the same cause) and "a run owing an event of type GOAL_STATE is refused". |
+| 3 | DoD command: typecheck clean; `journal-owed.test.ts` and `fault-points.test.ts` pass, neither file changed (`git diff --stat origin/main` lists neither). |
+| 4 [R3] | Comment above `OwedEvent` in `src/core/types.ts` and `changelog.d/T1-OWED-EVENT-TYPES.md` name `CARD_STATE` (continuation of a stopped run, T1-CONTINUE-REVIEW) and `NOTE` (amendment of a started card, T1-CARD-AMEND). |
+| Guard sweep | Guard added: the two enum values. Without `NOTE`: "accepts an owed NOTE event" and the CardRun parse test fail. Without `CARD_STATE`: "accepts an owed CARD_STATE event" and the CardRun parse test fail. Both restored. |
