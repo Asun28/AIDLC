@@ -1,4 +1,4 @@
-// Card T1-CONTINUE-REVIEW: `CardRunner.continueStop` lifts a review stop on the same card in one locked update, and every rule that reads the review allowance reads the count the continuation admits.
+// Card T1-CONTINUE-REVIEW-2: `CardRunner.continueStop` lifts a review stop on the same card in one locked update, and every rule that reads the review allowance reads the count the continuation admits.
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import fs, { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -99,7 +99,7 @@ test('acceptance 1, 2, 3 and 6: a run stopped on R3 decision 4 is continued, kee
       await d.review();
       const last = d.next();
       if (admits === 8) return assert.match(last['narration'], /^Second R3 pass/);
-      if (fifth === PASS) return assert.deepEqual([last['kind'], d.ship.requests.map((q) => q.candidateSha), d.persisted().review.invocations.some((i) => i.secondPass)], ['close', ['sha-5'], false]);
+      if (fifth === PASS) { assert.deepEqual([last['kind'], d.ship.requests.map((q) => q.candidateSha), d.persisted().review.invocations.some((i) => i.secondPass)], ['close', ['sha-5'], false]); d.further('sha-6'); return assert.rejects(d.review(), /continuation's admitted count of 5 decisions is used/); }
       assert.match(d.persisted().stop!.detail, /continuation.*\b5\b/);
       d.further('sha-6');
       await assert.rejects(d.review(), /continuation/);
@@ -134,6 +134,7 @@ test('acceptance 5: a run the gate stopped with no decision left is continued an
     assert.equal((await d.cycle('sha-2'))['kind'], 'build');
     d.attempt('sha-3');
     assert.deepEqual([d.next()['kind'], d.persisted().stop?.reason], ['stop', 'review']);
+    assert.match(d.persisted().stop!.detail, /exceeds the two-decision allowance \(2 used\)/);
     d.go();
     assert.deepEqual([d.next()['kind'], d.next()['decision'], d.next()['maxDecisions']], ['review', 3, 3]);
     await d.review();

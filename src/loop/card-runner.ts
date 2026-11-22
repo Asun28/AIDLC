@@ -677,7 +677,7 @@ export class CardRunner {
   }
 
   /**
-   * The owner's continuation of a run stopped for review (card T1-CONTINUE-REVIEW): one locked update of the record read inside the
+   * The owner's continuation of a run stopped for review (card T1-CONTINUE-REVIEW-2): one locked update of the record read inside the
    * lock (`continueReviewStop`), state BUILD for `selectCardState`, no counter, finding, receipt or deadline moved, and one owed
    * CARD_STATE event with the continuation in its persisted data (`deliverOwed`). A refusal writes and appends nothing.
    */
@@ -1815,7 +1815,7 @@ export class CardRunner {
    */
   private formalAllowance(run: CardRun, card: Card): number {
     if (!this.config.formalReview.command.length) return MAX_SUBSTANTIVE_REVIEW_DECISIONS;
-    // A continuation's admitted count replaces both allowances from the act on (card T1-CONTINUE-REVIEW).
+    // A continuation's admitted count replaces both allowances from the act on (card T1-CONTINUE-REVIEW-2).
     const admitted = admittedDecisions(run.continuations);
     if (admitted !== undefined) return admitted;
     if (this.secondPassDue(run)) return MAX_R3_DECISIONS;
