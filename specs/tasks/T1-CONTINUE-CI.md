@@ -1,7 +1,7 @@
 ---
 id: T1-CONTINUE-CI
 title: "`aidlc card continue` returns a run stopped for ci to BUILD on the same card with a counted repair attempt, and its goal is re-admitted"
-status: todo
+status: merged
 branch: T1-CONTINUE-CI
 worktree: D:\wt\AIDLC\T1-CONTINUE-CI
 plan_ref: plans/card-continuation.md#order-of-work
