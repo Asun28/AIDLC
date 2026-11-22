@@ -63,3 +63,23 @@ npm run typecheck && node --test tests/scenarios/card-continue-goal.test.ts test
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error, every test of the four files passes, the build succeeds and every benchmark count is within its ceiling.
+
+## Attempt evidence
+Build attempt 1. RED `b819dac2` (`acceptance 1 and 2: ...`: `fx.controller.continueCard is not a function`, all 5 tests).
+
+| Item | Proof in `tests/scenarios/card-continue-goal.test.ts` | Result |
+|---|---|---|
+| 1 | `acceptance 1 and 2`: returned flags, run, goal, the one `GOAL_STATE` data, `wait` on `T1-CG:BUILD`, `card next` `build` | pass |
+| 2 | same test: `verifyAudit` `WORK_AFTER_TERMINAL` is `[]` after the repair attempt | pass |
+| 3 | `acceptance 3`: append and goal-write rows, `EIO: injected`, then `continued: false`, one continuation event | pass |
+| 4 | `acceptance 4`: `EIO: injected`, owed data, no `CARD_STATE` with continuation, goal STOP; rerun; `card next` leaves one | pass |
+| 5 | `acceptance 5`: 9 rows plus 5 after a failed re-admission (decisions 5 and 1.5 added for G4c, G4a) | pass |
+| 6 | `acceptance 6`: two-card goal; review goal with a ci continuation throws the runner's cause; ci goal not re-admitted | pass |
+| 7 | DoD: the three files unchanged, build and bench exit 0 | pass |
+| 8 | docs/ARCHITECTURE.md `GoalController.continueCard` entry (R1 to R7), `changelog.d/T1-CONTINUE-GOAL-2.md` | reviewer |
+
+Guard sweep (each loosened, this file and `review-rule-goal` run, restored):
+- G1 `terminalGoalRefusal` throw removed, G2 blank `by`, G3 blank `reason`, G4a `Number.isInteger`, G4b `>= 1`, G4c `<= MAX_R3_DECISIONS` dropped: acceptance 5 fails.
+- G5 `before.state !== 'STOP'` dropped: acceptance 1 (second continuation) fails. G6 `last.stop.reason === reason` dropped: acceptance 6 fails.
+- G8 section `current.stop?.reason !== reason` dropped: acceptance 6 and `review-rule-goal` fail. G9 scan `e.data[key]` to `true`: acceptance 3 fails.
+- equivalent: G7 `if (!reason) return` removed: on a goal not in STOP the section returns the goal unchanged and `readmitted` false, the same records and flags.
