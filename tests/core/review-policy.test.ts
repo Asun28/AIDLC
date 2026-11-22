@@ -803,7 +803,9 @@ describe('recordReviewOutcome with an admitted count (card T1-CONTINUE-CORE)', (
     assert.match(detail, /continuation/);
     assert.match(detail, /\b5\b/);
     assert.equal(five.ledger.invocations.at(-1)?.stopReview, detail, 'the recorded invocation carries the detail');
-    assert.deepEqual(block(5, 6, []).decision, { action: 'review-fix', remainingDecisions: 1 }, 'count 6, block on decision 5');
+    const six = block(5, 6, []);
+    assert.deepEqual(six.decision, { action: 'review-fix', remainingDecisions: 1 }, 'count 6, block on decision 5');
+    assert.deepEqual(recordReviewOutcome(six.ledger, { ...inv('i5'), decision: 5 }, c, specBlock, 0, [], 6).decision, six.decision, 'a replay decides with the same count');
     assert.equal(block(3, 3, []).decision.action, 'stop-review', 'count 3, block on decision 3');
   });
 

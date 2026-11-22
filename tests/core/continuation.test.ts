@@ -40,7 +40,7 @@ describe('continueReviewStop (card T1-CONTINUE-CORE)', () => {
 
   const base = runs['a: a block on decision 4'];
   const act = { at: AT, by: 'owner', reason: 'r' };
-  const refusals: Array<[string, CardRun, Record<string, unknown>, boolean, RegExp]> = [
+  const refusals: Array<[string, CardRun, Parameters<typeof continueReviewStop>[1], boolean, RegExp]> = [
     ['state BUILD', { ...base, state: 'BUILD' }, act, true, /is in BUILD, not in STOP/],
     ['stop reason ci', stopped(base.review, stopFor('ci')), act, true, /stop reason ci is not review/],
     ['stop reason time', stopped(base.review, stopFor('time')), act, true, /stop reason time is not review/],
@@ -57,7 +57,7 @@ describe('continueReviewStop (card T1-CONTINUE-CORE)', () => {
   for (const [cause, run, a, command, message] of refusals) {
     test(`acceptance 2: ${cause} is refused with a message that names it, and the run is unchanged [R3]`, () => {
       const before = structuredClone(run);
-      assert.throws(() => continueReviewStop(run, a as Parameters<typeof continueReviewStop>[1], command), message);
+      assert.throws(() => continueReviewStop(run, a, command), message);
       assert.deepEqual(run, before);
     });
   }
