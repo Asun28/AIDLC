@@ -448,11 +448,14 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
   test('T0-VERIFY-SYNC-CMD: Keeping in sync names the commit of the Sync commit: line, carries no sha of its own and diffs exactly the coverage record files', () => {
     const text = read(SKILL);
     const sync = section(text, 'Keeping in sync');
-    assert.doesNotMatch(sync, /\b[0-9a-f]{7,40}\b/, 'Keeping in sync holds no commit sha; the Sync commit: line is the only one');
-    assert.ok(sync.replace(/\s+/g, ' ').includes('`Sync commit:`'), 'Keeping in sync names the `Sync commit:` line as the start of the diff');
+    assert.doesNotMatch(sync, /[0-9a-f]{7,}/i, 'Keeping in sync holds no commit sha; the Sync commit: line is the only one');
     const commands = spansOf(sync).filter((s) => s.startsWith('git diff --name-only '));
     assert.equal(commands.length, 1, 'one git diff --name-only command');
-    const files = commands[0]!.split(' -- ')[1]?.trim().split(/\s+/) ?? [];
+    const [, revision, list] = /^git diff --name-only (\S+) -- (.+)$/.exec(commands[0]!) ?? [];
+    assert.ok(revision && list, `the command is git diff --name-only <revision> -- <files>: ${commands[0]}`);
+    const after = sync.slice(sync.indexOf(`\`${commands[0]!}\``) + commands[0]!.length + 2).replace(/\s+/g, ' ');
+    assert.ok(after.startsWith(` (${revision} is the sha on the \`Sync commit:\` line;`), `the text after the command defines ${revision} as the sha on the \`Sync commit:\` line: ${after.slice(0, 80)}`);
+    const files = list.trim().split(/\s+/);
     assert.deepEqual(files, coverage(section(text, 'Coverage')).map((l) => l.file), 'the command diffs the coverage record files, in order');
   });
 
