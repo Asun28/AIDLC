@@ -34,6 +34,7 @@ acceptance:
   - 6. `tests/scenarios/card-continue.test.ts`, `review-rule-goal.test.ts`, `audit.test.ts`, `tests/surface/command-lines.test.ts` and `tests/surface/readme.test.ts` pass with no line changed, and `npm run build && npm run bench -- --check` exits 0. [dod arm 1] [dod arm 2] [dod arm 3]
   - 7. The docs and the README row state R1 to R6 (reviewer-verified against the diff). [R7]
 depends_on: [T1-CONTINUE-REVIEW-2, T1-CONTINUE-AUDIT]
+superseded_by: T1-CONTINUE-GOAL-2
 budget: 240
 sweep: "On main at 212ff184. src/loop/controller.ts:984-1017 (`ruleFinding`) holds the goal re-admission this card follows, and its goal-lock section is the one to share; :405-408 is where `aidlc next` stops the goal with the reason of its stopped card. src/cli/main.ts:660-672 is `checkedGoal`, which passes its guard to `terminalGoalRefusal`; :1196-1221 is `review rule`, the command line this one follows; :719-750 (`withdraw`, `adopt-merge`) show a command that reads an existing run and starts none. README.md:145 is the Limits row. `terminalGoalRefusal` takes `continue` from T1-CONTINUE-AUDIT, and the audit rule comes from it too."
 forbid: [weakening or skipping a test to go green, a re-admission of a goal stopped for a reason other than that of the lifted stop, moving a deadline, a change to `CardRunner.continueStop`, to `terminalGoalRefusal` or to the verifier, editing .aidlc state by hand]
