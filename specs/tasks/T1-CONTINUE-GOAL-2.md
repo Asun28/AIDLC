@@ -1,7 +1,7 @@
 ---
 id: T1-CONTINUE-GOAL-2
 title: "The controller continues a card on a goal stopped for the card's stop and re-admits the goal with an event that carries the continuation (replaces T1-CONTINUE-GOAL: carries its controller code and states what a failure after the runner's write leaves)"
-status: todo
+status: merged
 branch: T1-CONTINUE-GOAL-2
 worktree: D:\wt\AIDLC\T1-CONTINUE-GOAL-2
 plan_ref: plans/card-continuation.md#order-of-work
