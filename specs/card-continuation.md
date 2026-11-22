@@ -196,9 +196,9 @@ The work took ten cards and three replaced cards, where the intent says at most 
 Additive fields on the card-run record, each optional or with a default. No migration: a record without them reads as a run with no continuation, no amendment and no recorded contract.
 
 ## Flagged concerns (route to policy owners)
-- The delegation is named in the free text of `--by` and `--reason`. No command checks that the owner gave one. The owner decides whether a recorded delegation needs a record of its own.
-- The table of R12 is the coordinator's reading of "invalidate only the evidence they touch". The owner may rule a field otherwise.
-- A contract change that nobody records is detected by no gate in this version. `aidlc card amend` is how a session finds it: the command refuses when nothing changed.
+- The delegation is named in the free text of `--by` and `--reason`. No command checks that the owner gave one. The owner decides whether a recorded delegation needs a record of its own. Ruled by the owner in the session on 2026-11-22 at about 09:55Z: it stays as built.
+- The table of R12 is the coordinator's reading of "invalidate only the evidence they touch". The owner may rule a field otherwise. Ruled by the owner at the same time: the table stands.
+- A contract change that nobody records is detected by no gate in this version. `aidlc card amend` is how a session finds it: the command refuses when nothing changed. Ruled by the owner at the same time: this changes. Card T0-CONTRACT-GATE, in a goal of its own, makes the loop refuse new work on a run whose card differs from its recorded contract.
 
 ## Non-goals
 - Lifting a `tool`, `card`, `risk`, `time` or any other stop with `aidlc card continue`; a review stop after a missing verdict; a review stop under a ship-path reviewer.
