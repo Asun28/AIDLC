@@ -50,7 +50,7 @@ function setup(fx: ReturnType<typeof makeFixture>, verdicts: string[], ship: Inj
   const stored = (): Stored => JSON.parse(readFileSync(runFile, 'utf8'));
   const next = () => runner.next(g(), card, persisted()).directive as Stored;
   /** A success; with no `sha` the dry-run path keeps the run's candidate. */
-  const attempt = (sha?: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
+  const attempt = (sha?: string, evidence?: string) => runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha, evidence });
   const review = () => runner.formalReview(g(), card, persisted());
   const pre = () => runner.preReview(g(), card, persisted());
   return {
@@ -228,4 +228,46 @@ test('guard rows of the same-candidate rule: a pre-review pass on the amended di
     s.amend(DOD); s.attempt('sha-1');
     await assert.rejects(s.review(), /candidate sha-1 was blocked by its last formal decision and is unchanged; open finding\(s\): F1/);
   });
+});
+
+test('second R3 pass, F3: a dod amendment of a succeeded episode keeps the bound attempt a success and appends the literal reopen reason with its revision to its evidence; a second one on the re-succeeded episode appends revision 2 [R1] [R2]', async () => {
+  const rows: Array<[string | undefined, string, string]> = [
+    [undefined, 'review block: amendment 1', 'review block: amendment 2'],
+    ['dod green on sha-1', 'dod green on sha-1; review block: amendment 1', 'dod green on sha-1; review block: amendment 2'],
+  ];
+  for (const [prior, first, second] of rows) {
+    await scenario([], async (s) => {
+      s.attempt('sha-1', prior);
+      s.amend(ACCEPTANCE);
+      assert.deepEqual(s.persisted().effort!.attempts.map((a) => [a.outcome, a.evidence]), [['success', first]], String(prior));
+      assert.equal(s.next()['kind'], 'build');
+      s.attempt('sha-1', prior);
+      s.amend(DOD);
+      const now = s.stored();
+      assert.deepEqual([now['effort'].attempts.map((a: Stored) => [a.outcome, a.evidence]), now['effort'].terminal, now['cardRevision'], now['contract']], [[['success', first], ['success', second]], undefined, 2, contractDigests(s.card())], String(prior));
+    });
+  }
+});
+
+test('clause rows: the revision is one above a cardRevision of 3; R4 on a new commit for n of 1 and 2; a continuation and a pre-review round stay as they were [R1] [R3] [R4] [R5]', async () => {
+  await scenario([PASS], async (s) => {
+    await s.decide('sha-1');
+    s.seed((r) => { r['cardRevision'] = 3; r['continuations'] = [{ at: T0, by: 'the owner', reason: 'one more round', stop: { reason: 'review', detail: 'four blocks', at: T0 }, decisions: 1, admits: 5 }]; });
+    const was = s.stored(); s.amend(ACCEPTANCE); const now = s.stored();
+    assert.deepEqual([now['amendments'].map((a: Stored) => a.revision), now['cardRevision'], now['continuations']], [[4], 4, was['continuations']]);
+  });
+  for (const n of [1, 2]) {
+    await scenario([PASS], async (s) => {
+      await s.decide('sha-1');
+      for (let i = 1; i <= n; i += 1) s.amend({ acceptance: [`1. amend holds ${i} times. [R1]`] });
+      assert.equal(s.next()['kind'], 'build');
+      s.attempt('sha-2');
+      assert.deepEqual(s.persisted().candidate, { sha: 'sha-2', dirty: false, untracked: [], digest: amendedDigest('sha-2', n) }, String(n));
+    });
+  }
+  await scenario([PASS], async (s) => {
+    s.attempt('sha-1'); s.next(); await s.pre(); s.next(); await s.review();
+    const was = s.stored(); s.amend(REQUIREMENTS); const now = s.stored();
+    assert.deepEqual([now['preReview'], now['preReview'].rounds.map((r: Stored) => [r.candidateDigest, r.outcome])], [was['preReview'], [['sha-1', 'pass']]]);
+  }, undefined, [PASS]);
 });
