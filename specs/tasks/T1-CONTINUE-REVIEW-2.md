@@ -1,7 +1,7 @@
 ---
 id: T1-CONTINUE-REVIEW-2
 title: "The runner lifts a review stop on the same card in one locked update, and the gate, the admission, the assessment and the second pass read the count the continuation admits (replaces T1-CONTINUE-REVIEW: carries its first candidate e28b2aef, states what `card next` returns in REVIEW_FIX, and raises the cli.start module ceiling of the loop benchmark)"
-status: todo
+status: merged
 branch: T1-CONTINUE-REVIEW-2
 worktree: D:\wt\AIDLC\T1-CONTINUE-REVIEW-2
 plan_ref: plans/card-continuation.md#order-of-work
