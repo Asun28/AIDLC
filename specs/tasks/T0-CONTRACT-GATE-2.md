@@ -1,7 +1,7 @@
 ---
 id: T0-CONTRACT-GATE-2
 title: "The loop refuses new work on a card run while the card differs from its recorded contract"
-status: todo
+status: merged
 branch: T0-CONTRACT-GATE-2
 allow_paths:
   - src/loop/card-runner.ts
