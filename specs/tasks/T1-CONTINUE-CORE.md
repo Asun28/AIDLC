@@ -62,3 +62,35 @@ npm run typecheck && node --test tests/core/continuation.test.ts tests/core/revi
 ```
 - Expected exit code: 0
 - Assertion: the typecheck reports no error and every test of the four files passes.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 [R2] | `tests/core/continuation.test.ts`, the six "acceptance 1 (a/b/c, decisions absent/3)" tests and "acceptance 1: the lifted invocation keeps its own lift, and a gate stop leaves the ledger deep-equal" | pass |
+| 2 [R3] | same file, twelve "acceptance 2: <cause> is refused ..." tests (BUILD; ci, time, card; not a command; noVerdictRetriesUsed 2; blank by; blank reason; decisions 0, 5, 1.5, NaN) | pass |
+| 3 [R1] [R4] | same file, "acceptance 3: a run without continuations parses to an empty array, and one entry round-trips" and "acceptance 3: admittedDecisions is the admits of the last review entry, undefined without one" | pass |
+| 4 [R5] | `tests/core/review-policy.test.ts`, "acceptance 4: the admitted count replaces the four-decision cap in both directions" | pass |
+| 5 [R6] [R7] | same file, "acceptance 5: the re-raise stop and a ship-path block decide as without a count"; every test the file held on main is unchanged (`git diff origin/main -- tests/core/review-policy.test.ts` only appends) | pass |
+| 6 [R7] | `npm run typecheck`; `tests/scenarios/review-rule-ship.test.ts`, `tests/scenarios/fault-points.test.ts` unchanged (dod_command) | pass |
+| 7 [R8] | `docs/ARCHITECTURE.md` (module map names `continuation.ts`; Ship path adapters bullet states R1 to R6), `changelog.d/T1-CONTINUE-CORE.md`; `tests/surface/module-map.test.ts`, `tests/surface/changelog-fragments.test.ts` and every test file that reads `docs/ARCHITECTURE.md` pass | pass |
+
+Guard sweep (each loosened form, run against the four DoD test files; the restored form passes):
+
+| Guard | Loosened form | Failing tests |
+|---|---|---|
+| `run.state !== 'STOP'` | dropped | 1 (acceptance 2, state BUILD) |
+| `stop.reason !== 'review'` | `false` | 3 (ci, time, card rows) |
+| `!commandReviewer` | `false` | 1 |
+| `noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES` | `> MAX + 1` | 1 |
+| `act.by.trim()` / `act.reason.trim()` | untrimmed | 1 each |
+| `act.decisions ?? 1` | `?? 2` | 3 |
+| `!Number.isInteger(decisions)` | dropped | 2 (1.5, NaN) |
+| `decisions < 1` | dropped; `< 0` | 1 each (decisions 0) |
+| `decisions > MAX_R3_DECISIONS` | `> MAX + 1` | 1 (decisions 5) |
+| `i.stopReview && !i.stopLifted` | `i.stopReview`; `!i.stopLifted` | 3; 7 |
+| `admittedDecisions` review filter | dropped | 1 |
+| `.at(-1)` in `admittedDecisions` | `[0]` | 1 |
+| `substantiveDecisions >= cap` | `>` | 4, and 1 in review-rule-ship/fault-points |
+| `cap = admitted ?? MAX_R3_DECISIONS` | `MAX_R3_DECISIONS` | 1 |
+| `admitted === undefined ?` detail | negated | 1 |
+| replay passes `admitted` to `decideFromLedger` | not passed | 1 (after the replay assertion was added to acceptance 4) |
