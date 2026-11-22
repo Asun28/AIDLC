@@ -205,6 +205,27 @@ test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, l
   }
 });
 
+test('T1-CONTINUE-AUDIT acceptance 2: a GOAL_STATE from STOP to CARDS carrying continuation with a string cardId and by ends a stop for review or ci of its generation, and nothing else does', () => {
+  const lifted = (data: Record<string, unknown>, generation = 0): [string, number, Record<string, unknown>] => ['GOAL_STATE', generation, { from: 'STOP', to: 'CARDS', ...data }];
+  const BLOCKS = '1 mutation event(s) after terminal disposition';
+  const rows: Array<[string, number, [string, number, Record<string, unknown>], string | undefined]> = [];
+  for (const reason of ['review', 'ci']) {
+    rows.push(
+      [`${reason}: neither ruling nor continuation`, 0, lifted({}), BLOCKS],
+      [`${reason}: continuation without by`, 0, lifted({ continuation: { cardId: 'T0-X' } }), BLOCKS],
+      [`${reason}: continuation whose cardId is not a string`, 0, lifted({ continuation: { cardId: 7, by: 'owner' } }), BLOCKS],
+      [`${reason}: continuation in another generation`, 1, lifted({ continuation: { cardId: 'T0-X', by: 'owner' } }, 0), BLOCKS],
+      [`${reason}: continuation with a string cardId and by`, 0, lifted({ continuation: { cardId: 'T0-X', by: 'owner' } }), undefined],
+    );
+  }
+  rows.push(['card: continuation with a string cardId and by', 0, lifted({ continuation: { cardId: 'T0-X', by: 'owner' } }), BLOCKS]);
+  rows.push(['ci: ruling with a string cardId and by', 0, lifted({ ruling: { cardId: 'T0-X', by: 'owner' } }), BLOCKS]);
+  rows.forEach(([name, generation, event, expected], i) => {
+    const report = journalOf([['GOAL_STOPPED', generation, { reason: name.split(':')[0] }], event, dispatch(generation)], `g-cont-${i}`);
+    assert.equal(afterTerminal(report)?.detail, expected, `${name}: ${JSON.stringify(report.findings)}`);
+  });
+});
+
 test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state which events re-admit a goal for WORK_AFTER_TERMINAL', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
