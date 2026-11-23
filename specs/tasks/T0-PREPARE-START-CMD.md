@@ -81,7 +81,7 @@ Issue 376. On this repository a session ran the named script, got an error, and 
 Only the narration of a `prepare` start changes. The directive fields, the run state and the store writes stay the same.
 
 ### Security
-No new input, permission or command that the loop runs. The loop prints the commands, and the session runs them.
+The loop prints the commands, and the session runs them. Each path and ref is quoted for the shell, so a value with `$(...)` or a quote does not run as a command.
 
 ### Tests and review
 - Two new test files: one for the function on both platforms, one for the narration on each ship path.
@@ -137,4 +137,33 @@ The scaffold fixture sets `gateRequired: true`: the scaffold path stops a remote
 
 Verify skill `verify-card-run-writes`: the card changes `CardRunner.next`'s PREPARE narration only, no write; `tests/scenarios/fault-points.test.ts` runs in the DoD and passes, so the sync commit stays.
 
-DoD: `npm run typecheck` exit 0; `node --test` over the six files: 159 tests, 159 pass, 0 fail, exit 0.
+DoD: `npm run typecheck` exit 0; `node --test` over the six files: 159 tests, 159 pass, 0 fail, exit 0. After the repair: exit 0, 162 tests, 162 pass, 0 fail.
+
+Repair after R3 decision 1 (F1 and F2, class shell-interpolation): the worktree path, the main checkout and the ref went into the printed commands as they were, so a configured value with `$(...)`, a backtick or a quote would run when a session followed the command. Every value now goes through `shellArg` (exported from `src/delivery/worktree.ts`) or, for the id and the ref, `shellWord`, for the shell of the platform: PowerShell on win32, a POSIX shell elsewhere. A value with no character the shell expands inside double quotes stays in double quotes, so the R1 spelling holds for every ordinary path; any other value is single-quoted, with `''` for each single quote in PowerShell (typographic ones too) and `'\''` in a POSIX shell. A ref of letters, digits, `.`, `_`, `/` and `-` stays a bare word. The check has one site: all four commands are built from these two helpers.
+
+New tests in `tests/infra/worktree-start-command.test.ts`:
+
+| Test | Proof | Result |
+|---|---|---|
+| `shellArg keeps an ordinary path in double quotes ...` | exact output for ordinary paths, `$(...)`, single and typographic quotes, a backslash on each platform, `!` on POSIX; for 11 hostile values on both platforms, a double-quoted result holds no character that shell expands | pass |
+| `PowerShell and sh read each quoted value back unchanged ...` | runs `pwsh -Command [Console]::Out.Write(<arg>)` and `sh -c "printf '%s' <arg>"` for the 11 values and two ordinary paths, and compares the output with the value; both shells ran here (no skip) | pass |
+| `a worktree path, main checkout or ref with metacharacters is quoted literally in every command` | exact spans of the three commands on win32 and linux with `$(...)`, backticks, `;`, `&&` and a single quote in the path, main checkout and ref | pass |
+
+Each value form the repair hunks handle, and the test that covers it:
+
+| Form | Covered by |
+|---|---|
+| an ordinary path, with spaces or backslashes | `shellArg` exact cases; acceptance 1 tests unchanged; the shell round trip |
+| `$` and `$(...)`, `$env:` | `shellArg` exact cases; round trip; the metacharacter command test |
+| a backtick | round trip (a command name between backticks); the command test (a main checkout with backticks) |
+| an ASCII double quote | round trip (`a"b`) |
+| a single quote | `shellArg` exact cases on both platforms; round trip; the command test (`/it's $HOME`) |
+| typographic double and single quotes (PowerShell reads them as quotes) | `shellArg` exact cases; round trip on both shells |
+| `!` (POSIX history expansion) | `shellArg` exact case; round trip |
+| a POSIX backslash | `shellArg` exact case (`'a\b'` on linux, `"a\b"` on win32) |
+| `;`, `&&`, `|`, `>` in a ref or path | the command test (`origin/main;calc`, `main && id`); round trip (`a;b && c|d > e`) |
+| a ref with `$` | the command test (`origin/$(id)`) |
+| a bare ref or card id | acceptance 1 tests unchanged (`origin/main`, `T1-HELLO`) |
+| a control character | single-quoted by the `\u0000-\u001f` range; no test, as a path from `resolveWorktreeRoot` or git holds none |
+
+Shown failing: with the worktree path wrapped in plain double quotes again in `worktreeStartCommands` (the quoting of decision 1), the third test fails.
