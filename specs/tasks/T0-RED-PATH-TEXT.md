@@ -10,6 +10,7 @@ allow_paths:
   - src/loop/card-runner.ts
   - tests/scenarios/build-red-narration.test.ts
   - tests/scenarios/dispute-running-attempt.test.ts
+  - tests/scenarios/dod-receipt-required.test.ts
   - docs/OPERATIONS.md
   - changelog.d/T0-RED-PATH-TEXT.md
   - specs/tasks/T0-RED-PATH-TEXT.md
@@ -26,14 +27,14 @@ acceptance:
   - 1. `tests/scenarios/build-red-narration.test.ts`, a new file, `makeFixture` (dry-run ship path). A `tdd: true` card driven to its first BUILD directive has a narration equal to R2 for that card, which holds `--red-receipt "<sha>:<test>"` and no `task.ps1`. RED on main, whose narration names only `task.ps1 -Phase red`. [R2] [dod arm 2]
   - 2. Same file. The same card with a `CardRunner` whose `shipPath` is a `ScaffoldShipPath` (a subclass whose `readRedReceipt` returns no receipt is allowed) has a narration that holds ``establish behavioural RED first with `aidlc card red <id>` (task.ps1 -Phase red writes .review/<id>.red)`` and no `--red-receipt`. RED on main, whose narration does not name `aidlc card red`. [R3] [dod arm 2]
   - 3. Same file. Each copy of `card-loop.md`, with runs of white space read as one space, holds the R1 sentence and does not hold ``(`aidlc card red <id>`; scaffold: task.ps1``. RED on main. [R1] [dod arm 2]
-  - 4. In `tests/scenarios/dispute-running-attempt.test.ts` only the constant `BEFORE_RED` (line 427) changes, to the R2 narration for card `T0-DRA`; every assertion that uses it passes. `accept-table`, `dod-receipt-required` and `t0-flow`, which match the prefix `establish behavioural RED first`, pass with no change. [R2] [R4] [dod arms 3, 4, 5, 6]
+  - 4. In `tests/scenarios/dispute-running-attempt.test.ts` only the constant `BEFORE_RED` (line 427) changes, to the R2 narration for card `T0-DRA`; every assertion that uses it passes. In `tests/scenarios/dod-receipt-required.test.ts` only the constant `tddClause` (line 346) changes, to the record sentence of R2 for card `T0-DR`; the assertions of that test and the rest of the file pass unchanged. `accept-table` and `t0-flow`, which match the prefix `establish behavioural RED first`, pass with no change. [R2] [R4] [dod arms 3, 4, 5, 6]
   - 5. `tests/surface/templates.test.ts` (the 6500-byte cap and ASCII rule of card-loop.md) and `tests/surface/mirror.test.ts` (the two copies) pass with no change. [R1] [dod arms 7, 8]
   - 6. The OPERATIONS.md sentence and the fragment say what R5 says (reviewer-verified against the diff); the fragment has the form of `changelog.d/README.md` and the prose test passes. [R5] [dod arms 9, 10]
 depends_on: []
 budget: 120
 tdd: true
-sweep: "On main at aecf88e4. `git grep -n -E 'card red|red-receipt|Phase red' -- src docs README.md .claude templates tests`: the wrong instruction stands in both card-loop.md copies at line 48; `tdd/SKILL.md:62-63` and `diagnose/SKILL.md:31` (both copies) already name `--red-receipt` with the scaffold exception; `docs/OPERATIONS.md:98` already states the refusal of `card red` off the scaffold path; the BUILD narration is `src/loop/card-runner.ts:1454`, pinned in full only by `tests/scenarios/dispute-running-attempt.test.ts:427` and by its prefix in accept-table:34, dod-receipt-required:349 and t0-flow:1044. card-loop.md is 6494 of its 6500 bytes; the R1 parenthetical (52 bytes) replaces one of 54."
-forbid: [a change to src/cli/main.ts, a change to the byte caps in tests/surface/templates.test.ts, a change to another existing test file or to another line of dispute-running-attempt.test.ts, a change to the tdd or diagnose skills]
+sweep: "On main at aecf88e4. `git grep -n -E 'card red|red-receipt|Phase red' -- src docs README.md .claude templates tests`: the wrong instruction stands in both card-loop.md copies at line 48; `tdd/SKILL.md:62-63` and `diagnose/SKILL.md:31` (both copies) already name `--red-receipt` with the scaffold exception; `docs/OPERATIONS.md:98` already states the refusal of `card red` off the scaffold path; the BUILD narration is `src/loop/card-runner.ts:1454`, pinned in full by `tests/scenarios/dispute-running-attempt.test.ts:427`, its record sentence by `tests/scenarios/dod-receipt-required.test.ts:346` (missed at registration, added by owner amendment), and by its prefix in accept-table:34, dod-receipt-required:349 and t0-flow:1044. card-loop.md is 6494 of its 6500 bytes; the R1 parenthetical (52 bytes) replaces one of 54."
+forbid: [a change to src/cli/main.ts, a change to the byte caps in tests/surface/templates.test.ts, a change to another existing test file, to another line of dispute-running-attempt.test.ts or to another line of dod-receipt-required.test.ts, a change to the tdd or diagnose skills]
 non_goals:
   - "option 1 of issue 437: `aidlc card red` recording a RED receipt on the github and dry-run ship paths"
   - a `--goal` option on `aidlc card red`

@@ -1,7 +1,7 @@
 ---
 id: T0-OUTCOME-DUCKDB-EPIPE
 title: "bench/outcome/run.ts reports that the DuckDB binary cannot be started only when no process started; a binary that exited before its input was written is a failed query with its exit code"
-status: todo
+status: merged
 branch: T0-OUTCOME-DUCKDB-EPIPE
 worktree: D:\wt\AIDLC\T0-OUTCOME-DUCKDB-EPIPE
 allow_paths:
@@ -58,3 +58,39 @@ npm run typecheck && node --test tests/surface/outcome-duckdb.test.ts tests/surf
 ```
 - Expected exit code: 0
 - Assertion: the tests of the new file pass, the tests that start `run.ts` pass unchanged, and the changelog fragment is well formed.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/outcome-duckdb.test.ts`, test `acceptance 1: a binary that exits before a 1 MiB input is written is a failed query ...`. RED at c766db73, where the call has moved with the rule of main: `queryDuckdb` throws `NoDuckdb` with `spawnSync C:\Program Files\nodejs\node.exe EOF` | pass after the fix |
+| 2 | Same file, test `acceptance 2: a path that names no file cannot be started; node with a one-line input is a failed query ...` | pass |
+| 3 | Same file, test `acceptance 3: with a scripted spawn ...`: the arguments of the call, three outputs, seven failures | pass |
+| 4 | The DoD: `outcome-ingest` (acceptance 4 and 10 among its tests), `outcome-summary`, `outcome-github`, `outcome-baseline`, `outcome-usage`. 71 tests, none skipped: DuckDB 1.5.6 is on PATH here, so the views ran through `queryDuckdb` | pass |
+| 5 | `bench/outcome/README.md` (the exit codes paragraph and the Tests section) and the fragment; `tests/surface/changelog-fragments.test.ts`, `tests/surface/prose.test.ts` | reviewer-verified; pass |
+
+Each result `spawn` can return, what `queryDuckdb` does with it, and the proof:
+
+| Error | Status | Signal | Outcome | Proof |
+|---|---|---|---|---|
+| yes | null | null | `NoDuckdb` with the error's message | acceptance 2 (a missing path, `ENOENT`); acceptance 3 |
+| yes | a number | null | failed query: stderr, then the error | acceptance 1 (exit 9 before a 1 MiB input is written); acceptance 3 with a stderr, with an empty stderr and with status 0 |
+| yes | null | set | failed query: the error | acceptance 3 (`ENOBUFS`, `SIGTERM`) |
+| no | null | set | failed query: stderr | acceptance 3 (`SIGKILL`) |
+| no | not 0 | null | failed query: stderr | acceptance 3 (status 1); acceptance 2 when the write came first |
+| no | 0 | null | the rows of the JSON array; none for an empty or white-space output | acceptance 3; the view tests with a real DuckDB |
+
+Unchanged and outside the card: an output with status 0 that is not JSON makes `JSON.parse` throw, and `run.ts` exits 1, as on main.
+
+Each clause and the mutant that fails without it (applied, run and restored; the typecheck is DoD arm 1):
+
+| Clause | Mutant | Fails |
+|---|---|---|
+| R2 no exit code and no signal | the rule of main (`r.error && r.signal === null`); the signal check left out | acceptance 1 and 3; acceptance 3 |
+| R3 an error or a non-zero exit fails | an error beside exit 0 returns; a non-zero exit without an error returns | acceptance 3; acceptance 2 and 3 |
+| R3 detail for an exit | the error alone; an empty part kept; stderr not trimmed; the error before stderr | acceptance 1 and 3 |
+| R3 detail for a null status | stderr and error joined; stderr before the error | acceptance 3 |
+| R3 message | no exit code; the sql in place of the label | acceptance 1, 2 and 3; typecheck |
+| R1 the call | `-bail` left out; another `maxBuffer`; `windowsHide` left out | acceptance 3; typecheck |
+| R1 the rows | white space parsed; always none | acceptance 3 |
+| R4 exits of `run.ts` | `NoDuckdb` exits 1; no install hint; every query error exits 2 | `outcome-ingest` acceptance 4 and 8; typecheck |
+| R4 the query `run.ts` passes | the views left out; run in the invocation directory | typecheck; `outcome-ingest` acceptance 5 (needs DuckDB) |

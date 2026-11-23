@@ -71,10 +71,13 @@ keeps the last matching lessons in place of the first.
 Budgets: 130 and 60 changed lines, 190 in total. The cards run one after the other.
 
 ## Risks
-- Cards T0-PR-SUMMARY and T0-AMEND-DELTA were registered by another session on 2026-11-23.
-  T0-PR-SUMMARY allows `docs/OPERATIONS.md` and `docs/ARCHITECTURE.md`. Neither card of this
-  plan runs beside a card that allows one of its paths; each reads its line numbers again at
-  PREPARE.
+- Two open cards of other sessions allow a file of this plan: T0-PR-SUMMARY
+  (`docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`) and T0-RED-PATH-TEXT (`docs/OPERATIONS.md`).
+  On 2026-11-23, with main at c44e06fc, their branches change `docs/OPERATIONS.md` at lines
+  100 and 692 and `docs/ARCHITECTURE.md` at line 220; this plan changes lines 63 and 739 and
+  lines 159 to 160, so a merge of main joins the changes without a conflict. The owner said
+  "run lesson-delivery" while both were open. The two cards of this plan run one after the
+  other, and each reads its line numbers again at PREPARE.
 - The lessons a card writer receives are prose. One outside study measured a one-line rule
   in an instruction file as followed on 60 to 68% of cases, so the measure below decides
   whether the delivery is kept, not the merge.
