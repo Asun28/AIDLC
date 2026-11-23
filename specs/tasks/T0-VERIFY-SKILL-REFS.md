@@ -65,9 +65,109 @@ short body that says what its file holds and when to read it. In the trial
 - After this card, a card that adds a command the check does not drive edits `references/not-covered.md`, not `SKILL.md`.
 - No document names either section, so no document changes; the changelog fragment records the move.
 
+## PR summary
+### What
+Two long sections of the `verify-card-run-writes` skill move to reference files beside `SKILL.md`. `SKILL.md` goes from 7994 to 5525 bytes.
+
+### Why / Intent
+`SKILL.md` was 6 bytes below its 8000-byte cap. The next change to its coverage record had no room. The two sections are necessary only in special cases.
+
+### How / Behaviour
+- `references/not-covered.md` holds the list of what the check does not cover.
+- `references/shown-failing.md` holds the record of one failed run, with its TAP output.
+- Each section in `SKILL.md` keeps a short text that tells the reader when to read its file.
+
+### System impact
+Skill text and one test file change. No source code, no command and no state changes. `aidlc init` does not install this skill.
+
+### Security
+No new input, command or permission. The two files hold text that was in `SKILL.md` before.
+
+### Tests and review
+- One new test checks the two files and the two short sections. The DoD passes with 73 tests.
+- 47 single changes to the skill files or the test's fence pattern: a test fails for each.
+- The full suite passed before the review: 4097 tests, 0 failures. The repair after the review changes the new test only.
+
+### Risk
+Low. The change moves text only. A reader who does not open a reference file still gets a summary in `SKILL.md`.
+
+### Ownership
+Card `T0-VERIFY-SKILL-REFS`, goal `g-20261123090044-3aa462`, issue 430.
+
+### Docs
+No document names the two sections, so no document changes. `changelog.d/T0-VERIFY-SKILL-REFS.md` holds the entry.
+
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/surface/templates.test.ts tests/surface/mirror.test.ts tests/surface/prose.test.ts tests/surface/changelog-fragments.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the new test and the existing tests of the skill pass, and the mirror, prose and changelog fragment tests pass.
+
+## Attempt evidence
+RED commit 3cd8e7e5 holds the change to `tests/surface/templates.test.ts` alone. The new test fails there on its first assertion, `references/not-covered.md missing beside SKILL.md`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/templates.test.ts`, test `T0-VERIFY-SKILL-REFS: the Not covered list and the Shown failing record are reference files beside SKILL.md, ...`: for each section, the file exists, opens with its title line, is ASCII and has no placeholder marker; the body in `SKILL.md` is at most 400 bytes (280 and 252), holds no run of three backticks or tildes (`FENCE`), is refused with each of eight forms of a fenced block after its last line (`FENCED`), names the file as a code span and holds `Read`, the span and `when` in that order. RED at 3cd8e7e5 | pass after the change |
+| 2 | The same test: the three patterns on `references/not-covered.md`, and `/not\s+ok/i` finds nothing in `SKILL.md` | pass |
+| 3 | Test `acceptance 4: Shown failing (references/shown-failing.md) names ...` reads the file; `git diff --numstat origin/main...HEAD` lists `32 2 tests/surface/templates.test.ts`, and the two deleted lines are the name of that test and the line that read the section. Acceptance 1, acceptance 2 and the `T0-VERIFY-SYNC-CMD` test pass with no line changed | pass |
+| 4 | `git show 026debc9:.claude/skills/verify-card-run-writes/SKILL.md \| sed -n '54,75p'` compared with `references/not-covered.md` from its second line by `cmp`: equal; the same with `sed -n '78,98p'` and `references/shown-failing.md`: equal. `git diff -U0 origin/main...HEAD -- .claude/skills/verify-card-run-writes/SKILL.md` has two hunks, `-54,22 +54,4` and `-78,21 +60,4`, which are the two bodies | pass; what each body says is for the reviewer |
+| 5 | DoD arm 1 exit 0; `tests/surface/mirror.test.ts` and `tests/surface/prose.test.ts` are not in the diff and pass; `tests/surface/changelog-fragments.test.ts` passes; DoD tests: 73, 73 pass, 0 fail | pass; the text of the fragment is for the reviewer |
+
+Each requirement clause and the assertion that fails without it:
+
+| Clause | Assertion |
+|---|---|
+| R1 and R2, the file exists | item 1, `existsSync` |
+| R1 and R2, the title line | item 1, `startsWith` |
+| R1 and R2, the lines of main, byte for byte, nothing after them | item 4, the two `cmp` runs (reviewer-verified); item 2 for the three terms of the list; `acceptance 4` for the src/ file, the covered function and the TAP excerpt of the record |
+| R3, the heading line stays | acceptance 2 of the describe, the ten headings; the new test reads each body by its heading |
+| R3, at most 400 bytes | item 1, the byte count |
+| R3, no code fence | item 1, `FENCE` on each body and the eight `FENCED` forms on each body |
+| R3, the sentence with `Read`, the file as a code span, `when` | item 1, the span check and the phrase check |
+| R3, says what the file holds | item 4 (reviewer-verified) |
+| R4 | acceptance 2 of the describe, unchanged |
+| R5 | item 4, the two hunks (reviewer-verified); acceptance 1, acceptance 3 and the `T0-VERIFY-SYNC-CMD` test for the front matter, the coverage record and Keeping in sync |
+| R6 | item 1, the ASCII check and the four markers |
+| R7 | item 5 (reviewer-verified) and the fragment test |
+
+Changes, each made alone to one of the three skill files or to the test file, run against `tests/surface/templates.test.ts`, then restored. 43 changes to the skill files and 4 to the fence pattern of the test, and a test fails for each; the unchanged files and the two bodies padded to exactly 400 bytes pass:
+
+| Change | Test that fails |
+|---|---|
+| `references/not-covered.md` removed | the new test |
+| `references/shown-failing.md` removed | the new test and acceptance 4 |
+| a title line with two hashes; a title line in another case | the new test |
+| a non-ASCII character in either file | the new test |
+| `TODO` or `TBD` in the list; `FIXME` or an angle placeholder in the record | the new test |
+| either body padded to 401 bytes | the new test |
+| a code fence in a body | the new test |
+| each of eight forms of a fenced block after the last line of either body, 16 changes: three backticks, three tildes, four backticks, five tildes, three backticks indented with an info string, three tildes indented, tildes in a list item, backticks in a block quote | the new test |
+| the `FENCE` pattern of the test loosened to backticks only, to tildes only, to the line start, to a run of four | the new test, on a `FENCED` form |
+| the file named without a code span; the other file named | the new test |
+| `See` in place of `Read`; `if` in place of `when`; words between `Read` and the file | the new test |
+| the list without the lease, without the review queue, without more than one fault per run | the new test |
+| `NOT  OK` in capitals with two spaces in `SKILL.md`; `not` and `ok` on two lines | the new test |
+| the `SKILL.md` body without the lease | acceptance 2 |
+| the record without its `not ok` lines, without a covered function, without a src/ file | acceptance 4 |
+
+Verify skill `verify-card-run-writes`: the card changes no file of the coverage record (`tests/scenarios/fault-points.test.ts`, `src/loop/card-runner.ts`, `src/state/goal-store.ts`, `src/state/store.ts`, `src/state/journal.ts`), so the check and the sync commit are not involved.
+
+Repair after R3 decision 1 (F1, class tilde-fence-not-rejected): the test refused a fence of backticks only. It now refuses any run of three or more backticks or tildes in a section body, and it asserts for each of the two bodies that eight forms of a fenced block, put after the last line of the body, are refused. At the candidate of decision 1 (263c39b3) the eight changes with a tilde fence passed the test; each fails it now. The check has one site, the new test; the helper `fences` of the describe finds the fenced blocks that acceptance 2 and acceptance 4 ask for and refuses nothing.
+
+Each form a section body can hold, and what covers it:
+
+| Form | Covered by |
+|---|---|
+| a fence of three backticks or of three tildes | `FENCED` forms 1 and 2 on each body; the changes of the table above |
+| a longer run: four backticks, five tildes | `FENCED` forms 3 and 4 |
+| an indented fence, with or without an info string | `FENCED` forms 5 and 6 |
+| a fence in a list item or in a block quote | `FENCED` forms 7 and 8 |
+| code spans of one backtick, no fence | the two bodies of the candidate pass |
+| a code block of indented lines, with no delimiter | not a fence, so outside R3; the 400-byte bound holds for it |
+| an HTML element such as pre | acceptance 1 of the describe refuses an angle-bracket tag anywhere in `SKILL.md` |
+
+Full suite, run once on the candidate skill files, test file and changelog fragment, before this section was written and before the repair, which changes `tests/surface/templates.test.ts` and this card file only: `npm test` exit 0, 4097 tests, 4065 pass, 0 fail, 32 skipped.
+
+Size: 86 lines added and 45 deleted before this card file, against the budget of 200.

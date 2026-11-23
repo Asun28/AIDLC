@@ -479,9 +479,39 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
     assert.deepEqual(files, coverage(section(text, 'Coverage')).map((l) => l.file), 'the command diffs the coverage record files, in order');
   });
 
-  test('acceptance 4: Shown failing names an existing src/ file and a covered function and holds a TAP excerpt with a not ok line of the check [R10]', () => {
+  /** The sections of SKILL.md whose text is in a reference file beside it (card T0-VERIFY-SKILL-REFS): the heading and the file, relative to the skill directory. */
+  const REFERENCES: ReadonlyArray<readonly [heading: string, file: string]> = [['Not covered', 'references/not-covered.md'], ['Shown failing', 'references/shown-failing.md']];
+  const reference = (rel: string) => read(`${path.posix.dirname(SKILL)}/${rel}`);
+  /** A Markdown code fence delimiter: a run of three or more backticks or tildes, at any indentation and also inside a list item or a block quote. */
+  const FENCE = /`{3}|~{3}/;
+  /** The forms of a fenced block that FENCE refuses in a section body: each delimiter, a longer run, an indented one with an info string, one in a list item and one in a block quote. */
+  const FENCED = ['```\nx\n```', '~~~\nx\n~~~', '````\nx\n````', '~~~~~\nx\n~~~~~', '   ```sh\n   x\n   ```', '   ~~~\n   x\n   ~~~', '- a\n  ~~~\n  x\n  ~~~', '> ```\n> x\n> ```'];
+
+  test('T0-VERIFY-SKILL-REFS: the Not covered list and the Shown failing record are reference files beside SKILL.md, and each of the two sections of SKILL.md is at most 400 bytes, names its file and says when to read it', () => {
     const text = read(SKILL);
-    const shown = section(text, 'Shown failing');
+    for (const [heading, rel] of REFERENCES) {
+      assert.ok(existsSync(path.join(root, path.dirname(SKILL), rel)), `${rel} missing beside SKILL.md`);
+      const file = reference(rel);
+      assert.ok(file.startsWith(`# ${heading}\n`), `${rel} opens with the line # ${heading}`);
+      assert.ok(!/[^\x00-\x7F]/.test(file), `${rel} must be ASCII`);
+      for (const marker of [/\bTODO\b/, /\bTBD\b/, /\bFIXME\b/, /<[A-Za-z][^<>\n]*>/]) assert.ok(!marker.test(file), `${rel} carries a placeholder: ${marker}`);
+      const body = section(text, heading);
+      assert.ok(Buffer.byteLength(body, 'utf8') <= 400, `## ${heading} is ${Buffer.byteLength(body, 'utf8')} bytes > 400`);
+      assert.doesNotMatch(body, FENCE, `## ${heading} holds no code fence`);
+      for (const fenced of FENCED) assert.match(`${body}${fenced}\n`, FENCE, `## ${heading} with ${JSON.stringify(fenced)} as its last lines is refused`);
+      assert.ok(spansOf(body).includes(rel), `## ${heading} names \`${rel}\``);
+      assert.ok(body.replace(/\s+/g, ' ').includes(`Read \`${rel}\` when `), `## ${heading} says when to read ${rel}`);
+    }
+    const notCovered = reference('references/not-covered.md').replace(/\s+/g, ' ');
+    assert.match(notCovered, /\blease\b/i, 'references/not-covered.md names the lease');
+    assert.match(notCovered, /\breview[- ]queue\b/i, 'references/not-covered.md names the review queue');
+    assert.match(notCovered, /more than one fault per run/i, 'references/not-covered.md names more than one fault per run');
+    assert.doesNotMatch(text, /not\s+ok/i, 'SKILL.md holds no TAP result line: the excerpt is in references/shown-failing.md');
+  });
+
+  test('acceptance 4: Shown failing (references/shown-failing.md) names an existing src/ file and a covered function and holds a TAP excerpt with a not ok line of the check [R10]', () => {
+    const text = read(SKILL);
+    const shown = reference('references/shown-failing.md');
     const prose = shown.replace(/```[\s\S]*?```/g, '');
     const src = spansOf(prose).filter((s) => isPath(s) && s.startsWith('src/'));
     assert.ok(src.length > 0 && src.every((s) => existsSync(path.join(root, s))), `Shown failing names an existing file under src/: ${src.join(', ')}`);
