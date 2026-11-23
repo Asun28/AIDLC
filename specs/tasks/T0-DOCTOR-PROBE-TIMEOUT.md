@@ -14,7 +14,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - changelog.d/T0-DOCTOR-PROBE-TIMEOUT.md
   - specs/tasks/T0-DOCTOR-PROBE-TIMEOUT.md
-dod_command: npm run typecheck && node --test tests/infra/toolchain-probe.test.ts tests/infra/git-lookup-timeout.test.ts tests/infra/paths.test.ts tests/surface/doctor-interrupted-writes.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts
+dod_command: npm run typecheck && node --test tests/infra/toolchain-probe.test.ts tests/infra/git-lookup-timeout.test.ts tests/infra/paths.test.ts tests/surface/doctor-interrupted-writes.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/module-map.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts
 dod_exit: 0
 review_gate: codex {verdict:pass}
 requirements:
@@ -28,7 +28,7 @@ acceptance:
   - 2. Same file, a scripted async runner. The calls are exactly the three of R1 with `{ timeoutMs }`, the default being `TOOLCHAIN_PROBE_TIMEOUT_MS` (120000); exit 0 with output on stdout, and on stderr only, gives its first line; a non-zero exit and a spawn error give each tool's MISSING text; `timedOut` true gives the unknown line also beside exit code 0. [R1] [R2] [dod arm 2]
   - 3. `tests/infra/git-lookup-timeout.test.ts`, real process. `gitOut` with a spawner that runs the node binary with a script that never exits, with the options it receives, and `timeoutMs` 500, throws within 15 s an `Error` whose message is `git rev-parse --show-toplevel did not exit within 500 ms in <cwd>`. A recording spawner sees `timeout: 120000` by default and the `cwd`, `encoding: 'utf8'` and `windowsHide: true` of main; a result with status 0 returns the trimmed stdout, status 1 and an `ENOENT` error return undefined. RED on main's `gitOut` exported with the seam, where the call does not end and the test's 20 s timeout fails it. [R4] [dod arm 3]
   - 4. The doctor and repository tests pass with no change: `tests/infra/paths.test.ts`, `tests/surface/doctor-interrupted-writes.test.ts`, `tests/surface/cli-cwd-paths.test.ts`; doctor prints the version lines of the real tools. [R3] [R4] [dod arms 4, 5, 6]
-  - 5. The wiring of R3 and the call of R4 in `resolveRepoIdentity`, and the text of R5 (reviewer-verified against the diff); the fragment has the form of `changelog.d/README.md` and the prose test passes. [R3] [R4] [R5] [dod arms 1, 7, 8]
+  - 5. The wiring of R3 and the call of R4 in `resolveRepoIdentity`, and the text of R5 (reviewer-verified against the diff); the module map names `src/probes/toolchain.ts`; the fragment has the form of `changelog.d/README.md` and the prose test passes. [R3] [R4] [R5] [dod arms 1, 7, 8, 9]
 depends_on: []
 budget: 220
 tdd: true
@@ -57,7 +57,7 @@ The probes move to `toolchainReport` in `src/probes/toolchain.ts` and run throug
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/infra/toolchain-probe.test.ts tests/infra/git-lookup-timeout.test.ts tests/infra/paths.test.ts tests/surface/doctor-interrupted-writes.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts
+npm run typecheck && node --test tests/infra/toolchain-probe.test.ts tests/infra/git-lookup-timeout.test.ts tests/infra/paths.test.ts tests/surface/doctor-interrupted-writes.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/module-map.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass, the doctor and repository tests pass unchanged, and the changelog fragment is well formed.
