@@ -1,7 +1,7 @@
 ---
 id: T0-API-REVIEW-SKILL
 title: "secure-api-review checks authentication and personal data against what the project declares, its description names what it checks, and a surface test covers the file"
-status: todo
+status: merged
 branch: T0-API-REVIEW-SKILL
 worktree: D:\wt\AIDLC\T0-API-REVIEW-SKILL
 allow_paths:
