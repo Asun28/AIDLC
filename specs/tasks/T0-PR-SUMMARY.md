@@ -83,12 +83,13 @@ The old text was one fixed line. A person could not see what a change does, or w
 Only `src/delivery/github-ship.ts` changes. The ship runs no new command. A pull request that exists keeps its text.
 
 ### Security
-The ship refuses a section that contains an at sign, so GitHub sends no notification to an account. The text goes to `gh` as one argument and not through a shell.
+The ship refuses a section that contains an at sign, so GitHub sends no notification to an account. The text goes to `gh` as one argument and not through a shell. The ship also refuses a NUL character, because no command can receive it.
 
 ### Tests and review
 - Six new tests in `tests/infra/pr-summary.test.ts` pass. The DoD passes with 112 tests.
-- 39 single changes to the new code: a test fails for 38 of them. One change is equivalent.
-- The full suite ran once. Two document tests failed, the paragraph moved, and the 87 related test files now pass.
+- 44 single changes to the new code: a test fails for 43 of them. One change is equivalent.
+- The full suite ran once. Two document tests failed, the paragraph moved, and the related test files now pass.
+- R3 blocked one time: an empty commit id counted as a pass. The check is now exact.
 
 ### Risk
 Low. A card with no section gets the same text as before. A repository with a different card directory also gets the old text.
@@ -112,12 +113,12 @@ RED commit 4c65744c holds the tests and a `prBody` seam that returns the fixed l
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/infra/pr-summary.test.ts`, `acceptance 1`: seven texts, each `deepEqual` to the literal body for `reviewed` true and false; text before `### What`; a heading with trailing white space; `#### Detail` and `###x` as text; 4000 characters | pass |
-| 2 | Same file, `acceptance 2`: 18 texts, each `deepEqual` to the fixed line and its reason; three hold more than one fault and give the first reason of R2 | pass |
+| 2 | Same file, `acceptance 2`: 21 texts, each `deepEqual` to the fixed line and its reason, an empty text and a NUL character among them; four hold more than one fault and give the first reason of R2 | pass |
 | 3 | Same file, `acceptance 3`: `merged`; the arguments of the one `gh pr create` equal the literal list with the body; `PR body: the PR summary of the card` once, directly before the number line | pass |
-| 4 | Same file, `acceptance 4`: no card file, and a summary that holds `@`: the fixed line as `--body`, the reason line directly before the number line, `merged` | pass |
-| 5 | Same file, `acceptance 5`: five verdict states with `requireVerdict` false end `no pass recorded for this commit.`; a pass with no `sha` and a pass with `run_status` `success` end `pass.` | pass |
-| 6 | Same file, `acceptance 6`: a reused pull request (`merged`, number 8, no create), a create that exits 1 (`pr-failed`), no verdict file (`review-no-verdict`); no `PR body:` line in any | pass |
-| 7 | DoD arm 1 exit 0; DoD arm 2, 112 tests, 112 pass, 0 fail; `git diff --numstat origin/main...HEAD -- tests` lists `tests/infra/pr-summary.test.ts` alone (181 lines added) | pass |
+| 4 | Same file, `acceptance 4`: no card file, a summary that holds `@`, and one that holds a NUL character: the fixed line as `--body`, the reason line directly before the number line, `merged` | pass |
+| 5 | Same file, `acceptance 5`: seven verdict states with `requireVerdict` false end `no pass recorded for this commit.`, an empty `sha` and an empty `run_status` among them; a pass with an empty `sha` under the default `requireVerdict` reaches the create call and ends the same; a pass with no `sha` and a pass with `run_status` `success` end `pass.` | pass |
+| 6 | Same file, `acceptance 6`: a reused pull request (`merged`, number 8, no create), a create that exits 1 and one that prints no address (`pr-failed`), one that times out (`effect-unknown`), no verdict file (`review-no-verdict`); no `PR body:` line in any | pass |
+| 7 | DoD arm 1 exit 0; DoD arm 2, 112 tests, 112 pass, 0 fail; `git diff --numstat origin/main...HEAD -- tests` lists `tests/infra/pr-summary.test.ts` alone | pass |
 | 8 | `tests/surface/changelog-fragments.test.ts`; `docs/OPERATIONS.md`, Ship gates, the paragraph that starts `Pull request text (card T0-PR-SUMMARY).`, directly above the `aidlc review resolve` paragraph; `docs/ARCHITECTURE.md`, the last sentence of the `GitHubShipPath` item | pass; the two documents are for the reviewer |
 
 Each requirement clause and the assertion that fails without it:
@@ -138,11 +139,11 @@ Each requirement clause and the assertion that fails without it:
 | R4, one line directly before the number line, for each text | items 3 and 4, `bodyLines` |
 | R5, the ship as on main, and no line without a created pull request | item 3 (the whole argument list), items 6 and 7 |
 
-Guards, each loosened alone in `src/delivery/github-ship.ts`, run against the new test file, then restored. 39 changes: a test fails for 38, and one is equivalent.
+Guards, each loosened alone in `src/delivery/github-ship.ts`, run against the new test file, then restored. 44 changes: a test fails for 43, and one is equivalent.
 
 | Guard | Loosened to | Items that fail |
 |---|---|---|
-| `cardText === undefined` | removed | 2, 4 |
+| `cardText === undefined` | removed; `!cardText` | 2, 4; 2 |
 | `\r\n` read as `\n` | not replaced | 1 |
 | `l.trimEnd() === '## PR summary'` | `l ===`; `l.trim() ===`; `l.startsWith(` | 1; 2; 2 |
 | `findIndex` of that line | `findLastIndex` | 1 |
@@ -156,17 +157,22 @@ Guards, each loosened alone in `src/delivery/github-ship.ts`, run against the ne
 | `every((l) => l.trim() === '')` | `l === ''`; check removed; read to the end of the summary | 2; 2; 2 |
 | `summary.length > PR_SUMMARY_MAX` | `>=`; one higher; removed | 1; 2; 2 |
 | `summary.includes('@')` | removed | 2, 4 |
-| the order of the reasons | the `@` rule before the limit; the limit before the text rule; the `@` rule before the headings rule | 2; 2; 2 |
+| `summary.includes('\0')` | removed | 2, 4 |
+| the order of the reasons | the `@` rule before the limit; the limit before the text rule; the `@` rule before the headings rule; the NUL rule before the `@` rule | 2; 2; 2; 2 |
 | `reviewed ? 'pass' : ...` | words exchanged | 1, 3, 5 |
-| ship, `sha` absent or the head | conjunct removed; `sha === head` alone | 5; 5 |
+| ship, `sha === undefined` or the head | conjunct removed; `sha === head` alone; `!sha` (the form R3 decision 1 blocked) | 5; 5; 5 |
 | ship, `run_status` absent or `success` | conjunct removed; `=== 'success'` alone | 5; 3, 5 |
 | ship, the card path under the worktree | under the main checkout | 3, 4, 5 |
 | ship, a read failure gives no text | thrown again | 4 |
-| ship, the output line | removed; the two texts exchanged; one more written before the create call | 3, 4; 3, 4; 3, 4, 6 |
+| ship, the output line | removed; the two texts exchanged; one more written before the create call; one more written after the exit code check and before the number check | 3, 4; 3, 4; 3, 4, 6; 3, 4, 6 |
 | ship, `'--body', text.body` | a constant | 3, 4, 5 |
 
 equivalent: `v.verdict?.verdict === 'pass'` loosened to `v.verdict !== undefined`. A block verdict reaches `gh pr create` only with a `sha` that is not the head, because a block with no `sha` or with the head's ends the ship before; the `sha` conjunct already makes `reviewed` false for it. No input tells the two forms apart.
 
-Full suite, run once because the DoD names none of the test files that read the two documents: `npm test` in the worktree, exit 1, 4068 tests, 4034 pass, 2 fail, 32 skipped. The two failures were `tests/scenarios/review-release.test.ts:790` and `tests/scenarios/review-resolve.test.ts:995`, which pin the last two paragraphs of Ship gates. The owner amended R6 (revision 1) and the paragraph moved above the `aidlc review resolve` paragraph. After the move and the merge of main at a72f2ff8, the 87 test files that read `docs/OPERATIONS.md` or `docs/ARCHITECTURE.md` or construct `GitHubShipPath` pass: 2051 tests, 2038 pass, 0 fail, 13 skipped.
+Full suite, run once because the DoD names none of the test files that read the two documents: `npm test` in the worktree, exit 1, 4068 tests, 4034 pass, 2 fail, 32 skipped. The two failures were `tests/scenarios/review-release.test.ts:790` and `tests/scenarios/review-resolve.test.ts:995`, which pin the last two paragraphs of Ship gates. The owner amended R6 (revision 1) and the paragraph moved above the `aidlc review resolve` paragraph. After the move, the repair below and the merge of main at c44e06fc, the 87 test files that read `docs/OPERATIONS.md` or `docs/ARCHITECTURE.md` or construct `GitHubShipPath` pass: 2051 tests, 2038 pass, 0 fail, 13 skipped.
 
-Size: the candidate adds 181 test lines, 40 source lines and 4 document and changelog lines, 225 of the 230 budget, before this card file.
+Repair after R3 decision 1, F1 (class empty-sha-as-absent): `reviewed` read a pass verdict whose `sha` is the empty string as a pass with no `sha`. It now compares `sha` with `undefined`. The `sha` values the hunk can be given, each with its test in item 5: absent (`pass.`), the head (`pass.`, also item 3), the empty string (no pass, with `requireVerdict` false and with the default), another commit (no pass). A `sha` that is not a string never reaches the hunk: `parseVerdictDocument` drops it, so it is absent. Other sites of the class in the new code, each with a case added to its test: an empty card text is a text and gives `no PR summary section` (item 2); an empty `run_status` is read as `malformed` by `parseVerdictDocument` and is no pass (item 5). Two sites of the class are left as on main, because R5 keeps every outcome of the ship: the block check and the stale check of the verdict gates (`!v.verdict.sha`, `v.verdict?.sha &&`), which take an empty `sha` as none. The OPERATIONS paragraph said that `github.requireVerdict` on never lets a verdict that is no pass reach the create call; an empty `sha` does, so the paragraph now states the condition of the line itself.
+
+Amendments, each on the owner's instruction in the session and recorded with `aidlc card amend`: revision 1, R6 places the paragraph above the `aidlc review resolve` paragraph; revision 2, R2, R6 and acceptance 2 gain the seventh reason `a NUL character`. `runSync` throws for an argument that holds U+0000 (`The argument 'args[2]' must be a string without null bytes`), so without the rule a summary with one made the ship throw at `gh pr create`, after the push.
+
+Size: the candidate adds 200 test lines, 43 source lines and 4 document and changelog lines before this card file, 247 against the budget of 230; 19 of the test lines and 3 of the source lines came with the repair and the second amendment.
