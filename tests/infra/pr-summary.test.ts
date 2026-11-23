@@ -70,6 +70,7 @@ describe('T0-PR-SUMMARY: prBody', () => {
   test('acceptance 2: each other text gets the fixed line and the first reason that applies [R2]', () => {
     const cases: Array<[string, string | undefined, string]> = [
       ['an undefined text', undefined, 'no card file'],
+      ['an empty text', '', 'no PR summary section'],
       ['no summary line', HEAD_LINES.join('\n'), 'no PR summary section'],
       ['an indented summary line', card(LINES, undefined, '\n', '  ## PR summary'), 'no PR summary section'],
       ['a summary line with more text', card(LINES, undefined, '\n', '## PR summary notes'), 'no PR summary section'],
@@ -87,6 +88,8 @@ describe('T0-PR-SUMMARY: prBody', () => {
       ['exchanged headings, no text under one and the character @', card(swap('Card T1-A.', ['@someone'], exchanged).slice(0, -1)), 'the headings are not the nine in order'],
       ['no text under Security and 4001 characters', card([...noSecurityText, 'x'.repeat(4001)]), 'no text under a heading'],
       ['4001 characters and the character @', card(sized(4001, '@')), 'over 4000 characters'],
+      ['a NUL character', card(swap('Card T1-A.', ['Card T1-A.\0'])), 'a NUL character'],
+      ['the character @ and a NUL character', card(swap('Card T1-A.', ['\0 by @someone.'])), 'the character @'],
     ];
     for (const [name, text, reason] of cases) assert.deepEqual(prBody(text, 'T1-A', true), { body: FIXED, reason }, name);
   });
@@ -149,6 +152,11 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
     assert.equal(at.r.outcome, 'merged', at.r.receipt.stdout);
     assert.deepEqual(at.creates, createArgs(FIXED));
     assert.deepEqual(bodyLines(at.lines), [['PR body: the fixed line (the character @)', 'PR #42']]);
+    // A NUL character can be no argument of a process: the ship sends the fixed line and goes on.
+    const nul = shipOnce({ verdict: PASS_VERDICT, cardText: card(swap('Card T1-A.', ['Card T1-A.\0'])) });
+    assert.equal(nul.r.outcome, 'merged', nul.r.receipt.stdout);
+    assert.deepEqual(nul.creates, createArgs(FIXED));
+    assert.deepEqual(bodyLines(nul.lines), [['PR body: the fixed line (a NUL character)', 'PR #42']]);
   });
 
   test('acceptance 5: the last line says pass only for a pass verdict of the head whose review completed [R3]', () => {
@@ -156,7 +164,9 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
       ['no verdict file', undefined],
       ['a verdict file that does not parse', '{not json'],
       ['a pass for another commit', { verdict: 'pass', reasons: [], sha: OTHER }],
+      ['a pass whose sha is the empty string', { verdict: 'pass', reasons: [], sha: '' }],
       ['a pass for the head whose run_status is tool_error', { ...PASS_VERDICT, run_status: 'tool_error' }],
+      ['a pass for the head whose run_status is the empty string', { ...PASS_VERDICT, run_status: '' }],
       ['a block for another commit', { verdict: 'block', reasons: ['[spec] 1 x'], sha: OTHER }],
     ];
     for (const [name, verdict] of noPass) {
@@ -167,6 +177,10 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
     for (const verdict of [{ verdict: 'pass', reasons: [] }, { ...PASS_VERDICT, run_status: 'success' }]) {
       assert.deepEqual(shipOnce({ verdict, cardText: card(LINES) }).creates, createArgs(`${SUMMARY}\n\n---\n${PASS}`), JSON.stringify(verdict));
     }
+    // R3 decision 1, F1: with the default requireVerdict the gates take an empty sha as none, so the ship reaches the create call; the line still says no pass.
+    const empty = shipOnce({ verdict: { verdict: 'pass', reasons: [], sha: '' }, cardText: card(LINES) });
+    assert.equal(empty.r.outcome, 'merged', empty.r.receipt.stdout);
+    assert.deepEqual(empty.creates, createArgs(`${SUMMARY}\n\n---\n${NO_PASS}`));
   });
 
   test('acceptance 6: a ship that creates no pull request writes no PR body line [R5]', () => {
@@ -176,6 +190,11 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
     assert.deepEqual([failed.r.outcome, failed.creates.length], ['pr-failed', 1], failed.r.receipt.stdout);
     const unreviewed = shipOnce({ cardText: card(LINES) });
     assert.deepEqual([unreviewed.r.outcome, unreviewed.creates.length], ['review-no-verdict', 0], unreviewed.r.receipt.stdout);
-    for (const s of [reused, failed, unreviewed]) assert.deepEqual(bodyLines(s.lines), [], s.r.receipt.stdout);
+    // A create call that fails in another way returns no number either: an exit 0 with no pull request address, and a timeout.
+    const noNumber = shipOnce({ verdict: PASS_VERDICT, cardText: card(LINES), script: { 'gh pr create': { stdout: 'no address\n' } } });
+    assert.deepEqual([noNumber.r.outcome, noNumber.creates.length], ['pr-failed', 1], noNumber.r.receipt.stdout);
+    const timedOut = shipOnce({ verdict: PASS_VERDICT, cardText: card(LINES), script: { 'gh pr create': { timedOut: true, exitCode: 1 } } });
+    assert.deepEqual([timedOut.r.outcome, timedOut.creates.length], ['effect-unknown', 1], timedOut.r.receipt.stdout);
+    for (const s of [reused, failed, unreviewed, noNumber, timedOut]) assert.deepEqual(bodyLines(s.lines), [], s.r.receipt.stdout);
   });
 });

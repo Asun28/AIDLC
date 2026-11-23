@@ -255,6 +255,8 @@ export function prBody(cardText: string | undefined, cardId: string, reviewed: b
   if (heads.some((at, n) => lines.slice(at + 1, heads[n + 1]).every((l) => l.trim() === ''))) return fixed('no text under a heading');
   if (summary.length > PR_SUMMARY_MAX) return fixed(`over ${PR_SUMMARY_MAX} characters`);
   if (summary.includes('@')) return fixed('the character @');
+  // No process starts with an argument that holds U+0000, so such a summary cannot be the `--body` of `gh pr create`.
+  if (summary.includes('\0')) return fixed('a NUL character');
   return { body: `${summary}\n\n---\nCard: specs/tasks/${cardId}.md. Formal review: ${reviewed ? 'pass' : 'no pass recorded for this commit'}.` };
 }
 
@@ -385,14 +387,15 @@ export class GitHubShipPath implements ShipPath {
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr, prNumber);
     if (!prNumber) {
       // The text of the new pull request (card T0-PR-SUMMARY): a card file that cannot be read is no text, and the review
-      // counts as passed only for a pass verdict of this head whose review completed.
+      // counts as passed only for a pass verdict whose `sha` is absent or this head and whose review completed. An empty
+      // `sha` is not absent (R3 decision 1): the gates above take it as none, this line does not.
       let cardText: string | undefined;
       try {
         cardText = readFileSync(path.join(wt, 'specs', 'tasks', `${req.cardId}.md`), 'utf8');
       } catch {
         cardText = undefined;
       }
-      const reviewed = v.verdict?.verdict === 'pass' && (!v.verdict.sha || v.verdict.sha === head) && (v.verdict.run_status ?? 'success') === 'success';
+      const reviewed = v.verdict?.verdict === 'pass' && (v.verdict.sha === undefined || v.verdict.sha === head) && (v.verdict.run_status ?? 'success') === 'success';
       const text = prBody(cardText, req.cardId, reviewed);
       const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', text.body], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
       const unknownCreate = effectUnknown(`gh pr create --base ${base} --head ${req.cardId}`, create, GH_MS);
