@@ -1,7 +1,7 @@
 ---
 id: T0-OUTCOME-DUCKDB-EPIPE
 title: "bench/outcome/run.ts reports that the DuckDB binary cannot be started only when no process started; a binary that exited before its input was written is a failed query with its exit code"
-status: todo
+status: merged
 branch: T0-OUTCOME-DUCKDB-EPIPE
 worktree: D:\wt\AIDLC\T0-OUTCOME-DUCKDB-EPIPE
 allow_paths:
