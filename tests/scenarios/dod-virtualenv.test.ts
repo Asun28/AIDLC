@@ -68,7 +68,7 @@ describe('T0-DOD-VENV', () => {
       assert.equal(rec.exitCode, 0, rec.outputTail);
       assert.equal(rec.virtualenv, dir);
       assert.ok(rec.outputTail.includes('main venv'), rec.outputTail);
-      const [[, , options]] = c.nonGit();
+      const options = c.nonGit()[0]?.[2];
       assert.equal(options?.env?.VIRTUAL_ENV, dir, 'the DoD call carries the virtualenv');
     } finally {
       c.fx.cleanup();
@@ -98,7 +98,7 @@ describe('T0-DOD-VENV', () => {
       assert.ok(rec?.ran, 'the DoD ran');
       assert.notEqual(rec.exitCode, 0, 'no PATH holds the probe');
       assert.equal('virtualenv' in rec, false);
-      const [[, , options]] = c.nonGit();
+      const options = c.nonGit()[0]?.[2];
       assert.equal(options && 'env' in options, false);
     } finally {
       c.fx.cleanup();

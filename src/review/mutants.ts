@@ -15,6 +15,7 @@ import { nulList } from '../core/parse-guard.ts';
 import { MUTATION_OPERATORS, MutantReport, MutantPending, type Card, type MutantOutcome, type MutantResult } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
+import { virtualenvFor } from '../probes/virtualenv.ts';
 import { atomicWriteJson, createExclusive, readJson } from '../state/store.ts';
 import { applyMutant, changedSourceLines, mutantsFor, type Mutant } from './mutant-gen.ts';
 
@@ -167,10 +168,14 @@ const SCAFFOLD_DOD_PREFIX = "$ErrorActionPreference='Stop'; $PSNativeCommandUseE
  * The one call of a card's DoD, shared by the sweep and `card attempt` (card T1-DOD-RECORD), in the worktree. On the scaffold
  * ship path it is the program the scaffold ship's DoD leg runs, `pwsh -NoProfile -Command` with the two preferences before the
  * `dod_command` (card T0-DOD-SCAFFOLD-SHELL); on the github and dry-run paths the `dod_command` runs through the platform shell.
+ * When one of `roots` holds a Python virtualenv (`virtualenvFor`), the call carries the environment with its scripts
+ * directory first on PATH (card T0-DOD-VENV); otherwise it has no `env` and the child inherits the caller's.
  */
-export function dodCall(card: Pick<Card, 'dod_command'>, worktree: string, timeoutMs: number, shipPath: ProjectConfig['shipPath']): [string, string[], { cwd: string; shell?: true; timeoutMs: number }] {
-  if (shipPath === 'scaffold') return ['pwsh', ['-NoProfile', '-Command', SCAFFOLD_DOD_PREFIX + card.dod_command], { cwd: worktree, timeoutMs }];
-  return [card.dod_command, [], { cwd: worktree, shell: true, timeoutMs }];
+export function dodCall(card: Pick<Card, 'dod_command'>, worktree: string, timeoutMs: number, shipPath: ProjectConfig['shipPath'], roots: readonly string[] = [worktree]): [string, string[], { cwd: string; shell?: true; timeoutMs: number; env?: NodeJS.ProcessEnv }] {
+  const venv = virtualenvFor(roots);
+  const env = venv ? { env: venv.env } : {};
+  if (shipPath === 'scaffold') return ['pwsh', ['-NoProfile', '-Command', SCAFFOLD_DOD_PREFIX + card.dod_command], { cwd: worktree, timeoutMs, ...env }];
+  return [card.dod_command, [], { cwd: worktree, shell: true, timeoutMs, ...env }];
 }
 
 /** Apply the mutants of a committed candidate one at a time under the card's DoD and write the report bound to that commit. */
