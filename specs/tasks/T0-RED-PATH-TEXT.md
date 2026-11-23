@@ -72,11 +72,11 @@ RED: fb5fb668 (`tests/scenarios/build-red-narration.test.ts`), 4 of 4 failing at
 | 1 | build-red-narration: `acceptance 1` (R2 narration equal, `--red-receipt` present, no `task.ps1`) | pass |
 | 2 | build-red-narration: `acceptance 2` (`NoRedScaffold` subclass; `card red` text present, no `--red-receipt`) | pass |
 | 3 | build-red-narration: `acceptance 3`, one test per copy | pass |
-| 4 | dispute-running-attempt (only `BEFORE_RED` changed), accept-table, t0-flow: pass. dod-receipt-required `acceptance 6` (line 347): FAIL | blocked, see below |
+| 4 | dispute-running-attempt (only `BEFORE_RED` changed), dod-receipt-required (only `tddClause`, line 346, changed to the R2 record sentence, revision 1 amendment), accept-table, t0-flow | pass |
 | 5 | templates.test.ts, mirror.test.ts; card-loop.md 6492 bytes in both copies, identical | pass |
 | 6 | OPERATIONS.md line 100 (last sentence of the paragraph); changelog.d/T0-RED-PATH-TEXT.md; changelog-fragments.test.ts, prose.test.ts | pass |
 
-Blocker: `tests/scenarios/dod-receipt-required.test.ts:347` pins the clause ``--dod-receipt "<command: exit code and counts>"` or `aidlc card attempt T0-DR --outcome fail`` in the tdd BUILD narration of a dry-run fixture. R2 puts ` --red-receipt "<sha>:<test>"` between `counts>"` and the closing backtick, so no narration can meet both R2 and that assertion. The card's sweep lists dod-receipt-required:349 as a prefix-only match; line 347 pins the full clause. The card forbids changing that file, so this needs an owner amendment (allow line 347 to change to the R2 clause, or change R2).
+Attempt 1 failed on `tests/scenarios/dod-receipt-required.test.ts:346`, whose `tddClause` pinned the record sentence that R2 changes; the card forbade that file. The owner amended the card (revision 1) to let that one constant follow R2. Attempt 2: DoD exit 0, typecheck clean, 239 tests, 239 pass, 0 fail.
 
 Guard sweep:
 

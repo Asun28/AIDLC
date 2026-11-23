@@ -344,7 +344,7 @@ describe('T0-DOD-RECEIPT-REQUIRED: the refusal comes after every existing one an
 describe('T0-DOD-RECEIPT-REQUIRED: the build directives name --dod-receipt [R5]', () => {
   it('the build directives name --dod-receipt [acceptance 6]', (t) => {
     const c = atBuild(t);
-    const tddClause = `Record the result with \`aidlc card attempt T0-DR --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt T0-DR --outcome fail --cause ...\`.`;
+    const tddClause = `Record the result with \`aidlc card attempt T0-DR --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt T0-DR --outcome fail --cause ...\`.`;
     assert.ok(c.first.includes(tddClause), c.first);
     assert.match(c.first, /establish behavioural RED first/);
     assert.ok(c.first.endsWith(ACCEPTANCE_TABLE));
