@@ -1,0 +1,1 @@
+- T0-AMEND-DELTA: a review decision requested no later than an `aidlc card amend` that invalidates review is no longer the delta base of the next R2 round or R3 decision, so that decision receives no delta and marks no finding `outsideDelta` (first-round miss), on the same commit and on a repair commit; a decision recorded after the amendment is the delta base again (issue 415).

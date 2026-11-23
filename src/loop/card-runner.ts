@@ -557,10 +557,16 @@ export class CardRunner {
     return snapshotFindings(run.findings);
   }
 
-  /** The committed sha the stage last decided on (a pass or a block, whichever reviewer recorded it); undefined before the stage's first decision. */
+  /**
+   * The committed sha the stage last decided on (a pass or a block, whichever reviewer recorded it); undefined before the stage's
+   * first decision, and undefined when that decision was requested no later than an amendment that invalidated review (card
+   * T0-AMEND-DELTA), so the next decision is judged as a first one: no delta, no finding marked outside it.
+   */
   private lastReviewedSha(run: CardRun, stage: FindingStage): string | undefined {
-    if (stage === 'pre') return [...run.preReview.rounds].reverse().find((r) => (r.outcome === 'pass' || r.outcome === 'block') && r.candidateSha)?.candidateSha;
-    return [...run.review.invocations].reverse().find((i) => (i.outcome === 'pass' || i.outcome === 'block') && i.candidateSha)?.candidateSha;
+    const decisions: Array<{ outcome: string; candidateSha?: string; requestedAt: string }> = stage === 'pre' ? run.preReview.rounds : run.review.invocations;
+    const last = [...decisions].reverse().find((d) => (d.outcome === 'pass' || d.outcome === 'block') && d.candidateSha);
+    if (!last || run.amendments.some((a) => a.invalidated.includes('review') && last.requestedAt <= a.at)) return undefined;
+    return last.candidateSha;
   }
 
   /** The delta since the candidate the stage last reviewed (R9): the same commit gives an empty delta, another commit its committed diff under the candidate diff's cap. */

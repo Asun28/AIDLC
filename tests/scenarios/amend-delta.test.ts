@@ -48,8 +48,8 @@ function setup(fx: ReturnType<typeof makeFixture>, r3: string[], r2: string[]) {
     attempt: (sha: string) => { fx.advance(60_000); runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha }); },
     review: async () => { fx.advance(60_000); assert.equal(kind(), 'review'); return runner.formalReview(g(), card, persisted()); },
     pre: async () => { fx.advance(60_000); assert.equal(kind(), 'pre-review'); return runner.preReview(g(), card, persisted()); },
-    /** The card file committed with `delta` and amended on the run, one minute after the last step. */
-    amend: (delta: Partial<CardSpec>) => { fx.advance(60_000); writeCard(fx, { ...SPEC, ...delta }); card = fx.card(CARD); return runner.amendCard(g(), card, { by: 'the owner', reason: 'requirement reworded' }); },
+    /** The card file committed with `delta` and amended on the run, `stepMs` (one minute) after the last step. */
+    amend: (delta: Partial<CardSpec>, stepMs = 60_000) => { fx.advance(stepMs); writeCard(fx, { ...SPEC, ...delta }); card = fx.card(CARD); return runner.amendCard(g(), card, { by: 'the owner', reason: 'requirement reworded' }); },
     prompt: (stage: 'pre' | 'formal') => [...prompts].reverse().find((p) => p.stage === stage)!.text,
   };
 }
@@ -86,6 +86,12 @@ test('a ship-path decision after an amendment is bound to no delta', async () =>
     await s.review();
     s.amend(REQUIREMENTS);
     assert.equal(s.runner.shipBindings(s.persisted()).deltaPaths, undefined, 'an amendment invalidating review leaves no delta base');
+  });
+  await scenario([PASS], async (s) => {
+    s.attempt('sha-1');
+    await s.review();
+    s.amend(REQUIREMENTS, 0);
+    assert.equal(s.runner.shipBindings(s.persisted()).deltaPaths, undefined, 'a decision requested at the instant of the amendment is no delta base');
   });
   await scenario([PASS], async (s) => {
     s.attempt('sha-1');
