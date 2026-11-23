@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-PHASE-DOC
 title: "docs/OPERATIONS.md describes the four scaffold phase commands, `aidlc card start` and `aidlc card cleanup` among them, and a test keeps the description equal to the CLI"
-status: todo
+status: merged
 branch: T0-CARD-PHASE-DOC
 worktree: D:\wt\AIDLC\T0-CARD-PHASE-DOC
 allow_paths:
