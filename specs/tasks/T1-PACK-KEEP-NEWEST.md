@@ -1,7 +1,7 @@
 ---
 id: T1-PACK-KEEP-NEWEST
 title: The context pack removes the earliest matching lesson line first when it exceeds its budget, so the newest matching lessons stay
-status: todo
+status: merged
 branch: T1-PACK-KEEP-NEWEST
 worktree: D:\wt\AIDLC\T1-PACK-KEEP-NEWEST
 plan_ref: plans/lesson-delivery.md#7-task-split-dependencies-and-parallel-windows
