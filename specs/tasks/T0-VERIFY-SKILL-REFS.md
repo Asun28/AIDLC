@@ -111,7 +111,7 @@ RED commit 3cd8e7e5 holds the change to `tests/surface/templates.test.ts` alone.
 |---|---|---|
 | 1 | `tests/surface/templates.test.ts`, test `T0-VERIFY-SKILL-REFS: the Not covered list and the Shown failing record are reference files beside SKILL.md, ...`: for each section, the file exists, opens with its title line, is ASCII and has no placeholder marker; the body in `SKILL.md` is at most 400 bytes (280 and 252), holds no run of three backticks or tildes (`FENCE`), is refused with each of eight forms of a fenced block after its last line (`FENCED`), names the file as a code span and holds `Read`, the span and `when` in that order. RED at 3cd8e7e5 | pass after the change |
 | 2 | The same test: the three patterns on `references/not-covered.md`, and `/not\s+ok/i` finds nothing in `SKILL.md` | pass |
-| 3 | Test `acceptance 4: Shown failing (references/shown-failing.md) names ...` reads the file; `git diff --numstat origin/main...HEAD` lists `33 2 tests/surface/templates.test.ts`, and the two deleted lines are the name of that test and the line that read the section. Acceptance 1, acceptance 2 and the `T0-VERIFY-SYNC-CMD` test pass with no line changed | pass |
+| 3 | Test `acceptance 4: Shown failing (references/shown-failing.md) names ...` reads the file; `git diff --numstat origin/main...HEAD` lists `32 2 tests/surface/templates.test.ts`, and the two deleted lines are the name of that test and the line that read the section. Acceptance 1, acceptance 2 and the `T0-VERIFY-SYNC-CMD` test pass with no line changed | pass |
 | 4 | `git show 026debc9:.claude/skills/verify-card-run-writes/SKILL.md \| sed -n '54,75p'` compared with `references/not-covered.md` from its second line by `cmp`: equal; the same with `sed -n '78,98p'` and `references/shown-failing.md`: equal. `git diff -U0 origin/main...HEAD -- .claude/skills/verify-card-run-writes/SKILL.md` has two hunks, `-54,22 +54,4` and `-78,21 +60,4`, which are the two bodies | pass; what each body says is for the reviewer |
 | 5 | DoD arm 1 exit 0; `tests/surface/mirror.test.ts` and `tests/surface/prose.test.ts` are not in the diff and pass; `tests/surface/changelog-fragments.test.ts` passes; DoD tests: 73, 73 pass, 0 fail | pass; the text of the fragment is for the reviewer |
 
@@ -170,4 +170,4 @@ Each form a section body can hold, and what covers it:
 
 Full suite, run once on the candidate skill files, test file and changelog fragment, before this section was written and before the repair, which changes `tests/surface/templates.test.ts` and this card file only: `npm test` exit 0, 4097 tests, 4065 pass, 0 fail, 32 skipped.
 
-Size: 87 lines added and 45 deleted before this card file, against the budget of 200.
+Size: 86 lines added and 45 deleted before this card file, against the budget of 200.
