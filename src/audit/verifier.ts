@@ -19,7 +19,7 @@ import { CANDIDATE_BOUND_KINDS, fileSha256, type EvidenceStore, type Manifest } 
 import type { OperationLedger } from '../coordination/reconcile.ts';
 import type { GitProbe } from '../probes/git.ts';
 import type { GhProbe } from '../probes/gh.ts';
-import { ShippedFacts } from '../core/types.ts';
+import { ShippedFacts, type JournalEvent } from '../core/types.ts';
 
 export type AuditLevel = 'none' | 'recorded' | 'traceable' | 'independently-verified';
 
@@ -53,6 +53,11 @@ export interface VerifierInput {
   /** The probes that re-derive the facts journaled with each merge (card T1-AUDIT-FACTS); `base` is the ref a merge must be on. */
   probes?: { git: GitProbe; gh: GhProbe; cwd: string; base: string; repository?: string };
   now: string;
+}
+
+/** RED seam of card T0-RETAIN-STALE-CANDIDATE: refuses nothing. */
+export function staleCandidateRefusal(_entry: { id: string; kind: string; candidateDigest?: string; cardId?: string }, _events: () => JournalEvent[]): string | undefined {
+  return undefined;
 }
 
 export function verifyAudit(input: VerifierInput): AuditReport {
