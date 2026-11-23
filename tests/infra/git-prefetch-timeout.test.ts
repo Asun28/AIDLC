@@ -5,8 +5,7 @@
 import { describe, test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
-import { mkdtempSync, renameSync, rmSync } from 'node:fs';
-import os from 'node:os';
+import { renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
@@ -18,6 +17,7 @@ import {
   shortKey,
   type RepoIdentity,
 } from '../../src/state/paths.ts';
+import { tmpDir } from './helpers.ts';
 
 // Taken before any test mocks the timers, so the seam's own bound runs on the real clock.
 const realSetTimeout = globalThis.setTimeout;
@@ -59,11 +59,11 @@ function exited(child: ChildProcess): Promise<void> {
 }
 
 /**
- * A fresh git repository under the temp directory. After `body`, every child a spawner started there is ended and has
+ * A fresh git repository under the temp directory, made through `tmpDir`, which registers its removal. After `body`, every child a spawner started there is ended and has
  * exited before the directory is removed, so a failed assertion is not hidden by a busy directory.
  */
 async function withRepo(body: (dir: string, expected: RepoIdentity, children: ChildProcess[]) => Promise<void>): Promise<void> {
-  const dir = mkdtempSync(path.join(os.tmpdir(), 'aidlc-prefetch-timeout-'));
+  const dir = tmpDir('aidlc-prefetch-timeout-');
   const children: ChildProcess[] = [];
   try {
     const init = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8', windowsHide: true });

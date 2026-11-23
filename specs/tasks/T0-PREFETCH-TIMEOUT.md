@@ -100,3 +100,5 @@ npm run typecheck && node --test tests/infra/git-prefetch-timeout.test.ts tests/
 | 5 | DoD arm 1 (`npm run typecheck`) exit 0; `changelog-fragments`, `prose` pass; docs/OPERATIONS.md doctor paragraph, docs/ARCHITECTURE.md `src/state/` sentence, `changelog.d/T0-PREFETCH-TIMEOUT.md` | pass; doc text is for the reviewer |
 
 DoD on the candidate: exit 0, 63 tests, 62 pass, 0 fail, 1 skipped (`bin-entry` file links, EPERM on this platform, as on main).
+
+Repair after CI on PR 460 (attempt 2): `tests/surface/test-temp.test.ts` (T0-TEST-TEMP-SWEEP) failed on ubuntu and build-test because the new test made its directory with a direct call instead of `tmpDir` from `tests/infra/helpers.ts`, which registers the removal. The test now uses `tmpDir`; `test-temp.test.ts` passes, and `npm run check` in the worktree exits 0 (4128 tests, 4096 pass, 0 fail, 32 skipped).
