@@ -1,7 +1,7 @@
 ---
 id: T0-RETAIN-STALE-CANDIDATE
 title: "aidlc evidence retain refuses an entry of a candidate-bound kind whose card merged another candidate, and a file of an earlier candidate takes the kind earlier-candidate"
-status: todo
+status: merged
 branch: T0-RETAIN-STALE-CANDIDATE
 worktree: D:\wt\AIDLC\T0-RETAIN-STALE-CANDIDATE
 allow_paths:
