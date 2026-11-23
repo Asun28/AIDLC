@@ -37,6 +37,8 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
+  /** The directory of the card files in the worktree, `specs/tasks` when undefined (card T0-PR-SUMMARY-CARDS-DIR). */
+  cardsDir?: string;
   /** The writer of the base-sync CHANGELOG.md merge (card T0-BASE-SYNC-CHANGELOG-EDGES); injectable for tests. */
   writeFile?: (file: string, text: string) => void;
 }
@@ -240,7 +242,7 @@ const PR_SUMMARY_MAX = 4000;
  * first line that reads `## PR summary` (trailing white space ignored) to the next line that starts with `# ` or `## `.
  * Any other text gets the fixed line and the first reason that applies; with no `@` in the text GitHub notifies no account.
  */
-export function prBody(cardText: string | undefined, cardId: string, reviewed: boolean): { body: string; reason?: string } {
+export function prBody(cardText: string | undefined, cardId: string, reviewed: boolean, _cardsDir?: string): { body: string; reason?: string } {
   const fixed = (reason: string) => ({ body: `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${cardId}.md.`, reason });
   if (cardText === undefined) return fixed('no card file');
   const text = cardText.replace(/\r\n/g, '\n').split('\n');

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { GitHubShipPath, prBody } from '../../src/delivery/github-ship.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { tmpDir } from './helpers.ts';
+import { shipPathFor } from '../../src/loop/card-runner.ts';
+import { ProjectConfig } from '../../src/config.ts';
 
 const HEAD = 'a'.repeat(40);
 const OTHER = 'c'.repeat(40);
@@ -196,5 +198,72 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
     const timedOut = shipOnce({ verdict: PASS_VERDICT, cardText: card(LINES), script: { 'gh pr create': { timedOut: true, exitCode: 1 } } });
     assert.deepEqual([timedOut.r.outcome, timedOut.creates.length], ['effect-unknown', 1], timedOut.r.receipt.stdout);
     for (const s of [reused, failed, unreviewed, noNumber, timedOut]) assert.deepEqual(bodyLines(s.lines), [], s.r.receipt.stdout);
+  });
+});
+
+/** One remote ship of T1-A whose card file sits at `fileDir` in the worktree, with the `cardsDir` option given only when `opts` has the key. */
+function shipFrom(fileDir: string, opts: { cardsDir?: string }, cardText = card(LINES)) {
+  const root = tmpDir('aidlc-prsum-dir-');
+  const wt = path.join(root, 'wt', 'T1-A');
+  mkdirSync(path.join(wt, '.review'), { recursive: true });
+  mkdirSync(path.join(wt, fileDir), { recursive: true });
+  mkdirSync(path.join(root, '.git'), { recursive: true });
+  writeFileSync(path.join(wt, '.review', 'T1-A.json'), JSON.stringify(PASS_VERDICT));
+  writeFileSync(path.join(wt, fileDir, 'T1-A.md'), cardText);
+  const creates: string[][] = [];
+  const base = scriptedRunner(SCRIPT);
+  const runner: typeof base = (cmd, args, o) => {
+    if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'create') creates.push(args);
+    return base(cmd, args, o);
+  };
+  const r = new GitHubShipPath({ mainRoot: root, worktreeRoot: path.join(root, 'wt'), repository: 'o/r', runner, sleep: () => {}, ...opts }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+  return { r, creates, lines: r.receipt.stdout.split('\n') };
+}
+
+describe('T0-PR-SUMMARY-CARDS-DIR: the configured cards directory', () => {
+  const DIR_FIXED = 'Closed loop: worktree + TDD + independent review. DoD in docs/cards/T1-A.md.';
+  const DIR_PASS = 'Card: docs/cards/T1-A.md. Formal review: pass.';
+  const DIR_NO_PASS = 'Card: docs/cards/T1-A.md. Formal review: no pass recorded for this commit.';
+
+  test('acceptance 1: prBody names the card path of the cards directory it is given, and specs/tasks when it is given none [R1]', () => {
+    assert.deepEqual(prBody(card(LINES), 'T1-A', true, 'docs/cards'), { body: `${SUMMARY}\n\n---\n${DIR_PASS}` });
+    assert.deepEqual(prBody(card(LINES), 'T1-A', false, 'docs/cards'), { body: `${SUMMARY}\n\n---\n${DIR_NO_PASS}` });
+    assert.deepEqual(prBody(undefined, 'T1-A', true, 'docs/cards'), { body: DIR_FIXED, reason: 'no card file' });
+    assert.deepEqual(prBody(card(swap('Card T1-A.', ['@someone'])), 'T1-A', true, 'docs/cards'), { body: DIR_FIXED, reason: 'the character @' });
+    for (const [text, reviewed] of [[card(LINES), true], [card(LINES), false], [undefined, true], [HEAD_LINES.join('\n'), true]] as const) {
+      const three = prBody(text, 'T1-A', reviewed);
+      assert.deepEqual(prBody(text, 'T1-A', reviewed, undefined), three);
+      assert.ok(three.body.includes('specs/tasks/T1-A.md') && !three.body.includes('docs/cards'), three.body);
+    }
+  });
+
+  test('acceptance 2: the ship reads the card file from its cardsDir and the body names that path [R2] [R4]', () => {
+    const dir = shipFrom('docs/cards', { cardsDir: 'docs/cards' });
+    assert.equal(dir.r.outcome, 'merged', dir.r.receipt.stdout);
+    assert.deepEqual(dir.creates, createArgs(`${SUMMARY}\n\n---\n${DIR_PASS}`));
+    assert.deepEqual(bodyLines(dir.lines), [['PR body: the PR summary of the card', 'PR #42']]);
+    const elsewhere = shipFrom('specs/tasks', { cardsDir: 'docs/cards' });
+    assert.equal(elsewhere.r.outcome, 'merged', elsewhere.r.receipt.stdout);
+    assert.deepEqual(elsewhere.creates, createArgs(DIR_FIXED));
+    assert.deepEqual(bodyLines(elsewhere.lines), [['PR body: the fixed line (no card file)', 'PR #42']]);
+    for (const [name, opts] of [['no cardsDir key', {}], ['cardsDir undefined', { cardsDir: undefined }]] as const) {
+      const plain = shipFrom('specs/tasks', opts);
+      assert.equal(plain.r.outcome, 'merged', `${name}: ${plain.r.receipt.stdout}`);
+      assert.deepEqual(plain.creates, createArgs(`${SUMMARY}\n\n---\n${PASS}`), name);
+      assert.deepEqual(bodyLines(plain.lines), [['PR body: the PR summary of the card', 'PR #42']], name);
+    }
+    // Apart from the --body value, the calls of a ship from another directory are those of the default one.
+    const strip = (calls: string[][]) => calls.map((a) => a.slice(0, -1));
+    assert.deepEqual(strip(dir.creates), strip(shipFrom('specs/tasks', {}).creates));
+  });
+
+  test('acceptance 3: shipPathFor gives the GitHub ship path the configured cardsDir [R3]', () => {
+    const runner = scriptedRunner({});
+    const other = shipPathFor(ProjectConfig.parse({ shipPath: 'github', repository: 'o/r', cardsDir: 'docs/cards' }), tmpDir('aidlc-prsum-cfg-'), runner);
+    assert.ok(other instanceof GitHubShipPath);
+    assert.equal(other.options.cardsDir, 'docs/cards');
+    const plain = shipPathFor(ProjectConfig.parse({ shipPath: 'github', repository: 'o/r' }), tmpDir('aidlc-prsum-cfg-'), runner);
+    assert.ok(plain instanceof GitHubShipPath);
+    assert.equal(plain.options.cardsDir, 'specs/tasks');
   });
 });
