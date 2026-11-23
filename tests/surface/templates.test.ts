@@ -482,6 +482,10 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
   /** The sections of SKILL.md whose text is in a reference file beside it (card T0-VERIFY-SKILL-REFS): the heading and the file, relative to the skill directory. */
   const REFERENCES: ReadonlyArray<readonly [heading: string, file: string]> = [['Not covered', 'references/not-covered.md'], ['Shown failing', 'references/shown-failing.md']];
   const reference = (rel: string) => read(`${path.posix.dirname(SKILL)}/${rel}`);
+  /** A Markdown code fence delimiter: a run of three or more backticks or tildes, at any indentation and also inside a list item or a block quote. */
+  const FENCE = /`{3}|~{3}/;
+  /** The forms of a fenced block that FENCE refuses in a section body: each delimiter, a longer run, an indented one with an info string, one in a list item and one in a block quote. */
+  const FENCED = ['```\nx\n```', '~~~\nx\n~~~', '````\nx\n````', '~~~~~\nx\n~~~~~', '   ```sh\n   x\n   ```', '   ~~~\n   x\n   ~~~', '- a\n  ~~~\n  x\n  ~~~', '> ```\n> x\n> ```'];
 
   test('T0-VERIFY-SKILL-REFS: the Not covered list and the Shown failing record are reference files beside SKILL.md, and each of the two sections of SKILL.md is at most 400 bytes, names its file and says when to read it', () => {
     const text = read(SKILL);
@@ -493,7 +497,8 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
       for (const marker of [/\bTODO\b/, /\bTBD\b/, /\bFIXME\b/, /<[A-Za-z][^<>\n]*>/]) assert.ok(!marker.test(file), `${rel} carries a placeholder: ${marker}`);
       const body = section(text, heading);
       assert.ok(Buffer.byteLength(body, 'utf8') <= 400, `## ${heading} is ${Buffer.byteLength(body, 'utf8')} bytes > 400`);
-      assert.ok(!body.includes('```'), `## ${heading} holds no fenced block`);
+      assert.doesNotMatch(body, FENCE, `## ${heading} holds no code fence`);
+      for (const fenced of FENCED) assert.match(`${body}${fenced}\n`, FENCE, `## ${heading} with ${JSON.stringify(fenced)} as its last lines is refused`);
       assert.ok(spansOf(body).includes(rel), `## ${heading} names \`${rel}\``);
       assert.ok(body.replace(/\s+/g, ' ').includes(`Read \`${rel}\` when `), `## ${heading} says when to read ${rel}`);
     }
