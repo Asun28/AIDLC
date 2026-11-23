@@ -18,14 +18,14 @@ export interface ToolchainReport {
 
 /** One probe's line: unknown at the bound, the first output line on exit 0, else the tool's MISSING text. */
 function line(command: string, args: string[], receipt: ExecReceipt, missing: string, timeoutMs: number): string {
-  if (receipt.timedOut && false) return `unknown: ${[command, ...args].join(' ')} did not exit within ${timeoutMs} ms`;
+  if (receipt.timedOut) return `unknown: ${[command, ...args].join(' ')} did not exit within ${timeoutMs} ms`;
   if (receipt.exitCode === 0) return `${receipt.stdout}${receipt.stderr}`.trim().split(/\r?\n/)[0] ?? '';
   return missing;
 }
 
 /** Runs the three version probes concurrently, each with `timeoutMs`. */
 export async function toolchainReport(runner: Runner = run, timeoutMs: number = TOOLCHAIN_PROBE_TIMEOUT_MS): Promise<ToolchainReport> {
-  const probe = async (command: string, args: string[], missing: string): Promise<string> => line(command, args, await runner(command, args), missing, timeoutMs);
+  const probe = async (command: string, args: string[], missing: string): Promise<string> => line(command, args, await runner(command, args, { timeoutMs }), missing, timeoutMs);
   const [git, gh, pwsh] = await Promise.all([
     probe('git', ['--version'], 'MISSING'),
     probe('gh', ['--version'], 'MISSING (needed for remote ship)'),

@@ -47,8 +47,8 @@ export const GIT_LOOKUP_TIMEOUT_MS = 120_000;
  * within `timeoutMs` is ended by `spawnSync` and throws an error that names the command, the bound and the directory.
  */
 export function gitOut(args: string[], cwd: string, spawner: typeof spawnSync = spawnSync, timeoutMs: number = GIT_LOOKUP_TIMEOUT_MS): string | undefined {
-  void timeoutMs;
-  const res = spawner('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+  const res = spawner('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: timeoutMs });
+  if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') throw new Error(`git ${args.join(' ')} did not exit within ${timeoutMs} ms in ${cwd}`);
   if (res.status !== 0) return undefined;
   return res.stdout.trim();
 }

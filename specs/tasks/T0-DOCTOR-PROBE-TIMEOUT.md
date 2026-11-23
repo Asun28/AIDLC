@@ -61,3 +61,12 @@ npm run typecheck && node --test tests/infra/toolchain-probe.test.ts tests/infra
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass, the doctor and repository tests pass unchanged, and the changelog fragment is well formed.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/toolchain-probe.test.ts`, test `acceptance 1: ...`. RED at 52f69504, where the probe runs with no bound and reads no `timedOut`: the three lines read MISSING. The test's runner ends the child at 10 s when the probe passes no bound, so main's rule fails the assertion inside the 20 s test timeout instead of leaving three processes running | pass after the fix |
+| 2 | Same file, test `acceptance 2: ...`: the three calls and their options, the default bound, stdout and stderr-only output, three failures, `timedOut` beside exit 0, 1 and null. RED at 52f69504: the options were undefined | pass |
+| 3 | `tests/infra/git-lookup-timeout.test.ts`, both tests. RED at 52f69504: no exception (main returns undefined), and the options had no `timeout`. The spawner ends the child at 10 s when `gitOut` passes no bound, for the reason of item 1 (a synchronous call cannot be ended by the test timeout) | pass |
+| 4 | The DoD: `paths`, `doctor-interrupted-writes`, `cli-cwd-paths`; `node bin/aidlc.js doctor` in the worktree prints the git, gh and pwsh versions | pass |
+| 5 | `src/cli/main.ts` doctor action, `resolveRepoIdentity`, the docs and the fragment; `module-map`, `changelog-fragments`, `prose` | reviewer-verified; pass |
