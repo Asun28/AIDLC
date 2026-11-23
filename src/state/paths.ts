@@ -122,7 +122,8 @@ function endChild(steps: (() => void)[]): void {
  * spawn that fails in any way is no lookup, so the identity is then asked of git synchronously as before. Every outcome is
  * settled before any cleanup, so a kill that errors or throws cannot change it or leave it pending (R3 decision 2).
  */
-export function prefetchRepoIdentity(cwd: string): void {
+export function prefetchRepoIdentity(cwd: string, spawner: typeof spawn = spawn, timeoutMs: number = GIT_LOOKUP_TIMEOUT_MS): void {
+  void timeoutMs;
   if (prefetch) return;
   const lookup = new Promise<Lookup>((resolve) => {
     const unanswered = () => resolve({ answered: false });
@@ -130,7 +131,7 @@ export function prefetchRepoIdentity(cwd: string): void {
       /* the `close` event still reports the exit status */
     };
     try {
-      const child = spawn('git', IDENTITY_ARGS, { cwd, windowsHide: true });
+      const child = spawner('git', IDENTITY_ARGS, { cwd, windowsHide: true });
       child.on('error', unanswered);
       const { stdout, stderr, stdin } = child;
       if (!stdout || !stderr || !stdin) {
