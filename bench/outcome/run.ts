@@ -2,7 +2,6 @@
 // bench/outcome/views/*.sql in name order through the DuckDB CLI and prints each view named summary_* as one JSON line; with --summary
 // it then writes the commit, the run time, the table row counts and every view's rows to one JSON file.
 // See bench/outcome/README.md.
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,6 +10,7 @@ import { parseArgs } from 'node:util';
 import { loadProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
+import { NoDuckdb, queryDuckdb } from './duckdb.ts';
 import { githubTables } from './github.ts';
 import { assertWritable, ingestState, writeTables, type Row } from './ingest.ts';
 import { attribute, claudeUsage, codexUsage, priceOf, reviewLogUsage, type Prices } from './usage.ts';
@@ -22,9 +22,6 @@ const USAGE_VIEWS = '20-cost.sql';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewsDir = path.join(here, 'views');
-
-/** The DuckDB binary could not be started; exit code 2. */
-class NoDuckdb extends Error {}
 
 function main(): number {
   const ranAt = new Date().toISOString();
@@ -77,12 +74,7 @@ function main(): number {
   const bin = values.duckdb !== undefined && /[\\/]/.test(values.duckdb) ? path.resolve(values.duckdb) : (values.duckdb ?? 'duckdb');
   const views = readdirSync(viewsDir).filter((name) => name.endsWith('.sql') && (usage || name !== USAGE_VIEWS) && (github || name !== GITHUB_VIEWS)).sort().map((name) => readFileSync(path.join(viewsDir, name), 'utf8')).join('\n');
   /** One DuckDB process on an in-memory database: every view file, then `select`, whose rows it prints as a JSON array. */
-  const query = (select: string): Row[] => {
-    const r = spawnSync(bin, ['-json', '-bail'], { cwd: outDir, input: `${views}\n${select}\n`, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
-    if (r.error && r.signal === null) throw new NoDuckdb(r.error.message);
-    if (r.error || r.status !== 0) throw new Error(`${bin} failed on "${select}" (exit ${String(r.status)}): ${(r.error?.message ?? r.stderr).trim()}`);
-    return r.stdout.trim() === '' ? [] : (JSON.parse(r.stdout) as Row[]);
-  };
+  const query = (select: string): Row[] => queryDuckdb(bin, outDir, `${views}\n${select}\n`, select);
   try {
     const summaries = query("SELECT view_name FROM duckdb_views() WHERE NOT internal AND starts_with(view_name, 'summary_') ORDER BY view_name;");
     const viewRows: Record<string, Row[]> = {};
