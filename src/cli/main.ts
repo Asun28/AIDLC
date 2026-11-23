@@ -51,7 +51,7 @@ import { ClaudeApiProvider } from '../providers/claude-api.ts';
 import { ClaudeCodeProvider } from '../providers/claude-code.ts';
 import type { ModelProvider } from '../providers/types.ts';
 import { CANDIDATE_BOUND_KINDS, EvidenceStore, Manifest } from '../audit/manifest.ts';
-import { verifyAudit } from '../audit/verifier.ts';
+import { staleCandidateRefusal, verifyAudit } from '../audit/verifier.ts';
 import { evaluateBands, parseBandsYaml, type Sample } from '../maintain/bands.ts';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../maintain/incident.ts';
 import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '../hooks/index.ts';
@@ -1634,8 +1634,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = latestActiveGoalId(c, o.goal);
       const goalRec = c.controller.mustGoal(id);
       const ev = new EvidenceStore(c.paths.evidence, id);
+      const journal = Journal.forGoal(c.paths.journal, id);
+      // Refused before any write: the entry the audit reports as stale, on the events of a journal whose chain verifies (card T0-RETAIN-STALE-CANDIDATE).
+      const stale = staleCandidateRefusal({ id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card }, () => (journal.verify().ok ? journal.readAll() : []));
+      if (stale) throw new Error(stale);
       const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
-      Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
+      journal.append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
       out(c, { entries: mf.entries.length }, () => `retained ${o.id} (${mf.entries.length} entries)`);
     });
   program
