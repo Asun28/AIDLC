@@ -160,3 +160,23 @@ test('T0-PREPARE-START-CMD R3 decisions 1 and 2: with a worktree root holding $(
     fx.cleanup();
   }
 });
+
+test('T0-PREPARE-START-CMD R3 decision 3: on scaffold, a stale-registration start under a worktree root holding $(...) and backticks keeps the narration of main, with the path in plain double quotes [R3]', () => {
+  const { fx, worktree, next } = setup({ shipPath: 'scaffold', rootName: HOSTILE_ROOT });
+  try {
+    startNarration(next, worktree);
+    git(fx.tmp, ['worktree', 'add', '-q', '-b', CARD, worktree]);
+    next();
+    assert.equal(next().directive.kind, 'build');
+    git(fx.tmp, ['worktree', 'lock', worktree]);
+    rmSync(worktree, { recursive: true, force: true });
+    const stale = next();
+    assert.equal(stale.directive.kind, 'prepare', stale.directive.narration);
+    const asOnMain = `Start a new worktree for ${CARD} at ${worktree} (scaffold: pwsh scripts/task.ps1 -TaskId ${CARD} -Phase start from the main checkout). git still registers a worktree of branch ${CARD} at this path, but no directory is there: make the locked worktree's directory available again, or run \`git worktree unlock "${worktree}"\` and \`git worktree prune\` from the main checkout, then make the worktree with \`git worktree add "${worktree}" ${CARD}\`, since the branch exists`;
+    assert.ok(stale.directive.narration.endsWith(asOnMain), `the scaffold narration as on main: ${stale.directive.narration}`);
+    git(fx.tmp, ['worktree', 'unlock', worktree]);
+    git(fx.tmp, ['worktree', 'prune']);
+  } finally {
+    fx.cleanup();
+  }
+});

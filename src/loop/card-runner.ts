@@ -1408,7 +1408,13 @@ export class CardRunner {
     const kind = entry && !mismatch && (entry.locked || entry.prunable) ? pathKind(entry.path) : undefined;
     if (kind !== 'absent' && kind !== 'other') return undefined;
     const obstruction = kind === 'other' ? 'something that is not a directory is at this path: move or delete it, then ' : '';
-    // The path is quoted for the shell of this platform, and each command is one whole code span (card T0-PREPARE-START-CMD).
+    if (this.config.shipPath === 'scaffold') {
+      // The scaffold reason stays as before card T0-PREPARE-START-CMD, which leaves the scaffold ship path unchanged.
+      const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
+      return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
+    }
+    // Off the scaffold path the path is quoted for the shell of this platform, and each command is one whole code span
+    // (card T0-PREPARE-START-CMD), as in the commands of worktreeStartCommands that follow this reason.
     const quoted = shellArg(expected, process.platform);
     const clear = entry!.locked ? `make the locked worktree's directory available again, or run ${codeSpan(`git worktree unlock ${quoted}`)} and \`git worktree prune\`` : 'run `git worktree prune`';
     return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with ${codeSpan(`git worktree add ${quoted} ${cardId}`)}, since the branch exists` };
@@ -3794,7 +3800,7 @@ export class CardRunner {
     const passed = run.review.invocations.filter((i) => i.outcome === 'pass').at(-1);
     const verdict = passed?.verdictRef;
     const file = verdict ? [verdict, path.join(evidence.dir, 'review', card.id, path.basename(verdict))].find((f) => existsSync(f)) : undefined;
-    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? shellArg(file, process.platform) : '<file>'} --candidate ${passed?.candidateDigest ?? '<digest>'}`);
+    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? `"${file}"` : '<file>'} --candidate ${passed?.candidateDigest ?? '<digest>'}`);
   }
 
   /**

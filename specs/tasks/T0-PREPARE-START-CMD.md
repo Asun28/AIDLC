@@ -168,7 +168,7 @@ Each value form the repair hunks handle, and the test that covers it:
 
 Shown failing: with the worktree path wrapped in plain double quotes again in `worktreeStartCommands` (the quoting of decision 1), the third test fails.
 
-Repair after R3 decision 2 (F3, class markdown-code-delimiter): a backtick in a single-quoted value ended the single-backtick code span early. `codeSpan` (exported from `src/delivery/worktree.ts`) now writes each command with a delimiter one backtick longer than the longest run inside it, and pads with one space when the command begins or ends with a backtick, or begins and ends with a space, as CommonMark strips one such space. Sites of both classes in allow_paths, all fixed: the three commands of `worktreeStartCommands`; the `git worktree unlock` and `git worktree add` commands of the stale-registration reason in `CardRunner.staleRegistration`, which put the path in plain double quotes in single-backtick spans before this card; and the `--file` argument of the `aidlc evidence retain` refusal in `src/loop/card-runner.ts`, which now goes through `shellArg` (an ordinary path keeps its double quotes, so the pin in `tests/scenarios/card-close-cleanup.test.ts` holds; that file passes, 47 pass, 2 skipped, 0 fail).
+Repair after R3 decision 2 (F3, class markdown-code-delimiter): a backtick in a single-quoted value ended the single-backtick code span early. `codeSpan` (exported from `src/delivery/worktree.ts`) now writes each command with a delimiter one backtick longer than the longest run inside it, and pads with one space when the command begins or ends with a backtick, or begins and ends with a space, as CommonMark strips one such space. Sites fixed: the three commands of `worktreeStartCommands`, and the `git worktree unlock` and `git worktree add` commands of the stale-registration reason in `CardRunner.staleRegistration` on the github path, which follow it in the same narration.
 
 | Test | Proof | Result |
 |---|---|---|
@@ -178,4 +178,14 @@ Repair after R3 decision 2 (F3, class markdown-code-delimiter): a backtick in a 
 
 Shown failing: with the delimiter fixed at one backtick in `codeSpan`, both infra tests fail; with the stale-registration path in plain double quotes again, the scenario test fails.
 
-Each form the decision 2 hunks handle: no backtick (single delimiter, acceptance tests unchanged); one or more runs of backticks inside (longer delimiter, infra tests); a leading or trailing backtick (padding, infra test); a leading and trailing space (padding, infra test `' padded '`); a text of backticks only (infra test); a stale registration that is locked (scenario test) or prunable (`prepare-worktree.test.ts`, which checks `git worktree prune` and passes unchanged).
+Each form the decision 2 hunks handle: no backtick (single delimiter, acceptance tests unchanged); one or more runs of backticks inside (longer delimiter, infra tests); a leading or trailing backtick (padding, infra test); a leading and trailing space (padding, infra test `' padded '`); a text of backticks only (infra test); a stale registration on github that is locked (scenario test) or prunable (`prepare-worktree.test.ts`, which checks `git worktree prune` and passes unchanged).
+
+Repair after R3 decision 3 (F4, class unrelated-close-command-change; F5, class scaffold-narration-changed): decision 2's repair also changed the `--file` argument of the CLOSE `aidlc evidence retain` refusal and the stale-registration reason on the scaffold path. Both are reverted: `git diff 1612713b -- src/loop/card-runner.ts` holds no `evidence retain` line, and `staleRegistration` returns the reason of main, byte for byte, when `shipPath` is `scaffold`. The quoting stays on the github path, the only other path that reaches `staleRegistration` (dry-run decides before it). The quoting of the CLOSE refusal is out of scope for this card.
+
+| Test | Proof | Result |
+|---|---|---|
+| `on scaffold, a stale-registration start under a worktree root holding $(...) and backticks keeps the narration of main ...` (scenario) | a real hostile worktree root, a locked registration with its directory gone: the scaffold narration ends with the start sentence and stale reason of main exactly, path in plain double quotes | pass |
+
+Shown failing: with the scaffold branch of `staleRegistration` disabled, this test fails.
+
+DoD after the repair of decision 3: `npm run typecheck` exit 0; `node --test` over the six files: exit 0, 166 tests, 166 pass, 0 fail.
