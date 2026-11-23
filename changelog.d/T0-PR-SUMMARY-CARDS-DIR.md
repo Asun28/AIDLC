@@ -1,0 +1,1 @@
+- T0-PR-SUMMARY-CARDS-DIR: the GitHub ship path reads the `## PR summary` section from `<cardsDir>/<card>.md` in the worktree, the configured cards directory, where it read `specs/tasks/<card>.md` whatever `cardsDir` was; the fixed line and the `Card:` line of the pull request text name that path.

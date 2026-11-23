@@ -37,6 +37,8 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
+  /** The directory of the card files in the worktree, `specs/tasks` when undefined (card T0-PR-SUMMARY-CARDS-DIR). */
+  cardsDir?: string;
   /** The writer of the base-sync CHANGELOG.md merge (card T0-BASE-SYNC-CHANGELOG-EDGES); injectable for tests. */
   writeFile?: (file: string, text: string) => void;
 }
@@ -239,9 +241,11 @@ const PR_SUMMARY_MAX = 4000;
  * writes for a person, then a rule and one line that names the card and the formal review. The section runs from the
  * first line that reads `## PR summary` (trailing white space ignored) to the next line that starts with `# ` or `## `.
  * Any other text gets the fixed line and the first reason that applies; with no `@` in the text GitHub notifies no account.
+ * Both lines name `<cardsDir>/<cardId>.md`, `cardsDir` as given and `specs/tasks` when undefined (card T0-PR-SUMMARY-CARDS-DIR).
  */
-export function prBody(cardText: string | undefined, cardId: string, reviewed: boolean): { body: string; reason?: string } {
-  const fixed = (reason: string) => ({ body: `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${cardId}.md.`, reason });
+export function prBody(cardText: string | undefined, cardId: string, reviewed: boolean, cardsDir?: string): { body: string; reason?: string } {
+  const card = `${cardsDir ?? 'specs/tasks'}/${cardId}.md`;
+  const fixed = (reason: string) => ({ body: `Closed loop: worktree + TDD + independent review. DoD in ${card}.`, reason });
   if (cardText === undefined) return fixed('no card file');
   const text = cardText.replace(/\r\n/g, '\n').split('\n');
   const start = text.findIndex((l) => l.trimEnd() === '## PR summary');
@@ -257,7 +261,7 @@ export function prBody(cardText: string | undefined, cardId: string, reviewed: b
   if (summary.includes('@')) return fixed('the character @');
   // No process starts with an argument that holds U+0000, so such a summary cannot be the `--body` of `gh pr create`.
   if (summary.includes('\0')) return fixed('a NUL character');
-  return { body: `${summary}\n\n---\nCard: specs/tasks/${cardId}.md. Formal review: ${reviewed ? 'pass' : 'no pass recorded for this commit'}.` };
+  return { body: `${summary}\n\n---\nCard: ${card}. Formal review: ${reviewed ? 'pass' : 'no pass recorded for this commit'}.` };
 }
 
 export class GitHubShipPath implements ShipPath {
@@ -391,12 +395,12 @@ export class GitHubShipPath implements ShipPath {
       // `sha` is not absent (R3 decision 1): the gates above take it as none, this line does not.
       let cardText: string | undefined;
       try {
-        cardText = readFileSync(path.join(wt, 'specs', 'tasks', `${req.cardId}.md`), 'utf8');
+        cardText = readFileSync(path.join(wt, this.options.cardsDir ?? 'specs/tasks', `${req.cardId}.md`), 'utf8');
       } catch {
         cardText = undefined;
       }
       const reviewed = v.verdict?.verdict === 'pass' && (v.verdict.sha === undefined || v.verdict.sha === head) && (v.verdict.run_status ?? 'success') === 'success';
-      const text = prBody(cardText, req.cardId, reviewed);
+      const text = prBody(cardText, req.cardId, reviewed, this.options.cardsDir);
       const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', text.body], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
       const unknownCreate = effectUnknown(`gh pr create --base ${base} --head ${req.cardId}`, create, GH_MS);
       if (unknownCreate) return fail('[SHIP-EFFECT-UNKNOWN]', unknownCreate);
