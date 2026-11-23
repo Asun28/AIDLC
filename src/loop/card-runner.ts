@@ -30,7 +30,7 @@ import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
-import { decideWorktree } from '../delivery/worktree.ts';
+import { codeSpan, decideWorktree, shellArg, worktreeStartCommands } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
@@ -1373,9 +1373,21 @@ export class CardRunner {
         worktree: decision.path,
         skills: [],
         lessons,
-        narration: `${lessons.count} lessons so far; the most recent are in this directive, and docs/LESSONS.md holds them all for reference. ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
+        narration: `${lessons.count} lessons so far; the most recent are in this directive, and docs/LESSONS.md holds them all for reference. ` + (decision.action === 'start' ? this.startNarration(card.id, decision.path, decision.reason) : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /**
+   * The start sentence of a `prepare` directive. The scaffold path names its `task.ps1 -Phase start`; the github and dry-run
+   * paths, which have no such script, name `git worktree add` from the base ref and the main checkout's `node_modules` link
+   * when it has one (card T0-PREPARE-START-CMD, issue 376).
+   */
+  private startNarration(cardId: string, worktree: string, reason: string): string {
+    if (this.config.shipPath === 'scaffold') return `Start a new worktree for ${cardId} at ${worktree} (scaffold: pwsh scripts/task.ps1 -TaskId ${cardId} -Phase start from the main checkout). ${reason}`;
+    const ref = this.config.mode === 'local' ? this.config.base : `origin/${this.config.base}`;
+    const linkModules = existsSync(path.join(this.repo.mainRoot, 'node_modules'));
+    return `Start a new worktree for ${cardId} at ${worktree}: ${reason}. ` + worktreeStartCommands({ cardId, path: worktree, mainRoot: this.repo.mainRoot, ref, linkModules, platform: process.platform });
   }
 
   /**
@@ -1396,8 +1408,16 @@ export class CardRunner {
     const kind = entry && !mismatch && (entry.locked || entry.prunable) ? pathKind(entry.path) : undefined;
     if (kind !== 'absent' && kind !== 'other') return undefined;
     const obstruction = kind === 'other' ? 'something that is not a directory is at this path: move or delete it, then ' : '';
-    const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
-    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
+    if (this.config.shipPath === 'scaffold') {
+      // The scaffold reason stays as before card T0-PREPARE-START-CMD, which leaves the scaffold ship path unchanged.
+      const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
+      return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
+    }
+    // Off the scaffold path the path is quoted for the shell of this platform, and each command is one whole code span
+    // (card T0-PREPARE-START-CMD), as in the commands of worktreeStartCommands that follow this reason.
+    const quoted = shellArg(expected, process.platform);
+    const clear = entry!.locked ? `make the locked worktree's directory available again, or run ${codeSpan(`git worktree unlock ${quoted}`)} and \`git worktree prune\`` : 'run `git worktree prune`';
+    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with ${codeSpan(`git worktree add ${quoted} ${cardId}`)}, since the branch exists` };
   }
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
