@@ -56,9 +56,81 @@ text (card T0-PR-SUMMARY); with this card every author is asked for it.
 - In the three `build` narrations the table instruction stays last. In the repair narration the summary instruction stands where the table instruction stood, and the table instruction follows it.
 - No code reads the section here. The ship reads it (card T0-PR-SUMMARY).
 
+## PR summary
+### What
+The build instructions now ask each author to write a PR summary in the card file.
+
+### Why / Intent
+The ship can already use this section as the pull request text. But no instruction asked authors to write it. A person must be able to read a pull request in one minute.
+
+### How / Behaviour
+- The `build` directive carries one more instruction, directly before the acceptance table instruction.
+- The instruction gives the nine headings and the style: short sentences, active voice, New Zealand spelling.
+- The repair directive carries the same instruction.
+
+### System impact
+One text constant in `src/loop/card-runner.ts` changes four narrations. No state, no gate and no command changes. Each build directive is about 600 characters longer.
+
+### Security
+No new input and no new command. The instruction tells authors not to use the at sign, so GitHub sends no notification to an account.
+
+### Tests and review
+- Four new tests in `tests/scenarios/pr-summary-ask.test.ts` pass. The DoD passes with 224 tests.
+- Eight single changes to the narrations: a test fails for each one.
+- The full suite passes: 4095 tests, 0 failures.
+
+### Risk
+Low. The change is text only. If an author does not write the section, the pull request keeps the old one-line text.
+
+### Ownership
+Card `T0-PR-SUMMARY-ASK`, goal `g-20261123071418-eb255b`. The repository owner asked for the change.
+
+### Docs
+`docs/OPERATIONS.md` (Findings and dispositions) has a new paragraph. `changelog.d/T0-PR-SUMMARY-ASK.md` holds the entry.
+
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/scenarios/pr-summary-ask.test.ts tests/scenarios/accept-table.test.ts tests/scenarios/dispute-running-attempt.test.ts tests/scenarios/build-red-narration.test.ts tests/scenarios/dod-receipt-required.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/fault-points.test.ts tests/surface/prose.test.ts tests/surface/changelog-fragments.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the four new tests pass, the narration tests and the fault-point check pass, the typecheck is clean and the changelog fragment is well formed.
+
+## Attempt evidence
+RED commit 00093007 holds the new test file alone. Its four tests fail there on assertions: no narration of main holds the summary instruction.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/pr-summary-ask.test.ts`, four tests named `acceptance 1`: a build before RED off the scaffold ship path, one on it (`NoRedScaffold`), one with a RED receipt, and the build of an R3 repair; each narration splits in two on the summary instruction, and in two on the instruction, one space and the table instruction. RED at 00093007 | pass after the change |
+| 2 | `git diff --numstat origin/main...HEAD`: `4 3 tests/scenarios/dispute-running-attempt.test.ts`, `3 2 tests/scenarios/build-red-narration.test.ts`; each gains the constant and its templates (three and two) name it before the table constant; their `deepEqual` and `equal` comparisons of whole narrations pass | pass |
+| 3 | DoD arm 1 exit 0; DoD arm 2, 224 tests, 224 pass, 0 fail, with `accept-table`, `dod-receipt-required`, `t0-flow` and `fault-points` among them; the numstat lists none of those four files | pass |
+| 4 | `tests/surface/changelog-fragments.test.ts`; `docs/OPERATIONS.md`, Findings and dispositions, the paragraph that starts `PR summary instruction (card T0-PR-SUMMARY-ASK).`, directly below the Acceptance table paragraph | pass; the paragraph is for the reviewer |
+
+Each requirement clause and the assertion that fails without it:
+
+| Clause | Assertion |
+|---|---|
+| R1, every narration with the table instruction | item 1, one test for each of the four narrations |
+| R1, once | item 1, the first split count |
+| R1, directly before the table instruction, one space between | item 1, the second split count |
+| R1, the text | item 1, the literal constant of the test file |
+| R2, every other character of the four narrations | item 2, the whole-narration comparisons of the two test files |
+| R2, every other directive | `git diff --numstat origin/main...HEAD` lists `7 4 src/loop/card-runner.ts`: the constant with its comment and a blank line, and the four narration lines |
+
+Changes, each made alone in `src/loop/card-runner.ts`, run against the new test file, then restored. Eight changes, and a test fails for each:
+
+| Change | Test that fails |
+|---|---|
+| the instruction removed before RED on the scaffold ship path | the scaffold test |
+| the instruction removed before RED off it | the test before RED |
+| the instruction removed with a RED receipt | the RED receipt test |
+| the instruction removed from the repair narration | the repair test |
+| the instruction after the table in the repair narration | the repair test |
+| no space between the two with a RED receipt | the RED receipt test |
+| the instruction twice before RED off the scaffold ship path | the test before RED |
+| another word in the instruction text | all four |
+
+Verify skill `verify-card-run-writes`: `git diff --name-only c7ab79a9 -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts` lists `src/loop/card-runner.ts`. This card changes text of four narrations there, adds no write and reorders none, and `tests/scenarios/fault-points.test.ts` passes (28 tests, in the DoD). Outcome: in sync.
+
+Full suite, run once on the candidate source, tests, document and changelog fragment, before this section was written: `npm test` exit 0, 4095 tests, 4063 pass, 0 fail, 32 skipped. `npm run bench -- --check` on the same change in the trial: every count within its ceiling.
+
+Size: 121 lines added and 9 deleted before this card file, against the budget of 140.

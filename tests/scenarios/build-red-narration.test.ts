@@ -11,6 +11,7 @@ import type { ShipPath } from '../../src/delivery/ship.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table in its `## Attempt evidence` section before the final DoD run, one row per acceptance item: the item number, the test or command that proves it, and its result. A row with no proof is unfinished work. Correct the table on every repair.';
+const PR_SUMMARY_ASK = 'When allow_paths lists this card file, write a `## PR summary` section in it before the final DoD run, for a person who reads the pull request: the headings `### What`, `### Why / Intent`, `### How / Behaviour`, `### System impact`, `### Security`, `### Tests and review`, `### Risk`, `### Ownership` and `### Docs` in that order, one to three short sentences under each, in ASD-STE100 style (at most 20 words a sentence, active voice, one meaning for each word) and New Zealand spelling, at most 4000 characters and no `@`. The GitHub ship path makes it the text of the pull request it creates. Correct it on every repair.';
 
 /** A scaffold ship path whose worktree holds no `.red` file. */
 class NoRedScaffold extends ScaffoldShipPath {
@@ -40,7 +41,7 @@ test('T0-RED-PATH-TEXT acceptance 1: off the scaffold ship path, BUILD before RE
     const narration = firstBuildNarration(fx);
     assert.equal(
       narration,
-      `Attempt 1 at effort medium: establish behavioural RED first, then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt T0-RPT --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt T0-RPT --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`,
+      `Attempt 1 at effort medium: establish behavioural RED first, then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt T0-RPT --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt T0-RPT --outcome fail --cause ...\`. ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`,
     );
     assert.ok(narration.includes('--red-receipt "<sha>:<test>"'), narration);
     assert.ok(!narration.includes('task.ps1'), narration);
@@ -57,7 +58,7 @@ test('T0-RED-PATH-TEXT acceptance 2: on the scaffold ship path, BUILD before RED
     assert.ok(!narration.includes('--red-receipt'), narration);
     assert.equal(
       narration,
-      `Attempt 1 at effort medium: establish behavioural RED first with \`aidlc card red T0-RPT\` (task.ps1 -Phase red writes .review/T0-RPT.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt T0-RPT --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt T0-RPT --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`,
+      `Attempt 1 at effort medium: establish behavioural RED first with \`aidlc card red T0-RPT\` (task.ps1 -Phase red writes .review/T0-RPT.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt T0-RPT --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt T0-RPT --outcome fail --cause ...\`. ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`,
     );
   } finally {
     fx.cleanup();
