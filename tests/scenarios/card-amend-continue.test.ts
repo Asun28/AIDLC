@@ -72,6 +72,9 @@ async function workflow(candidateAfter: string) {
     assert.deepEqual([amended['state'], amended['amendment'].revision, amended['amendment'].changed, amended['amendment'].invalidated], ['STOP', 1, ['requirements'], ['review']]);
     assert.ok(String(amended['next']).includes(`aidlc card continue ${CARD}`), amended['next']);
     assert.deepEqual([s.run().state, s.run().stop, s.g().state, s.run().review.substantiveDecisions], ['STOP', before.stop, 'STOP', 4]);
+    // The amendment leaves the four decisions exactly as they were before it.
+    assert.equal(before.review.invocations.length, 4);
+    assert.deepEqual(s.run().review.invocations, before.review.invocations);
 
     // 2. The stop is lifted: one further decision, the goal re-admitted.
     const cont = s.cli('card', 'continue', CARD, '--by', BY, '--reason', 'the amended card gets one more decision');
@@ -80,7 +83,12 @@ async function workflow(candidateAfter: string) {
     assert.deepEqual([s.run().stop, continuations.length, continuations[0]?.admits, s.g().state === 'STOP'], [undefined, 1, 5, false]);
     assert.equal((s.run().amendments ?? []).length, 1);
 
+    // The continuation adds `stopLifted`, by the owner, to the stopping decision (the fourth) and changes nothing else of the four.
     const lifted = s.run().review.invocations;
+    const liftedBy = lifted[3]?.stopLifted;
+    assert.equal(liftedBy?.by, BY);
+    assert.ok(before.review.invocations[3]?.stopReview && !before.review.invocations[3]?.stopLifted);
+    assert.deepEqual(lifted, before.review.invocations.map((i, n) => (n === 3 ? { ...i, stopLifted: liftedBy } : i)));
 
     // 3. The amended candidate is the blocked commit under a new digest, with its DoD receipt: the loop asks for its review, decision 5 of 5.
     const first = s.next();
@@ -98,9 +106,8 @@ async function workflow(candidateAfter: string) {
     const reviewed = await s.review();
     const invocations = reviewed.run.review.invocations;
     assert.deepEqual([reviewed.run.review.substantiveDecisions, invocations.at(-1)?.outcome, invocations.at(-1)?.candidateDigest], [5, 'pass', amendedDigest(candidateAfter, 1)]);
-    // The four earlier decisions are as they were.
+    // The four earlier decisions are as they were after the continuation: the pre-amend records with the stop lifted on the fourth.
     assert.deepEqual(invocations.slice(0, 4), lifted);
-    assert.deepEqual(lifted.map((i) => [i.candidateDigest, i.outcome]), before.review.invocations.map((i) => [i.candidateDigest, i.outcome]));
 
     // 4. The pass ships and the merge is verified.
     assert.deepEqual([s.next()['kind'], s.run().mergeVerified, s.ship.requests.map((q) => q.candidateSha)], ['close', true, [candidateAfter]]);
