@@ -104,10 +104,10 @@ function cliGoal() {
   const append: Append = (type, cardId, data = {}) => void journal.append({ type, goalId: goal.id, cardId, data, actor: ACTOR, ts: T });
   const retain = (id: string, kind: string, digest: string | undefined, card: string | undefined, content = id) =>
     runCliInProcess(['evidence', 'retain', '--id', id, '--kind', kind, ...(digest === undefined ? [] : ['--candidate', digest]), ...(card === undefined ? [] : ['--card', card]), '--content', content, '--goal', goal.id, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root } });
-  /** The journal and every file of the evidence directory, by name, with its text. */
+  /** The journal, the evidence directory when it exists (the key `.`), and every file of it by name, each with its bytes. */
   const written = (): Record<string, string> => {
-    const out: Record<string, string> = { journal: readFileSync(journal.file, 'utf8') };
-    if (existsSync(ev.dir)) for (const name of readdirSync(ev.dir)) out[name] = readFileSync(path.join(ev.dir, name), 'utf8');
+    const out: Record<string, string> = { journal: readFileSync(journal.file, 'latin1') };
+    for (const name of existsSync(ev.dir) ? ['.', ...readdirSync(ev.dir)] : []) out[name] = name === '.' ? 'directory' : readFileSync(path.join(ev.dir, name), 'latin1');
     return out;
   };
   const entries = () => ev.load(goal.id, 0, 0, T).entries;
@@ -120,10 +120,10 @@ test('T0-RETAIN-STALE-CANDIDATE acceptance 3: the command refuses the entry with
   const g = cliGoal();
   one(g.append);
   const none = g.written();
-  assert.deepEqual(Object.keys(none), ['journal'], 'no evidence directory before the first accepted retain');
+  assert.deepEqual([Object.keys(none), existsSync(g.ev.dir)], [['journal'], false], 'no evidence directory before the first refused retain');
   const first = await g.retain('r3-1', 'review-verdict', OLD, CARD);
   assert.ok(first.status === 1 && first.stderr.includes(refusalText('r3-1', 'review-verdict', OLD, CARD, [MERGED])), first.stderr);
-  assert.deepEqual(g.written(), none);
+  assert.deepEqual([g.written(), existsSync(g.ev.dir)], [none, false], 'no evidence directory after it');
   // The same with a manifest that holds an entry: a new id, and an id the manifest holds.
   assert.equal((await g.retain('dod', 'dod-receipt', MERGED, CARD)).status, 0);
   const before = g.written();
@@ -182,9 +182,6 @@ test('T0-RETAIN-STALE-CANDIDATE acceptance 5: an entry that the audit reports as
   const r = await g.retain('r3-1', EARLIER_CANDIDATE_KIND, OLD, CARD, '{"verdict":"block"}');
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(g.audit().filter((f) => f.severity === 'block'), []);
-  assert.deepEqual(g.entries().map((e) => [e.id, e.kind, e.candidateDigest, e.sha256]), [
-    ['r3-2', 'review-verdict', MERGED, pass!.sha256],
-    ['r3-1', EARLIER_CANDIDATE_KIND, OLD, block!.sha256],
-  ]);
+  assert.deepEqual(g.entries(), [pass, { ...block, kind: EARLIER_CANDIDATE_KIND }]);
   assert.deepEqual(g.retained(), [{ id: 'r3-1', kind: EARLIER_CANDIDATE_KIND, candidateDigest: OLD, cardId: CARD }]);
 });
