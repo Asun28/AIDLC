@@ -42,3 +42,14 @@ describe('a review held on the Claude CLI limit message waits until its reset ti
     assert.match(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'), /limit-reset\.ts/);
   });
 });
+
+describe('the reset zone is read only for a full tzdata 2026a zone or link name (T0-LIMIT-RESET-IANA-NAMES, issue 398)', () => {
+  test('docs/OPERATIONS.md names tzdata 2026a, US/Pacific-New and issue 398 in the paragraph of the reset form; docs/ARCHITECTURE.md names iana-zones.ts [R3]', () => {
+    const ops = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    const paragraph = ops.split(/\r?\n/).find((line) => line.includes('`resets <time> (<zone>)`')) ?? '';
+    assert.match(paragraph, /tzdata 2026a/);
+    assert.match(paragraph, /`US\/Pacific-New`/);
+    assert.match(paragraph, /issue 398/);
+    assert.match(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'), /`iana-zones\.ts`/);
+  });
+});
