@@ -157,11 +157,15 @@ for (const [name, verdict, outcome] of [
     }));
 }
 
-test('T0-ADVISORY-WITHDRAW acceptance 3: with HEAD at the candidate after a pass, card next ships as on main [R3]', () =>
-  withSetup([PASS], async (s) => {
-    const c1 = commit(s.fx, 1);
-    assert.equal(await decideFirst(s, c1), 'pass');
-    s.next();
-    assert.equal(s.stored().mergeVerified, true);
-    assert.equal(s.merges().length, 1);
-  }));
+for (const moved of [false, true]) {
+  test(`T0-ADVISORY-WITHDRAW acceptance 3: with HEAD ${moved ? 'moved past' : 'at'} the candidate after a pass, card next ships as on main [R3]`, () =>
+    withSetup([PASS], async (s) => {
+      const c1 = commit(s.fx, 1);
+      assert.equal(await decideFirst(s, c1), 'pass');
+      if (moved) commit(s.fx, 2);
+      const { directive } = s.next();
+      assert.ok(directive.kind !== 'wait' || directive.on !== 'candidate-moved', directive.narration);
+      assert.equal(s.stored().mergeVerified, true);
+      assert.equal(s.merges().length, 1);
+    }));
+}

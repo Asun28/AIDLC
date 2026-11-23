@@ -1619,10 +1619,15 @@ export class CardRunner {
     return open.length ? `operation(s) of this card are unresolved (${open.join(', ')}); reconcile them first` : undefined;
   }
 
-  /** The directive for a review checkout whose HEAD is not the bound candidate; undefined when it is, or when it cannot be read. */
+  /**
+   * The directive for a review checkout whose HEAD is not the bound candidate, when the candidate's latest R3 decision is an
+   * advisory block; undefined otherwise, or when HEAD cannot be read. A pass or a ruled pass ships as before (owner's ruling).
+   */
   private movedHead(card: Card, run: CardRun): CardDirective | undefined {
     const sha = run.candidate?.sha;
     if (!this.repo.isGit || sha === undefined) return undefined;
+    const decided = [...run.review.invocations].reverse().find((i) => i.candidateDigest === run.candidate?.digest && (i.outcome === 'pass' || i.outcome === 'block'));
+    if (decided?.outcome !== 'block' || this.invocationBlocking(run, card, decided)) return undefined;
     let head: string;
     try {
       head = this.git.head(this.reviewCheckout(run));
@@ -1651,8 +1656,8 @@ export class CardRunner {
     // R3 as a command: a fresh formal pass for this candidate before any ship is issued.
     const formal = this.formalReviewGate(goal, card, run);
     if (formal) return formal;
-    // The ship takes the review checkout as it is: a HEAD R3 never read is not shipped (card T0-ADVISORY-WITHDRAW R3). Nothing is
-    // written, so the stale verdict spends no retry; a HEAD read that throws ships as before.
+    // After an advisory R3 block, a HEAD R3 never read is not shipped (card T0-ADVISORY-WITHDRAW R3). Nothing is written, so the
+    // stale verdict spends no retry; a HEAD read that throws ships as before.
     const moved = this.movedHead(card, run);
     if (moved) return { run, directive: moved };
     if (!this.allowShip) {
