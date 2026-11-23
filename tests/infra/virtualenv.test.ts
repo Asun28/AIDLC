@@ -4,18 +4,19 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { virtualenvFor } from '../../src/probes/virtualenv.ts';
 import { dodCall } from '../../src/review/mutants.ts';
+import { cleanup, tmpDir } from './helpers.ts';
 
 function inTemp(body: (dir: string) => void): void {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-venv-'));
+  // tmpDir makes the directory with mkdtempSync and registers its removal (T0-TEST-TEMP-SWEEP); the finally block removes it.
+  const dir = tmpDir('aidlc-venv-');
   try {
     body(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    cleanup(dir);
   }
 }
 
