@@ -36,8 +36,19 @@ export interface RepoIdentity {
   key: string;
 }
 
-function gitOut(args: string[], cwd: string): string | undefined {
-  const res = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+/**
+ * How long the repository lookup's `git` may run (card T0-DOCTOR-PROBE-TIMEOUT, issue 371): long enough for a cold start
+ * on Windows CI, where the first doctor of a job takes 17-32 s.
+ */
+export const GIT_LOOKUP_TIMEOUT_MS = 120_000;
+
+/**
+ * Runs git through `spawner` (a test seam) and returns its trimmed stdout on exit 0, else undefined. A git that does not exit
+ * within `timeoutMs` is ended by `spawnSync` and throws an error that names the command, the bound and the directory.
+ */
+export function gitOut(args: string[], cwd: string, spawner: typeof spawnSync = spawnSync, timeoutMs: number = GIT_LOOKUP_TIMEOUT_MS): string | undefined {
+  const res = spawner('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: timeoutMs });
+  if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') throw new Error(`git ${args.join(' ')} did not exit within ${timeoutMs} ms in ${cwd}`);
   if (res.status !== 0) return undefined;
   return res.stdout.trim();
 }

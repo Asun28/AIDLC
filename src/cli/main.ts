@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, w
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { canonical, resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
@@ -18,6 +18,7 @@ import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
 import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { strayProcessesReport } from '../probes/processes.ts';
+import { toolchainReport } from '../probes/toolchain.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
@@ -322,30 +323,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       let c: Ctx;
       // Only a configuration that does not parse is a config error; any other failure ends doctor as it ends every command.
       try { c = ctx(g()); } catch (err) { if (err instanceof ConfigError) return fail(`config: ERROR ${err.message}`); throw err; }
-      // Toolchain probes run concurrently: doctor is the entry check of every route and wakeup.
-      const probe = (cmd: string, args: string[]) =>
-        new Promise<string | undefined>((resolve) => {
-          let out = '';
-          const child = spawn(cmd, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-          child.stdout.on('data', (d: Buffer) => (out += d.toString()));
-          child.stderr.on('data', (d: Buffer) => (out += d.toString()));
-          child.on('error', () => resolve(undefined));
-          child.on('close', (code) => resolve(code === 0 ? out.trim().split(/\r?\n/)[0] : undefined));
-        });
       const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
       const validation = validateRegistry(registry, c.config.tierPaths);
       const blocking = [...validation.values()].flat().filter((f) => f.severity === 'block').length;
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
-      const [gitVersion, ghVersion, pwshVersion, avail, strayProcesses] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available(), strayProcessesReport({ isGit: c.repo.isGit, mainRoot: c.repo.mainRoot, config: c.config, runner: run, now: nowIso() })]);
+      // Toolchain probes run concurrently, each ended at its bound: doctor is the entry check of every route and wakeup.
+      const [toolchain, avail, strayProcesses] = await Promise.all([toolchainReport(), provider.available(), strayProcessesReport({ isGit: c.repo.isGit, mainRoot: c.repo.mainRoot, config: c.config, runner: run, now: nowIso() })]);
       // The session line names the source token (env, claude, default) and what it means; default is a warning.
       const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
         source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
       const checks = {
         node: process.version,
-        git: gitVersion ?? 'MISSING',
-        gh: ghVersion ?? 'MISSING (needed for remote ship)',
-        pwsh: pwshVersion ?? 'MISSING (needed for scaffold ship path)',
+        git: toolchain.git,
+        gh: toolchain.gh,
+        pwsh: toolchain.pwsh,
         repository: c.repo.isGit ? c.repo.mainRoot : `${c.root} (not a git repository)`,
         config: c.configFound ? 'aidlc.config.json' : 'defaults (run aidlc init)',
         shipPath: c.config.shipPath,
