@@ -16,22 +16,25 @@ after(() => {
 });
 
 /** An `isFile` that holds exactly `files` and records every path it is asked about. */
-function fakeFs(files: string[]): { isFile: (p: string) => boolean; asked: string[] } {
+function fakeFs(files: string[], noCase = false): { isFile: (p: string) => boolean; asked: string[] } {
   const asked: string[] = [];
-  return { asked, isFile: (p: string) => (asked.push(p), files.includes(p)) };
+  const fold = (p: string) => (noCase ? p.toLowerCase() : p);
+  return { asked, isFile: (p: string) => (asked.push(p), files.map(fold).includes(fold(p))) };
 }
+/** `fakeFs` comparing names without case, as a Windows file system does. */
+const winFs = (files: string[]) => fakeFs(files, true);
 
 describe('T0-INIT-CLI-PATH: aidlcOnPath', () => {
   test('acceptance 1: win32 reads Path and PATHEXT without case, finds aidlc with a PATHEXT extension in a later or quoted entry, and no bare aidlc [R1] [R2]', () => {
     for (const name of ['aidlc.cmd', 'AIDLC.CMD', 'aidlc.exe']) {
-      const fs = fakeFs([`C:\\two\\${name}`]);
+      const fs = winFs([`C:\\two\\${name}`]);
       assert.equal(aidlcOnPath({ Path: 'C:\\one;C:\\two' }, 'win32', fs.isFile), true, name);
     }
-    assert.equal(aidlcOnPath({ Path: 'C:\\one;C:\\two' }, 'win32', fakeFs(['C:\\two\\aidlc']).isFile), false, 'a bare aidlc is not a Windows command');
-    assert.equal(aidlcOnPath({ Path: 'C:\\two' }, 'win32', fakeFs(['C:\\two\\aidlc.ps1']).isFile), false, '.ps1 is not in the default PATHEXT');
-    assert.equal(aidlcOnPath({ Path: 'C:\\two', pathext: '.EXE;.PS1' }, 'win32', fakeFs(['C:\\two\\aidlc.ps1']).isFile), true, 'PATHEXT read without case');
-    assert.equal(aidlcOnPath({ Path: 'C:\\two', PATHEXT: '.EXE' }, 'win32', fakeFs(['C:\\two\\aidlc.cmd']).isFile), false, 'PATHEXT replaces the default list');
-    assert.equal(aidlcOnPath({ PATH: '"C:\\Program Files\\npm"' }, 'win32', fakeFs(['C:\\Program Files\\npm\\aidlc.cmd']).isFile), true, 'a quoted entry');
+    assert.equal(aidlcOnPath({ Path: 'C:\\one;C:\\two' }, 'win32', winFs(['C:\\two\\aidlc']).isFile), false, 'a bare aidlc is not a Windows command');
+    assert.equal(aidlcOnPath({ Path: 'C:\\two' }, 'win32', winFs(['C:\\two\\aidlc.ps1']).isFile), false, '.ps1 is not in the default PATHEXT');
+    assert.equal(aidlcOnPath({ Path: 'C:\\two', pathext: '.EXE;.PS1' }, 'win32', winFs(['C:\\two\\aidlc.ps1']).isFile), true, 'PATHEXT read without case');
+    assert.equal(aidlcOnPath({ Path: 'C:\\two', PATHEXT: '.EXE' }, 'win32', winFs(['C:\\two\\aidlc.cmd']).isFile), false, 'PATHEXT replaces the default list');
+    assert.equal(aidlcOnPath({ PATH: '"C:\\Program Files\\npm"' }, 'win32', winFs(['C:\\Program Files\\npm\\aidlc.cmd']).isFile), true, 'a quoted entry');
   });
 
   test('acceptance 1: elsewhere PATH is split by colon and only a file named aidlc counts [R1] [R2]', () => {

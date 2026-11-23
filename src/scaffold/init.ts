@@ -227,6 +227,42 @@ export function resolveHookCommand(target: string, hookEntry?: string): string {
   return TEMPLATE_HOOK_COMMAND;
 }
 
+/** The value of `name` in `env`; on Windows, where variable names have no case, the first key equal to it without case. */
+function envValue(env: Record<string, string | undefined>, name: string, platform: NodeJS.Platform): string | undefined {
+  if (platform !== 'win32') return env[name];
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name);
+  return key === undefined ? undefined : env[key];
+}
+
+/** Whether `p` names a regular file; a path that names nothing, or cannot be read, does not. */
+function isRegularFile(p: string): boolean {
+  try {
+    return statSync(p, { throwIfNoEntry: false })?.isFile() ?? false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether a shell would find `aidlc` through PATH (card T0-INIT-CLI-PATH): a file `aidlc` in a listed directory, on Windows
+ * `aidlc` with a PATHEXT extension. Empty entries are skipped, so the current directory is never searched by accident.
+ */
+export function aidlcOnPath(env: Record<string, string | undefined> = process.env, platform: NodeJS.Platform = process.platform, isFile: (p: string) => boolean = isRegularFile): boolean {
+  const win = platform === 'win32';
+  const dirs = (envValue(env, 'PATH', platform) ?? '').split(win ? ';' : ':').map((d) => (win ? d.replace(/^"(.*)"$/, '$1') : d)).filter((d) => d !== '');
+  const names = win ? (envValue(env, 'PATHEXT', platform) || '.COM;.EXE;.BAT;.CMD').split(';').filter((e) => e !== '').map((e) => `aidlc${e.toLowerCase()}`) : ['aidlc'];
+  const join = win ? path.win32.join : path.posix.join;
+  return dirs.some((d) => names.some((n) => isFile(join(d, n))));
+}
+
+/** The command `init` names for running the CLI: `aidlc` when it is on PATH, else a direct `node` start of `entry` and a note that says so. */
+export function initCli(entry: string, onPath: boolean): { onPath: boolean; command: string; note?: string } {
+  if (onPath) return { onPath: true, command: 'aidlc' };
+  const file = entry.replace(/\\/g, '/');
+  const checkout = path.posix.dirname(path.posix.dirname(file));
+  return { onPath: false, command: `node "${file}"`, note: `aidlc is not on PATH: run each aidlc command as node "${file}" <command>, or run npm link in "${checkout}" to put aidlc on PATH` };
+}
+
 /** The target's `package.json`; a file that is absent or does not parse lists nothing. */
 function readPackage(target: string): { name?: string; dependencies?: unknown; devDependencies?: unknown } {
   try {

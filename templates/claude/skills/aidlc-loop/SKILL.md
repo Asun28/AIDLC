@@ -21,7 +21,8 @@ step.
    writes; it names the goal claiming each uncommitted planning file. Leave
    another goal's file alone; commit your own goal's planning artifacts on
    main as soon as they validate and before you stop, then push main.
-   A `baseSync` that names a git command => run it. Red => STOP/tool.
+   A `baseSync` that names a git command => run it. No `aidlc` on PATH =>
+   `node <aidlc checkout>/bin/aidlc.js` instead. Red => STOP/tool.
 2. Identity: canonical repository, base, goal generation, card revision. A
    window path or session id is not ownership; `aidlc goal status` shows the
    lease. Stale generation => `aidlc goal reconcile` before any mutation.
@@ -50,8 +51,8 @@ step.
 ## Authority
 - T0/T1 routine work uses the goal's authorization.
 - T2 has one checkpoint: plan + validated card projection approved together
-  before registration (`aidlc plan approve`). Carry approval forward; do not
-  ask again for unchanged routine work.
+  before registration (`aidlc plan approve`). Do not ask again for
+  unchanged routine work.
 - Production, material scope change, reserved decisions and high-risk ops
   keep their gates. A timeout never implies approval. Prohibited stays
   prohibited even if a skill suggests asking.
@@ -59,7 +60,7 @@ step.
 ## Modules
 - `card-loop.md`: one card PREPARE..DONE/STOP.
 - `arc.md`: multi-card dispatch, amendments, integrated acceptance.
-- `release.md`: package/staging/production/recovery. Explicit target only.
+- `release.md`: package/staging/production/recovery.
 - `migrate.md`: data impact, phase graph, recovery. Data impact only.
 - Companion skills, read by path when needed: `tdd` before any test,
   `diagnose` on T0-bugfix, `grilling` at T1/T2 intake and the T2
@@ -75,7 +76,7 @@ twice with no progress => stop early. Quota, expected RED, tool outage and
 env setup do not count.
 
 ## Output
-Concise progress: state, evidence refs, blocker, next action. STOP always
+Progress: state, evidence refs, blocker, next action. STOP always
 carries reason, partial effects and the exact next action. Never claim
 "fully audited" without `aidlc audit verify` at the required level. Never
 merge without the required review, never bypass quota, never weaken a test

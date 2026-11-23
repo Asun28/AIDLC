@@ -65,3 +65,40 @@ npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/i
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass and the existing init, template, mirror, size, command-line, changelog and prose tests pass unchanged.
+
+## PR summary
+### What
+`aidlc init` checks whether `aidlc` is on PATH. When it is not, init prints the `node "<path>/bin/aidlc.js"` command and the `npm link` alternative.
+
+### Why / Intent
+Issue 451. Setup does not put `aidlc` on PATH, so the commands in the skill and in CLAUDE.md failed as written, and no text said what to run.
+
+### How / Behaviour
+`aidlcOnPath` searches the PATH directories for `aidlc`, with a PATHEXT extension on Windows. `initCli` gives the command and the note. The init report gains a `cli` field, and the `next` line names that command.
+
+### System impact
+Only `aidlc init` output changes. Entry check 1 of the skill and the CLAUDE.md section get one fallback line each. Three redundant phrases leave SKILL.md to stay under its 4500-byte cap.
+
+### Security
+The check reads PATH and PATHEXT and calls `stat` on candidate files. It starts no process and skips empty PATH entries, so it never searches the current directory.
+
+### Tests and review
+`tests/infra/init-cli-path.test.ts` covers the PATH rules on both platforms, the two `initCli` shapes, a real `init` run with a controlled PATH, and the new text. The existing init, template and doc tests pass unchanged.
+
+### Risk
+Low. A wrong PATH result changes only the printed hint; init writes the same files.
+
+### Ownership
+aidlc maintainers, `src/scaffold/init.ts`.
+
+### Docs
+`docs/OPERATIONS.md` (Setup), `README.md` (Quick start) and `changelog.d/T0-INIT-CLI-PATH.md`.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/init-cli-path.test.ts`, the three `aidlcOnPath` tests. RED at af753892: the export does not exist | pass |
+| 2 | Same file, `acceptance 2: the command is aidlc ...` | pass |
+| 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run | pass |
+| 4 | Same file, the two text tests | pass |
+| 5 | The DoD: init, init-no-package, cli-cwd-paths, templates, coordinator-effort, mirror, claude-md-size, command-lines, changelog-fragments, prose | pass; text reviewer-verified |

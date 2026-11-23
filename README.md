@@ -29,6 +29,8 @@ node bin/aidlc.js next             # one directive: ask | plan | project-cards |
 node bin/aidlc.js run --goal <id> --max-steps 40  # drive a goal with the claude-code provider until attention is needed
 ```
 
+The commands below and in the skills call `aidlc`. Setup does not put it on PATH: run `npm link` in this checkout, or run `node <checkout>/bin/aidlc.js` in its place. `aidlc init` prints that command when `aidlc` is not on PATH.
+
 The loop is `next` -> act -> `report` -> `next`:
 
 ```bash
