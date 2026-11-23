@@ -1,7 +1,7 @@
 ---
 id: T0-PR-SUMMARY
 title: "The GitHub ship path writes the pull request text from the PR summary section of the card file, and keeps the fixed line where the card has none"
-status: todo
+status: merged
 branch: T0-PR-SUMMARY
 worktree: D:\wt\AIDLC\T0-PR-SUMMARY
 allow_paths:
