@@ -53,9 +53,51 @@ In a repository whose `cardsDir` is not `specs/tasks`, the GitHub ship path read
 the `## PR summary` section from `<cardsDir>/<card>.md` in the worktree, and the
 fixed line and the `Card:` line name that path.
 
+## PR summary
+### What
+The GitHub ship path now reads the PR summary from the configured card directory. The pull request text names that card path.
+
+### Why / Intent
+Before, the ship read only `specs/tasks`. A repository with another `cardsDir` always got the fixed line, and the text named the wrong path.
+
+### How / Behaviour
+- `GitHubShipOptions` has a new optional field `cardsDir`. `shipPathFor` sets it from the configuration.
+- The ship reads `<cardsDir>/<card>.md` in the worktree. When the field is not set, it reads `specs/tasks`.
+- The fixed line and the `Card:` line name the same path.
+
+### System impact
+Only `src/delivery/github-ship.ts` and one line of `src/loop/card-runner.ts` change. A repository that uses `specs/tasks` gets the same text as before.
+
+### Security
+The ship runs no new command. The text goes to `gh` as one argument, as before. The rules for the at sign and the NUL character do not change.
+
+### Tests and review
+- Three new tests in `tests/infra/pr-summary.test.ts` pass. They cover `prBody`, the ship and the configuration.
+- The existing ship and template tests pass with no change.
+
+### Risk
+Low. The default directory gives the same text as before. The path in the text is the configured value, with no change to its spelling.
+
+### Ownership
+Card `T0-PR-SUMMARY-CARDS-DIR`, goal `g-20261123100524-366872`, from issue 445.
+
+### Docs
+`docs/OPERATIONS.md` (Ship gates, Pull request text) and `docs/ARCHITECTURE.md` name the new path. `changelog.d/T0-PR-SUMMARY-CARDS-DIR.md` holds the entry.
+
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/infra/pr-summary.test.ts tests/infra/github-ship.test.ts tests/infra/github-ship-merge-refused.test.ts tests/surface/templates.test.ts tests/surface/prose.test.ts tests/surface/changelog-fragments.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass, the existing ship and template tests pass unchanged, the typecheck is clean and the changelog fragment is well formed.
+
+## Attempt evidence
+RED commit d86b550c holds the new tests and a seam: `prBody` takes an unused fourth parameter and `GitHubShipOptions` has a `cardsDir` field nobody reads. The three new tests fail on assertions there.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `pr-summary.test.ts`, T0-PR-SUMMARY-CARDS-DIR acceptance 1 | pass |
+| 2 | `pr-summary.test.ts`, T0-PR-SUMMARY-CARDS-DIR acceptance 2 | pass |
+| 3 | `pr-summary.test.ts`, T0-PR-SUMMARY-CARDS-DIR acceptance 3 | pass |
+| 4 | DoD: typecheck, the six T0-PR-SUMMARY tests, `github-ship.test.ts`, `github-ship-merge-refused.test.ts`, `templates.test.ts` | pass |
+| 5 | `changelog-fragments.test.ts`; the two documents in the diff | pass |

@@ -266,7 +266,7 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
   if (config.shipPath === 'scaffold') return new ScaffoldShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), runner });
   if (config.shipPath === 'github') {
     const gh = config.github;
-    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs });
+    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs, cardsDir: config.cardsDir });
   }
   return new DryRunShipPath();
 }
