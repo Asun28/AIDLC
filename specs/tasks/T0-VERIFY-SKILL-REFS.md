@@ -1,7 +1,7 @@
 ---
 id: T0-VERIFY-SKILL-REFS
 title: "The Not covered list and the Shown failing record of the verify-card-run-writes skill are reference files beside SKILL.md, and each of the two sections says when to read its file"
-status: todo
+status: merged
 branch: T0-VERIFY-SKILL-REFS
 worktree: D:\wt\AIDLC\T0-VERIFY-SKILL-REFS
 allow_paths:
