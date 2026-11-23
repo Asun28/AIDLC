@@ -1,7 +1,7 @@
 ---
 id: T0-AMEND-DELTA
 title: "A review decision on a candidate whose card was amended since the stage's last decision receives no delta and marks no finding outsideDelta, so a finding the amended contract raises is not counted a first-round miss (issue 415)"
-status: todo
+status: merged
 branch: T0-AMEND-DELTA
 allow_paths:
   - src/loop/card-runner.ts
