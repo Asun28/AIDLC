@@ -160,6 +160,26 @@ describe('templates (Q14 packaging)', () => {
     assert.match(agent('reviewer'), /fewer verified findings/, 'reviewer verdict budget');
   });
 
+  test('T0-API-REVIEW-SKILL acceptance 1, 2: secure-api-review exists, is ASCII, carries frontmatter, stays within its cap, and its description names what it checks [R4] [R6]', () => {
+    const file = path.join(tpl, 'claude', 'skills', 'secure-api-review', 'SKILL.md');
+    assert.ok(existsSync(file), 'secure-api-review/SKILL.md missing');
+    const bytes = statSync(file).size;
+    assert.ok(bytes <= 2500, `secure-api-review/SKILL.md is ${bytes} bytes > cap 2500`);
+    const text = readFileSync(file, 'utf8');
+    assert.ok(!/[^\x00-\x7F]/.test(text), 'secure-api-review/SKILL.md must be ASCII so bytes == chars');
+    assert.ok(text.startsWith('---\nname: secure-api-review\n'), 'secure-api-review frontmatter must start with its name');
+    const opener = '\ndescription: >-\n';
+    assert.ok(text.includes(opener), 'secure-api-review folded description');
+    // A session decides from the description alone whether to load the skill, so the description names each thing the skill checks.
+    const folded = text.slice(text.indexOf(opener) + opener.length);
+    const close = folded.indexOf('\n---\n');
+    assert.ok(close > 0, 'the frontmatter closes after the description');
+    const description = folded.slice(0, close).replace(/\s+/g, ' ').toLowerCase();
+    for (const term of ['authentication', 'authorization', 'input validation', 'audit', 'pii', 'session', 'error']) {
+      assert.ok(description.includes(term), `the secure-api-review description must name "${term}": ${description}`);
+    }
+  });
+
   test('REVIEW.md carries the two axes, the nit cap and the verdict contract', () => {
     const review = readFileSync(path.join(tpl, 'REVIEW.md'), 'utf8');
     assert.match(review, /spec/);
