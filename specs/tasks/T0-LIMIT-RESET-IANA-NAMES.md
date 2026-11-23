@@ -52,3 +52,61 @@ doc_sync: changelog.d/T0-LIMIT-RESET-IANA-NAMES.md
 
 ## Why
 Issue 398: the area rule of T0-CLI-LIMIT-RESET lets `US/Pacific-New` and `Canada/East-Saskatchewan` through because ICU still resolves them.
+
+## Attempt evidence
+
+Attempt 1, base main at e46e61e2. RED commit b29dc106 (tests only, src/ and docs/ as on main): tests/core/iana-zones.test.ts fails to load (no src/core/iana-zones.ts); in tests/core/limit-reset.test.ts the new test reads 75600000 (21 h) for `US/Pacific-New`; in tests/surface/pre-review-limit-reset.test.ts the new docs test finds no `tzdata 2026a` in the paragraph.
+
+Requirement clauses and the assertion that fails without each:
+
+| Clause | Assertion |
+|---|---|
+| R1 597 names, each once | iana-zones.test.ts size 597 and the lower-case set of 597 |
+| R1 zones, links, names with no area | iana-zones.test.ts `has` rows (Pacific/Auckland, US/Pacific, W-SU, NZ-CHAT ...) |
+| R1 no removed or ICU-only name | iana-zones.test.ts `!has` rows (US/Pacific-New, Canada/East-Saskatchewan, Factory, SystemV/AST4, PST) |
+| R1 Intl accepts each | iana-zones.test.ts third test |
+| R2 full name, any letter case | limit-reset.test.ts removed names in two letter cases read undefined |
+| R2 links and zones still read | limit-reset.test.ts held rows (America/Godthab ... America/Ciudad_Juarez) and the existing F3 rows |
+| R3 OPERATIONS sentence | pre-review-limit-reset.test.ts `tzdata 2026a`, `` `US/Pacific-New` ``, `issue 398` in the paragraph |
+| R3 ARCHITECTURE module map | pre-review-limit-reset.test.ts `` `iana-zones.ts` `` |
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/core/limit-reset.test.ts "a name IANA removed that ICU still accepts reads no delay; ..." | pass |
+| 2 | the same test (held rows) and every earlier test of the file, unchanged | pass |
+| 3 | tests/core/iana-zones.test.ts, three tests | pass |
+| 4 | tests/surface/pre-review-limit-reset.test.ts "docs/OPERATIONS.md names tzdata 2026a, US/Pacific-New and issue 398 ..."; the two earlier tests unchanged | pass |
+| 5 | src/core/iana-zones.ts generated from the hygiene extraction of tzdata 2026a (597 names; Intl accepts all; all 418 ICU canonical names are among them); typecheck clean; parse-guard.test.ts unchanged and green; changelog fragment | pass |
+
+Every test file that reads docs/OPERATIONS.md or docs/ARCHITECTURE.md (84 files) was run once on Windows: 2035 tests, 2034 pass; the one failure, tests/scenarios/finding-repro.test.ts "T0-REPRO-SAME-SHA acceptance 1", passed 10 of 10 when its file was rerun alone.
+
+DoD (Windows): `npm run typecheck` clean; `node --test tests/core/iana-zones.test.ts tests/core/limit-reset.test.ts tests/surface/pre-review-limit-reset.test.ts tests/core/parse-guard.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts`: 68 tests, 68 pass, 0 fail.
+
+## PR summary
+
+### What
+The reset zone of a CLI limit message gives a delay only when its whole name is a tzdata 2026a zone or link name.
+
+### Why / Intent
+Issue 398. ICU still accepts `US/Pacific-New` and `Canada/East-Saskatchewan`, which IANA removed. The old area rule let both names through.
+
+### How / Behaviour
+A new module, src/core/iana-zones.ts, holds the 597 zone and link names of tzdata 2026a. `limitResetMs` compares the whole zone name with this set, without letter case. The area rule and the bare-name list are removed.
+
+### System impact
+Only the delay of a review quota hold changes. A removed name now holds for the 15-minute default.
+
+### Security
+No change. The module reads no file, no network and no secret.
+
+### Tests and review
+New tests: tests/core/iana-zones.test.ts and one test each in tests/core/limit-reset.test.ts and tests/surface/pre-review-limit-reset.test.ts. RED commit b29dc106 failed before the change.
+
+### Risk
+Low. A zone that a later tzdata release adds reads no delay until the list is refreshed, so its hold is 15 minutes.
+
+### Ownership
+Card T0-LIMIT-RESET-IANA-NAMES, follow-up of issue 394.
+
+### Docs
+docs/OPERATIONS.md (quota paragraph), docs/ARCHITECTURE.md (module map) and changelog.d/T0-LIMIT-RESET-IANA-NAMES.md.

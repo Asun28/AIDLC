@@ -53,6 +53,21 @@ describe('limitResetMs: the delay to the reset time a CLI limit message names (T
     for (const [zone, ms] of held) assert.equal(limitResetMs(`resets 1pm (${zone})`, now), ms, zone);
   });
 
+  test('a name IANA removed that ICU still accepts reads no delay; links and zones of tzdata 2026a do (T0-LIMIT-RESET-IANA-NAMES, issue 398) [R2]', () => {
+    const now = '2026-11-20T00:00:00.000Z';
+    for (const zone of ['US/Pacific-New', 'us/pacific-new', 'Canada/East-Saskatchewan', 'CANADA/EAST-SASKATCHEWAN']) assert.equal(limitResetMs(`resets 1pm (${zone})`, now), undefined, zone);
+    const held: Array<[string, number]> = [
+      ['America/Godthab', 15 * HOUR],
+      ['Antarctica/South_Pole', 24 * HOUR],
+      ['Asia/Calcutta', 7 * HOUR + 1_800_000],
+      ['ROC', 5 * HOUR],
+      ['Etc/GMT+12', HOUR],
+      ['Europe/Kyiv', 11 * HOUR],
+      ['America/Ciudad_Juarez', 20 * HOUR],
+    ];
+    for (const [zone, ms] of held) assert.equal(limitResetMs(`resets 1pm (${zone})`, now), ms, zone);
+  });
+
   test('`resets` joined to a letter or digit before it reads no delay; a separator before it does (F4, class reset-substring-match) [R1]', () => {
     const now = '2026-11-20T00:00:00.000Z';
     for (const text of ['quota exceeded; presets 1pm (UTC)', 'éresets 1pm (UTC)', '9resets 1pm (UTC)', 'Presets 1pm (UTC)']) assert.equal(limitResetMs(text, now), undefined, text);

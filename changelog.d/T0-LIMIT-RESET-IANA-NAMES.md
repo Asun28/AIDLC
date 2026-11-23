@@ -1,0 +1,1 @@
+- T0-LIMIT-RESET-IANA-NAMES: the reset zone of a CLI limit message (`resets <time> (<zone>)`) gives a delay only when its whole name is a zone or link name of tzdata 2026a, where any name in an IANA area was read; `US/Pacific-New` and `Canada/East-Saskatchewan`, which ICU still accepts and IANA removed, now hold for the 15-minute default (issue 398).
