@@ -1,0 +1,1 @@
+- T0-PREFETCH-TIMEOUT: the hook entry's early `git rev-parse` (`prefetchRepoIdentity`) is ended at 120 seconds, the bound of the synchronous repository lookup, and then gives no answer, so the guards run the synchronous lookup, which has the same bound; before, a git that did not exit held the hook until Claude Code's hook timeout (issue 456).

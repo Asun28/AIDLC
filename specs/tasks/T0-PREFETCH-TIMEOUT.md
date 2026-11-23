@@ -93,3 +93,10 @@ npm run typecheck && node --test tests/infra/git-prefetch-timeout.test.ts tests/
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
+| 1 | `tests/infra/git-prefetch-timeout.test.ts`, test `acceptance 1: ...`. RED at 43b09073 (seam parameters, no timer): `settled after 10020 ms, not at the 500 ms bound`, the seam's own 10 s kill ending the child | pass |
+| 2 | Same file, test `acceptance 2: ...`: the spawner's command, arguments and options; with mocked `setTimeout`, no kill at 119 999 ms and one kill at 120 000 ms; git's identity after settling. RED at 43b09073: `ended at 120000 ms`, 0 kills | pass |
+| 3 | Same file, test `acceptance 3: ...`: a real git answers, no kill after 120 000 mocked ms, and with `.git` moved away the cached identity is still git's | pass (also at 43b09073: a guard for R2) |
+| 4 | DoD arms 3-7: `git-lookup-timeout`, `hook-git-prefetch`, `cli-inprocess`, `paths`, `bin-entry`, none in the diff | pass |
+| 5 | DoD arm 1 (`npm run typecheck`) exit 0; `changelog-fragments`, `prose` pass; docs/OPERATIONS.md doctor paragraph, docs/ARCHITECTURE.md `src/state/` sentence, `changelog.d/T0-PREFETCH-TIMEOUT.md` | pass; doc text is for the reviewer |
+
+DoD on the candidate: exit 0, 63 tests, 62 pass, 0 fail, 1 skipped (`bin-entry` file links, EPERM on this platform, as on main).

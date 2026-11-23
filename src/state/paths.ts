@@ -120,10 +120,12 @@ function endChild(steps: (() => void)[]): void {
  * and stderr together pass `MAX_OUTPUT` (the child is ended and reading stops, as `spawnSync` does, and at most `MAX_OUTPUT`
  * bytes stay buffered). A failed read of a stream leaves the exit status and the bytes read, as it does for `spawnSync`. A
  * spawn that fails in any way is no lookup, so the identity is then asked of git synchronously as before. Every outcome is
- * settled before any cleanup, so a kill that errors or throws cannot change it or leave it pending (R3 decision 2).
+ * settled before any cleanup, so a kill that errors or throws cannot change it or leave it pending (R3 decision 2). A git
+ * still running at `timeoutMs` (`GIT_LOOKUP_TIMEOUT_MS` by default) is no lookup either: the lookup settles as not answered,
+ * then the child is ended, so the identity is asked of git synchronously through `gitOut`, which has the same bound (card
+ * T0-PREFETCH-TIMEOUT, issue 456). `spawner` is a test seam.
  */
 export function prefetchRepoIdentity(cwd: string, spawner: typeof spawn = spawn, timeoutMs: number = GIT_LOOKUP_TIMEOUT_MS): void {
-  void timeoutMs;
   if (prefetch) return;
   const lookup = new Promise<Lookup>((resolve) => {
     const unanswered = () => resolve({ answered: false });
@@ -132,7 +134,12 @@ export function prefetchRepoIdentity(cwd: string, spawner: typeof spawn = spawn,
     };
     try {
       const child = spawner('git', IDENTITY_ARGS, { cwd, windowsHide: true });
-      child.on('error', unanswered);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stopTimer = () => clearTimeout(timer);
+      child.on('error', () => {
+        stopTimer();
+        unanswered();
+      });
       const { stdout, stderr, stdin } = child;
       if (!stdout || !stderr || !stdin) {
         unanswered();
@@ -145,6 +152,7 @@ export function prefetchRepoIdentity(cwd: string, spawner: typeof spawn = spawn,
       const withinLimit = (d: Buffer): boolean => {
         bytes += d.length;
         if (bytes <= MAX_OUTPUT) return true;
+        stopTimer();
         resolve({ answered: true, out: undefined });
         endChild([() => child.kill(), () => stdout.destroy(), () => stderr.destroy()]);
         return false;
@@ -156,7 +164,16 @@ export function prefetchRepoIdentity(cwd: string, spawner: typeof spawn = spawn,
         if (withinLimit(d)) chunks.push(d);
       });
       stderr.on('data', withinLimit);
-      child.on('close', (code) => resolve({ answered: true, out: code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined }));
+      child.on('close', (code) => {
+        stopTimer();
+        resolve({ answered: true, out: code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined });
+      });
+      /** Past the bound the lookup is settled as not answered, then the child is ended; the timer alone keeps no process alive. */
+      timer = setTimeout(() => {
+        unanswered();
+        endChild([() => child.kill(), () => stdout.destroy(), () => stderr.destroy()]);
+      }, timeoutMs);
+      timer.unref();
       stdin.end();
     } catch {
       unanswered();
