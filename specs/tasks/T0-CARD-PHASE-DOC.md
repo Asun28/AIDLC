@@ -97,3 +97,5 @@ Mutants of the repair, each applied, run and restored:
 | `helpOptions` keeps `-h, --help`; flags cut at the first space | acceptance 1, the readers test |
 | `namedOptions` keeps the script parameters | acceptance 1, the readers test |
 | `namedOptions` reads only spans that begin with `--`; a span named twice counted twice; `helpList` without the guard for a missing list | the readers test |
+
+CI on 0da4e351 (run 45090049641, PR 434) failed on one test outside this card: `T1-OUTCOME-INGEST acceptance 10` of `tests/surface/outcome-ingest.test.ts`, with `spawnSync ... EPIPE` from `bench/outcome/run.ts`. The stand-in binary of that test exits without reading its input, and the run fails when that exit comes before the parent's write (issue 435). The five tests of this card passed in that run, and no change inside this card's `allow_paths` repairs the failure. The candidate after it merges origin/main at 4e6f3efb (PR 433 and its closure, which change no file of this card); this card's diff against the base is as R3 passed it, plus this paragraph.
