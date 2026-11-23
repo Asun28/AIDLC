@@ -2,7 +2,7 @@
 // as EVIDENCE_STALE_CANDIDATE through the merges of its card; the kind `earlier-candidate` holds a file of a candidate that did not merge.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { actor, cleanup, tmpDir } from '../infra/helpers.ts';
 import { runCliInProcess } from '../infra/cli-inprocess.ts';
@@ -19,10 +19,7 @@ const CARD = 'T0-RETAIN';
 const [OLD, MERGED, LATER] = ['a1'.repeat(32), 'b2'.repeat(32), 'c3'.repeat(32)];
 const roots: string[] = [];
 const fixtures: Fixture[] = [];
-after(() => {
-  for (const root of roots) cleanup(root);
-  for (const fx of fixtures) fx.cleanup();
-});
+after(() => [...roots.map((root) => cleanup(root)), ...fixtures.map((fx) => fx.cleanup())]);
 
 const refusalText = (id: string, kind: string, digest: string, card: string, merged: string[]): string => // the refusal, whole
   `evidence ${id} of the candidate-bound kind ${kind} names candidate ${digest}, and ${card} merged ${merged.join(', ')}: aidlc audit verify blocks such an entry (EVIDENCE_STALE_CANDIDATE). Evidence of a merged candidate takes its digest as --candidate; a file of an earlier candidate takes --kind earlier-candidate`;
@@ -125,17 +122,14 @@ test('T0-RETAIN-STALE-CANDIDATE acceptance 3: the command refuses the entry with
   const none = g.written();
   assert.deepEqual(Object.keys(none), ['journal'], 'no evidence directory before the first accepted retain');
   const first = await g.retain('r3-1', 'review-verdict', OLD, CARD);
-  assert.equal(first.status, 1, first.stdout);
-  assert.ok(first.stderr.includes(refusalText('r3-1', 'review-verdict', OLD, CARD, [MERGED])), first.stderr);
+  assert.ok(first.status === 1 && first.stderr.includes(refusalText('r3-1', 'review-verdict', OLD, CARD, [MERGED])), first.stderr);
   assert.deepEqual(g.written(), none);
-
   // The same with a manifest that holds an entry: a new id, and an id the manifest holds.
   assert.equal((await g.retain('dod', 'dod-receipt', MERGED, CARD)).status, 0);
   const before = g.written();
   for (const id of ['r3-1', 'dod']) {
     const again = await g.retain(id, 'dod-receipt', OLD, CARD);
-    assert.equal(again.status, 1, again.stdout);
-    assert.ok(again.stderr.includes(refusalText(id, 'dod-receipt', OLD, CARD, [MERGED])), again.stderr);
+    assert.ok(again.status === 1 && again.stderr.includes(refusalText(id, 'dod-receipt', OLD, CARD, [MERGED])), again.stderr);
     assert.deepEqual(g.written(), before, id);
   }
 });
@@ -156,7 +150,6 @@ test('T0-RETAIN-STALE-CANDIDATE acceptance 4: the command accepts a retain befor
   assert.deepEqual([g.entries().map((e) => e.id), g.retained().map((d) => d['id'])], [ids, ids]);
   // The retain made before the merge is the one the audit reports.
   assert.deepEqual(g.audit().filter((f) => f.code === 'EVIDENCE_STALE_CANDIDATE'), [staleFinding('early', [MERGED])]);
-
   // A journal whose chain does not verify gives the check no merge digest, as it gives the verifier none.
   const b = cliGoal();
   one(b.append);
@@ -168,6 +161,13 @@ test('T0-RETAIN-STALE-CANDIDATE acceptance 4: the command accepts a retain befor
   assert.deepEqual(b.entries().map((e) => [e.id, e.kind, e.candidateDigest]), [['r3-1', 'review-verdict', OLD]]);
   const codes = b.audit().map((f) => f.code);
   assert.ok(codes.includes('JOURNAL_CHAIN') && !codes.includes('EVIDENCE_STALE_CANDIDATE'), codes.join(','));
+  // A journal that cannot be read gives the check no event either: the retain goes on to the store, and the append fails as on main.
+  const u = cliGoal();
+  rmSync(u.journal.file);
+  mkdirSync(u.journal.file);
+  const unread = await u.retain('r3-1', 'review-verdict', OLD, CARD);
+  assert.ok(unread.status === 1 && !unread.stderr.includes('EVIDENCE_STALE_CANDIDATE'), unread.stderr);
+  assert.deepEqual(u.entries().map((e) => e.id), ['r3-1']);
 });
 
 test('T0-RETAIN-STALE-CANDIDATE acceptance 5: an entry that the audit reports as stale is corrected by a retain of the same id, file and digest under the kind earlier-candidate; the entry is replaced, its file digest stays, and the journal records the retain [R4]', async () => {
@@ -179,7 +179,6 @@ test('T0-RETAIN-STALE-CANDIDATE acceptance 5: an entry that the audit reports as
   assert.deepEqual(g.audit().filter((f) => f.severity === 'block'), [staleFinding('r3-1', [MERGED])]);
   const [block, pass] = g.entries();
   assert.notEqual(block!.sha256, pass!.sha256);
-
   const r = await g.retain('r3-1', EARLIER_CANDIDATE_KIND, OLD, CARD, '{"verdict":"block"}');
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(g.audit().filter((f) => f.severity === 'block'), []);

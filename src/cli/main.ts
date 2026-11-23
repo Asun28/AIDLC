@@ -1635,8 +1635,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const goalRec = c.controller.mustGoal(id);
       const ev = new EvidenceStore(c.paths.evidence, id);
       const journal = Journal.forGoal(c.paths.journal, id);
-      // Refused before any write: the entry the audit reports as stale, on the events of a journal whose chain verifies (card T0-RETAIN-STALE-CANDIDATE).
-      const stale = staleCandidateRefusal({ id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card }, () => (journal.verify().ok ? journal.readAll() : []));
+      // Refused before any write: the entry the audit reports as stale. A journal whose chain does not verify, or that cannot be read, gives no event (card T0-RETAIN-STALE-CANDIDATE).
+      const verified = () => { try { return journal.verify().ok ? journal.readAll() : []; } catch { return []; } };
+      const stale = staleCandidateRefusal({ id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card }, verified);
       if (stale) throw new Error(stale);
       const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
       journal.append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
