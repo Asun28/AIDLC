@@ -74,7 +74,7 @@ export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8
   });
   const pack = { tokenBudget, planRef: card.plan_ref ?? null, planSection: sources.planSection, acceptance: card.acceptance, allow_paths: card.allow_paths, non_goals: card.non_goals ?? [], lessons: sources.lessons.split(/\r?\n/).filter((l) => l.startsWith('- ') && relevant(l)), missingSources: sources.missingSources ?? [], truncated: { lessons: 0, plan: false } };
   const fits = () => Buffer.byteLength(JSON.stringify(pack), 'utf8') <= tokenBudget;
-  while (!fits() && pack.lessons.length) { pack.lessons.pop(); pack.truncated.lessons++; }
+  while (!fits() && pack.lessons.length) { pack.lessons.shift(); pack.truncated.lessons++; }
   if (!fits()) {
     const points = Array.from(pack.planSection);
     pack.planSection = '';

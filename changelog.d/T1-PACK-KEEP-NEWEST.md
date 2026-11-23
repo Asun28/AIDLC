@@ -1,0 +1,1 @@
+- T1-PACK-KEEP-NEWEST: a context pack over its byte budget removes the earliest matching lesson line first, so the newest matching lessons stay, still in file order.
