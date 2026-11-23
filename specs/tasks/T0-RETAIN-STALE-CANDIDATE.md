@@ -35,7 +35,6 @@ budget: 250
 tdd: true
 sweep: "On main at 5325b3ce, and again at 2b789c3f for the files of this card. `git grep -n -F '.retain(' -- src` finds one caller of `EvidenceStore.retain`: the `evidence retain` action of src/cli/main.ts. The merge digests are a closure inside `verifyAudit` with one use. `tests/surface/manifest.test.ts` (retaining the same id replaces the entry) and docs/OPERATIONS.md, Audit, pin the replacement of an entry by a retain of its id. `tests/scenarios/card-close-cleanup.test.ts` compares the whole CLOSE section of both card-loop.md copies and the close narration with literals that name `--candidate <digest>`, and card-loop.md is at 6492 of its 6500 bytes, so this card leaves both as they are. A trial of this change in a worktree that was discarded: the 88 test files that read docs/OPERATIONS.md, docs/ARCHITECTURE.md, card-loop.md or changelog.d, with the audit test files, ran 2146 tests with 2 failures, the card-loop.md comparison (the trial then dropped its change to that file) and the changelog fragment of a card not yet registered; 30 single changes to the guards of src/audit/verifier.ts and src/cli/main.ts each fail a test of the new file."
 forbid:
-  - a change to what `verifyAudit` reports
   - a new journal event type or a new manifest field
   - weakening or skipping a test to go green
 non_goals:
