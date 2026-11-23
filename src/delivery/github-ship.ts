@@ -230,6 +230,11 @@ function checksJson(runs: Array<{ name: string; status?: string; conclusion: str
     .replace(/\//g, '\\/'); // escaped, a check name never forms the `runs/<id>` the card runner reads as a rerun's run (T0-CI-RED-LOGS)
 }
 
+/** The text of a new pull request (card T0-PR-SUMMARY). */
+export function prBody(_cardText: string | undefined, cardId: string, _reviewed: boolean): { body: string; reason?: string } {
+  return { body: `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${cardId}.md.`, reason: 'no card file' };
+}
+
 export class GitHubShipPath implements ShipPath {
   readonly name = 'github';
   readonly options: GitHubShipOptions;
