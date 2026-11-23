@@ -26,6 +26,11 @@ function keysOf(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platform)
   return Object.getOwnPropertyNames(env).filter((k) => k.toUpperCase() === upper);
 }
 
+/** Set the own data property `key`, so a name such as `__proto__` is a variable and not the prototype setter. */
+function define(env: NodeJS.ProcessEnv, key: string, value: string | undefined): void {
+  Object.defineProperty(env, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 /**
  * A copy of every own variable of `env`, enumerable or not. On win32 the keys that name one variable in any letter case
  * become one key, spelled as the first of them, holding the value `envValue` reads for that spelling (else the first value).
@@ -35,13 +40,13 @@ function copyOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.Proce
   const seen = new Set<string>();
   for (const k of Object.getOwnPropertyNames(env)) {
     if (platform !== 'win32') {
-      next[k] = env[k];
+      define(next, k, env[k]);
       continue;
     }
     const upper = k.toUpperCase();
     if (seen.has(upper)) continue;
     seen.add(upper);
-    next[k] = envValue(env, k, platform) ?? env[k];
+    define(next, k, envValue(env, k, platform) ?? env[k]);
   }
   return next;
 }
@@ -50,7 +55,7 @@ function copyOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.Proce
 function setVariable(env: NodeJS.ProcessEnv, name: string, value: string | undefined, platform: NodeJS.Platform): void {
   const keys = keysOf(env, name, platform);
   for (const k of keys) delete env[k];
-  if (value !== undefined) env[keys[0] ?? name] = value;
+  if (value !== undefined) define(env, keys[0] ?? name, value);
 }
 
 /**

@@ -77,6 +77,21 @@ test('(b4) linux: every own variable is copied with its exact name, a non-enumer
   });
 });
 
+test('(b5) a variable named __proto__ is copied as an own variable on linux and win32 [R2]', () => {
+  inTemp((root) => {
+    for (const platform of ['linux', 'win32'] as const) {
+      venv(root, '.venv', platform === 'win32' ? 'Scripts' : 'bin');
+      const env = JSON.parse('{"__proto__":"p","KEEP":"k"}') as NodeJS.ProcessEnv;
+      const found = virtualenvFor([root], env, platform);
+      assert.ok(found, platform);
+      assert.equal(Object.hasOwn(found.env, '__proto__'), true, `${platform}: __proto__ is an own variable`);
+      assert.equal(Object.getOwnPropertyDescriptor(found.env, '__proto__')?.value, 'p', platform);
+      assert.equal(Object.getPrototypeOf(found.env), Object.prototype, `${platform}: the prototype is unchanged`);
+      assert.deepEqual(Object.keys(found.env).sort(), ['KEEP', 'PATH', 'VIRTUAL_ENV', '__proto__'], platform);
+    }
+  });
+});
+
 test('(c) no PATH, or an empty one: PATH is the scripts directory alone [R2]', () => {
   inTemp((root) => {
     const dir = venv(root, '.venv', 'bin');
