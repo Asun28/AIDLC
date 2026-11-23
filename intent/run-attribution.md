@@ -41,6 +41,33 @@ the event `claude_code.api_request` carries `cost_usd`, `model` and the four tok
 telemetry variables must be set in the environment that starts `claude`, not in a settings
 `env` block.
 
+Measured on 2026-11-23 with main at 636a8fb9, for a study of
+`github.com/markrussinovich/agent-session-insights` (commit 735792d8; read, not run):
+
+- `bench/outcome/run.ts:44` reads the live session logs on every run, and `writeTables`
+  (`bench/outcome/ingest.ts:182-183`) replaces each table, so a run keeps nothing an earlier
+  run read. The earliest Claude Code request in this repository's logs is of 2026-10-19; an
+  extract of 2026-11-09 kept outside the repository starts on 2026-10-07. The requests before
+  2026-10-19 are in that extract and no longer in the logs, and no output names the period a
+  run read.
+- The usage table carries no request identity (`bench/outcome/ingest.ts:30`). `claudeUsage`
+  keys a request by `message.id` and `requestId` (`bench/outcome/usage.ts:85`) and writes
+  neither, so two extracts cannot be joined by request.
+- A Codex row is the last cumulative `total_token_usage` of its session file
+  (`bench/outcome/usage.ts:127`), so a sum over two extracts that hold one session counts its
+  tokens twice.
+- No table holds what a person typed. The 80 main-session files of this repository
+  (2026-10-19 to 2026-11-23) hold 332 inputs, 306 typed and 26 queued, counted by the rule of
+  `sources.py:233-245` of that study: a user record of the main session that is no compact
+  summary and no meta record and does not start with a task notification, an agent message,
+  a system reminder, the continuation notice or the interrupt notice, and a queued command
+  marked as a person's.
+- 51 of those 332 turns name several cards in the journal and hold 64.5% of the main-session
+  tokens, so a turn does not name a card. The card of the last journal event the same session
+  wrote at or before a request covers 81.8% of the main-session tokens inside the same turn
+  and 88.7% anywhere earlier in the session. These are the shares the rule assigns; nothing
+  checks that the card is the right one.
+
 ## Proposed outcome
 Part A, which needs no other goal:
 
@@ -53,6 +80,23 @@ Part A, which needs no other goal:
 4. One goal of this repository runs under `aidlc run` with the Claude Code provider, so code
    coordinates and each directive runs in a new bounded session. Its spend per merged card,
    its family spend and its coordinate and subagent share are reported beside the baseline.
+
+Additions to part A, on the owner's word of 2026-11-23 (the study named under Problem):
+
+a. The cost sums are named observed priced subtotals. `summary.json` records, per source, the
+   earliest and the latest request the run read, as the coverage the run observed and not as
+   a statement that the period is complete.
+b. Each run keeps its usage extract under a dated name and never changes it, with the price
+   card it used and, on every row, a request identity that names its source. A later run
+   joins the kept extracts and the live logs by that identity. For a Codex session the latest
+   cumulative observation replaces an earlier one and is never added to it. The spec states
+   the rule for a duplicate and for two records of one identity that differ, and a comparison
+   of two runs uses one price card.
+c. A `human_inputs` table holds counts only: session id, time, kind (typed or queued) and a
+   deduplication identity, and no text.
+d. Before the rule of outcome 3 is adopted, it is compared with attribution rule 4
+   (`bench/outcome/README.md:90`) on a hand-labelled sample of requests. The comparison
+   reports the precision of each rule and the share of requests each leaves unattributed.
 
 Part B, after card T1-DOD-GATE of `plans/execution-gate.md`:
 
@@ -68,7 +112,8 @@ Part B, after card T1-DOD-GATE of `plans/execution-gate.md`:
 ## Affected users and systems
 `src/loop/run-driver.ts`, `src/providers/claude-code.ts`, `src/providers/types.ts`,
 `src/loop/directive.ts`, `src/loop/controller.ts`, `src/core/effort.ts`, `src/config.ts`,
-`bench/outcome/usage.ts`, `docs/reliability/`, `docs/OPERATIONS.md`.
+`bench/outcome/usage.ts`, `bench/outcome/run.ts`, `bench/outcome/ingest.ts`,
+`bench/outcome/README.md`, `docs/reliability/`, `docs/OPERATIONS.md`.
 
 ## Constraints
 - Part B starts after card T1-DOD-GATE has merged: a cheaper model is safe only when the
@@ -81,8 +126,15 @@ Part B, after card T1-DOD-GATE of `plans/execution-gate.md`:
   driver exports to a file or not at all.
 - Cards are written when the goal starts; the cards of part B cite code that T1-DOD-GATE
   changes.
+- A kept extract and the `human_inputs` table hold no message text.
 
 ## Open questions
 - Which goal runs under `aidlc run` for outcome 4, and with what spend ceiling?
 - For outcome 7, does the alternating assignment apply to interactive sessions (the
   implementer subagent's model) or only to workers the driver starts?
+- For outcome b, where are the kept extracts stored: committed beside `summary.json`, or in a
+  directory git ignores? Each row holds a session id and a working directory.
+- For outcome b, which record is kept when two extracts hold one identity with different
+  values? Suggestion of the coordinator session of 2026-11-23: the one read later, as
+  `claudeUsage` does within one run, with the count of replaced records reported.
+- For outcome d, how many requests are labelled by hand, and by whom?
