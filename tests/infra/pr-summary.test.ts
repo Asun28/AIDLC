@@ -48,6 +48,7 @@ describe('T0-PR-SUMMARY: prBody', () => {
     const texts: Array<[string, string]> = [
       ['a section follows', card(LINES)],
       ['the summary ends the text', card(LINES, [])],
+      ['the summary ends the text with no line feed', card(LINES, []).slice(0, -1)],
       ['every line ends with a carriage return and a line feed', card(LINES, undefined, '\r\n')],
       ['a level-1 heading follows', card(LINES, ['# Other', 'x'])],
       ['the heading line has trailing white space', card(LINES, undefined, '\n', '## PR summary \t')],
@@ -59,6 +60,8 @@ describe('T0-PR-SUMMARY: prBody', () => {
     }
     assert.deepEqual(prBody(card(['', 'Intro line.', ...LINES]), 'T1-A', true), { body: `Intro line.\n${SUMMARY}\n\n---\n${PASS}` }, 'text before the first heading is part of the body');
     assert.deepEqual(prBody(card(swap('### Risk', ['### Risk  '])), 'T1-A', true), { body: `${swap('### Risk', ['### Risk  ']).join('\n')}\n\n---\n${PASS}` }, 'a heading with trailing white space is that heading');
+    const detail = swap('Card T1-A.', ['Card T1-A.', '#### Detail', '###x']);
+    assert.deepEqual(prBody(card(detail), 'T1-A', true), { body: `${detail.join('\n')}\n\n---\n${PASS}` }, 'a line that starts with four hashes, or with three and no space, is text');
     const full = sized(4000);
     assert.equal(full.join('\n').length, 4000);
     assert.deepEqual(prBody(card(full), 'T1-A', true), { body: `${full.join('\n')}\n\n---\n${PASS}` }, '4000 characters are within the limit');
@@ -71,6 +74,8 @@ describe('T0-PR-SUMMARY: prBody', () => {
       ['an indented summary line', card(LINES, undefined, '\n', '  ## PR summary'), 'no PR summary section'],
       ['a summary line with more text', card(LINES, undefined, '\n', '## PR summary notes'), 'no PR summary section'],
       ['no Risk heading', card(LINES.filter((l) => l !== '### Risk')), 'the headings are not the nine in order'],
+      ['no Docs heading', card(LINES.slice(0, -2)), 'the headings are not the nine in order'],
+      ['no heading', card(['Text alone.']), 'the headings are not the nine in order'],
       ['Risk and Security exchanged', card(exchanged), 'the headings are not the nine in order'],
       ['What twice', card([...LINES, '### What', 'Again.']), 'the headings are not the nine in order'],
       ['a tenth heading', card([...LINES, '### Notes', 'More.']), 'the headings are not the nine in order'],
