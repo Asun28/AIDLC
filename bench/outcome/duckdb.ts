@@ -27,10 +27,17 @@ export type DuckdbSpawn = (bin: string, args: string[], options: DuckdbOptions) 
 /**
  * One DuckDB process on an in-memory database, run in `cwd` with `sql` on its standard input; returns the rows it prints
  * as a JSON array, none for an empty output. `label` names the query in a failure.
+ *
+ * `NoDuckdb` only when no process started: an error with neither an exit code nor a signal (ENOENT, EACCES). An error
+ * beside an exit code is a process that started and exited, as when it exits before its input is written (EPIPE, or
+ * EOF on Windows): a failed query, reported with the exit code, what the process wrote on stderr and the error.
  */
 export function queryDuckdb(bin: string, cwd: string, sql: string, label: string, spawn: DuckdbSpawn = spawnSync): Row[] {
   const r = spawn(bin, ['-json', '-bail'], { cwd, input: sql, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
-  if (r.error && r.signal === null) throw new NoDuckdb(r.error.message);
-  if (r.error || r.status !== 0) throw new Error(`${bin} failed on "${label}" (exit ${String(r.status)}): ${(r.error?.message ?? r.stderr).trim()}`);
+  if (r.error && r.status === null && r.signal === null) throw new NoDuckdb(r.error.message);
+  if (r.error || r.status !== 0) {
+    const detail = r.status === null ? (r.error?.message ?? r.stderr).trim() : [r.stderr.trim(), r.error?.message].filter((part) => part).join('; ');
+    throw new Error(`${bin} failed on "${label}" (exit ${String(r.status)}): ${detail}`);
+  }
   return r.stdout.trim() === '' ? [] : (JSON.parse(r.stdout) as Row[]);
 }

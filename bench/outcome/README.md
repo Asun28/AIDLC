@@ -21,7 +21,7 @@ node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckd
 
 `--state`, `--cards`, `--out`, `--claude-dir` and `--codex-dir` are resolved against the invocation directory too, before the DuckDB child starts in `--out`.
 
-The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` in name order through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order, then writes the `--summary` file when one is given. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`.
+The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` in name order through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order, then writes the `--summary` file when one is given. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`. Exit 2 is given only when no DuckDB process started, an error with neither an exit code nor a signal (`ENOENT`, `EACCES`). A binary that started and exited, also before its input was written (`EPIPE`, or `EOF` on Windows), is exit 1 with its exit code, what it wrote on stderr and the error of the write (card T0-OUTCOME-DUCKDB-EPIPE, `queryDuckdb` in `duckdb.ts`).
 
 `bench/outcome/summary.json` is the `--summary` file of one run of `node bench/outcome/run.ts --summary bench/outcome/summary.json --out <scratch directory>` from a worktree of this repository, with no other option, so it covers the state directory, the registry, the session logs and GitHub of the main checkout at the commit it names. It is committed as written.
 
@@ -179,6 +179,8 @@ Every boolean is computed from the tables as read: when `github_errors` has rows
 ## Tests
 
 `tests/surface/outcome-panel.test.ts` covers `unionOf`, the refusals of `panel.ts assemble`, the measures and keep verdicts over hand-written reports in temporary directories, the committed `bench/outcome/panel.json`, and that every table value of `docs/reliability/panel.md` equals its source.
+
+`tests/surface/outcome-duckdb.test.ts` covers `queryDuckdb` everywhere and needs no DuckDB binary: with node in place of the binary, an exit before a 1 MiB input is written and a path that names no file; with a scripted spawn, the call, the rows of a result and each failure.
 
 `tests/surface/outcome-summary.test.ts` checks the shape of `bench/outcome/summary.json` everywhere, and that `run.ts --summary` writes the document only after every view has run (skipped with the reason `no duckdb binary` as below), leaves an existing file as it was when DuckDB cannot be started, and writes neither the file nor a table on either refusal.
 
