@@ -156,8 +156,8 @@ stateDiagram-v2
 | Kind | Payload | Meaning |
 |---|---|---|
 | `ask` | question, options, responseRoute | one sizing/identity question the context cannot resolve; the revision that answers it (`aidlc goal amend <id> --text "<answer>"`) re-classifies the revised text with the router and stores only the new question (none removes it), and every other routing field is the retained intake route (card T0-ASK-RECLASSIFY) |
-| `plan` | size, inputs, invocationAllowance, outputs | produce the plan at the routed depth |
-| `project-cards` | planRef, cardsDir, outputs | write/validate cards; human sign-off owns the registry |
+| `plan` | size, inputs, invocationAllowance, outputs, lessons | produce the plan at the routed depth; `lessons` is the count and the ten most recent lines of `docs/LESSONS.md`, which every card is checked against before it is registered |
+| `project-cards` | planRef, cardsDir, outputs, lessons | write/validate cards; human sign-off owns the registry; `lessons` as for `plan` |
 | `checkpoint` | approvalKind, packet, responseRoute | T2 plan+projection approval, or a production approval packet |
 | `run-card` | cardId, cardState, worktree, base, mode, effort, role, cardDeadline, context | run one card through `aidlc card next` |
 | `verify-arc` | cards, integratedChecks, repairCyclesLeft | verify the whole goal on the integrated artifact |
