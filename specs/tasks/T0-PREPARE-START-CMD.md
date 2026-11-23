@@ -1,7 +1,7 @@
 ---
 id: T0-PREPARE-START-CMD
 title: "On the github and dry-run ship paths the PREPARE start narration names the git worktree add command and the node_modules link, in place of scripts/task.ps1"
-status: todo
+status: merged
 branch: T0-PREPARE-START-CMD
 worktree: D:\wt\AIDLC\T0-PREPARE-START-CMD
 allow_paths:
