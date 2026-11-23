@@ -61,3 +61,37 @@ npm run typecheck && node --test tests/scenarios/build-red-narration.test.ts tes
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass, the pinned narration follows R2, the other narration tests pass unchanged, and card-loop.md stays within its cap and identical in both copies.
+
+## Attempt evidence
+
+RED: fb5fb668 (`tests/scenarios/build-red-narration.test.ts`), 4 of 4 failing at the assertion on the unchanged code: the narration named `task.ps1 -Phase red` and no `--red-receipt` (item 1), did not name `aidlc card red` (item 2), and both card-loop.md copies lacked the R1 sentence (item 3).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | build-red-narration: `acceptance 1` (R2 narration equal, `--red-receipt` present, no `task.ps1`) | pass |
+| 2 | build-red-narration: `acceptance 2` (`NoRedScaffold` subclass; `card red` text present, no `--red-receipt`) | pass |
+| 3 | build-red-narration: `acceptance 3`, one test per copy | pass |
+| 4 | dispute-running-attempt (only `BEFORE_RED` changed), accept-table, t0-flow: pass. dod-receipt-required `acceptance 6` (line 347): FAIL | blocked, see below |
+| 5 | templates.test.ts, mirror.test.ts; card-loop.md 6492 bytes in both copies, identical | pass |
+| 6 | OPERATIONS.md line 100 (last sentence of the paragraph); changelog.d/T0-RED-PATH-TEXT.md; changelog-fragments.test.ts, prose.test.ts | pass |
+
+Blocker: `tests/scenarios/dod-receipt-required.test.ts:347` pins the clause ``--dod-receipt "<command: exit code and counts>"` or `aidlc card attempt T0-DR --outcome fail`` in the tdd BUILD narration of a dry-run fixture. R2 puts ` --red-receipt "<sha>:<test>"` between `counts>"` and the closing backtick, so no narration can meet both R2 and that assertion. The card's sweep lists dod-receipt-required:349 as a prefix-only match; line 347 pins the full clause. The card forbids changing that file, so this needs an owner amendment (allow line 347 to change to the R2 clause, or change R2).
+
+Guard sweep:
+
+| Guard | Loosened form | Test that failed |
+|---|---|---|
+| `this.shipPath instanceof ScaffoldShipPath` in the BUILD narration | `true` | build-red-narration `acceptance 1` |
+| same | `false` | build-red-narration `acceptance 2` |
+
+Requirement clauses:
+
+| Clause | Assertion that fails without it |
+|---|---|
+| R1 first BUILD sentence names `card attempt --red-receipt` and `card red` for scaffold | acceptance 3, `includes(R1 sentence)` |
+| R1 old parenthetical gone | acceptance 3, `!includes('(`aidlc card red <id>`; scaffold: task.ps1')` |
+| R1 copies identical, ASCII, <= 6500 bytes | mirror.test.ts, templates.test.ts |
+| R2 off scaffold: no RED-first command, `--red-receipt` in the success command | acceptance 1, `assert.equal(narration, R2)`; dispute-running-attempt `BEFORE_RED` |
+| R3 on scaffold: `aidlc card red <id>` with the task.ps1 note, record sentence unchanged | acceptance 2, `includes(...)` and `assert.equal(narration, R3)` |
+| R4 other narrations unchanged | dispute-running-attempt `WITH_RED`, accept-table, dod-receipt-required `plainClause`, t0-flow |
+| R5 OPERATIONS.md and fragment | reviewer check against the diff (acceptance 6); prose.test.ts, changelog-fragments.test.ts |

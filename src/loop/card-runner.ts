@@ -1450,8 +1450,11 @@ export class CardRunner {
         effort,
         attempt: attemptNo,
         skills: run.pendingRepair?.kind === 'merge-conflict' ? ['merge-conflicts', ...this.buildSkills(goal, card)] : this.buildSkills(goal, card),
+        // `aidlc card red` records RED on the scaffold ship path only; elsewhere the success attempt carries it (card T0-RED-PATH-TEXT).
         narration: card.tdd && !redReceipt
-          ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
+          ? this.shipPath instanceof ScaffoldShipPath
+            ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first with \`aidlc card red ${card.id}\` (task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
+            : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first, then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
           : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`,
       },
     };
