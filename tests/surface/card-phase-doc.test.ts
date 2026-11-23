@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { Command } from 'commander';
 import { runCliInProcess } from '../infra/cli-inprocess.ts';
 import { tmpDir } from '../infra/helpers.ts';
 
@@ -17,6 +18,8 @@ const BEFORE = 'PREPARE and the card worktree';
 /** The four commands R1 names, in the order of the CLI's help. */
 const PHASES = ['start', 'red', 'ship', 'cleanup'];
 const OPTIONS = ['--base <ref>', '--local'];
+/** The parameters of `scripts/task.ps1` the paragraph states: the code spans that begin with `-` and are not options of the CLI. */
+const PARAMETERS = ['-TaskId <id>', '-Phase', '-Base', '-Local'];
 const CARD = 'T1-FOO';
 const refusal = (shipPath: string): string => `aidlc: ship path is ${shipPath}; task.ps1 phases apply to the scaffold path only`;
 
@@ -68,16 +71,30 @@ function records(dir: string): Record<string, unknown> {
   return found;
 }
 
-/** The entries of a list of a commander help text (`Commands:` or `Options:`), each with its wrapped lines joined by one space. */
+/** The entries of a list of a commander help text (`Commands:` or `Options:`), each with its wrapped lines joined by one space; none when the text has no such list. */
 function helpList(help: string, heading: string): string[] {
   const lines = help.split(/\r?\n/);
   const entries: string[] = [];
+  if (!lines.includes(heading)) return entries;
   for (const line of lines.slice(lines.indexOf(heading) + 1)) {
     if (!line.trim()) break;
     if (/^ {2}\S/.test(line) || !entries.length) entries.push(line.trim());
     else entries[entries.length - 1] = `${entries.at(-1)} ${line.trim()}`;
   }
   return entries;
+}
+
+/** The flags of every option a commander help text lists, as it prints them before the description (`--base <ref>`, `-f, --force`, `-q`), the built-in help left out. */
+function helpOptions(help: string): string[] {
+  return helpList(help, 'Options:')
+    .map((entry) => entry.split(/ {2,}/)[0] ?? '')
+    .filter((flags) => flags !== '-h, --help');
+}
+
+/** The options `text` names: each code span that begins with `-`, once, in order, the script parameters left out. */
+function namedOptions(text: string): string[] {
+  const spans = text.split('`').filter((_, i) => i % 2 === 1);
+  return [...new Set(spans.filter((span) => span.startsWith('-') && !PARAMETERS.includes(span)))];
 }
 
 test('acceptance 1: the paragraph follows the PREPARE paragraph and names exactly the phase commands and the options of the CLI help [R1] [R4]', async () => {
@@ -94,17 +111,30 @@ test('acceptance 1: the paragraph follows the PREPARE paragraph and names exactl
   assert.deepEqual(phaseEntries.map((entry) => entry.split(' ')[0]), named, 'the card subcommands whose help line names task.ps1 -Phase');
   for (const [i, entry] of phaseEntries.entries()) assert.ok(entry.includes(`task.ps1 -Phase ${PHASES[i]} `), entry);
 
-  const namedOptions = [...new Set([...paragraph().matchAll(/`(--[^`]+)`/g)].map((m) => m[1]))];
-  assert.deepEqual(namedOptions, OPTIONS, 'the options the paragraph names');
+  assert.deepEqual(namedOptions(paragraph()), OPTIONS, 'the options the paragraph names');
   for (const phase of PHASES) {
     const own = await runCliInProcess(['card', phase, '--help'], { cwd: repo, env });
     assert.equal(own.status, 0, own.stderr);
-    assert.deepEqual(helpList(own.stdout, 'Options:').filter((entry) => entry.startsWith('--')), namedOptions, `the options of card ${phase}`);
+    assert.deepEqual(helpOptions(own.stdout), OPTIONS, `the options of card ${phase}`);
   }
 });
 
+test('acceptance 1: an option with a short alias, with a short flag alone, with an argument or negated is read from a help text and from a paragraph; only the built-in help and the script parameters are left out [R4]', () => {
+  const sample = new Command('sample')
+    .option('--base <ref>')
+    .option('--local')
+    .option('-f, --force', 'a short alias')
+    .option('-n, --count <n>', 'a short alias and an argument', '1')
+    .option('-q', 'a short flag alone')
+    .option('--no-color', 'negated');
+  assert.deepEqual(helpOptions(sample.helpInformation()), ['--base <ref>', '--local', '-f, --force', '-n, --count <n>', '-q', '--no-color']);
+  assert.deepEqual(helpList(sample.helpInformation(), 'Commands:'), [], 'a help text with no Commands list');
+  const text = '`aidlc card close --cleanup` with `-TaskId <id>`, `-Phase`, `-Base` and `-Local`; `--base <ref>`, `-f, --force`, `-n, --count <n>`, `-q`, `--no-color` and `--base <ref>` again';
+  assert.deepEqual(namedOptions(text), ['--base <ref>', '-f, --force', '-n, --count <n>', '-q', '--no-color']);
+});
+
 test('acceptance 2: on the scaffold ship path each command runs task.ps1 in the main checkout with -TaskId, its own -Phase, -Base and, when asked, -Local, and exits with the script\'s exit code [R2] [R4]', async () => {
-  for (const statement of ['`-TaskId <id>`', '`-Phase`', '`-Base`', '`-Local`', '`mode: local`']) assert.ok(paragraph().includes(statement), `the paragraph states ${statement}`);
+  for (const statement of [...PARAMETERS, 'mode: local']) assert.ok(paragraph().includes(`\`${statement}\``), `the paragraph states ${statement}`);
   const { repo, sub, env } = fixture({ shipPath: 'scaffold' });
   const local = fixture({ shipPath: 'scaffold', mode: 'local' });
   const record = (phase: string, base: string, isLocal: boolean) => ({ [`ran-${phase}.json`]: { taskId: CARD, phase, base, local: isLocal, extra: [] } });

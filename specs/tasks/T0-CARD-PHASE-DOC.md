@@ -55,7 +55,7 @@ npm run typecheck && node --test tests/surface/card-phase-doc.test.ts tests/surf
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `tests/surface/card-phase-doc.test.ts`, test `acceptance 1: the paragraph follows the PREPARE paragraph and names exactly the phase commands and the options of the CLI help`; RED at 95775d0e: `the paragraph after the one that begins "PREPARE and the card worktree" begins "Scaffold phase commands (card T0-CARD-PHASE-DOC, issue 419):"` | pass after the paragraph |
+| 1 | `tests/surface/card-phase-doc.test.ts`, test `acceptance 1: the paragraph follows the PREPARE paragraph and names exactly the phase commands and the options of the CLI help`; RED at 95775d0e: `the paragraph after the one that begins "PREPARE and the card worktree" begins "Scaffold phase commands (card T0-CARD-PHASE-DOC, issue 419):"`. Test `acceptance 1: an option with a short alias, with a short flag alone, with an argument or negated is read from a help text and from a paragraph ...` (the readers the first test compares with) | pass after the paragraph |
 | 2 | Same file, test `acceptance 2: on the scaffold ship path each command runs task.ps1 in the main checkout ...`: 12 runs of the recording `scripts/task.ps1`, each of the four commands with no option, with `--base other --local` and under `mode: local` | pass |
 | 3 | Same file, tests `acceptance 3: on the github ship path ...` and `acceptance 3: on the dry-run ship path ...`: each of the four commands, with and without the options | pass |
 | 4 | Read against the source: `src/cli/main.ts:950-966` (the `pwsh` arguments, `cwd`, `stdio: 'inherit'`, the exit code, the `AIDLC_RUN_NO_SHIP` guard), `src/loop/card-runner.ts:1367` (the `prepare` narration names `-Phase start`), `src/delivery/ship.ts:303-316` (`phase` is called for `ship` only), `src/loop/card-runner.ts` `reclaimWorktree` and `src/loop/worktree-reclaim.ts:43` (`git.removeWorktree`) | reviewer-verified |
@@ -75,3 +75,25 @@ Each clause of R1 to R3 and the assertion that fails without it (the mutant name
 | R2 `-Base` | the configured base not passed; `--base` ignored | acceptance 2 |
 | R2 `-Local` | `--local` ignored; `mode: local` ignored; `mode: local` left out of the paragraph | acceptance 2 |
 | R3 message, exit 1, nothing run | another message in the CLI or in the paragraph; exit 2; `dry-run` not refused | acceptance 3 |
+
+Repair after R3 decision 1 (F1, class aliased-options-ignored). The option comparison kept only help entries that begin with `--`, so `.option('-f, --force')` on the commands changed nothing it compared; the paragraph side had the same gap, since it read only code spans that begin with `--`. Both sites are replaced. `helpOptions` returns the flags of every entry of the Options list as commander prints them and leaves out only `-h, --help`; `namedOptions` returns every code span that begins with `-` and leaves out only the four script parameters. Each of the four commands' options and the paragraph's are compared with `--base <ref>` and `--local`.
+
+Input forms the two readers handle, each in the readers test, which builds the help text with commander:
+
+| Reader | Input form | Result |
+|---|---|---|
+| `helpOptions` | a long flag (`--local`); a long flag with an argument (`--base <ref>`); a short alias (`-f, --force`); a short alias, an argument and a default in the description (`-n, --count <n>`); a short flag alone (`-q`); a negated flag (`--no-color`) | each returned as printed |
+| `helpOptions` | the built-in `-h, --help` | left out |
+| `helpList` | a help text with no such list (no `Commands:`) | no entries |
+| `namedOptions` | the same six forms as code spans; a span named twice | each returned once, in order |
+| `namedOptions` | the script parameters `-TaskId <id>`, `-Phase`, `-Base`, `-Local`; a span that holds an option after other text (`aidlc card close --cleanup`) | left out |
+
+Mutants of the repair, each applied, run and restored:
+
+| Mutant | Failing test |
+|---|---|
+| `.option('-f, --force')` on the commands; `.option('-q')` on the commands; `--local` declared as `-l, --local` | acceptance 1 |
+| the paragraph names `-f, --force`; the paragraph names `-q` | acceptance 1 |
+| `helpOptions` keeps `-h, --help`; flags cut at the first space | acceptance 1, the readers test |
+| `namedOptions` keeps the script parameters | acceptance 1, the readers test |
+| `namedOptions` reads only spans that begin with `--`; a span named twice counted twice; `helpList` without the guard for a missing list | the readers test |
