@@ -115,8 +115,8 @@ No code, input or permission changes.
 
 ### Tests and review
 - Three new tests fail on the base and pass on the change.
-- DOD_LINE
-- REVIEW_LINE
+- The DoD passes with 306 tests. The 15 other test files that read `CLAUDE.md` pass with no line changed.
+- 14 single wrong edits of `CLAUDE.md`: a new test fails for each one.
 
 ### Risk
 Low. The change is text. One line stays free under the limit after card `T0-INIT-CLI-PATH` merges.
@@ -133,3 +133,38 @@ npm run typecheck && node --test tests/surface/claude-md-reuse.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: the three new tests pass, the 15 other test files pass with no line changed, and the typecheck is clean.
+
+## Attempt evidence
+Candidate on the base 4d3ab57c. `CLAUDE.md` there is the file of 41593464, where the sweep ran.
+
+| Acceptance | Evidence |
+|---|---|
+| 1 | test 1 passes. RED at 889f62f1 |
+| 2 | test 2 passes. RED at 889f62f1 |
+| 3 | test 3 passes. RED at 889f62f1 |
+| 4 | `git diff --stat 4d3ab57c -- CLAUDE.md`: 8 insertions, 5 deletions. `CLAUDE.md` has 198 lines. `git diff --quiet 4d3ab57c -- templates/CLAUDE.aidlc.md` exits 0 |
+| 5 | The DoD exits 0: 306 tests, 305 pass, 0 fail, 1 skipped. The diff of `tests/` holds the new file only |
+| 6 | The sweep field gives each command and line |
+
+RED: commit 889f62f1 holds the new test file alone. `node --test tests/surface/claude-md-reuse.test.ts` exits 1 there: 3 tests, 3 fail, each with `ERR_ASSERTION`.
+
+Guard sweep: each change was made to `CLAUDE.md` alone, the new test file ran, and the file was restored. 14 changes, and a test fails for each:
+
+| Change | Failing tests |
+|---|---|
+| the reuse rule is removed | 1 |
+| the reuse rule comes after the schema bullet | 1 |
+| the reuse rule is in the file twice | 1 |
+| the reuse rule and the schema bullet are in Architecture, not in Conventions | 1 |
+| the reuse rule does not name the Node built-ins | 1 |
+| the reuse rule has no second sentence | 1 |
+| the schema bullet does not name the manifest | 1 |
+| the schema bullet is as on the base | 1, 3 |
+| the Layers paragraph is as on the base | 2, 3 |
+| the words of R2 are in the file twice | 2 |
+| the last sentence of the paragraph on side effects is as on the base | 2, 3 |
+| the real-time sentence is added and the old clause stays | 2, 3 |
+| the real-time sentence does not name the file time | 2 |
+| the real-time sentence is in Conventions, not in Architecture | 2 |
+
+The trial of the sweep field ran every file of `tests/surface` with a first wording of the real-time sentence (`Some tests use real time to bound a wait or to set a file time.`). The words changed after it, when the sweep found calls that measure a wait and one that a stat stand-in returns. The DoD ran with the final words; it holds each test file that reads `CLAUDE.md`.

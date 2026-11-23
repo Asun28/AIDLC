@@ -45,7 +45,7 @@ cards follow the same shape through `aidlc card next <id>` /
 **Layers, inner to outer** (`src/`): `core/` (pure decision engines, no I/O),
 `state/`, `coordination/`, `probes/`, `delivery/`, `review/`, `loop/`, `hooks/`,
 `cli/` and `scaffold/`. `docs/ARCHITECTURE.md`, Module map, describes each.
-Four facts it leaves out: state lives under `<main checkout>/.aidlc/`, shared
+Runtime details: state lives under `<main checkout>/.aidlc/`, shared
 by all worktrees; every `ShipPath` adapter (`scaffold`, `github`, `dry-run`)
 prints the same scaffold-style sentinels so `classifyShipOutput` maps outcomes
 uniformly; a review verdict is the last stdout line of JSON, written next to
@@ -72,8 +72,8 @@ what a block or a quota hold does: `docs/OPERATIONS.md`, Pre-review (R2).
 **Every side effect is injectable.** `GoalController`, `CardRunner` and
 `ReleaseRunner` take a deps object (`runner`, `git`, `gh`, `shipPath`, `now`,
 stores). Tests use `scriptedRunner` from `src/probes/exec.ts`,
-`DryRunShipPath`, a fixed clock and a temp `.aidlc`; nothing in `tests/`
-calls `Date.now()`.
+`DryRunShipPath`, a fixed clock and a temp `.aidlc`.
+Some tests read real time to measure or bound a wait, or for a file time.
 
 ## Configuration and environment
 
@@ -94,8 +94,11 @@ calls `Date.now()`.
 - ESM, strict TypeScript with `erasableSyntaxOnly` (no enums, namespaces or
   parameter properties) and `verbatimModuleSyntax` (`import type` for
   types). Relative imports carry an explicit `.ts` extension.
-- Every persisted record has a zod schema in `src/core/types.ts`; parse at
-  the boundary.
+- Before adding a package or writing code, check `package.json` dependencies,
+  Node built-ins, and helpers in `src/` and `tests/` for the needed capability.
+  Read the relevant APIs before choosing reuse or custom code.
+- Parse persisted records with their zod schemas at the boundary.
+  Core schemas: `src/core/types.ts`; manifest: `src/audit/manifest.ts`.
 - Provider and reviewer commands are argv arrays, never shell strings.
 - Tests are `node:test` + `node:assert/strict` under
   `tests/{core,infra,scenarios,surface}`. Shared fixtures:
