@@ -30,7 +30,7 @@ import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
-import { decideWorktree } from '../delivery/worktree.ts';
+import { decideWorktree, worktreeStartCommands } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
@@ -1373,9 +1373,21 @@ export class CardRunner {
         worktree: decision.path,
         skills: [],
         lessons,
-        narration: `${lessons.count} lessons so far; the most recent are in this directive, and docs/LESSONS.md holds them all for reference. ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
+        narration: `${lessons.count} lessons so far; the most recent are in this directive, and docs/LESSONS.md holds them all for reference. ` + (decision.action === 'start' ? this.startNarration(card.id, decision.path, decision.reason) : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /**
+   * The start sentence of a `prepare` directive. The scaffold path names its `task.ps1 -Phase start`; the github and dry-run
+   * paths, which have no such script, name `git worktree add` from the base ref and the main checkout's `node_modules` link
+   * when it has one (card T0-PREPARE-START-CMD, issue 376).
+   */
+  private startNarration(cardId: string, worktree: string, reason: string): string {
+    if (this.config.shipPath === 'scaffold') return `Start a new worktree for ${cardId} at ${worktree} (scaffold: pwsh scripts/task.ps1 -TaskId ${cardId} -Phase start from the main checkout). ${reason}`;
+    const ref = this.config.mode === 'local' ? this.config.base : `origin/${this.config.base}`;
+    const linkModules = existsSync(path.join(this.repo.mainRoot, 'node_modules'));
+    return `Start a new worktree for ${cardId} at ${worktree}: ${reason}. ` + worktreeStartCommands({ cardId, path: worktree, mainRoot: this.repo.mainRoot, ref, linkModules, platform: process.platform });
   }
 
   /**

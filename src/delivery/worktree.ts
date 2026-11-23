@@ -52,3 +52,33 @@ export function decideWorktree(probe: GitProbe, input: WorktreeAttachInput): Wor
   }
   return { action: 'attach', path: found.entry.path, head: found.entry.head ?? '', reason: 'branch, path and common directory match; owner record permits attach' };
 }
+
+export interface WorktreeStartInput {
+  cardId: string;
+  /** The worktree path of the `prepare` directive. */
+  path: string;
+  /** The main checkout, whose `node_modules` the link targets. */
+  mainRoot: string;
+  /** The ref the new branch starts from: `origin/<base>` in remote mode, `<base>` in local mode. */
+  ref: string;
+  /** Name the `node_modules` link: the main checkout has one, and the DoD finds its tools there. */
+  linkModules: boolean;
+  platform: NodeJS.Platform;
+}
+
+/**
+ * The commands that make a card worktree off the scaffold ship path (card T0-PREPARE-START-CMD, issue 376): `git worktree
+ * add` of the card branch at the directive path, the form for a branch that exists, and, when asked, the link of the main
+ * checkout's `node_modules` in the syntax of the platform (a PowerShell junction on win32, `ln -s` elsewhere). Pure: paths
+ * are joined with the separator of `platform`, not of this process.
+ */
+export function worktreeStartCommands(input: WorktreeStartInput): string {
+  const { cardId, path: dir, mainRoot, ref } = input;
+  const commands = `From the main checkout run \`git worktree add -b ${cardId} "${dir}" ${ref}\` (when branch ${cardId} exists: \`git worktree add "${dir}" ${cardId}\`)`;
+  if (!input.linkModules) return `${commands}.`;
+  const join = input.platform === 'win32' ? path.win32.join : path.posix.join;
+  const link = join(dir, 'node_modules');
+  const target = join(mainRoot, 'node_modules');
+  const command = input.platform === 'win32' ? `New-Item -ItemType Junction -Path "${link}" -Target "${target}"` : `ln -s "${target}" "${link}"`;
+  return `${commands}, then link node_modules so the DoD finds its tools: \`${command}\`.`;
+}

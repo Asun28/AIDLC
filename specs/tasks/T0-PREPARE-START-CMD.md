@@ -64,9 +64,77 @@ it has one, in the syntax of the platform. The scaffold narration stays.
 - On `win32` the link is a PowerShell junction, elsewhere `ln -s`.
 - A stale-registration start keeps its reason text; the commands follow it.
 
+## PR summary
+### What
+The PREPARE start text now names commands that work on the github and dry-run ship paths. Before, it named `scripts/task.ps1`, which exists on the scaffold path only.
+
+### Why / Intent
+Issue 376. On this repository a session ran the named script, got an error, and made the worktree by hand. Without a `node_modules` link the DoD then failed on `'tsc' is not recognized`.
+
+### How / Behaviour
+- A new pure function `worktreeStartCommands` writes the text: `git worktree add -b <id> "<path>" <ref>`, the form for a branch that exists, and the `node_modules` link.
+- The ref is `origin/<base>` in remote mode and `<base>` in local mode.
+- The link is named only when the main checkout has `node_modules`: a PowerShell junction on Windows, `ln -s` elsewhere.
+- The scaffold text does not change.
+
+### System impact
+Only the narration of a `prepare` start changes. The directive fields, the run state and the store writes stay the same.
+
+### Security
+No new input, permission or command that the loop runs. The loop prints the commands, and the session runs them.
+
+### Tests and review
+- Two new test files: one for the function on both platforms, one for the narration on each ship path.
+- One test runs the named `git worktree add` command and checks that the next `card next` attaches.
+- The PREPARE, T0 flow and fault-point tests pass unchanged.
+
+### Risk
+Low. The change is text in one directive. A wrong command fails visibly when the session runs it.
+
+### Ownership
+Card `T0-PREPARE-START-CMD`, goal `g-20261123100508-50a5a4`, issue 376.
+
+### Docs
+`docs/OPERATIONS.md`, paragraph PREPARE and the card worktree, says what a start names on each ship path. `changelog.d/T0-PREPARE-START-CMD.md` holds the entry.
+
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/infra/worktree-start-command.test.ts tests/scenarios/prepare-start-command.test.ts tests/scenarios/prepare-worktree.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/fault-points.test.ts tests/surface/changelog-fragments.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the new tests and the existing PREPARE, T0 flow and fault-point tests pass.
+
+## Attempt evidence
+RED commit ce519a5a holds the two new test files alone. There both fail on the missing export `worktreeStartCommands`. With the new `src/delivery/worktree.ts` and `src/loop/card-runner.ts` as on main, the scenario file fails its four github and dry-run tests on the narration, and the scaffold test passes.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/worktree-start-command.test.ts`, four tests: win32 and linux with the link, both without, a path with a space; exact code spans, the leading `From the main checkout`, no `ln -s` on win32, no `New-Item` on linux | pass |
+| 2 | `tests/scenarios/prepare-start-command.test.ts`, acceptance 2 tests: github with `node_modules`, github without it in remote and local mode, dry-run; the narration holds the function output for `process.platform` and no `task.ps1` in any case | pass |
+| 3 | The same file, acceptance 3: runs `git worktree add -q -b T1-HELLO <worktree> origin/main` against a fixture with a bare `origin`, then `card next` returns `prepare` attach at that path, and its narration holds no `git worktree add` | pass |
+| 4 | The same file, acceptance 4: the scaffold narration ends with the start sentence and reason as on main, and holds no `git worktree add -b`; the attach check is in item 3 | pass |
+| 5 | DoD arm 1 exit 0; `prepare-worktree.test.ts`, `t0-flow.test.ts`, `fault-points.test.ts` not in the diff and pass; the changelog fragment test passes; `prose.test.ts` passes with the OPERATIONS sentence | pass; doc text is for the reviewer |
+
+Each requirement clause and the assertion that fails without it:
+
+| Clause | Assertion |
+|---|---|
+| R1, begins with `From the main checkout` | item 1, `startsWith` |
+| R1, `git worktree add -b` span | item 1, exact span per platform |
+| R1, existing-branch span | item 1, exact span |
+| R1, link only when asked | item 1, `node_modules` absent without the link |
+| R1, junction on win32, `ln -s` elsewhere | item 1, exact spans and the cross-platform absences |
+| R2, the function text in the narration | item 2, `includes(expected)` |
+| R2, ref per mode | item 2, local mode with `main` and no `origin/` |
+| R2, link exactly when `node_modules` exists | item 2, with and without the directory |
+| R2, no `task.ps1` | item 2, `/task\.ps1/i` |
+| R2, dry-run as github | item 2, dry-run test |
+| R3 | item 4, `endsWith` the sentence of main |
+| R4 | item 3 for the attach; `prepare-worktree.test.ts` for the fields and state; `fault-points.test.ts` for the writes |
+| R5, R6 | item 5 (reviewer-verified) and the fragment test |
+
+The scaffold fixture sets `gateRequired: true`: the scaffold path stops a remote card under an advisory ReviewGate before PREPARE. That line changed after the RED commit; the assertion did not.
+
+Verify skill `verify-card-run-writes`: the card changes `CardRunner.next`'s PREPARE narration only, no write; `tests/scenarios/fault-points.test.ts` runs in the DoD and passes, so the sync commit stays.
+
+DoD: `npm run typecheck` exit 0; `node --test` over the six files: 159 tests, 159 pass, 0 fail, exit 0.

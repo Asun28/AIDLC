@@ -41,7 +41,8 @@ function setup(options: Options) {
   mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
   const root = realpathSync.native(path.join(fx.tmp, 'wt'));
   const mainRoot = realpathSync.native(fx.tmp);
-  const config = { ...fx.config, shipPath: options.shipPath, mode: options.mode ?? 'remote', worktreeRoot: root };
+  // The scaffold path refuses a remote card under an advisory ReviewGate before PREPARE, so its fixture makes the gate required.
+  const config = { ...fx.config, shipPath: options.shipPath, mode: options.mode ?? 'remote', worktreeRoot: root, gateRequired: options.shipPath === 'scaffold' };
   const runner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, mainRoot, worktreeRoot: mainRoot }, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
   const next = () => runner.next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD) ?? fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
   return { fx, mainRoot, worktree: path.join(root, CARD), next };
