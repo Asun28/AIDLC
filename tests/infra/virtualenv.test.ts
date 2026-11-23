@@ -44,7 +44,7 @@ test('(b) win32: one key per variable, spelled as the env given spells it first,
     assert.ok(found, 'a virtualenv is found');
     assert.equal(found.dir, dir);
     assert.deepEqual(Object.keys(found.env).sort(), ['KEEP', 'Path', 'virtual_env']);
-    assert.deepEqual(found.env, { Path: `${path.join(dir, 'Scripts')};C:\\x`, virtual_env: dir, KEEP: 'k' });
+    assert.deepEqual(found.env, { Path: `${path.join(dir, 'Scripts')};C:\\y`, virtual_env: dir, KEEP: 'k' });
   });
 });
 
