@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { GitHubShipPath, prBody } from '../../src/delivery/github-ship.ts';
+import { GitHubShipPath, prBody, shipWroteBody } from '../../src/delivery/github-ship.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { tmpDir } from './helpers.ts';
 import { shipPathFor } from '../../src/loop/card-runner.ts';
@@ -186,8 +186,7 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
   });
 
   test('acceptance 6: a ship that creates no pull request writes no PR body line [R5]', () => {
-    const reused = shipOnce({ verdict: PASS_VERDICT, cardText: card(LINES), script: { 'gh pr list': { stdout: JSON.stringify([{ number: 8, state: 'OPEN', headRefOid: HEAD, baseRefName: 'main' }]) } } });
-    assert.deepEqual([reused.r.outcome, reused.r.prNumber, reused.creates.length], ['merged', 8, 0], reused.r.receipt.stdout);
+    // The case of an open pull request that the ship uses again moved to T0-PR-SUMMARY-REUSED acceptance 2, which writes its text.
     const failed = shipOnce({ verdict: PASS_VERDICT, cardText: card(LINES), script: { 'gh pr create': { exitCode: 1, stderr: 'refused' } } });
     assert.deepEqual([failed.r.outcome, failed.creates.length], ['pr-failed', 1], failed.r.receipt.stdout);
     const unreviewed = shipOnce({ cardText: card(LINES) });
@@ -197,7 +196,7 @@ describe('T0-PR-SUMMARY: the GitHub ship', () => {
     assert.deepEqual([noNumber.r.outcome, noNumber.creates.length], ['pr-failed', 1], noNumber.r.receipt.stdout);
     const timedOut = shipOnce({ verdict: PASS_VERDICT, cardText: card(LINES), script: { 'gh pr create': { timedOut: true, exitCode: 1 } } });
     assert.deepEqual([timedOut.r.outcome, timedOut.creates.length], ['effect-unknown', 1], timedOut.r.receipt.stdout);
-    for (const s of [reused, failed, unreviewed, noNumber, timedOut]) assert.deepEqual(bodyLines(s.lines), [], s.r.receipt.stdout);
+    for (const s of [failed, unreviewed, noNumber, timedOut]) assert.deepEqual(bodyLines(s.lines), [], s.r.receipt.stdout);
   });
 });
 
@@ -265,5 +264,158 @@ describe('T0-PR-SUMMARY-CARDS-DIR: the configured cards directory', () => {
     const plain = shipPathFor(ProjectConfig.parse({ shipPath: 'github', repository: 'o/r' }), tmpDir('aidlc-prsum-cfg-'), runner);
     assert.ok(plain instanceof GitHubShipPath);
     assert.equal(plain.options.cardsDir, 'specs/tasks');
+  });
+});
+
+/** The listing of one pull request 8 for T1-A in the given state. */
+const listed = (state: 'OPEN' | 'MERGED'): Partial<ExecReceipt> => ({ stdout: JSON.stringify([{ number: 8, state, headRefOid: HEAD, baseRefName: 'main', ...(state === 'MERGED' ? { mergedAt: '2026-09-11T00:00:00.000Z' } : {}) }]) });
+const isBodyView = (args: string[]): boolean => args[0] === 'pr' && args[1] === 'view' && args.includes('--json') && args[args.indexOf('--json') + 1] === 'body';
+
+/**
+ * One remote ship of T1-A with every gh call recorded. By default `gh pr list` lists open pull request 8, the view of its
+ * text prints `current` as its body, and `gh pr edit` exits 0; `view` and `edit` replace those receipts.
+ */
+function shipReused(opts: { current?: unknown; cardText?: string; verdict?: Record<string, unknown>; view?: Partial<ExecReceipt>; edit?: Partial<ExecReceipt>; script?: Record<string, Partial<ExecReceipt>> }) {
+  const root = tmpDir('aidlc-prsum-reused-');
+  const wt = path.join(root, 'wt', 'T1-A');
+  mkdirSync(path.join(wt, '.review'), { recursive: true });
+  mkdirSync(path.join(wt, 'specs', 'tasks'), { recursive: true });
+  mkdirSync(path.join(root, '.git'), { recursive: true });
+  if (opts.verdict !== undefined) writeFileSync(path.join(wt, '.review', 'T1-A.json'), JSON.stringify(opts.verdict));
+  if (opts.cardText !== undefined) writeFileSync(path.join(wt, 'specs', 'tasks', 'T1-A.md'), opts.cardText);
+  const merged = SCRIPT['gh pr view']!;
+  const base = scriptedRunner({
+    ...SCRIPT,
+    'gh pr list': listed('OPEN'),
+    'gh pr view': (args) => (isBodyView(args) ? (opts.view ?? { stdout: JSON.stringify({ body: opts.current }) }) : merged),
+    'gh pr edit': opts.edit ?? {},
+    ...opts.script,
+  });
+  const calls: string[][] = [];
+  const runner: typeof base = (cmd, args, o) => {
+    if (cmd === 'gh') calls.push(args);
+    return base(cmd, args, o);
+  };
+  const r = new GitHubShipPath({ mainRoot: root, worktreeRoot: path.join(root, 'wt'), repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+  const lines = r.receipt.stdout.split('\n');
+  return {
+    r,
+    lines,
+    views: calls.filter(isBodyView),
+    edits: calls.filter((a) => a[0] === 'pr' && a[1] === 'edit'),
+    creates: calls.filter((a) => a[0] === 'pr' && a[1] === 'create'),
+    merges: calls.filter((a) => a[0] === 'pr' && a[1] === 'merge'),
+  };
+}
+const VIEW_ARGS = [['pr', 'view', '8', '--repo', 'o/r', '--json', 'body']];
+const editArgs = (body: string): string[][] => [['pr', 'edit', '8', '--repo', 'o/r', '--body', body]];
+const NEW_BODY = `${SUMMARY}\n\n---\n${PASS}`;
+/** The output lines that start with a bracket: the sentinels. */
+const bracketed = (lines: string[]): string[] => lines.filter((l) => l.startsWith('['));
+
+describe('T0-PR-SUMMARY-REUSED: the text of an open pull request the ship uses again', () => {
+  test('acceptance 1: shipWroteBody is true only for the fixed line or a text whose last line is the Card: line [R1]', () => {
+    const summaryPass = `${SUMMARY}\n\n---\n${PASS}`;
+    const summaryNoPass = `${SUMMARY}\n\n---\n${NO_PASS}`;
+    const yes: Array<[string, string, string | undefined]> = [
+      ['the fixed line', FIXED, undefined],
+      ['the fixed line of docs/cards', 'Closed loop: worktree + TDD + independent review. DoD in docs/cards/T1-A.md.', 'docs/cards'],
+      ['the fixed line of specs/tasks under docs/cards', FIXED, 'docs/cards'],
+      ['a summary with the pass line', summaryPass, undefined],
+      ['a summary with the no-pass line', summaryNoPass, undefined],
+      ['a summary with the pass line of docs/cards', `${SUMMARY}\n\n---\nCard: docs/cards/T1-A.md. Formal review: pass.`, 'docs/cards'],
+      ['a summary with the no-pass line of specs/tasks under docs/cards', summaryNoPass, 'docs/cards'],
+    ];
+    for (const [name, body, dir] of yes) {
+      const forms: Array<[string, string]> = [
+        ['as is', body],
+        ['CRLF', body.replace(/\n/g, '\r\n')],
+        ['a trailing newline and spaces', `${body}\n  \n `],
+        ['CRLF and a trailing CRLF', `${body.replace(/\n/g, '\r\n')}\r\n`],
+      ];
+      for (const [form, text] of forms) assert.equal(shipWroteBody(text, 'T1-A', dir), true, `${name}, ${form}`);
+    }
+    const no: Array<[string, string, string | undefined]> = [
+      ['the empty string', '', undefined],
+      ['a text a person wrote', 'Fixes the ship.\n\nThanks.', undefined],
+      ['a Card: line that is not the last line', `${summaryPass}\n\nEdited by hand.`, undefined],
+      ['a Card: line of T1-B', `${SUMMARY}\n\n---\nCard: specs/tasks/T1-B.md. Formal review: pass.`, undefined],
+      ['the fixed line of T1-B', 'Closed loop: worktree + TDD + independent review. DoD in specs/tasks/T1-B.md.', undefined],
+      ['a Card: line with another review word', `${SUMMARY}\n\n---\nCard: specs/tasks/T1-A.md. Formal review: block.`, undefined],
+      ['a fixed line of other/T1-A.md under docs/cards', 'Closed loop: worktree + TDD + independent review. DoD in other/T1-A.md.', 'docs/cards'],
+      ['a Card: line of docs/cards with no cardsDir', `${SUMMARY}\n\n---\nCard: docs/cards/T1-A.md. Formal review: pass.`, undefined],
+      ['the fixed line after another word', `Note: ${FIXED}`, undefined],
+    ];
+    for (const [name, body, dir] of no) assert.equal(shipWroteBody(body, 'T1-A', dir), false, name);
+  });
+
+  test('acceptance 2: a ship that uses open pull request 8 writes the new text over a text the ship wrote [R2] [R3]', () => {
+    const s = shipReused({ verdict: PASS_VERDICT, cardText: card(LINES), current: FIXED });
+    assert.deepEqual([s.r.outcome, s.r.prNumber, s.creates.length], ['merged', 8, 0], s.r.receipt.stdout);
+    assert.deepEqual(s.views, VIEW_ARGS);
+    assert.deepEqual(s.edits, editArgs(NEW_BODY));
+    assert.deepEqual(bodyLines(s.lines), [['PR body: updated, the PR summary of the card', 'PR #8']]);
+    const none = shipReused({ verdict: PASS_VERDICT, current: NEW_BODY });
+    assert.deepEqual([none.r.outcome, none.r.prNumber, none.creates.length], ['merged', 8, 0], none.r.receipt.stdout);
+    assert.deepEqual(none.views, VIEW_ARGS);
+    assert.deepEqual(none.edits, editArgs(FIXED));
+    assert.deepEqual(bodyLines(none.lines), [['PR body: updated, the fixed line (no card file)', 'PR #8']]);
+  });
+
+  test('acceptance 3: the same text, or a text a person wrote, is not written [R2] [R3]', () => {
+    const same = shipReused({ verdict: PASS_VERDICT, cardText: card(LINES), current: `${NEW_BODY.replace(/\n/g, '\r\n')}\r\n` });
+    assert.equal(same.r.outcome, 'merged', same.r.receipt.stdout);
+    assert.deepEqual([same.views, same.edits], [VIEW_ARGS, []]);
+    assert.deepEqual(bodyLines(same.lines), [['PR body: unchanged', 'PR #8']]);
+    const person = shipReused({ verdict: PASS_VERDICT, cardText: card(LINES), current: 'Fixes the ship.\n\nThanks.' });
+    assert.equal(person.r.outcome, 'merged', person.r.receipt.stdout);
+    assert.deepEqual([person.views, person.edits], [VIEW_ARGS, []]);
+    assert.deepEqual(bodyLines(person.lines), [['PR body: kept (the current text was not written by the ship)', 'PR #8']]);
+  });
+
+  test('acceptance 4: a failed read or edit is one line, and the ship goes on to the merge [R3] [R4]', () => {
+    const ok = shipReused({ verdict: PASS_VERDICT, cardText: card(LINES), current: FIXED });
+    const READ = 'PR body: not updated (could not read the current text: ';
+    const EDIT = 'PR body: not updated (gh pr edit ';
+    const cases: Array<[string, Parameters<typeof shipReused>[0], string, number]> = [
+      ['a view that exits 1', { view: { exitCode: 1, stderr: 'HTTP 502\n[SAGA-FAIL] x' } }, READ, 0],
+      ['a view that times out', { view: { timedOut: true, exitCode: null } }, READ, 0],
+      ['a view that prints no JSON', { view: { stdout: '{not json' } }, READ, 0],
+      ['a view whose body is a number', { current: 7 }, READ, 0],
+      ['an edit that exits 1', { current: FIXED, edit: { exitCode: 1, stderr: '[SAGA-FAIL] boom' } }, EDIT, 1],
+      ['an edit that times out', { current: FIXED, edit: { timedOut: true, exitCode: null } }, EDIT, 1],
+    ];
+    for (const [name, opts, prefix, edits] of cases) {
+      const s = shipReused({ verdict: PASS_VERDICT, cardText: card(LINES), ...opts });
+      assert.deepEqual([s.r.outcome, s.r.prNumber, s.merges.length, s.edits.length], ['merged', 8, 1, edits], `${name}: ${s.r.receipt.stdout}`);
+      const body = bodyLines(s.lines);
+      const line = body[0]?.[0] ?? '';
+      const next = body[0]?.[1];
+      assert.equal(body.length, 1, `${name}: ${s.r.receipt.stdout}`);
+      assert.ok(line.startsWith(prefix), `${name}: ${line}`);
+      assert.equal(next, 'PR #8', name);
+      assert.ok(!line.includes('['), `${name}: ${line}`);
+      assert.deepEqual(bracketed(s.lines), bracketed(ok.lines), name);
+    }
+  });
+
+  test('acceptance 5: a ship that creates the pull request, finds it merged or ends before the push neither reads nor writes its text [R5]', () => {
+    const fresh = { 'gh pr list': { stdout: '[]' } };
+    const cases: Array<[string, Parameters<typeof shipReused>[0], string]> = [
+      ['a new pull request', { verdict: PASS_VERDICT, cardText: card(LINES), script: fresh }, 'merged'],
+      ['a create call that exits 1', { verdict: PASS_VERDICT, cardText: card(LINES), script: { ...fresh, 'gh pr create': { exitCode: 1, stderr: 'refused' } } }, 'pr-failed'],
+      ['no verdict', { cardText: card(LINES), script: fresh }, 'review-no-verdict'],
+      ['a create call with no address', { verdict: PASS_VERDICT, cardText: card(LINES), script: { ...fresh, 'gh pr create': { stdout: 'no address\n' } } }, 'pr-failed'],
+      ['a create call that times out', { verdict: PASS_VERDICT, cardText: card(LINES), script: { ...fresh, 'gh pr create': { timedOut: true, exitCode: 1 } } }, 'effect-unknown'],
+      ['pull request 8 merged', { verdict: PASS_VERDICT, cardText: card(LINES), current: FIXED, script: { 'gh pr list': listed('MERGED') } }, 'merged'],
+      ['a push that exits 1', { verdict: PASS_VERDICT, cardText: card(LINES), current: FIXED, script: { 'git push': { exitCode: 1, stderr: 'rejected' } } }, 'push-failed'],
+    ];
+    for (const [name, opts, outcome] of cases) {
+      const s = shipReused(opts);
+      assert.equal(s.r.outcome, outcome, `${name}: ${s.r.receipt.stdout}`);
+      assert.deepEqual([s.views, s.edits], [[], []], name);
+      const expected = name === 'a new pull request' ? [['PR body: the PR summary of the card', 'PR #42']] : [];
+      assert.deepEqual(bodyLines(s.lines), expected, name);
+    }
   });
 });

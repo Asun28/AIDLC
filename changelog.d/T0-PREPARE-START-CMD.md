@@ -1,0 +1,1 @@
+- T0-PREPARE-START-CMD: on the github and dry-run ship paths, the narration of a `prepare` start names `git worktree add` of the card branch from the base ref and, when the main checkout has `node_modules`, the link to it, in place of `scripts/task.ps1`, which exists on the scaffold path only.

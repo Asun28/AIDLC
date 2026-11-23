@@ -1,7 +1,7 @@
 ---
 id: T0-LIMIT-RESET-IANA-NAMES
 title: "The reset zone of a CLI limit message is read only when its full name is a tzdata 2026a zone or link name, so `US/Pacific-New` and `Canada/East-Saskatchewan`, which ICU still accepts and IANA removed, read no delay (issue 398)"
-status: todo
+status: merged
 branch: T0-LIMIT-RESET-IANA-NAMES
 worktree: D:\wt\AIDLC\T0-LIMIT-RESET-IANA-NAMES
 allow_paths:

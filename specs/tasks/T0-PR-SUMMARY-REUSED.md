@@ -1,7 +1,7 @@
 ---
 id: T0-PR-SUMMARY-REUSED
 title: "The GitHub ship path rewrites the text of an open pull request it uses again when the ship wrote the current text, and a failed read or edit does not stop the ship"
-status: todo
+status: merged
 branch: T0-PR-SUMMARY-REUSED
 worktree: D:\wt\AIDLC\T0-PR-SUMMARY-REUSED
 allow_paths:
@@ -94,3 +94,15 @@ npm run typecheck && node --test tests/infra/pr-summary.test.ts tests/infra/gith
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass, the existing ship and template tests pass, the typecheck is clean and the changelog fragment is well formed.
+
+## Attempt evidence
+RED commit 964118c7 holds the new tests and a seam: `shipWroteBody` is exported and returns false, and the ship does not read or write the text of a reused pull request. Acceptance 1 to 4 fail on assertions there; acceptance 5 passes, as it states behaviour that stays.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `pr-summary.test.ts`, T0-PR-SUMMARY-REUSED acceptance 1 | pass |
+| 2 | `pr-summary.test.ts`, T0-PR-SUMMARY-REUSED acceptance 2 | pass |
+| 3 | `pr-summary.test.ts`, T0-PR-SUMMARY-REUSED acceptance 3 | pass |
+| 4 | `pr-summary.test.ts`, T0-PR-SUMMARY-REUSED acceptance 4 | pass |
+| 5 | `pr-summary.test.ts`, T0-PR-SUMMARY-REUSED acceptance 5 and T0-PR-SUMMARY acceptance 6; DoD: typecheck, `github-ship.test.ts`, `github-ship-merge-refused.test.ts`, `templates.test.ts` | pass |
+| 6 | `changelog-fragments.test.ts`; the two documents in the diff | pass |

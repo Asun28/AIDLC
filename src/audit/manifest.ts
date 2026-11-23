@@ -49,6 +49,9 @@ export type Manifest = z.infer<typeof Manifest>;
 /** The evidence kinds bound to a candidate, matched as exact whole strings (card T0-AUDIT-BINDING). */
 export const CANDIDATE_BOUND_KINDS: readonly string[] = ['dod-receipt', 'review-verdict', 'ci-run', 'test-output', 'health'];
 
+/** The kind of a file of a candidate of a card that did not merge, such as the verdict that blocked it; not candidate-bound (card T0-RETAIN-STALE-CANDIDATE). */
+export const EARLIER_CANDIDATE_KIND = 'earlier-candidate';
+
 export function fileSha256(file: string): string {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
