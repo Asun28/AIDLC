@@ -264,6 +264,14 @@ export function prBody(cardText: string | undefined, cardId: string, reviewed: b
   return { body: `${summary}\n\n---\nCard: ${card}. Formal review: ${reviewed ? 'pass' : 'no pass recorded for this commit'}.` };
 }
 
+/** RED seam (card T0-PR-SUMMARY-REUSED): whether the ship wrote a pull request text. */
+export function shipWroteBody(body: string, cardId: string, cardsDir?: string): boolean {
+  void body;
+  void cardId;
+  void cardsDir;
+  return false;
+}
+
 export class GitHubShipPath implements ShipPath {
   readonly name = 'github';
   readonly options: GitHubShipOptions;
