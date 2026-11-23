@@ -51,3 +51,27 @@ npm run typecheck && node --test tests/surface/card-phase-doc.test.ts tests/surf
 ```
 - Expected exit code: 0
 - Assertion: the three tests of the new file pass, the prose test passes and the changelog fragment is well formed.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/card-phase-doc.test.ts`, test `acceptance 1: the paragraph follows the PREPARE paragraph and names exactly the phase commands and the options of the CLI help`; RED at 95775d0e: `the paragraph after the one that begins "PREPARE and the card worktree" begins "Scaffold phase commands (card T0-CARD-PHASE-DOC, issue 419):"` | pass after the paragraph |
+| 2 | Same file, test `acceptance 2: on the scaffold ship path each command runs task.ps1 in the main checkout ...`: 12 runs of the recording `scripts/task.ps1`, each of the four commands with no option, with `--base other --local` and under `mode: local` | pass |
+| 3 | Same file, tests `acceptance 3: on the github ship path ...` and `acceptance 3: on the dry-run ship path ...`: each of the four commands, with and without the options | pass |
+| 4 | Read against the source: `src/cli/main.ts:950-966` (the `pwsh` arguments, `cwd`, `stdio: 'inherit'`, the exit code, the `AIDLC_RUN_NO_SHIP` guard), `src/loop/card-runner.ts:1367` (the `prepare` narration names `-Phase start`), `src/delivery/ship.ts:303-316` (`phase` is called for `ship` only), `src/loop/card-runner.ts` `reclaimWorktree` and `src/loop/worktree-reclaim.ts:43` (`git.removeWorktree`) | reviewer-verified |
+| 5 | `tests/surface/changelog-fragments.test.ts`, `tests/surface/prose.test.ts`; `git diff --numstat origin/main...HEAD -- src templates` | pass; empty |
+
+Each clause of R1 to R3 and the assertion that fails without it (the mutant named was applied, the test file run, and the file restored):
+
+| Clause | Mutant | Failing test |
+|---|---|---|
+| R1 place | the paragraph moved before the PREPARE paragraph | acceptance 1 |
+| R1 the four commands | `aidlc card cleanup <id>` left out; `aidlc card verify <id>` added | acceptance 1 |
+| R4 commands equal the CLI's | a fifth phase in `src/cli/main.ts`; `cleanup` removed there | acceptance 1 |
+| R4 options equal the CLI's | `--local` left out of the paragraph; `--force` added to it; `--force` added to the commands | acceptance 1 |
+| R2 `-TaskId`, own `-Phase` | `-Phase` always `start`; an extra argument; `-TaskId <id>` left out of the paragraph | acceptance 2 |
+| R2 main checkout | `cwd: process.cwd()` | acceptance 2 |
+| R2 exit code | exit 1 for every non-zero script exit | acceptance 2 |
+| R2 `-Base` | the configured base not passed; `--base` ignored | acceptance 2 |
+| R2 `-Local` | `--local` ignored; `mode: local` ignored; `mode: local` left out of the paragraph | acceptance 2 |
+| R3 message, exit 1, nothing run | another message in the CLI or in the paragraph; exit 2; `dry-run` not refused | acceptance 3 |
