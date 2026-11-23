@@ -184,6 +184,9 @@ interface FormalResult {
 /** What the build and formal repair narrations ask for before the final DoD run (card T0-ACCEPT-TABLE). No code reads the table. */
 const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table in its `## Attempt evidence` section before the final DoD run, one row per acceptance item: the item number, the test or command that proves it, and its result. A row with no proof is unfinished work. Correct the table on every repair.';
 
+/** What the same narrations ask for directly before the table (card T0-PR-SUMMARY-ASK): the section the GitHub ship path makes the pull request text (`prBody`). No gate reads its style. */
+const PR_SUMMARY_ASK = 'When allow_paths lists this card file, write a `## PR summary` section in it before the final DoD run, for a person who reads the pull request: the headings `### What`, `### Why / Intent`, `### How / Behaviour`, `### System impact`, `### Security`, `### Tests and review`, `### Risk`, `### Ownership` and `### Docs` in that order, one to three short sentences under each, in ASD-STE100 style (at most 20 words a sentence, active voice, one meaning for each word) and New Zealand spelling, at most 4000 characters and no `@`. The GitHub ship path makes it the text of the pull request it creates. Correct it on every repair.';
+
 /** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
 const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines. List in the attempt evidence each input form and failure path the repair hunks handle (for a parser, each kind of value it can be given; for I/O, each error it can raise), each with the test that covers it.';
 
@@ -1193,7 +1196,7 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running && episode ? ladderNumber(episode, episode.attempts.indexOf(running)) : episode ? episode.attempts.length : 1,
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
+            narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
           },
         };
       }
@@ -1453,9 +1456,9 @@ export class CardRunner {
         // `aidlc card red` records RED on the scaffold ship path only; elsewhere the success attempt carries it (card T0-RED-PATH-TEXT).
         narration: card.tdd && !redReceipt
           ? this.shipPath instanceof ScaffoldShipPath
-            ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first with \`aidlc card red ${card.id}\` (task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
-            : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first, then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
-          : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`,
+            ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first with \`aidlc card red ${card.id}\` (task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`
+            : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first, then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`
+          : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`,
       },
     };
   }
