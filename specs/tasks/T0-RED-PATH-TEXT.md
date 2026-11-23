@@ -1,7 +1,7 @@
 ---
 id: T0-RED-PATH-TEXT
 title: "card-loop.md BUILD and the BUILD directive name `card attempt --red-receipt` as the way to record RED, and `aidlc card red` for the scaffold ship path only"
-status: todo
+status: merged
 branch: T0-RED-PATH-TEXT
 worktree: D:\wt\AIDLC\T0-RED-PATH-TEXT
 allow_paths:
