@@ -1,7 +1,7 @@
 ---
 id: T1-CARD-WRITER-LESSONS
 title: The plan and project-cards directives carry the count and the ten most recent lessons of docs/LESSONS.md, and the card templates and the planner agent say a card is checked against them before it is registered
-status: todo
+status: merged
 branch: T1-CARD-WRITER-LESSONS
 worktree: D:\wt\AIDLC\T1-CARD-WRITER-LESSONS
 plan_ref: plans/lesson-delivery.md#7-task-split-dependencies-and-parallel-windows
