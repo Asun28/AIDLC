@@ -174,7 +174,7 @@ describe('templates (Q14 packaging)', () => {
     const folded = text.slice(text.indexOf(opener) + opener.length);
     const close = folded.indexOf('\n---\n');
     assert.ok(close > 0, 'the frontmatter closes after the description');
-    const description = folded.slice(0, close).replace(/\s+/g, ' ').toLowerCase();
+    const description = folded.slice(0, close).replace(/\s+/g, ' ').trim().toLowerCase();
     for (const term of ['authentication', 'authorization', 'input validation', 'audit', 'pii', 'session', 'error']) {
       assert.ok(description.includes(term), `the secure-api-review description must name "${term}": ${description}`);
     }

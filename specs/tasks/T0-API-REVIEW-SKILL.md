@@ -57,3 +57,18 @@ npm run typecheck && node --test tests/surface/templates.test.ts tests/surface/m
 ```
 - Expected exit code: 0
 - Assertion: the new test passes, the companion-skills test and the mirror test pass unchanged, and the fragment has the required form.
+
+## Attempt evidence
+Build attempt 1. RED receipt `ce4295ea4df9ea7761e04409c0686059e2e8444e:tests/surface/templates.test.ts` (the new test failed on the description of main: `the secure-api-review description must name "authentication"`).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | the new test in `tests/surface/templates.test.ts`: the file exists, is 2176 of 2500 bytes, is ASCII, starts with its `name:` and holds the folded description; the companion-skills test has no changed line | pass (held at RED) |
+| 2 | same test, the seven terms in the description; the description with each term removed in turn fails it | pass (failed at RED) |
+| 3 | `git diff main -- templates/claude/skills/secure-api-review/SKILL.md`: four hunks, the description (its "Use whenever" sentence word for word), the paragraph above the rules, rule 1 and rule 5; no other line | reads as R1 to R5 say, for the reviewer to confirm |
+| 4 | `tests/surface/mirror.test.ts`, no change; `cmp` of the two copies | pass |
+| 5 | `changelog.d/T0-API-REVIEW-SKILL.md`; `tests/surface/changelog-fragments.test.ts` and `tests/surface/prose.test.ts` | pass |
+
+The other assertions of the new test, each checked once on a changed copy of the file that was then restored: a file of 2502 bytes, a non-ASCII character, a changed `name:`, a description that is not folded and a frontmatter that does not close each fail it; a file of exactly 2500 bytes passes.
+
+DoD: the command above, exit 0, 72 of 72 tests pass.
