@@ -1,7 +1,7 @@
 ---
 id: T0-AMEND-CONTINUE-TEST
 title: "A scenario test runs aidlc card amend and aidlc card continue on one run stopped for review, for the same blocked commit and for a new one"
-status: todo
+status: merged
 branch: T0-AMEND-CONTINUE-TEST
 worktree: D:\wt\AIDLC\T0-AMEND-CONTINUE-TEST
 allow_paths:
