@@ -1,7 +1,7 @@
 ---
 id: T0-PREFETCH-TIMEOUT
 title: "The hook entry's early git rev-parse (prefetchRepoIdentity) is ended at the 120 s bound of the synchronous lookup and settles as not answered, so the guards ask git through the bounded synchronous lookup"
-status: todo
+status: merged
 branch: T0-PREFETCH-TIMEOUT
 worktree: D:\wt\AIDLC\T0-PREFETCH-TIMEOUT
 allow_paths:
@@ -93,3 +93,12 @@ npm run typecheck && node --test tests/infra/git-prefetch-timeout.test.ts tests/
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
+| 1 | `tests/infra/git-prefetch-timeout.test.ts`, test `acceptance 1: ...`. RED at 43b09073 (seam parameters, no timer): `settled after 10020 ms, not at the 500 ms bound`, the seam's own 10 s kill ending the child | pass |
+| 2 | Same file, test `acceptance 2: ...`: the spawner's command, arguments and options; with mocked `setTimeout`, no kill at 119 999 ms and one kill at 120 000 ms; git's identity after settling. RED at 43b09073: `ended at 120000 ms`, 0 kills | pass |
+| 3 | Same file, test `acceptance 3: ...`: a real git answers, no kill after 120 000 mocked ms, and with `.git` moved away the cached identity is still git's | pass (also at 43b09073: a guard for R2) |
+| 4 | DoD arms 3-7: `git-lookup-timeout`, `hook-git-prefetch`, `cli-inprocess`, `paths`, `bin-entry`, none in the diff | pass |
+| 5 | DoD arm 1 (`npm run typecheck`) exit 0; `changelog-fragments`, `prose` pass; docs/OPERATIONS.md doctor paragraph, docs/ARCHITECTURE.md `src/state/` sentence, `changelog.d/T0-PREFETCH-TIMEOUT.md` | pass; doc text is for the reviewer |
+
+DoD on the candidate: exit 0, 63 tests, 62 pass, 0 fail, 1 skipped (`bin-entry` file links, EPERM on this platform, as on main).
+
+Repair after CI on PR 460 (attempt 2): `tests/surface/test-temp.test.ts` (T0-TEST-TEMP-SWEEP) failed on ubuntu and build-test because the new test made its directory with a direct call instead of `tmpDir` from `tests/infra/helpers.ts`, which registers the removal. The test now uses `tmpDir`; `test-temp.test.ts` passes, and `npm run check` in the worktree exits 0 (4128 tests, 4096 pass, 0 fail, 32 skipped).

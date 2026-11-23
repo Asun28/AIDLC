@@ -1,7 +1,7 @@
 ---
 id: T0-PR-SUMMARY-REUSED
 title: "The GitHub ship path rewrites the text of an open pull request it uses again when the ship wrote the current text, and a failed read or edit does not stop the ship"
-status: todo
+status: merged
 branch: T0-PR-SUMMARY-REUSED
 worktree: D:\wt\AIDLC\T0-PR-SUMMARY-REUSED
 allow_paths:
