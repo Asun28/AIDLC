@@ -1,7 +1,7 @@
 ---
 id: T0-PREFETCH-TIMEOUT
 title: "The hook entry's early git rev-parse (prefetchRepoIdentity) is ended at the 120 s bound of the synchronous lookup and settles as not answered, so the guards ask git through the bounded synchronous lookup"
-status: todo
+status: merged
 branch: T0-PREFETCH-TIMEOUT
 worktree: D:\wt\AIDLC\T0-PREFETCH-TIMEOUT
 allow_paths:
