@@ -1,7 +1,7 @@
 ---
 id: T0-PR-SUMMARY-ASK
 title: "Every narration that asks for the acceptance table also asks the author for the PR summary section of the card file, directly before the table instruction"
-status: todo
+status: merged
 branch: T0-PR-SUMMARY-ASK
 worktree: D:\wt\AIDLC\T0-PR-SUMMARY-ASK
 allow_paths:
