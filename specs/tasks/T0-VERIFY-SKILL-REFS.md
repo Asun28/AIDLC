@@ -65,9 +65,93 @@ short body that says what its file holds and when to read it. In the trial
 - After this card, a card that adds a command the check does not drive edits `references/not-covered.md`, not `SKILL.md`.
 - No document names either section, so no document changes; the changelog fragment records the move.
 
+## PR summary
+### What
+Two long sections of the `verify-card-run-writes` skill move to reference files beside `SKILL.md`. `SKILL.md` goes from 7994 to 5525 bytes.
+
+### Why / Intent
+`SKILL.md` was 6 bytes below its 8000-byte cap. The next change to its coverage record had no room. The two sections are necessary only in special cases.
+
+### How / Behaviour
+- `references/not-covered.md` holds the list of what the check does not cover.
+- `references/shown-failing.md` holds the record of one failed run, with its TAP output.
+- Each section in `SKILL.md` keeps a short text that tells the reader when to read its file.
+
+### System impact
+Skill text and one test file change. No source code, no command and no state changes. `aidlc init` does not install this skill.
+
+### Security
+No new input, command or permission. The two files hold text that was in `SKILL.md` before.
+
+### Tests and review
+- One new test checks the two files and the two short sections. The DoD passes with 73 tests.
+- 27 single changes to the three files: a test fails for each one.
+- The full suite passes: 4097 tests, 0 failures.
+
+### Risk
+Low. The change moves text only. A reader who does not open a reference file still gets a summary in `SKILL.md`.
+
+### Ownership
+Card `T0-VERIFY-SKILL-REFS`, goal `g-20261123090044-3aa462`, issue 430.
+
+### Docs
+No document names the two sections, so no document changes. `changelog.d/T0-VERIFY-SKILL-REFS.md` holds the entry.
+
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/surface/templates.test.ts tests/surface/mirror.test.ts tests/surface/prose.test.ts tests/surface/changelog-fragments.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the new test and the existing tests of the skill pass, and the mirror, prose and changelog fragment tests pass.
+
+## Attempt evidence
+RED commit 3cd8e7e5 holds the change to `tests/surface/templates.test.ts` alone. The new test fails there on its first assertion, `references/not-covered.md missing beside SKILL.md`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/templates.test.ts`, test `T0-VERIFY-SKILL-REFS: the Not covered list and the Shown failing record are reference files beside SKILL.md, ...`: for each section, the file exists, opens with its title line, is ASCII and has no placeholder marker; the body in `SKILL.md` is at most 400 bytes (280 and 252), holds no code fence, names the file as a code span and holds `Read`, the span and `when` in that order. RED at 3cd8e7e5 | pass after the change |
+| 2 | The same test: the three patterns on `references/not-covered.md`, and `/not\s+ok/i` finds nothing in `SKILL.md` | pass |
+| 3 | Test `acceptance 4: Shown failing (references/shown-failing.md) names ...` reads the file; `git diff --numstat origin/main...HEAD` lists `27 2 tests/surface/templates.test.ts`, and the two deleted lines are the name of that test and the line that read the section. Acceptance 1, acceptance 2 and the `T0-VERIFY-SYNC-CMD` test pass with no line changed | pass |
+| 4 | `git show 026debc9:.claude/skills/verify-card-run-writes/SKILL.md \| sed -n '54,75p'` compared with `references/not-covered.md` from its second line by `cmp`: equal; the same with `sed -n '78,98p'` and `references/shown-failing.md`: equal. `git diff -U0 origin/main...HEAD -- .claude/skills/verify-card-run-writes/SKILL.md` has two hunks, `-54,22 +54,4` and `-78,21 +60,4`, which are the two bodies | pass; what each body says is for the reviewer |
+| 5 | DoD arm 1 exit 0; `tests/surface/mirror.test.ts` and `tests/surface/prose.test.ts` are not in the diff and pass; `tests/surface/changelog-fragments.test.ts` passes; DoD tests: 73, 73 pass, 0 fail | pass; the text of the fragment is for the reviewer |
+
+Each requirement clause and the assertion that fails without it:
+
+| Clause | Assertion |
+|---|---|
+| R1 and R2, the file exists | item 1, `existsSync` |
+| R1 and R2, the title line | item 1, `startsWith` |
+| R1 and R2, the lines of main, byte for byte, nothing after them | item 4, the two `cmp` runs (reviewer-verified); item 2 for the three terms of the list; `acceptance 4` for the src/ file, the covered function and the TAP excerpt of the record |
+| R3, the heading line stays | acceptance 2 of the describe, the ten headings; the new test reads each body by its heading |
+| R3, at most 400 bytes | item 1, the byte count |
+| R3, no code fence | item 1 |
+| R3, the sentence with `Read`, the file as a code span, `when` | item 1, the span check and the phrase check |
+| R3, says what the file holds | item 4 (reviewer-verified) |
+| R4 | acceptance 2 of the describe, unchanged |
+| R5 | item 4, the two hunks (reviewer-verified); acceptance 1, acceptance 3 and the `T0-VERIFY-SYNC-CMD` test for the front matter, the coverage record and Keeping in sync |
+| R6 | item 1, the ASCII check and the four markers |
+| R7 | item 5 (reviewer-verified) and the fragment test |
+
+Changes, each made alone to one of the three files, run against `tests/surface/templates.test.ts`, then restored. 27 changes, and a test fails for each; the unchanged files and the two bodies padded to exactly 400 bytes pass:
+
+| Change | Test that fails |
+|---|---|
+| `references/not-covered.md` removed | the new test |
+| `references/shown-failing.md` removed | the new test and acceptance 4 |
+| a title line with two hashes; a title line in another case | the new test |
+| a non-ASCII character in either file | the new test |
+| `TODO` or `TBD` in the list; `FIXME` or an angle placeholder in the record | the new test |
+| either body padded to 401 bytes | the new test |
+| a code fence in a body | the new test |
+| the file named without a code span; the other file named | the new test |
+| `See` in place of `Read`; `if` in place of `when`; words between `Read` and the file | the new test |
+| the list without the lease, without the review queue, without more than one fault per run | the new test |
+| `NOT  OK` in capitals with two spaces in `SKILL.md`; `not` and `ok` on two lines | the new test |
+| the `SKILL.md` body without the lease | acceptance 2 |
+| the record without its `not ok` lines, without a covered function, without a src/ file | acceptance 4 |
+
+Verify skill `verify-card-run-writes`: the card changes no file of the coverage record (`tests/scenarios/fault-points.test.ts`, `src/loop/card-runner.ts`, `src/state/goal-store.ts`, `src/state/store.ts`, `src/state/journal.ts`), so the check and the sync commit are not involved.
+
+Full suite, run once on the candidate skill files, test file and changelog fragment, before this section was written: `npm test` exit 0, 4097 tests, 4065 pass, 0 fail, 32 skipped.
+
+Size: 81 lines added and 45 deleted before this card file, against the budget of 200.
