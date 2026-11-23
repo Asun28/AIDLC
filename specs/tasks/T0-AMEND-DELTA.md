@@ -51,3 +51,24 @@ npm run typecheck && node --test tests/scenarios/amend-delta.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass, the neighbouring tests pass unchanged, and the typecheck is clean.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/scenarios/amend-delta.test.ts "issue 415 - R3 on the amended candidate of the same commit marks no first-round miss" | pass (failed at RED db30edf5: F2 `outsideDelta: true`) |
+| 2 | same file "R2 on the amended candidate of the same commit marks no first-round miss" | pass (failed at RED: F2 `outsideDelta: true`) |
+| 3 | same file "a ship-path decision after an amendment is bound to no delta" (review-invalidating amendment one minute after and at the same instant as the decision: undefined; dod-only: `[]`) | pass (failed at RED: `[] !== undefined`) |
+| 4 | same file "an amendment followed by a repair commit gives no delta either" | pass (failed at RED: delta section in the prompt) |
+| 5 | same file "a decision after the amendment is the delta base again" | pass (passed at RED too, as the card expects) |
+| 6 | DoD: t0-flow, card-amend, card-amend-continue, fault-points unchanged; `npm run typecheck` clean | pass, DoD exit 0, 181 tests, 0 fail |
+| 7 | docs/OPERATIONS.md Review inputs and Amendments sentences, changelog.d/T0-AMEND-DELTA.md; changelog-fragments.test.ts, prose.test.ts | pass (statement for the reviewer to check against the diff) |
+
+Guard sweep (`lastReviewedSha`, each loosened in turn, amend-delta.test.ts run, then restored):
+
+| Guard | Loosened form | Failing test |
+|---|---|---|
+| `a.invalidated.includes('review')` | removed (any amendment) | 3 (dod-only amendment gives undefined, not `[]`) |
+| `last.requestedAt <= a.at` | `<` | 3 (decision at the instant of the amendment) |
+| `last.requestedAt <= a.at` | removed (any earlier or later amendment) | 5 |
+| the whole amendment check | removed (main) | 1, 2, 3, 4 |
