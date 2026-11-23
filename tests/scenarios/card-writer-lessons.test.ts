@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, type Fixture } from './_harness.ts';
-import type { Directive } from '../../src/loop/directive.ts';
+import { Directive } from '../../src/loop/directive.ts';
 
 // T1-CARD-WRITER-LESSONS: the `plan` and `project-cards` directives carry the count and the ten most recent lines of
 // docs/LESSONS.md, and their narration names the count and the file and says every card is checked against them
@@ -95,6 +95,7 @@ test('each of the five narrations names the count, the file and registration, ke
       assert.ok(n.includes('docs/LESSONS.md'), `${name}: ${n}`);
       assert.ok(n.includes('registered'), `${name}: ${n}`);
       assert.ok(n.indexOf(onMain) < n.indexOf('12 lessons so far'), `${name}: the text from main comes first: ${n}`);
+      assert.ok(n.slice(n.indexOf('12 lessons so far')).includes('registered'), `${name}: the new sentence says registered: ${n}`);
       for (const line of VALID) {
         assert.ok(!n.includes(line), `${name}: quotes a lesson line`);
         assert.ok(!n.includes(line.slice(line.indexOf(': ') + 2)), `${name}: quotes a lesson rule`);
@@ -127,4 +128,13 @@ test('with no lessons file the plan and project-cards directives carry count 0 a
   } finally {
     fx.cleanup();
   }
+});
+
+test('the lessons field is optional in the schema, and a count that is not a whole number of lines is refused', () => {
+  const base = { goalId: 'g', generation: 0, revision: 0, goalState: 'PLAN', deadline: '2026-11-23T00:00:00.000Z', narration: 'n' };
+  assert.doesNotThrow(() => Directive.parse({ kind: 'plan', ...base, size: 'T0', inputs: [], invocationAllowance: 1, outputs: [] }));
+  assert.doesNotThrow(() => Directive.parse({ kind: 'project-cards', ...base, planRef: 'p', cardsDir: 'specs/tasks', outputs: [] }));
+  const lessons = { file: 'docs/LESSONS.md', count: -1, recent: [] };
+  assert.throws(() => Directive.parse({ kind: 'plan', ...base, size: 'T0', inputs: [], invocationAllowance: 1, outputs: [], lessons }));
+  assert.throws(() => Directive.parse({ kind: 'project-cards', ...base, planRef: 'p', cardsDir: 'specs/tasks', outputs: [], lessons: { ...lessons, count: 1.5 } }));
 });
