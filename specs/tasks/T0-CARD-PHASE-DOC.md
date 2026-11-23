@@ -29,7 +29,11 @@ budget: 130
 tdd: true
 sweep: "On main at a8008e12. `git grep -n -o -E '\\bcard (start|cleanup|red|ship)\\b' -- README.md CLAUDE.md REVIEW.md docs/OPERATIONS.md docs/ARCHITECTURE.md docs/DELIVERY-OPS.md docs/PROJECT-STATE.md docs/REQUIREMENTS-TRACEABILITY.md .claude/skills` finds `card ship` in docs/OPERATIONS.md (lines 49 and 51, the `aidlc run` guard) and in two skill files, `card red` in two skill files, and neither `card start` nor `card cleanup`. `src/cli/main.ts:950` defines the four commands in one loop. In `src/`, `ScaffoldShipPath.phase` is called for `ship` only (`src/delivery/ship.ts:314`), and `reclaimWorktree` (`src/loop/card-runner.ts`) removes the worktree through git on the scaffold and github paths. `tests/infra/cli-inprocess.test.ts` runs `card start` and `card red` against a `scripts/task.ps1` of its own to compare output capture, and asserts none of the statements of R2 or R3."
 forbid: [a change under src/ or templates/, a change to an existing test file]
-non_goals: [the PREPARE narration that names `scripts/task.ps1` on the github ship path (issue 376), a doc claims test over every command of the CLI (issue 420, not built by the owner's decision), what the scaffold's `task.ps1` does inside a phase, which the scaffold repository defines, the `AIDLC_RUN_NO_SHIP` refusal of `card ship`, which docs/OPERATIONS.md states under `aidlc run` and tests/scenarios/run-driver.test.ts pins]
+non_goals:
+  - the PREPARE narration that names `scripts/task.ps1` on the github ship path (issue 376)
+  - a doc claims test over every command of the CLI (issue 420, not built by the owner's decision)
+  - what the scaffold's `task.ps1` does inside a phase, which the scaffold repository defines
+  - the `AIDLC_RUN_NO_SHIP` refusal of `card ship`, which docs/OPERATIONS.md states under `aidlc run` and tests/scenarios/run-driver.test.ts pins
 hygiene: "Issue 419, taken as the docs option (a sentence for each command where the scaffold ship path is described). Acceptance 2 and 3 pin behaviour main already has; acceptance 1 is the RED. The tests run `pwsh`, as tests/infra/cli-inprocess.test.ts does. No behaviour of aidlc changes; the fragment records the new operating-guide text, as T0-BUDGET-DOC-TRUTH did."
 doc_sync: changelog.d/T0-CARD-PHASE-DOC.md
 ---
