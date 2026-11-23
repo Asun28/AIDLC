@@ -1611,9 +1611,26 @@ export class CardRunner {
     if (run.pendingRepair) return `a ${run.pendingRepair.kind} repair is pending (${run.pendingRepair.detail}); finish it first`;
     const flight = this.inFlight(run, 'pre') ?? this.inFlight(run, 'formal');
     if (flight) return `${flight}; withdraw after its verdict lands`;
-    if (run.review.invocations.some((i) => i.candidateDigest === candidate.digest && (i.outcome === 'pass' || i.outcome === 'block'))) return `R3 decided candidate ${candidate.sha.slice(0, 12)}, so it cannot be withdrawn; ship it, repair a block, or take the defect to a follow-up card`;
+    // The latest R3 decision on the candidate refuses unless it is an advisory block (card T0-ADVISORY-WITHDRAW, issue 449): the
+    // advisory finding may be an introduced defect, and its fix goes back through the DoD and its own R3 decision.
+    const decided = [...run.review.invocations].reverse().find((i) => i.candidateDigest === candidate.digest && (i.outcome === 'pass' || i.outcome === 'block'));
+    if (decided && !(decided.outcome === 'block' && !this.invocationBlocking(run, card, decided))) return `R3 decided candidate ${candidate.sha.slice(0, 12)}, so it cannot be withdrawn; ship it, repair a block, or take the defect to a follow-up card`;
     const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
     return open.length ? `operation(s) of this card are unresolved (${open.join(', ')}); reconcile them first` : undefined;
+  }
+
+  /** The directive for a review checkout whose HEAD is not the bound candidate; undefined when it is, or when it cannot be read. */
+  private movedHead(card: Card, run: CardRun): CardDirective | undefined {
+    const sha = run.candidate?.sha;
+    if (!this.repo.isGit || sha === undefined) return undefined;
+    let head: string;
+    try {
+      head = this.git.head(this.reviewCheckout(run));
+    } catch {
+      return undefined;
+    }
+    if (head === sha) return undefined;
+    return { kind: 'wait', cardId: card.id, on: 'candidate-moved', pollSeconds: 0, narration: `Nothing was shipped: the checkout HEAD ${head.slice(0, 12)} is not the bound candidate ${sha.slice(0, 12)}. If the new commit fixes an advisory R3 finding, run \`aidlc card withdraw ${card.id} --cause "<finding>"\`, then \`aidlc card next ${card.id}\` to record the repair; otherwise check out the candidate ${sha.slice(0, 12)} and run \`aidlc card next ${card.id}\` again.` };
   }
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
@@ -1634,6 +1651,10 @@ export class CardRunner {
     // R3 as a command: a fresh formal pass for this candidate before any ship is issued.
     const formal = this.formalReviewGate(goal, card, run);
     if (formal) return formal;
+    // The ship takes the review checkout as it is: a HEAD R3 never read is not shipped (card T0-ADVISORY-WITHDRAW R3). Nothing is
+    // written, so the stale verdict spends no retry; a HEAD read that throws ships as before.
+    const moved = this.movedHead(card, run);
+    if (moved) return { run, directive: moved };
     if (!this.allowShip) {
       const next = this.save({ ...run, state: 'SHIP', blocker: 'driver-ship-boundary' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'driver-ship-boundary', pollSeconds: 90, narration: 'Shipping requires a separate operator invocation outside aidlc run.' } };

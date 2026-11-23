@@ -710,7 +710,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   card
     .command('withdraw <cardId>')
-    .description('withdraw the bound candidate before R3 has decided it: its success becomes a counted failure with this cause and the repair is the next attempt')
+    .description('withdraw the bound candidate before R3 has decided it, or after an advisory (non-merge-blocking) R3 block: its success becomes a counted failure with this cause and the repair is the next attempt')
     .option('--goal <id>')
     .requiredOption('--cause <text>', 'the finding that refutes the candidate')
     .action((cardId: string, o: { goal?: string; cause: string }) => {

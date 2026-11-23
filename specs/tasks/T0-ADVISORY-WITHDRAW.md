@@ -59,3 +59,40 @@ npm run typecheck && node --test tests/scenarios/advisory-withdraw.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass and the existing withdrawal, pin, amend-continue and fault-point tests pass unchanged.
+
+## PR summary
+### What
+`aidlc card withdraw` now accepts a candidate whose latest R3 decision is an advisory block. `aidlc card next` at SHIP does not ship a moved HEAD.
+
+### Why / Intent
+Issue 449. After an advisory R3 finding, no command could bind the fix commit. The ship then failed on a stale verdict and stopped with a wrong reason.
+
+### How / Behaviour
+`withdrawalRefusal` reads the latest R3 decision on the candidate and admits an advisory block. `CardRunner.ship` reads the checkout HEAD after the R3 gate. When HEAD is not the candidate, it returns a `candidate-moved` wait and writes nothing.
+
+### System impact
+Only the card runner and the CLI help text change. A pass and a merge-blocking block still refuse a withdrawal.
+
+### Security
+No new input, network call or credential.
+
+### Tests and review
+`tests/scenarios/advisory-withdraw.test.ts` uses real git and a scripted reviewer. The existing withdrawal, pin, amend-continue and fault-point tests pass unchanged. R3 reviews the candidate.
+
+### Risk
+Low. A HEAD read that fails ships as before. The guard runs only in a git repository with a recorded candidate sha.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and `changelog.d/T0-ADVISORY-WITHDRAW.md` state the change.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/advisory-withdraw.test.ts`, test `acceptance 1`. RED at b9e23dd911: `card next` returned `close` (the moved HEAD merged) | pass after the fix |
+| 2 | Same file, test `acceptance 2`. RED at b9e23dd911: the withdrawal was refused with `R3 decided candidate` | pass after the fix |
+| 3 | Same file, the three `acceptance 3` tests: spec block (after a dispute settles the repair) and pass refuse with nothing written; HEAD at the candidate ships | pass (also on main) |
+| 4 | DoD: `candidate-withdraw`, `candidate-pins`, `card-amend-continue`, `fault-points` unchanged | pass |
+| 5 | `src/cli/main.ts` withdraw description, the docs and the fragment; `changelog-fragments`, `prose` | reviewer-verified; pass |
