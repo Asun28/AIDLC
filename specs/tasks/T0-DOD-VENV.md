@@ -102,7 +102,7 @@ npm run typecheck && node --test tests/infra/virtualenv.test.ts tests/scenarios/
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
-| 1 | tests/infra/virtualenv.test.ts rows (a) to (h), (b2), (c2) | pass |
+| 1 | tests/infra/virtualenv.test.ts rows (a) to (h), (b2), (b3), (b4), (c2) | pass |
 | 2 | tests/infra/virtualenv.test.ts, `dodCall carries the virtualenv env on every ship path, and no env without one` | pass |
 | 3 | tests/scenarios/dod-virtualenv.test.ts, acceptance 3 (RED on main at b282eab0: exit 1, expected 0) | pass |
 | 4 | tests/scenarios/dod-virtualenv.test.ts, acceptance 4 (RED on main at b282eab0: exit 1, expected 0) | pass |

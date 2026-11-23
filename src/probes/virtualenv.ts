@@ -26,6 +26,26 @@ function keysOf(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platform)
   return Object.getOwnPropertyNames(env).filter((k) => k.toUpperCase() === upper);
 }
 
+/**
+ * A copy of every own variable of `env`, enumerable or not. On win32 the keys that name one variable in any letter case
+ * become one key, spelled as the first of them, holding the value `envValue` reads for that spelling (else the first value).
+ */
+function copyOf(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): NodeJS.ProcessEnv {
+  const next: NodeJS.ProcessEnv = {};
+  const seen = new Set<string>();
+  for (const k of Object.getOwnPropertyNames(env)) {
+    if (platform !== 'win32') {
+      next[k] = env[k];
+      continue;
+    }
+    const upper = k.toUpperCase();
+    if (seen.has(upper)) continue;
+    seen.add(upper);
+    next[k] = envValue(env, k, platform) ?? env[k];
+  }
+  return next;
+}
+
 /** Set `name` to `value` (or remove it when undefined) in `env`, keeping one key spelled as `env` spelled it first. */
 function setVariable(env: NodeJS.ProcessEnv, name: string, value: string | undefined, platform: NodeJS.Platform): void {
   const keys = keysOf(env, name, platform);
@@ -35,7 +55,7 @@ function setVariable(env: NodeJS.ProcessEnv, name: string, value: string | undef
 
 /**
  * The first virtualenv in `roots`, in order, and in each root `.venv` then `venv`: a directory holding the regular file
- * `pyvenv.cfg` and its scripts directory (`Scripts` on win32, `bin` elsewhere). Its `env` is a copy of `env` with the
+ * `pyvenv.cfg` and its scripts directory (`Scripts` on win32, `bin` elsewhere). Its `env` is a copy of `env` (`copyOf`) with the
  * scripts directory first on PATH, `VIRTUAL_ENV` set to the directory and `PYTHONHOME` removed, as an activate script
  * leaves them. Undefined when no root holds one; `env` is never changed.
  */
@@ -47,7 +67,7 @@ export function virtualenvFor(roots: readonly string[], env: NodeJS.ProcessEnv =
       const scripts = path.join(dir, scriptsName);
       if (kind(path.join(dir, 'pyvenv.cfg')) !== 'file' || kind(scripts) !== 'directory') continue;
       const previous = envValue(env, 'PATH', platform);
-      const next: NodeJS.ProcessEnv = { ...env };
+      const next = copyOf(env, platform);
       setVariable(next, 'PATH', previous ? `${scripts}${platform === 'win32' ? ';' : ':'}${previous}` : scripts, platform);
       setVariable(next, 'VIRTUAL_ENV', dir, platform);
       setVariable(next, 'PYTHONHOME', undefined, platform);

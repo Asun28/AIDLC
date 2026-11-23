@@ -56,6 +56,27 @@ test('(b2) win32 with no PATH spelling: the key is PATH and VIRTUAL_ENV in upper
   });
 });
 
+test('(b3) win32: every variable keeps one key spelled as given first, and a non-enumerable variable is copied [R2]', () => {
+  inTemp((root) => {
+    const dir = venv(root, '.venv', 'Scripts');
+    const env: NodeJS.ProcessEnv = { Keep: '', KEEP: 'k', other: 'o' };
+    Object.defineProperty(env, 'virtual_env', { value: 'old', enumerable: false });
+    Object.defineProperty(env, 'Hidden', { value: 'h', enumerable: false });
+    const found = virtualenvFor([root], env, 'win32');
+    assert.deepEqual(found?.env, { Keep: 'k', other: 'o', Hidden: 'h', virtual_env: dir, PATH: path.join(dir, 'Scripts') });
+    assert.deepEqual(Object.keys(found!.env).sort(), ['Hidden', 'Keep', 'PATH', 'other', 'virtual_env']);
+  });
+});
+
+test('(b4) linux: every own variable is copied with its exact name, a non-enumerable one too [R2]', () => {
+  inTemp((root) => {
+    const dir = venv(root, '.venv', 'bin');
+    const env: NodeJS.ProcessEnv = { Keep: 'a', KEEP: 'b' };
+    Object.defineProperty(env, 'Hidden', { value: 'h', enumerable: false });
+    assert.deepEqual(virtualenvFor([root], env, 'linux')?.env, { Keep: 'a', KEEP: 'b', Hidden: 'h', PATH: path.join(dir, 'bin'), VIRTUAL_ENV: dir });
+  });
+});
+
 test('(c) no PATH, or an empty one: PATH is the scripts directory alone [R2]', () => {
   inTemp((root) => {
     const dir = venv(root, '.venv', 'bin');
