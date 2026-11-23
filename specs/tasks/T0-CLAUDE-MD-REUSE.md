@@ -1,7 +1,7 @@
 ---
 id: T0-CLAUDE-MD-REUSE
 title: "CLAUDE.md gains the rule to check existing dependencies, Node built-ins and helpers before new code, and three of its sentences that the tree contradicts are corrected"
-status: todo
+status: merged
 branch: T0-CLAUDE-MD-REUSE
 worktree: D:\wt\AIDLC\T0-CLAUDE-MD-REUSE
 allow_paths:
