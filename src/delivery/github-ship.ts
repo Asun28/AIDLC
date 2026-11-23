@@ -230,6 +230,36 @@ function checksJson(runs: Array<{ name: string; status?: string; conclusion: str
     .replace(/\//g, '\\/'); // escaped, a check name never forms the `runs/<id>` the card runner reads as a rerun's run (T0-CI-RED-LOGS)
 }
 
+/** The headings of a card's `## PR summary`, in order, and the largest summary in characters (card T0-PR-SUMMARY). */
+const PR_SUMMARY_HEADINGS = ['What', 'Why / Intent', 'How / Behaviour', 'System impact', 'Security', 'Tests and review', 'Risk', 'Ownership', 'Docs'].map((h) => `### ${h}`);
+const PR_SUMMARY_MAX = 4000;
+
+/**
+ * The text of a new pull request (card T0-PR-SUMMARY): the `## PR summary` section of the card file, which the author
+ * writes for a person, then a rule and one line that names the card and the formal review. The section runs from the
+ * first line that reads `## PR summary` (trailing white space ignored) to the next line that starts with `# ` or `## `.
+ * Any other text gets the fixed line and the first reason that applies; with no `@` in the text GitHub notifies no account.
+ */
+export function prBody(cardText: string | undefined, cardId: string, reviewed: boolean): { body: string; reason?: string } {
+  const fixed = (reason: string) => ({ body: `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${cardId}.md.`, reason });
+  if (cardText === undefined) return fixed('no card file');
+  const text = cardText.replace(/\r\n/g, '\n').split('\n');
+  const start = text.findIndex((l) => l.trimEnd() === '## PR summary');
+  if (start < 0) return fixed('no PR summary section');
+  const after = text.slice(start + 1);
+  const end = after.findIndex((l) => /^##? /.test(l));
+  const summary = (end < 0 ? after : after.slice(0, end)).join('\n').trim();
+  const lines = summary.split('\n');
+  const heads = lines.flatMap((l, i) => (l.startsWith('### ') ? [i] : []));
+  if (heads.length !== PR_SUMMARY_HEADINGS.length || heads.some((at, n) => lines[at]!.trimEnd() !== PR_SUMMARY_HEADINGS[n])) return fixed('the headings are not the nine in order');
+  if (heads.some((at, n) => lines.slice(at + 1, heads[n + 1]).every((l) => l.trim() === ''))) return fixed('no text under a heading');
+  if (summary.length > PR_SUMMARY_MAX) return fixed(`over ${PR_SUMMARY_MAX} characters`);
+  if (summary.includes('@')) return fixed('the character @');
+  // No process starts with an argument that holds U+0000, so such a summary cannot be the `--body` of `gh pr create`.
+  if (summary.includes('\0')) return fixed('a NUL character');
+  return { body: `${summary}\n\n---\nCard: specs/tasks/${cardId}.md. Formal review: ${reviewed ? 'pass' : 'no pass recorded for this commit'}.` };
+}
+
 export class GitHubShipPath implements ShipPath {
   readonly name = 'github';
   readonly options: GitHubShipOptions;
@@ -356,12 +386,24 @@ export class GitHubShipPath implements ShipPath {
     if (unknownPush) return fail('[SHIP-EFFECT-UNKNOWN]', unknownPush, prNumber);
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr, prNumber);
     if (!prNumber) {
-      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
+      // The text of the new pull request (card T0-PR-SUMMARY): a card file that cannot be read is no text, and the review
+      // counts as passed only for a pass verdict whose `sha` is absent or this head and whose review completed. An empty
+      // `sha` is not absent (R3 decision 1): the gates above take it as none, this line does not.
+      let cardText: string | undefined;
+      try {
+        cardText = readFileSync(path.join(wt, 'specs', 'tasks', `${req.cardId}.md`), 'utf8');
+      } catch {
+        cardText = undefined;
+      }
+      const reviewed = v.verdict?.verdict === 'pass' && (v.verdict.sha === undefined || v.verdict.sha === head) && (v.verdict.run_status ?? 'success') === 'success';
+      const text = prBody(cardText, req.cardId, reviewed);
+      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', text.body], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
       const unknownCreate = effectUnknown(`gh pr create --base ${base} --head ${req.cardId}`, create, GH_MS);
       if (unknownCreate) return fail('[SHIP-EFFECT-UNKNOWN]', unknownCreate);
       if (create.exitCode !== 0) return fail('[SHIP-PR-NUMBER-FAIL]', create.stderr);
       prNumber = Number(create.stdout.match(/\/pull\/(\d+)/)?.[1]);
       if (!prNumber) return fail('[SHIP-PR-NUMBER-FAIL]', create.stdout);
+      log.push(text.reason === undefined ? 'PR body: the PR summary of the card' : `PR body: the fixed line (${text.reason})`);
     }
     log.push(`PR #${prNumber}`);
     // CI gate
