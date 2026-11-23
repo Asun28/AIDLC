@@ -44,3 +44,27 @@ npm run typecheck && node --test tests/scenarios/card-amend-continue.test.ts tes
 ```
 - Expected exit code: 0
 - Assertion: the two new tests pass, the two neighbouring command tests pass unchanged, and the typecheck is clean.
+
+## Attempt evidence
+tdd false: the test pins behaviour main already has, so it passes at its first run; the guards below show it fails when that behaviour breaks.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/card-amend-continue.test.ts`, both tests, step 1: the `card amend` exit, state, revision, `changed`, `invalidated`, `next` text, and the run and goal unchanged | pass |
+| 2 | Same, step 2: the `card continue` exit, no stop, one continuation admitting 5, one amendment, goal not `STOP` | pass |
+| 3 | Same, step 3: `review` with `decision 5/5` for `sha-4` under `amendedDigest('sha-4', 1)`; in the `sha-5` test the refused attempt naming `aidlc card withdraw T1-ARC`, `build` with 4 decisions after `withdrawCandidate`, and the new digest | pass |
+| 4 | Same, steps 1 to 4: the four invocations equal the pre-amend records in full after `card amend`, equal them with `stopLifted` by the owner added to the fourth alone after `card continue`, and are unchanged by decision 5, which passes on the amended digest; `close` with `mergeVerified` and one ship request for the reviewed commit | pass |
+| 5 | Same, step 5: one amendment NOTE, one CARD_STATE and one GOAL_STATE continuation event; `aidlc audit verify --json` exit 0, journal ok, no `WORK_AFTER_TERMINAL` | pass |
+| 6 | DoD: `npm run typecheck` exit 0; `node --test` over the three files, 12 tests, 12 pass, 0 fail; `git diff --stat origin/main` lists the test file and this card file only | pass |
+
+Guards, each a temporary change to the source in this worktree, run against the new test file, then restored with `git checkout`:
+
+| Change | Tests that fail |
+|---|---|
+| `src/cli/main.ts:782`, the `next` text of `card amend` names `aidlc card next` instead of `aidlc card continue` | 2 of 2 |
+| `src/loop/card-runner.ts:1517`, the digest of a new attempt takes no amendment count | 1 of 2 (the `sha-5` test) |
+| `src/loop/card-runner.ts`, `amendCard`, the amendment also drops `verdictRef` from every invocation | 2 of 2 |
+| `src/core/continuation.ts:36`, the continuation also drops `verdictRef` from the stopping decision | 2 of 2 |
+| `src/core/continuation.ts:36`, the continuation adds `stopLifted` to every invocation | 2 of 2 |
+
+R3 decision 1 blocked on acceptance 4: the earlier invocations were compared in full only against a record taken after amend and continue. The repair compares them against the pre-amend record after each command; the last three guards were added for it.
