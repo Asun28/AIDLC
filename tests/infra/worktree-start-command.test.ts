@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { shellArg, worktreeStartCommands } from '../../src/delivery/worktree.ts';
+import { codeSpan, shellArg, worktreeStartCommands } from '../../src/delivery/worktree.ts';
 
 const WIN = { cardId: 'T1-HELLO', path: 'D:\\wt\\repo\\T1-HELLO', mainRoot: 'D:\\Projects\\repo', ref: 'origin/main' };
 const LINUX = { cardId: 'T1-HELLO', path: '/home/u/wt/repo/T1-HELLO', mainRoot: '/home/u/repo', ref: 'main' };
@@ -114,4 +114,77 @@ test('T0-PREPARE-START-CMD R3 decision 1: a worktree path, main checkout or ref 
   assert.ok(linux.includes("`ln -s '/it'\\''s $HOME/node_modules' '/w/$(id)/T1-HELLO/node_modules'`"), linux);
   const dollarRef = worktreeStartCommands({ cardId: 'T1-HELLO', path: '/w/T1-HELLO', mainRoot: '/m', ref: 'origin/$(id)', linkModules: false, platform: 'linux' });
   assert.ok(dollarRef.includes(`"/w/T1-HELLO" 'origin/$(id)'\``), dollarRef);
+});
+
+// Repair after R3 decision 2 (F3, class markdown-code-delimiter): a backtick in a quoted value does not end the code span.
+
+/**
+ * The contents of the code spans of `text`, read as CommonMark reads them: a backtick run opens a span that the next run
+ * of the same length closes (a run with no closing match is literal text); the content loses one leading and one trailing
+ * space when it has both and is not all spaces.
+ */
+function spans(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '`') {
+      i++;
+      continue;
+    }
+    let n = 0;
+    while (text[i + n] === '`') n++;
+    const open = i + n;
+    let j = open;
+    let close = -1;
+    while (j < text.length) {
+      if (text[j] !== '`') {
+        j++;
+        continue;
+      }
+      let m = 0;
+      while (text[j + m] === '`') m++;
+      if (m === n) {
+        close = j;
+        break;
+      }
+      j += m;
+    }
+    if (close < 0) {
+      i = open;
+      continue;
+    }
+    let content = text.slice(open, close);
+    if (content.length >= 2 && content.startsWith(' ') && content.endsWith(' ') && content.trim() !== '') content = content.slice(1, -1);
+    out.push(content);
+    i = close + n;
+  }
+  return out;
+}
+
+test('T0-PREPARE-START-CMD R3 decision 2: codeSpan uses a delimiter longer than any backtick run inside and pads a text that begins or ends with a backtick [R1]', () => {
+  assert.equal(codeSpan('git status'), '`git status`');
+  assert.equal(codeSpan("ln -s 'a`b' c"), "``ln -s 'a`b' c``");
+  assert.equal(codeSpan('x ``y`` z'), '```x ``y`` z```');
+  assert.equal(codeSpan('`a'), '`` `a ``');
+  assert.equal(codeSpan('a`'), '`` a` ``');
+  for (const text of ['git status', "ln -s 'a`b' c", 'x ``y`` z', '`a', 'a`', '```', "'/tmp/a`b`'", ' padded ']) {
+    assert.deepEqual(spans(`before ${codeSpan(text)} after`), [text], `one span that reads back ${JSON.stringify(text)}`);
+  }
+});
+
+test('T0-PREPARE-START-CMD R3 decision 2: with backticks in the worktree path, main checkout and ref, every command reads back as one whole code span [R1]', () => {
+  for (const platform of ['win32', 'linux'] as const) {
+    const input = platform === 'win32'
+      ? { cardId: 'T1-HELLO', path: 'D:\\a`b``\\T1-HELLO', mainRoot: 'D:\\m```', ref: 'origin/`x`', linkModules: true, platform }
+      : { cardId: 'T1-HELLO', path: '/tmp/a`b`/T1-HELLO', mainRoot: '/m``', ref: '`x', linkModules: true, platform };
+    const text = worktreeStartCommands(input);
+    const dir = shellArg(input.path, platform);
+    const ref = shellArg(input.ref, platform);
+    const link = shellArg(`${input.path}${platform === 'win32' ? '\\' : '/'}node_modules`, platform);
+    const target = shellArg(`${input.mainRoot}${platform === 'win32' ? '\\' : '/'}node_modules`, platform);
+    const linkCommand = platform === 'win32' ? `New-Item -ItemType Junction -Path ${link} -Target ${target}` : `ln -s ${target} ${link}`;
+    assert.deepEqual(spans(text), [`git worktree add -b T1-HELLO ${dir} ${ref}`, `git worktree add ${dir} T1-HELLO`, linkCommand], `${platform}: ${text}`);
+  }
+  const plain = worktreeStartCommands({ cardId: 'T1-HELLO', path: '/w/T1-HELLO', mainRoot: '/m', ref: 'main', linkModules: false, platform: 'linux' });
+  assert.deepEqual(spans(plain), ['git worktree add -b T1-HELLO "/w/T1-HELLO" main', 'git worktree add "/w/T1-HELLO" T1-HELLO']);
 });

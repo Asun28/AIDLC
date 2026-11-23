@@ -30,7 +30,7 @@ import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
-import { decideWorktree, worktreeStartCommands } from '../delivery/worktree.ts';
+import { codeSpan, decideWorktree, shellArg, worktreeStartCommands } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
@@ -1408,8 +1408,10 @@ export class CardRunner {
     const kind = entry && !mismatch && (entry.locked || entry.prunable) ? pathKind(entry.path) : undefined;
     if (kind !== 'absent' && kind !== 'other') return undefined;
     const obstruction = kind === 'other' ? 'something that is not a directory is at this path: move or delete it, then ' : '';
-    const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
-    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
+    // The path is quoted for the shell of this platform, and each command is one whole code span (card T0-PREPARE-START-CMD).
+    const quoted = shellArg(expected, process.platform);
+    const clear = entry!.locked ? `make the locked worktree's directory available again, or run ${codeSpan(`git worktree unlock ${quoted}`)} and \`git worktree prune\`` : 'run `git worktree prune`';
+    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with ${codeSpan(`git worktree add ${quoted} ${cardId}`)}, since the branch exists` };
   }
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
@@ -3792,7 +3794,7 @@ export class CardRunner {
     const passed = run.review.invocations.filter((i) => i.outcome === 'pass').at(-1);
     const verdict = passed?.verdictRef;
     const file = verdict ? [verdict, path.join(evidence.dir, 'review', card.id, path.basename(verdict))].find((f) => existsSync(f)) : undefined;
-    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? `"${file}"` : '<file>'} --candidate ${passed?.candidateDigest ?? '<digest>'}`);
+    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? shellArg(file, process.platform) : '<file>'} --candidate ${passed?.candidateDigest ?? '<digest>'}`);
   }
 
   /**

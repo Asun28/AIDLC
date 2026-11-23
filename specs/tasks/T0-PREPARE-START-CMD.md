@@ -137,7 +137,7 @@ The scaffold fixture sets `gateRequired: true`: the scaffold path stops a remote
 
 Verify skill `verify-card-run-writes`: the card changes `CardRunner.next`'s PREPARE narration only, no write; `tests/scenarios/fault-points.test.ts` runs in the DoD and passes, so the sync commit stays.
 
-DoD: `npm run typecheck` exit 0; `node --test` over the six files: 159 tests, 159 pass, 0 fail, exit 0. After the repair: exit 0, 162 tests, 162 pass, 0 fail.
+DoD: `npm run typecheck` exit 0; `node --test` over the six files: 159 tests, 159 pass, 0 fail, exit 0. After the repair of decision 1: exit 0, 162 tests, 162 pass, 0 fail. After the repair of decision 2: exit 0, 165 tests, 165 pass, 0 fail.
 
 Repair after R3 decision 1 (F1 and F2, class shell-interpolation): the worktree path, the main checkout and the ref went into the printed commands as they were, so a configured value with `$(...)`, a backtick or a quote would run when a session followed the command. Every value now goes through `shellArg` (exported from `src/delivery/worktree.ts`) or, for the id and the ref, `shellWord`, for the shell of the platform: PowerShell on win32, a POSIX shell elsewhere. A value with no character the shell expands inside double quotes stays in double quotes, so the R1 spelling holds for every ordinary path; any other value is single-quoted, with `''` for each single quote in PowerShell (typographic ones too) and `'\''` in a POSIX shell. A ref of letters, digits, `.`, `_`, `/` and `-` stays a bare word. The check has one site: all four commands are built from these two helpers.
 
@@ -167,3 +167,15 @@ Each value form the repair hunks handle, and the test that covers it:
 | a control character | single-quoted by the `\u0000-\u001f` range; no test, as a path from `resolveWorktreeRoot` or git holds none |
 
 Shown failing: with the worktree path wrapped in plain double quotes again in `worktreeStartCommands` (the quoting of decision 1), the third test fails.
+
+Repair after R3 decision 2 (F3, class markdown-code-delimiter): a backtick in a single-quoted value ended the single-backtick code span early. `codeSpan` (exported from `src/delivery/worktree.ts`) now writes each command with a delimiter one backtick longer than the longest run inside it, and pads with one space when the command begins or ends with a backtick, or begins and ends with a space, as CommonMark strips one such space. Sites of both classes in allow_paths, all fixed: the three commands of `worktreeStartCommands`; the `git worktree unlock` and `git worktree add` commands of the stale-registration reason in `CardRunner.staleRegistration`, which put the path in plain double quotes in single-backtick spans before this card; and the `--file` argument of the `aidlc evidence retain` refusal in `src/loop/card-runner.ts`, which now goes through `shellArg` (an ordinary path keeps its double quotes, so the pin in `tests/scenarios/card-close-cleanup.test.ts` holds; that file passes, 47 pass, 2 skipped, 0 fail).
+
+| Test | Proof | Result |
+|---|---|---|
+| `codeSpan uses a delimiter longer than any backtick run inside ...` (infra) | exact output for no backtick, one, a run of two, a leading and a trailing backtick; eight texts read back whole through a CommonMark code span reader (`spans`) in the test | pass |
+| `with backticks in the worktree path, main checkout and ref, every command reads back as one whole code span` (infra) | on win32 and linux, `spans` of the text equals the three commands exactly; a plain text gives the two commands | pass |
+| `with a worktree root holding $(...), backticks and a quote ...` (scenario) | a real worktree root `w $(x) \`b\` it's`: the start narration holds the single-quoted path in a whole span; a locked registration with its directory gone gives a reason whose unlock and add commands are the quoted path in whole spans, and no path in plain double quotes | pass |
+
+Shown failing: with the delimiter fixed at one backtick in `codeSpan`, both infra tests fail; with the stale-registration path in plain double quotes again, the scenario test fails.
+
+Each form the decision 2 hunks handle: no backtick (single delimiter, acceptance tests unchanged); one or more runs of backticks inside (longer delimiter, infra tests); a leading or trailing backtick (padding, infra test); a leading and trailing space (padding, infra test `' padded '`); a text of backticks only (infra test); a stale registration that is locked (scenario test) or prunable (`prepare-worktree.test.ts`, which checks `git worktree prune` and passes unchanged).

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
-import { worktreeStartCommands } from '../../src/delivery/worktree.ts';
+import { codeSpan, shellArg, worktreeStartCommands } from '../../src/delivery/worktree.ts';
 
 const CARD = 'T1-HELLO';
 
@@ -20,6 +20,8 @@ interface Options {
   mode?: 'local' | 'remote';
   nodeModules?: boolean;
   origin?: boolean;
+  /** The name of the worktree root directory under the fixture, `wt` by default. */
+  rootName?: string;
 }
 
 /** A goal that projects T1-HELLO in a real git repository (the setup of prepare-worktree.test.ts), with canonical roots. */
@@ -38,8 +40,9 @@ function setup(options: Options) {
     git(fx.tmp, ['push', '-q', 'origin', 'main']);
     git(fx.tmp, ['fetch', '-q', 'origin']);
   }
-  mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
-  const root = realpathSync.native(path.join(fx.tmp, 'wt'));
+  const rootName = options.rootName ?? 'wt';
+  mkdirSync(path.join(fx.tmp, rootName), { recursive: true });
+  const root = realpathSync.native(path.join(fx.tmp, rootName));
   const mainRoot = realpathSync.native(fx.tmp);
   // The scaffold path refuses a remote card under an advisory ReviewGate before PREPARE, so its fixture makes the gate required.
   const config = { ...fx.config, shipPath: options.shipPath, mode: options.mode ?? 'remote', worktreeRoot: root, gateRequired: options.shipPath === 'scaffold' };
@@ -124,6 +127,35 @@ test('T0-PREPARE-START-CMD acceptance 4: on scaffold the start narration names t
     const n = startNarration(next, worktree);
     assert.ok(n.endsWith(`Start a new worktree for ${CARD} at ${worktree} (scaffold: pwsh scripts/task.ps1 -TaskId ${CARD} -Phase start from the main checkout). no worktree for this branch; start a new one`), `the start sentence as on main: ${n}`);
     assert.ok(!n.includes('git worktree add -b'), n);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+// R3 decisions 1 and 2: a worktree root with shell metacharacters and backticks, made by git itself.
+const HOSTILE_ROOT = 'w $(x) `b` it\'s';
+
+test('T0-PREPARE-START-CMD R3 decisions 1 and 2: with a worktree root holding $(...), backticks and a quote, the start narration and a stale-registration start quote the path for the shell, each command one whole code span [R1] [R2]', () => {
+  const { fx, mainRoot, worktree, next } = setup({ shipPath: 'github', rootName: HOSTILE_ROOT });
+  try {
+    const n = startNarration(next, worktree);
+    const quoted = shellArg(worktree, process.platform);
+    assert.ok(!quoted.startsWith('"'), `the hostile path is single-quoted: ${quoted}`);
+    assert.ok(n.includes(worktreeStartCommands({ cardId: CARD, path: worktree, mainRoot, ref: 'origin/main', linkModules: false, platform: process.platform })), n);
+    assert.ok(n.includes(codeSpan(`git worktree add -b ${CARD} ${quoted} origin/main`)), n);
+    git(fx.tmp, ['worktree', 'add', '-q', '-b', CARD, worktree]);
+    next();
+    assert.equal(next().directive.kind, 'build');
+    git(fx.tmp, ['worktree', 'lock', worktree]);
+    rmSync(worktree, { recursive: true, force: true });
+    const stale = next();
+    assert.equal(stale.directive.kind, 'prepare', stale.directive.narration);
+    const s = stale.directive.narration;
+    assert.ok(s.includes(codeSpan(`git worktree unlock ${quoted}`)), `the unlock command is quoted and whole: ${s}`);
+    assert.ok(s.includes(codeSpan(`git worktree add ${quoted} ${CARD}`)), `the add command of the reason is quoted and whole: ${s}`);
+    assert.ok(!s.includes(`"${worktree}"`), `no path in plain double quotes: ${s}`);
+    git(fx.tmp, ['worktree', 'unlock', worktree]);
+    git(fx.tmp, ['worktree', 'prune']);
   } finally {
     fx.cleanup();
   }

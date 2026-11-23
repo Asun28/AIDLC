@@ -97,6 +97,20 @@ function shellWord(value: string, platform: NodeJS.Platform): string {
 }
 
 /**
+ * `text` as one Markdown code span (card T0-PREPARE-START-CMD, R3 decision 2): the delimiter is a run of backticks one
+ * longer than the longest run inside, so a backtick of a quoted value does not end the span, and a text that begins or
+ * ends with a backtick, or begins and ends with a space, gets one space inside each delimiter, which a CommonMark reader
+ * strips again.
+ */
+export function codeSpan(text: string): string {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  const spaced = text.startsWith(' ') && text.endsWith(' ') && text.trim() !== '';
+  const pad = text.startsWith('`') || text.endsWith('`') || spaced ? ' ' : '';
+  return `${fence}${pad}${text}${pad}${fence}`;
+}
+
+/**
  * The commands that make a card worktree off the scaffold ship path (card T0-PREPARE-START-CMD, issue 376): `git worktree
  * add` of the card branch at the directive path, the form for a branch that exists, and, when asked, the link of the main
  * checkout's `node_modules` in the syntax of the platform (a PowerShell junction on win32, `ln -s` elsewhere). Pure: paths
@@ -108,11 +122,11 @@ export function worktreeStartCommands(input: WorktreeStartInput): string {
   const id = shellWord(input.cardId, platform);
   const dir = shellArg(input.path, platform);
   const ref = shellWord(input.ref, platform);
-  const commands = `From the main checkout run \`git worktree add -b ${id} ${dir} ${ref}\` (when branch ${id} exists: \`git worktree add ${dir} ${id}\`)`;
+  const commands = `From the main checkout run ${codeSpan(`git worktree add -b ${id} ${dir} ${ref}`)} (when branch ${id} exists: ${codeSpan(`git worktree add ${dir} ${id}`)})`;
   if (!input.linkModules) return `${commands}.`;
   const join = platform === 'win32' ? path.win32.join : path.posix.join;
   const link = shellArg(join(input.path, 'node_modules'), platform);
   const target = shellArg(join(input.mainRoot, 'node_modules'), platform);
   const command = platform === 'win32' ? `New-Item -ItemType Junction -Path ${link} -Target ${target}` : `ln -s ${target} ${link}`;
-  return `${commands}, then link node_modules so the DoD finds its tools: \`${command}\`.`;
+  return `${commands}, then link node_modules so the DoD finds its tools: ${codeSpan(command)}.`;
 }
