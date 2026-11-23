@@ -21,6 +21,7 @@ import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoa
 import { GoalTransitionError, stagesForTarget, transitionGoal } from '../core/goal-machine.ts';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { parseIntent } from '../artifacts/intent.ts';
+import { lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { makeStop } from '../core/stop.ts';
 import { terminalGoalRefusal } from '../core/card-goal.ts';
 import type { ContinuationAct } from '../core/continuation.ts';
@@ -292,6 +293,16 @@ export class GoalController {
     }
   }
 
+  /**
+   * The lessons the `plan` and `project-cards` directives carry: the count and the ten most recent lines of
+   * docs/LESSONS.md, and the narration sentence that names the count and the file. Lesson text goes in the field,
+   * never in the narration (card T1-CARD-WRITER-LESSONS).
+   */
+  private cardWriterLessons(): { lessons: LessonsContext; checkLessons: string } {
+    const lessons = readLessons(lessonsPath(this.repo.mainRoot), 10);
+    return { lessons, checkLessons: ` ${lessons.count} lessons so far in docs/LESSONS.md: check every card against the lessons of the \`lessons\` field before it is registered.` };
+  }
+
   private nextInPlan(goal: Goal, now: string): Directive {
     const base = this.baseOf(goal);
     if (goal.routing.ambiguity) {
@@ -299,9 +310,10 @@ export class GoalController {
     }
     const size = goal.routing.size;
     const light = size === 'T0' || size === 'T0-bugfix';
+    const { lessons, checkLessons } = this.cardWriterLessons();
     if (light && goal.cards.length) {
       // Existing card: plan is the card's plan_ref; go straight to projection validation.
-      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? 'existing card plan_ref', cardsDir: this.config.cardsDir, outputs: goal.cards, narration: `T0 route with resolved card ${goal.cards.join(',')}: validate the card (aidlc cards validate) and report cards-projected.` });
+      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? 'existing card plan_ref', cardsDir: this.config.cardsDir, outputs: goal.cards, lessons, narration: `T0 route with resolved card ${goal.cards.join(',')}: validate the card (aidlc cards validate) and report cards-projected.${checkLessons}` });
     }
     const allowance = MAX_PLANNING_INVOCATIONS - goal.counters.planningInvocations;
     if (allowance <= 0 && !goal.planRef) {
@@ -309,13 +321,13 @@ export class GoalController {
       return Directive.parse({ kind: 'stop', ...this.baseOf(g), stop: g.stop, narration: 'Planning allowance exhausted.' });
     }
     if (goal.planRef) {
-      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef, cardsDir: this.config.cardsDir, outputs: [], narration: 'Plan accepted; project cards into the registry (human sign-off writes the card files), validate them, then report cards-projected with the card ids.' });
+      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef, cardsDir: this.config.cardsDir, outputs: [], lessons, narration: `Plan accepted; project cards into the registry (human sign-off writes the card files), validate them, then report cards-projected with the card ids.${checkLessons}` });
     }
     const inputs = [goal.revisions[goal.revisions.length - 1]!.request.text];
     const planInputs = goal.intentRef && !light ? [...inputs, goal.intentRef] : inputs;
     const intake = light ? '' : this.intakeNarration(goal);
     const outputs = light ? ['one coherent card (diagnosis + fix + regression test)'] : size === 'T1' ? ['concise plan points (Files that change / Order of work / Risks / Proof)', '2-5 valid cards with depends_on'] : ['brief', 'plan (10 sections)', 'plan-forge audit ready-to-decompose', 'validated card projection'];
-    return Directive.parse({ kind: 'plan', ...base, size, inputs: planInputs, invocationAllowance: allowance, outputs, narration: (light ? 'T0: diagnose and write one card; no planning funnel.' : size === 'T1' ? 'T1: concise plan and cards; no full forge where routing policy permits.' : 'T2: full funnel; one product checkpoint approves plan and projection together.') + intake });
+    return Directive.parse({ kind: 'plan', ...base, size, inputs: planInputs, invocationAllowance: allowance, outputs, lessons, narration: (light ? 'T0: diagnose and write one card; no planning funnel.' : size === 'T1' ? 'T1: concise plan and cards; no full forge where routing policy permits.' : 'T2: full funnel; one product checkpoint approves plan and projection together.') + intake + checkLessons });
   }
 
   private nextInCards(goal: Goal, now: string): Directive {
@@ -326,7 +338,8 @@ export class GoalController {
     const blocking = goal.cards.flatMap((id) => (validation.get(id) ?? []).filter((f) => f.severity === 'block').map((f) => `${id}: ${f.sentinel} ${f.message}`));
     if (!goal.cards.length || missing.length || blocking.length) {
       const problems = [...missing.map((m) => `${m}: not in registry`), ...blocking];
-      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? '', cardsDir: this.config.cardsDir, outputs: goal.cards, narration: problems.length ? `Projection invalid: ${problems.slice(0, 5).join('; ')}` : 'No cards registered for this goal; project and report cards-projected.' });
+      const { lessons, checkLessons } = this.cardWriterLessons();
+      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? '', cardsDir: this.config.cardsDir, outputs: goal.cards, lessons, narration: (problems.length ? `Projection invalid: ${problems.slice(0, 5).join('; ')}` : 'No cards registered for this goal; project and report cards-projected.') + checkLessons });
     }
     // Authorization: T2 needs the combined plan+projection checkpoint for this revision.
     if (goal.routing.size === 'T2') {

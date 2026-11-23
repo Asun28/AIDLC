@@ -68,3 +68,59 @@ npm run typecheck && node --test tests/scenarios/card-writer-lessons.test.ts tes
 ```
 - Expected exit code: 0
 - Assertion: dod arm 1 is `npm run typecheck`, dod arm 2 is the `node --test` command; the assertions of acceptance 1 to 4 fail on main and pass with the change.
+
+## Attempt evidence
+
+Attempt 1. RED commit 65cf6c92 (the new test alone, 4 of 4 fail on `lessons` absent: `the plan directive has a lessons field`, deepEqual against `undefined`, and the narration without `12 lessons so far`). GREEN commit 45b48eac.
+
+### Acceptance items
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | card-writer-lessons.test.ts, test `the plan directive of a T0 goal with no card carries the lessons file, its count and the ten most recent lines` | fails at 65cf6c92, passes at GREEN |
+| 2 | same file, test `each of the five plan and project-cards directives carries the same lessons field` (deepEqual per directive, kind asserted per directive) | fails at 65cf6c92, passes at GREEN |
+| 3 | same file, test `with no lessons file the plan and project-cards directives carry count 0 and no lines, and say 0 lessons so far` (`doesNotThrow` on both `next` calls) | fails at 65cf6c92, passes at GREEN |
+| 4 | same file, test `each of the five narrations names the count, the file and registration, keeps its text from main and quotes no lesson`; the `0 lessons so far` clause in the item 3 test | fails at 65cf6c92, passes at GREEN |
+| 5 | reviewer-verified: src/loop/controller.ts:341-342, one `Directive.parse` whose narration is `(problems.length ? 'Projection invalid: ...' : 'No cards registered ...') + checkLessons` and whose `lessons` is set for both branches | diff |
+| 6 | reviewer-verified: specs/tasks/_TEMPLATE.md:20 and templates/cards/_TEMPLATE.md:20 (one comment line under `acceptance:`), .claude/agents/planner.md:11 and templates/claude/agents/planner.md:11 (one line after the inputs); `cmp` of the planner copies is silent and `diff` of the templates shows only line 10 (`worktree`); mirror, templates and card surface tests pass unchanged | diff + DoD |
+| 7 | reviewer-verified: docs/OPERATIONS.md:739 (new clause after `(card T1-PREPARE-LESSONS-REF);`, before `CLOSE appends at most one dated`), docs/ARCHITECTURE.md:159-160 (`lessons` in both payload columns); lesson-dup.test.ts passes unchanged | diff + DoD |
+| 8 | changelog.d/T1-CARD-WRITER-LESSONS.md, one line; tests/surface/changelog-fragments.test.ts | DoD |
+| 9 | `npm run typecheck` and the other nine DoD files, no line of them changed (`git diff main...HEAD --stat -- tests` lists only the new file) | DoD |
+
+### Requirement clauses
+
+| Clause | Assertion that fails without it |
+|---|---|
+| R1 `plan` directive carries `lessons` | item 1 test `assert.ok(lessons)`; item 2 test, names `T0 goal with no card`, `T1 goal` |
+| R1 `project-cards` directive carries `lessons` (each of the three places) | item 2 test, names `T0 goal for an existing card` (:316), `T1 goal after plan-produced` (:342), `T1 goal in RUN after a revision naming a registered card` (:324) |
+| R1 `file` is the path of docs/LESSONS.md | `assert.equal(lessons.file, file)` (item 1); `file` in the item 2 and item 3 deepEquals |
+| R1 count of valid lesson lines (placeholder and a non-lesson line not counted) | `assert.equal(lessons.count, 12)`; count 0 in the item 3 deepEquals |
+| R1 ten most recent lines, file order | `deepEqual(lessons.recent, VALID.slice(-10))`; `VALID.slice(2)` in item 2 |
+| R2 narration names the count | `includes('12 lessons so far')` per directive; `includes('0 lessons so far')` with no file |
+| R2 narration names docs/LESSONS.md | `includes('docs/LESSONS.md')` per directive |
+| R2 says every card is checked before it is registered | `includes('registered')` per directive, and `registered` after `12 lessons so far` per directive (the `No cards registered` text of main already holds the word) |
+| R2 narration keeps its text from main | `includes(onMain)` per directive |
+| R1 (design) the field is optional in the schema; count is a whole non-negative number | test 5: `Directive.parse` of a `plan` and a `project-cards` directive without `lessons` does not throw; count -1 and 1.5 throw |
+| R2 (design) no lesson text in a narration | no valid line and no rule text is a substring; no `rule number` |
+| R3 templates and planner copies | reviewer-verified, item 6 lines |
+| R4 OPERATIONS Lessons paragraph and ARCHITECTURE table | reviewer-verified, item 7 lines; lesson-dup.test.ts:105-106 pins the paragraph end |
+
+### Guard sweep
+
+Each mutant applied to the GREEN source, the test run, the source restored (script outside the worktree; `git status` clean after each run).
+
+| Guard added | Loosened form | Test that failed |
+|---|---|---|
+| `readLessons(..., 10)` | default (5) | tests 1, 2 |
+| `lessonsPath(this.repo.mainRoot)` | another root | tests 1, 2, 3, 4 |
+| count in the sentence | fixed `12` | test 4 |
+| `lessons` on the plan directive (:330) | dropped | tests 1, 2, 4 |
+| `lessons` at :316 (T0 existing card) | dropped | tests 2, 4 |
+| `lessons` at :324 (Plan accepted) | dropped | test 2 |
+| `lessons` at :342 (nextInCards) | dropped | test 2 |
+| `checkLessons` at :330, :316, :324, :342 | dropped, one at a time | test 3 each (and test 4 for :330, :316) |
+| `before it is registered` in the sentence | `first` | test 3 |
+| schema `lessons` on `plan` / `project-cards` | removed (zod strips the key) | tests 1, 2, 4 / tests 2, 4 |
+| schema `.optional()` | required | test 5 |
+| schema count `.int().nonnegative()` | `z.number()` | test 5 |
+| `Projection invalid` branch of :342 gains the sentence | not reached by a test (non_goal, acceptance 5) | reviewer-verified: the sentence is appended outside the parenthesised ternary |

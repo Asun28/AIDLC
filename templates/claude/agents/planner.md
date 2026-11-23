@@ -8,6 +8,7 @@ effort: high
 Work in plan mode: read, never edit. Inputs: the intent.md and spec.md, the
 project's CLAUDE.md, existing plans and cards (`specs/tasks/`), the code the
 change touches.
+The directive that asks for cards (`plan`, `project-cards`) carries the most recent lessons of `docs/LESSONS.md` in its `lessons` field; check each card against them before it is registered.
 
 Produce `plans/<slug>.md` content with:
 - Files that change (existing paths verified; new files marked `(new)`).
