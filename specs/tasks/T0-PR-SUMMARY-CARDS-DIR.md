@@ -1,7 +1,7 @@
 ---
 id: T0-PR-SUMMARY-CARDS-DIR
 title: "The GitHub ship path reads the PR summary from the configured cardsDir and names that path in the fixed line and the Card: line"
-status: todo
+status: merged
 branch: T0-PR-SUMMARY-CARDS-DIR
 worktree: D:\wt\AIDLC\T0-PR-SUMMARY-CARDS-DIR
 allow_paths:
