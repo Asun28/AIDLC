@@ -57,7 +57,7 @@ import { evaluateBands, parseBandsYaml, type Sample } from '../maintain/bands.ts
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../maintain/incident.ts';
 import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
-import { aidlcOnPath, initCli, initProject } from '../scaffold/init.ts';
+import { aidlcOnPath, initCli, initNextLine, initProject } from '../scaffold/init.ts';
 import { Goal, OperationKind, nowIso, type CardRun, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
 import { disputeKindOf, parseDisputeKind, parseRuling, parseVerdictDocument } from '../core/review-policy.ts';
 
@@ -315,7 +315,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const report = initProject({ target, force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun, hooks: o.hooks, hookEntry: existsSync(hookEntry) ? hookEntry : undefined });
       // The command a session types next: `aidlc` only when PATH holds it (card T0-INIT-CLI-PATH).
       const cli = initCli(fileURLToPath(new URL('../../bin/aidlc.js', import.meta.url)), aidlcOnPath());
-      out({ json: Boolean(g().json) }, { ...report, cli }, () => [`created: ${report.created.length}`, ...report.created.map((f) => `  + ${f}`), `merged: ${report.merged.join(', ') || '-'}`, `skipped (exists): ${report.skipped.length}`, ...report.skipped.map((f) => `  = ${f}`), ...(cli.note === undefined ? [] : [cli.note]), `next: review aidlc.config.json, then \`${cli.command} doctor\``].join('\n'));
+      out({ json: Boolean(g().json) }, { ...report, cli }, () => [`created: ${report.created.length}`, ...report.created.map((f) => `  + ${f}`), `merged: ${report.merged.join(', ') || '-'}`, `skipped (exists): ${report.skipped.length}`, ...report.skipped.map((f) => `  = ${f}`), ...(cli.note === undefined ? [] : [cli.note]), initNextLine(cli)].join('\n'));
     });
 
   program

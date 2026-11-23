@@ -75,7 +75,7 @@ npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/i
 Issue 451. Setup does not put `aidlc` on PATH, so the commands in the skill and in CLAUDE.md failed as written, and no text said what to run.
 
 ### How / Behaviour
-`aidlcOnPath` searches the PATH directories for `aidlc`, with a PATHEXT extension on Windows. `initCli` gives the command and the note. The init report gains a `cli` field, and the `next` line names that command.
+`aidlcOnPath` searches the PATH directories for `aidlc`, with a PATHEXT extension on Windows. `initCli` gives the command and the note. The init report gains a `cli` field, and the `next` line names that command. A path with `$`, a backtick, `%` or `"` gets a plain-text note and no command, so no printed command can name the wrong file.
 
 ### System impact
 Only `aidlc init` output changes. Entry check 1 of the skill and the CLAUDE.md section get one fallback line each. Three redundant phrases leave SKILL.md to stay under its 4500-byte cap.
@@ -84,7 +84,7 @@ Only `aidlc init` output changes. Entry check 1 of the skill and the CLAUDE.md s
 The check reads PATH and PATHEXT and calls `stat` on candidate files. It starts no process and skips empty PATH entries, so it never searches the current directory.
 
 ### Tests and review
-`tests/infra/init-cli-path.test.ts` covers the PATH rules on both platforms, the two `initCli` shapes, a real `init` run with a controlled PATH, and the new text. The existing init, template and doc tests pass unchanged.
+`tests/infra/init-cli-path.test.ts` covers the PATH rules on both platforms, the three `initCli` shapes, the `next` line forms, a real `init` run with a controlled PATH, and the new text. The existing init, template and doc tests pass unchanged. R3 decision 1 blocked on the README text and on shell-special paths; the owner amended R3 and R4 for the second.
 
 ### Risk
 Low. A wrong PATH result changes only the printed hint; init writes the same files.
@@ -103,3 +103,4 @@ aidlc maintainers, `src/scaffold/init.ts`.
 | 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run | pass |
 | 4 | Same file, the two text tests | pass |
 | 5 | The DoD: init, init-no-package, cli-cwd-paths, templates, coordinator-effort, mirror, claude-md-size, command-lines, changelog-fragments, prose | pass; text reviewer-verified |
+| 6 | Same file, `acceptance 6: a CLI path with $, a backtick, % or a double quote ...`. RED at 9ae37009: `initNextLine` did not exist and the special paths got the command | pass |

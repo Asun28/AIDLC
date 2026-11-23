@@ -255,12 +255,28 @@ export function aidlcOnPath(env: Record<string, string | undefined> = process.en
   return dirs.some((d) => names.some((n) => isFile(join(d, n))));
 }
 
-/** The command `init` names for running the CLI: `aidlc` when it is on PATH, else a direct `node` start of `entry` and a note that says so. */
-export function initCli(entry: string, onPath: boolean): { onPath: boolean; command: string; note?: string } {
+/** Characters a shell expands inside double quotes or that end the quote or a Markdown code span: the set `ABSOLUTE_DISPATCHER` refuses. */
+const SHELL_SPECIAL = /[$`%"]/;
+
+/** What `init` prints about running the CLI; `command` is absent when no command can be printed safely. */
+export type InitCli = { onPath: boolean; command?: string; note?: string };
+
+/**
+ * The command `init` names for running the CLI: `aidlc` when it is on PATH, else a direct `node` start of `entry` and a note
+ * that says so. A path holding a character of `SHELL_SPECIAL` gets a plain-text note and no command, since a shell would
+ * expand it or end the quote at it.
+ */
+export function initCli(entry: string, onPath: boolean): InitCli {
   if (onPath) return { onPath: true, command: 'aidlc' };
   const file = entry.replace(/\\/g, '/');
   const checkout = path.posix.dirname(path.posix.dirname(file));
+  if (SHELL_SPECIAL.test(file)) return { onPath: false, note: `aidlc is not on PATH, and the path of this CLI holds $, a backtick, % or a double quote, which a shell can expand or end a quote at, so no command is printed: run node with bin/aidlc.js under the aidlc checkout at ${checkout}, quoted for your shell, or run npm link in that checkout to put aidlc on PATH` };
   return { onPath: false, command: `node "${file}"`, note: `aidlc is not on PATH: run each aidlc command as node "${file}" <command>, or run npm link in "${checkout}" to put aidlc on PATH` };
+}
+
+/** The last line of the text output of `init`: the doctor command in a code span, or a plain line when `cli` has no command. */
+export function initNextLine(cli: InitCli): string {
+  return cli.command === undefined ? 'next: review aidlc.config.json, then run doctor through node as the line above says' : `next: review aidlc.config.json, then \`${cli.command} doctor\``;
 }
 
 /** The target's `package.json`; a file that is absent or does not parse lists nothing. */
