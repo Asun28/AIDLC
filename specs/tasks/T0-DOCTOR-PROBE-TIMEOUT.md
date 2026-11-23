@@ -1,7 +1,7 @@
 ---
 id: T0-DOCTOR-PROBE-TIMEOUT
 title: "aidlc doctor reports a git, gh or pwsh version probe that does not exit within 120 s as unknown, and the repository lookup of ctx() ends a git rev-parse that does not exit within 120 s with an error that names it"
-status: todo
+status: merged
 branch: T0-DOCTOR-PROBE-TIMEOUT
 worktree: D:\wt\AIDLC\T0-DOCTOR-PROBE-TIMEOUT
 allow_paths:
