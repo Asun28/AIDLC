@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aidlcOnPath, initCli } from '../../src/scaffold/init.ts';
+import { aidlcOnPath, initCli, initNextLine } from '../../src/scaffold/init.ts';
 import { cleanup, tmpDir } from './helpers.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -65,6 +65,29 @@ describe('T0-INIT-CLI-PATH: initCli', () => {
       command: 'node "/opt/aidlc/bin/aidlc.js"',
       note: 'aidlc is not on PATH: run each aidlc command as node "/opt/aidlc/bin/aidlc.js" <command>, or run npm link in "/opt/aidlc" to put aidlc on PATH',
     });
+    assert.deepEqual(initCli('C:\\Program Files (x86)\\a b\\bin\\aidlc.js', false), {
+      onPath: false,
+      command: 'node "C:/Program Files (x86)/a b/bin/aidlc.js"',
+      note: 'aidlc is not on PATH: run each aidlc command as node "C:/Program Files (x86)/a b/bin/aidlc.js" <command>, or run npm link in "C:/Program Files (x86)/a b" to put aidlc on PATH',
+    });
+  });
+
+  test('acceptance 6: a CLI path with $, a backtick, % or a double quote gets a plain-text note and no command; the next line drops the backticks only then [R3] [R4]', () => {
+    for (const ch of ['$', '`', '%', '"']) {
+      for (const [entry, checkout] of [[`C:\\x${ch}y\\aidlc\\bin\\aidlc.js`, `C:/x${ch}y/aidlc`], [`/opt/x${ch}y/bin/aidlc.js`, `/opt/x${ch}y`]] as const) {
+        const cli = initCli(entry, false);
+        assert.deepEqual(cli, {
+          onPath: false,
+          note: `aidlc is not on PATH, and the path of this CLI holds $, a backtick, % or a double quote, which a shell can expand or end a quote at, so no command is printed: run node with bin/aidlc.js under the aidlc checkout at ${checkout}, quoted for your shell, or run npm link in that checkout to put aidlc on PATH`,
+        }, entry);
+        assert.ok(!Object.hasOwn(cli, 'command'), `${entry}: no command key`);
+        assert.equal(initNextLine(cli), 'next: review aidlc.config.json, then run doctor through node as the line above says', entry);
+        assert.ok(!initNextLine(cli).includes('`'), `${entry}: the next line holds no backtick`);
+        assert.deepEqual(initCli(entry, true), { onPath: true, command: 'aidlc' }, `${entry} on PATH`);
+      }
+    }
+    assert.equal(initNextLine(initCli('/opt/aidlc/bin/aidlc.js', true)), 'next: review aidlc.config.json, then `aidlc doctor`');
+    assert.equal(initNextLine(initCli('/opt/aidlc/bin/aidlc.js', false)), 'next: review aidlc.config.json, then `node "/opt/aidlc/bin/aidlc.js" doctor`');
   });
 });
 
