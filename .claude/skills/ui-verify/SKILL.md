@@ -43,8 +43,9 @@ Write captures outside the worktree and never commit them. After
 `aidlc card attempt` records the success, read `candidate.digest` from
 `aidlc card status <card> --json` and keep each file:
 
-    aidlc evidence retain --goal <goal> --card <card> --candidate <digest> --kind screenshot --id <card>-<item>-after.png --file <path>
+    aidlc evidence retain --goal <goal> --card <card> --candidate <digest> --kind <screenshot|video> --id <card>-<sha7>-<item>-<capture>.<ext> --file <path>
 
-Use `--kind video` for a recording. After a candidate that changes a
-covered file, take new captures under new ids: the audit does not report
-an old one as stale.
+`<sha7>` is the candidate commit and `<capture>` is `before`, `after`,
+`step-<n>` or `video`. Give every file its own id: an id used again
+replaces the earlier file. After a candidate that changes a covered file,
+take new captures: the audit does not report an old one as stale.
