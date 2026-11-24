@@ -98,3 +98,5 @@ The aidlc loop maintainers.
 | 5 | `src/cli/main.ts` withdraw description, the docs and the fragment; `changelog-fragments`, `prose` | reviewer-verified; pass |
 | 6 | Same file, test `acceptance 6`. RED at 5b86f598: the withdrawal was admitted (no exception) | pass after the fix |
 | 7 | Same file, test `acceptance 7` (base-sync R3, F3). RED at e4d1f890: `card next` returned the `candidate-moved` wait | pass after the fix |
+
+Guards: each of nine loosened in turn; a test of this file caught seven. `equivalent:` `invocationBlocking` in `movedHead`, since a merge-blocking block gets REVIEW_FIX, a review directive or a stop before this point of `ship`. `equivalent:` `isGit` in `movedHead`, since outside a git repository the HEAD read throws, with the same result.
