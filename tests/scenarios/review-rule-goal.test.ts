@@ -459,7 +459,7 @@ test('T0-SMALL-ISSUES-410-411-465 acceptance 2: after card A was ruled, shipped 
     s.stopGoal();
     for (const id of ['F1', 'F2']) s.rule(id, 'the owner');
     assert.equal(s.next().directive.kind, 'close');
-    s.runner.markClosure(s.g(), fx.card(CARD), s.persisted(), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    s.runner.markClosure(s.g(), fx.card(CARD), s.persisted(), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'fixture: no rule learned' });
     assert.equal(s.next().directive.kind, 'done');
     fx.advance(1);
     s.stopGoal();

@@ -232,7 +232,7 @@ test('T0-SMALL-ISSUES-410-411-465 acceptance 1: after card A was continued, ship
     s.verdicts.push('{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n');
     assert.equal(s.runner.next(s.g(), card, s.persisted()).directive.kind, 'review');
     assert.equal(s.runner.next(s.g(), card, (await s.runner.formalReview(s.g(), card, s.persisted())).run).directive.kind, 'close');
-    s.runner.markClosure(s.g(), card, s.persisted(), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    s.runner.markClosure(s.g(), card, s.persisted(), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'fixture: no rule learned' });
     assert.equal(s.runner.next(s.g(), card, s.persisted()).directive.kind, 'done');
     fx.advance(1);
     s.stopGoal();
