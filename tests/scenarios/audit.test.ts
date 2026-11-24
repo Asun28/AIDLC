@@ -161,7 +161,7 @@ test('T0-AUDIT-READMIT acceptance 2 end to end: a goal stopped for time, re-admi
     const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:T1-HELLO', redReceipt: 'red:T1-HELLO', candidateSha: candidateShaFor('T1-HELLO') });
     r = runner.next(fx.goal(goal.id), card, run1);
     assert.equal(r.directive.kind, 'close', r.directive.narration);
-    const run2 = runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    const run2 = runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'fixture: no rule learned' });
     assert.equal(runner.next(fx.goal(goal.id), card, run2).directive.kind, 'done');
     fx.controller.next(goal.id);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: {} });

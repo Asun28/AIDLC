@@ -1,6 +1,6 @@
 /**
  * Fault-point check (card T1-VERIFY-FAULT-POINTS, spec review-verification R1 to R3): each card-run record write and each
- * goal journal append of five card-run commands fails in turn, one write per run, by a throw from the `node:fs` call every
+ * goal journal append of six card-run commands fails in turn, one write per run, by a throw from the `node:fs` call every
  * writer passes through; the card then takes its next step, and six invariants are checked over the persisted card run and
  * the goal journal after the fault-free run, after the faulted command and after the next step.
  */
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { goalForCards, makeFixture, writeCard, T0, type Fixture } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { Journal } from '../../src/state/journal.ts';
 import type { StatePaths } from '../../src/state/paths.ts';
 import { CardRun, type Card, type Goal, type JournalEvent, type ReviewInvocation } from '../../src/core/types.ts';
@@ -25,7 +25,7 @@ const CARD = 'T1-FP';
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Fixture: one card driven PREPARE -> BUILD -> A -> B -> C, then D or E (the atReview setup of r3-fallback.test.ts).
+// Fixture: one card driven PREPARE -> BUILD -> A -> B -> C, then D or E (the atReview setup of r3-fallback.test.ts), or F after D.
 // ---------------------------------------------------------------------------------------------------------------------
 
 interface Ctx {
@@ -37,11 +37,13 @@ interface Ctx {
   g: () => Goal;
   /** The persisted card run; every command and recovery step starts from it. */
   run: () => CardRun;
-  /** Reviewer runs so far, counted at the scripted runner. */
-  spawned: { r2: number; r3: number };
+  /** Reviewer runs and issue submissions so far, counted at the scripted runner. */
+  spawned: { r2: number; r3: number; submit: number };
+  /** The issues of the scripted gh, and whether its list call prints them. */
+  issues: { filed: Array<{ number: number; body: string }>; listed: boolean };
 }
 
-type Stage = 'A' | 'B' | 'C' | 'D' | 'E';
+type Stage = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 
 function open(): Ctx {
   const fx = makeFixture({
@@ -51,7 +53,7 @@ function open(): Ctx {
       formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false },
     },
   });
-  const spawned = { r2: 0, r3: 0 };
+  const spawned = { r2: 0, r3: 0, submit: 0 };
   const runner = scriptedRunner({
     'git diff --numstat': { stdout: '0\t0\tsrc/t1-fp.ts\n' },
     'git diff --name-only': { stdout: 'src/t1-fp.ts\u0000' },
@@ -75,13 +77,26 @@ function open(): Ctx {
   assert.equal(r.directive.kind, 'prepare', r.directive.narration);
   r = cardRunner.next(g(), card, r.run);
   assert.equal(r.directive.kind, 'build', r.directive.narration);
-  return { fx, runner: cardRunner, ship, goalId, card, g, run: () => fx.store.getCardRun(goalId, CARD)!, spawned };
+  return { fx, runner: cardRunner, ship, goalId, card, g, run: () => fx.store.getCardRun(goalId, CARD)!, spawned, issues: { filed: [], listed: true } };
 }
 
 const attempt = (c: Ctx): CardRun => c.runner.recordAttempt(c.g(), c.card, c.run(), { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-fp' });
 const next = (c: Ctx) => c.runner.next(c.g(), c.card, c.run());
 const preReview = (c: Ctx) => c.runner.preReview(c.g(), c.card, c.run());
 const formalReview = (c: Ctx) => c.runner.formalReview(c.g(), c.card, c.run());
+/** `card close --followups` by a fresh runner on the github path; a submit files an issue of the scripted gh. */
+const closeFollowups = (c: Ctx, skipFollowups?: string): CardRun => {
+  const gh: SyncRunner = (command, args, options) => {
+    if (args[0] === 'issue') {
+      c.spawned.submit += 1;
+      c.issues.filed.push({ number: 199 + c.spawned.submit, body: options?.input ?? '' });
+    }
+    const stdout = args[0] === 'api' ? JSON.stringify(c.issues.listed ? c.issues.filed : []) : args[0] === 'issue' ? `https://github.com/acme/fp/issues/${c.issues.filed.at(-1)!.number}\n` : '';
+    return scriptedRunner({ 'gh api repos/acme/fp/issues': { stdout }, 'gh label create': {}, 'gh issue create': { stdout } })(command, args, options);
+  };
+  const runner = new CardRunner({ paths: c.fx.paths, repo: c.fx.repo, config: { ...c.fx.config, shipPath: 'github', repository: 'acme/fp' }, store: c.fx.store, leases: c.fx.leases, queue: c.fx.queue, ops: c.fx.ops, shipPath: c.ship, now: c.fx.now, runner: gh });
+  return runner.markClosure(c.g(), c.card, c.run(), skipFollowups === undefined ? { followups: true } : {}, { skipFollowups });
+};
 
 /** A fresh fixture driven without faults to the start of `stage`. */
 async function startAt(stage: Stage): Promise<Ctx> {
@@ -95,6 +110,11 @@ async function startAt(stage: Stage): Promise<Ctx> {
   if (stage === 'C') return c;
   assert.equal((await formalReview(c)).classified.outcome, 'pass');
   if (stage === 'D') return c;
+  if (stage === 'F') {
+    assert.equal(next(c).directive.kind, 'close');
+    c.fx.store.updateCardRun(c.goalId, CARD, (run) => ({ ...run!, review: { ...run!.review, invocations: run!.review.invocations.map((i) => ({ ...i, advisory: ['Name the unit.'] })) } }));
+    return c;
+  }
   // E: the fixture clock moves past the card run's deadline (and with it the lease).
   c.fx.advance(Date.parse(c.run().deadline) - Date.parse(c.fx.now()) + 60_000);
   return c;
@@ -106,6 +126,10 @@ interface Covered {
   run: (c: Ctx) => unknown;
   /** The command is E: its fault-free run and every recovery must end in the deadline stop (I6). */
   deadline?: boolean;
+  /** The command that the recovery runs again after its first `card next`. */
+  again?: (c: Ctx) => unknown;
+  /** The writes of the fault-free run, in order. */
+  writes?: string[];
   /** How the fault-free run's result and persisted run differ from the end the card names for the command (`field actual, expected value`). */
   ends: (value: unknown, run: CardRun | undefined, shipped: number) => string[];
 }
@@ -122,7 +146,7 @@ const pollOf = (value: unknown): { pollSeconds?: number } => {
 // The CardRunner methods each covered command reaches (the coverage record of .claude/skills/verify-card-run-writes/SKILL.md):
 // A recordAttempt -> deliverOwed, save; B preReview -> deliverOwed, commitReviewed, deliverOwed; C formalReview -> deliverOwed,
 // commitFormalResult -> commitReviewed, deliverOwed; D next -> deliverOwed, ship -> save, applyShipResult -> deliverOwed, close
-// -> save; E next -> deliverOwed, save.
+// -> save; E next -> deliverOwed, save; F markClosure -> recordFollowups -> writeFollowups -> writeClosure (reservation, record).
 const COVERED: Covered[] = [
   {
     stage: 'A', name: 'A recordAttempt success (card attempt)', run: attempt,
@@ -143,6 +167,11 @@ const COVERED: Covered[] = [
   {
     stage: 'E', name: 'E next at SHIP past the deadline (card next, STOP/time)', run: next, deadline: true,
     ends: (v, run) => differ(['directive', directiveOf(v), 'stop'], ['state', run?.state, 'STOP'], ['stop.reason', run?.stop?.reason, 'time']),
+  },
+  {
+    stage: 'F', name: 'F markClosure followups (card close --followups)', run: (c) => closeFollowups(c), again: (c) => closeFollowups(c),
+    writes: ['renameSync', 'appendFileSync EVIDENCE_RETAINED', 'renameSync'],
+    ends: (_v, run) => differ(['state', run?.state, 'CLOSE'], ['closure.followups', run?.closure.followups, true], ['followupIssue', run?.followupIssue, 200], ['followupPending', run?.followupPending, undefined], ['followupNote', run?.followupNote, undefined]),
   },
 ];
 
@@ -168,9 +197,13 @@ interface EndState {
   activeSlots: Array<[string, number]>;
   /** The card's operations as sorted `[kind, status, an OPERATION_INTENT event names it]`. */
   operations: Array<[string, string, boolean]>;
+  /** The followups step, its issue, its note and its pending record as stored, and the issues submitted. */
+  followups: { recorded: boolean | null; issue: number | null; note: string | null; pending: boolean; submitted: number };
   /** Counts per `TYPE outcome` (or `TYPE status`) of the counted journal events, decision events of a discard left out. */
   journal: Record<string, number>;
 }
+
+const NO_FOLLOWUP: EndState['followups'] = { recorded: false, issue: null, note: null, pending: false, submitted: 0 };
 
 // R4: written from the fixture's design before any run. A to D: one success attempt (the episode `succeeded`), one R2 pass
 // in cycle 0, one R3 pass by the formal reviewer `primary`, the formal request and the ship's request (`codex-review`, the
@@ -187,6 +220,7 @@ const FAULT_FREE_CLOSE: EndState = {
   requests: [['codex-review', 'completed'], ['primary', 'completed']],
   activeSlots: [['default', 0]],
   operations: [['merge', 'succeeded', true]],
+  followups: NO_FOLLOWUP,
   journal: { ATTEMPT_STARTED: 1, 'ATTEMPT_FINISHED success': 1, 'PRE_REVIEW_DECIDED pass': 1, 'REVIEW_DECIDED pass': 1, 'OPERATION_RESULT succeeded': 1 },
 };
 
@@ -203,8 +237,12 @@ const FAULT_FREE_TIME: EndState = {
   requests: [['primary', 'completed']],
   activeSlots: [['default', 0]],
   operations: [],
+  followups: NO_FOLLOWUP,
   journal: { ATTEMPT_STARTED: 1, 'ATTEMPT_FINISHED success': 1, 'PRE_REVIEW_DECIDED pass': 1, 'REVIEW_DECIDED pass': 1 },
 };
+
+// F: the end of D with the one issue submitted and recorded.
+const FAULT_FREE_FOLLOWUPS: EndState = { ...FAULT_FREE_CLOSE, followups: { recorded: true, issue: 200, note: null, pending: false, submitted: 1 } };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Fault points: the k-th renameSync onto a card-run record or appendFileSync onto a goal journal throws EIO.
@@ -277,7 +315,7 @@ async function underFaults(paths: StatePaths, failAt: number, body: () => unknow
 // ---------------------------------------------------------------------------------------------------------------------
 
 interface Step {
-  call: 'next' | 'preReview' | 'formalReview';
+  call: 'next' | 'preReview' | 'formalReview' | 'again';
   /** The directive a `next` returned. */
   directive?: string;
   /** The message of a throw (a refusal). */
@@ -295,15 +333,15 @@ interface Observation {
   events: JournalEvent[];
   /** The recovery steps taken so far. */
   steps: Step[];
-  /** Runs of the R2 reviewer, the R3 reviewer and the ship path since the covered command started. */
-  spawned: { r2: number; r3: number; ship: number };
+  /** Runs of the R2 reviewer, the R3 reviewer and the ship path, and issue submissions, since the covered command started. */
+  spawned: { r2: number; r3: number; ship: number; submit?: number };
   /** The observation ends a fault-free run or a recovery of E: the deadline stop must hold (I6). */
   deadline: boolean;
   /** The directive of the last `next` (the command's own for a fault-free `next`). */
   lastDirective?: string;
 }
 
-function observe(c: Ctx, base: { r2: number; r3: number; ship: number }, extra: Pick<Observation, 'steps' | 'deadline' | 'lastDirective'>): Observation {
+function observe(c: Ctx, base: { r2: number; r3: number; ship: number; submit: number }, extra: Pick<Observation, 'steps' | 'deadline' | 'lastDirective'>): Observation {
   let run: CardRun | undefined;
   let runError: string | undefined;
   try {
@@ -328,7 +366,7 @@ function observe(c: Ctx, base: { r2: number; r3: number; ship: number }, extra: 
     stray,
     journal: { ok: verified.ok, problems: verified.problems.map((p) => `line ${p.line}: ${p.problem}`) },
     events,
-    spawned: { r2: c.spawned.r2 - base.r2, r3: c.spawned.r3 - base.r3, ship: c.ship.requests.length - base.ship },
+    spawned: { r2: c.spawned.r2 - base.r2, r3: c.spawned.r3 - base.r3, ship: c.ship.requests.length - base.ship, submit: c.spawned.submit - base.submit },
     ...extra,
   };
 }
@@ -367,7 +405,7 @@ function check(o: Observation): string[] {
   const passes = rounds.filter((r) => r.outcome === 'pass').length;
   if (passes > 1) v.push(`I4: ${passes} R2 passes (preReview.rounds)`);
   // I5: no reviewer and no ship runs twice over one command and its recovery.
-  for (const [who, n] of Object.entries(o.spawned)) if (n > 1) v.push(`I5: the ${who === 'ship' ? 'ship path' : `${who.toUpperCase()} reviewer`} ran ${n} times`);
+  for (const [who, n] of Object.entries(o.spawned)) if (n > 1) v.push(`I5: the ${who === 'ship' ? 'ship path' : who === 'submit' ? 'issue submission' : `${who.toUpperCase()} reviewer`} ran ${n} times`);
   // I6: a deadline stop is kept.
   if (o.deadline && (o.run?.stop?.reason !== 'time' || o.lastDirective !== 'stop')) v.push(`I6: the deadline run ends at ${o.run?.state ?? 'no run'} with stop ${o.run?.stop?.reason ?? 'none'} and directive ${o.lastDirective ?? 'none'} (stop.reason)`);
   return v;
@@ -384,8 +422,8 @@ interface Enumerated {
   violations: string[];
 }
 
-/** The recovery: next, the review command it directs, next again; a refusal of the review command is printed, not failed. */
-async function recover(c: Ctx, log: (msg: string) => void, label: string): Promise<Step[]> {
+/** The recovery: next, the review command it directs or the command's own `again`, next again; a refusal of that command is printed, not failed. */
+async function recover(c: Ctx, log: (msg: string) => void, label: string, again?: Covered['again']): Promise<Step[]> {
   const steps: Step[] = [];
   const step = async (call: Step['call'], body: () => unknown): Promise<string | undefined> => {
     try {
@@ -402,6 +440,7 @@ async function recover(c: Ctx, log: (msg: string) => void, label: string): Promi
   const first = await step('next', () => next(c));
   if (first === 'pre-review') await step('preReview', () => preReview(c));
   if (first === 'review') await step('formalReview', () => formalReview(c));
+  if (again) await step('again', () => again(c));
   await step('next', () => next(c));
   return steps;
 }
@@ -497,6 +536,7 @@ function endState(c: Ctx, directive: string | undefined): EndState {
     r2: (run?.preReview.rounds ?? []).map((r): [number, number, string] => [r.cycle, r.round, r.outcome]),
     r3: { invocations: (run?.review.invocations ?? []).map((i): [string, string] => [i.reviewer, i.outcome]), substantiveDecisions: run?.review.substantiveDecisions ?? 0, substantiveBlocks: run?.review.substantiveBlocks ?? 0, noVerdictRetriesUsed: run?.review.noVerdictRetriesUsed ?? 0 },
     requests: requests.map((r): [string, string] => [r.reviewer, r.state]).sort(byText),
+    followups: { recorded: run?.closure.followups ?? null, issue: run?.followupIssue ?? null, note: run?.followupNote ?? null, pending: run?.followupPending !== undefined, submitted: c.spawned.submit },
     activeSlots: [...new Set(requests.map((r) => r.pool))].sort().map((p): [string, number] => [p, c.fx.queue.pool(p, c.fx.now()).active.length]),
     operations: c.fx.ops.list({ goalId: c.goalId, cardId: CARD }).map((o): [string, string, boolean] => [o.kind, o.status, intents.has(o.id)]).sort(byText),
     journal,
@@ -650,7 +690,7 @@ async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: str
       let trail = 'none';
       let steps: Step[] = [];
       if (recovery) {
-        steps = await recover(c, log, label);
+        steps = await recover(c, log, label, cmd.again);
         const last = [...steps].reverse().find((s) => s.call === 'next')?.directive;
         trail = steps.map(stepText).join(', ');
         afterRecovery = check(observe(c, base, { steps, deadline: Boolean(cmd.deadline), lastDirective: last }));
@@ -695,10 +735,10 @@ const decideInOrder: Covered = { stage: 'A', name: 'decideInOrder', run: (c) => 
 // ---------------------------------------------------------------------------------------------------------------------
 
 const DOC_SENTENCES = [
-  '`tests/scenarios/fault-points.test.ts` (card T1-VERIFY-FAULT-POINTS) fails each card-run record write and each goal journal append of five card-run commands, one write per run, then takes the card\'s next step and checks the persisted card run and the goal journal.',
-  'The covered commands are `card attempt` (a success at BUILD), `review pre` (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3 pass (the dry-run ship merges and the card reaches CLOSE) and `card next` at SHIP once the card deadline has passed (STOP/time).',
-  'A write fails by a throw from `fs.renameSync` onto the card-run record or from `fs.appendFileSync` onto the goal journal; the next step is `card next`, the `review pre` or `review r3` it directs, and `card next` again, and a refusal of that review command is printed, not failed.',
-  'After the faulted command and after the next step the test checks six invariants: the records and the journal chain are intact (I1), every `card next` returns a directive (I2), every `REVIEW_DECIDED` and `PRE_REVIEW_DECIDED` event names a decision the card run holds (I3), no decision is recorded twice (I4), no reviewer or ship runs twice (I5), and a deadline stop is kept (I6).',
+  '`tests/scenarios/fault-points.test.ts` (card T1-VERIFY-FAULT-POINTS) fails each card-run record write and each goal journal append of six card-run commands, one write per run, then takes the card\'s next step and checks the persisted card run and the goal journal.',
+  'The covered commands are `card attempt` (a success at BUILD), `review pre` (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3 pass (the dry-run ship merges and the card reaches CLOSE), `card next` at SHIP once the card deadline has passed (STOP/time) and `card close --followups` at CLOSE (one issue submitted to a scripted gh and recorded, card T1-REVIEW-FOLLOWUP-ISSUE-2).',
+  'A write fails by a throw from `fs.renameSync` onto the card-run record or from `fs.appendFileSync` onto the goal journal; the next step is `card next`, the `review pre` or `review r3` it directs, or the same `card close --followups` again after a fault in it, and `card next` again, and a refusal of that review or close command is printed, not failed.',
+  'After the faulted command and after the next step the test checks six invariants: the records and the journal chain are intact (I1), every `card next` returns a directive (I2), every `REVIEW_DECIDED` and `PRE_REVIEW_DECIDED` event names a decision the card run holds (I3), no decision is recorded twice (I4), no reviewer, ship or issue submission runs twice (I5), and a deadline stop is kept (I6).',
   'It does not fail lease, review-queue, operation-ledger or `.review/` writes, does not model a process that dies mid-command or a torn journal line, and does not require every card-run change to reach the journal.',
   'Run it with `node --test tests/scenarios/fault-points.test.ts`; `npm test` runs it, so CI runs it on every push.',
 ];
@@ -706,10 +746,12 @@ const DOC_SENTENCES = [
 const CHANGELOG_ENTRY = '- T1-VERIFY-FAULT-POINTS: `tests/scenarios/fault-points.test.ts` fails each card-run record write and goal journal append of `card attempt`, `review pre`, `review r3` and two `card next` steps (the ship to CLOSE and the deadline stop) one at a time, takes the card\'s next step, and checks six invariants over the card run and the goal journal; a self-test shows that it reports a component that journals a decision before it writes the record.';
 
 const LIVENESS_SENTENCES = [
-  'The liveness check (card T1-VERIFY-LIVENESS) continues each fault run until `card next` returns `close`, `done` or `stop`, or for 12 `card next` calls, taking the move each directive names (`card attempt`, `review pre`, `review r3`, or a wait of `pollSeconds` on the fixture clock), and compares the end state with the fault-free run\'s: the card state and stop, the attempts, both review ledgers, the review-pool requests and slots, the card\'s operations and the decision events of the journal.',
+  'The liveness check (card T1-VERIFY-LIVENESS) continues each fault run until `card next` returns `close`, `done` or `stop`, or for 12 `card next` calls, taking the move each directive names (`card attempt`, `review pre`, `review r3`, or a wait of `pollSeconds` on the fixture clock), and compares the end state with the fault-free run\'s: the card state and stop, the attempts, both review ledgers, the review-pool requests and slots, the card\'s operations, the follow-up fields and the decision events of the journal.',
   'A fault point whose end state differs fails the test unless `KNOWN_VIOLATIONS` in the test file pins it with that difference and its counterexample; a pin that no longer reproduces fails the test too, so a fix removes its pin in the same change.',
   'Each pin is a defect to file as a T0-bugfix card, except where the pin names a recovery these docs assign to a person, such as `aidlc ops reconcile` for an operation left `issued`.',
 ];
+
+const PENDING_SENTENCE = 'Two further cases of `card close --followups` use a submission whose issue is not listed: a pending record committed before the fault stays until the lookup records the issue or `--skip-followups` clears it, and a reservation that lands and then throws leaves zero submissions, after which a fresh `CardRunner` over the same stored state only looks up. The second simulates an interruption after the reservation, not the death of an operating-system process.';
 
 const LIVENESS_CHANGELOG_ENTRY = '- T1-VERIFY-LIVENESS: the fault-point test continues each fault run to rest and fails when the card does not reach the fault-free end state (card state, attempts, review ledgers, review-pool slots, operations, journal decisions), apart from the violations pinned in `KNOWN_VIOLATIONS` with their counterexamples; a pin that no longer reproduces fails the test.';
 
@@ -717,7 +759,7 @@ const lf = (file: string): string => readFileSync(path.join(root, file), 'utf8')
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-describe('fault-point check: each card-run write and journal append of five commands fails in turn (T1-VERIFY-FAULT-POINTS)', { timeout: 30_000 }, () => {
+describe('fault-point check: each card-run write and journal append of six commands fails in turn (T1-VERIFY-FAULT-POINTS)', { timeout: 30_000 }, () => {
   const rested = new Map<Stage, Rest>();
   for (const cmd of COVERED) {
     it(`${cmd.name}: the fault-free run has fault points and no violation, and every fault point and its recovery keep I1 to I6 [R1] [R2] [R3]`, async (t) => {
@@ -727,19 +769,20 @@ describe('fault-point check: each card-run write and journal append of five comm
       t.diagnostic(`${cmd.name}: ${out.points.length} fault points: ${out.points.map((p, n) => `${n + 1} ${describePoint(p)}`).join('; ')}`);
       assert.ok(out.points.some((p) => p.call === 'renameSync'), 'at least one card-run record write');
       assert.ok(out.points.some((p) => p.call === 'appendFileSync'), 'at least one goal journal append');
+      if (cmd.writes) assert.deepEqual(out.points.map((p) => `${p.call} ${p.event ?? ''}`.trim()), cmd.writes, 'the writes of the fault-free run');
       assert.deepEqual(out.violations, []);
     });
 
-    it(`${cmd.name}: the fault-free run rests at ${cmd.deadline ? 'stop with FAULT_FREE_TIME' : 'close with FAULT_FREE_CLOSE'} inside ${NEXT_BOUND} next calls [R1] [R3] [R4]`, () => {
+    it(`${cmd.name}: the fault-free run rests at ${cmd.deadline ? 'stop with FAULT_FREE_TIME' : cmd.again ? 'close with FAULT_FREE_FOLLOWUPS' : 'close with FAULT_FREE_CLOSE'} inside ${NEXT_BOUND} next calls [R1] [R3] [R4]`, () => {
       const ff = rested.get(cmd.stage)?.faultFree;
       assert.ok(ff, `${cmd.name}: the fault-free run was driven`);
       const trail = `drive: ${ff.steps.map(driveText).join(', ')}`;
-      assert.deepEqual(ff.end, cmd.deadline ? FAULT_FREE_TIME : FAULT_FREE_CLOSE, trail);
+      assert.deepEqual(ff.end, cmd.deadline ? FAULT_FREE_TIME : cmd.again ? FAULT_FREE_FOLLOWUPS : FAULT_FREE_CLOSE, trail);
       assert.ok(ff.nexts <= NEXT_BOUND, `${ff.nexts} next calls; ${trail}`);
     });
   }
 
-  it('every fault point of A to E reaches its command\'s fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]', () => {
+  it('every fault point of A to F reaches its command\'s fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]', () => {
     assert.deepEqual([...rested.keys()], COVERED.map((c) => c.stage));
     for (const [stage, rest] of rested) assert.ok(rest.counted > 0 && rest.points.length === rest.counted, `${stage}: ${rest.points.length} of ${rest.counted} fault points driven to rest`);
     const observed = [...rested.values()].flatMap((r) => r.points);
@@ -749,7 +792,7 @@ describe('fault-point check: each card-run write and journal append of five comm
   it('every pin names a fault point, a difference, its hypothesis and a counterexample, and a documented recovery where it names one [R5]', () => {
     const ops = lf('docs/OPERATIONS.md');
     for (const pin of KNOWN_VIOLATIONS) {
-      assert.match(pin.faultPoint, /^[A-E]\/(record \d+|append [A-Z_]+( \d+)?)$/, pin.faultPoint);
+      assert.match(pin.faultPoint, /^[A-F]\/(record \d+|append [A-Z_]+( \d+)?)$/, pin.faultPoint);
       assert.ok(Object.keys(pin.difference).length > 0, `${pin.faultPoint}: a difference`);
       assert.match(pin.hypothesis, /^(H([1-9]|10)|new)$/, `${pin.faultPoint}: ${pin.hypothesis}`);
       assert.ok(pin.counterexample.length > 80, `${pin.faultPoint}: a counterexample`);
@@ -845,6 +888,9 @@ describe('fault-point check: each card-run write and journal append of five comm
       // I5: the ship path run twice.
       assert.deepEqual(check({ ...unbroken, spawned: { ...zero, ship: 1 } }), []);
       only({ ...unbroken, spawned: { ...zero, ship: 2 } }, 'I5');
+      // I5: one issue submission, then two.
+      assert.deepEqual(check({ ...unbroken, spawned: { ...zero, submit: 1 } }), []);
+      only({ ...unbroken, spawned: { ...zero, submit: 2 } }, 'I5');
       // I6: a recovery of E that ends at SHIP.
       const stopped = CardRun.parse({ ...run, state: 'STOP', stop: { reason: 'time', detail: 'admission deadline reached', nextAction: 'hand off', global: false, at: T0 } });
       assert.deepEqual(check({ ...unbroken, run: stopped, deadline: true, lastDirective: 'stop' }), []);
@@ -879,9 +925,84 @@ describe('fault-point check: each card-run write and journal append of five comm
     });
   });
 
+  it('docs/OPERATIONS.md Fault-point check states the pending cases of card close --followups (T1-REVIEW-FOLLOWUP-ISSUE-2)', () => {
+    assert.ok(section().includes(PENDING_SENTENCE), PENDING_SENTENCE);
+  });
+
   it('the CHANGELOG Unreleased section carries the T1-VERIFY-LIVENESS entry [R10]', () => {
     const changelog = lf('CHANGELOG.md');
     const unreleased = changelogSince010(changelog);
     assert.ok(unreleased.split('\n').includes(LIVENESS_CHANGELOG_ENTRY), LIVENESS_CHANGELOG_ENTRY);
+  });
+});
+
+describe('fault-point check: the pending record of card close --followups (T1-REVIEW-FOLLOWUP-ISSUE-2 acceptance 11)', { timeout: 30_000 }, () => {
+  const pendingOf = (c: Ctx) => c.run().followupPending;
+
+  for (const end of ['lookup', 'skip'] as const) {
+    it(`a fault at each write, with the issue not listed: at most one submission, and a committed pending record stays until the ${end} ends it`, async () => {
+      const writes = COVERED.find((cmd) => cmd.stage === 'F')!.writes!;
+      for (let k = 1; k <= writes.length; k += 1) {
+        const c = await startAt('F');
+        try {
+          c.issues.listed = false;
+          const base = { ...c.spawned, ship: c.ship.requests.length };
+          const res = await underFaults(c.fx.paths, k, () => closeFollowups(c));
+          assert.ok(res.error, `k=${k}: the command throws`);
+          assert.equal(c.run().closure.followups, false, `k=${k}`);
+          // The reservation is the first write: a fault in it commits nothing and submits nothing.
+          assert.deepEqual([pendingOf(c) !== undefined, c.spawned.submit], k === 1 ? [false, 0] : [true, 1], `k=${k}`);
+          const committed = pendingOf(c);
+          assert.equal(next(c).directive.kind, 'close', `k=${k}`);
+          if (committed) {
+            assert.throws(() => closeFollowups(c), /^Error: followups: .*nothing is submitted again/, `k=${k}`);
+            assert.deepEqual(pendingOf(c), committed, `k=${k}: the pending record is as it was committed`);
+            assert.equal(next(c).directive.kind, 'close', `k=${k}`);
+          }
+          if (end === 'lookup') {
+            c.issues.listed = true;
+            closeFollowups(c);
+            assert.deepEqual([c.run().followupIssue, c.run().followupNote, c.spawned.submit], [200, undefined, 1], `k=${k}`);
+          } else {
+            closeFollowups(c, 'not listed');
+            assert.deepEqual([c.run().followupIssue, c.run().followupNote, c.spawned.submit], [null, 'not listed', k === 1 ? 0 : 1], `k=${k}`);
+          }
+          assert.equal(c.run().closure.followups, true, `k=${k}`);
+          assert.equal(pendingOf(c), undefined, `k=${k}`);
+          assert.deepEqual(check(observe(c, base, { steps: [], deadline: false })), [], `k=${k}`);
+        } finally {
+          c.fx.cleanup();
+        }
+      }
+    });
+  }
+
+  it('a reservation that lands and then throws before the submit call leaves zero submissions, and a fresh runner over the stored state only looks up until --skip-followups', async () => {
+    const c = await startAt('F');
+    const update = c.fx.store.updateCardRun.bind(c.fx.store);
+    try {
+      const base = { ...c.spawned, ship: c.ship.requests.length };
+      c.fx.store.updateCardRun = (goalId, cardId, change, within) => {
+        const written = update(goalId, cardId, change, within);
+        if (written.followupPending) throw new Error('interrupted after the reservation');
+        return written;
+      };
+      assert.throws(() => closeFollowups(c), /interrupted after the reservation/);
+      c.fx.store.updateCardRun = update;
+      const committed = pendingOf(c);
+      assert.ok(committed, 'the reservation is stored');
+      assert.equal(c.spawned.submit, 0);
+      for (let call = 0; call < 2; call += 1) {
+        assert.equal(next(c).directive.kind, 'close');
+        assert.throws(() => closeFollowups(c), /^Error: followups: .*nothing is submitted again/);
+        assert.deepEqual([pendingOf(c), c.run().followupIssue, c.spawned.submit, c.issues.filed.length], [committed, undefined, 0, 0]);
+      }
+      closeFollowups(c, 'the request was never sent');
+      assert.deepEqual([c.run().closure.followups, c.run().followupIssue, c.run().followupNote, pendingOf(c), c.spawned.submit], [true, null, 'the request was never sent', undefined, 0]);
+      assert.deepEqual(check(observe(c, base, { steps: [], deadline: false })), []);
+    } finally {
+      c.fx.store.updateCardRun = update;
+      c.fx.cleanup();
+    }
   });
 });

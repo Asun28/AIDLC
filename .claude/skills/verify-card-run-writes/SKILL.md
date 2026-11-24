@@ -18,15 +18,20 @@ Harm: a card the journal reports in one state while the run record holds another
 
 ## Coverage
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
-- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`
+- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`, `CardRunner.markClosure`, `CardRunner.recordFollowups`, `CardRunner.writeFollowups`, `CardRunner.writeClosure`
 - `src/state/goal-store.ts`: `GoalStore.saveCardRun`, `GoalStore.updateCardRun`
 - `src/state/store.ts`: `atomicWriteJson`, `atomicWriteText`
 - `src/state/journal.ts`: `Journal.append`
 
 The commands driven are `card attempt` (a success at BUILD), `review pre`
 (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3
-pass (ship to CLOSE) and `card next` at SHIP past the card deadline
-(STOP/time). Invariants I1 to I6 and the liveness comparison are in the
+pass (ship to CLOSE), `card next` at SHIP past the card deadline
+(STOP/time) and `card close --followups` at CLOSE: a card-run write of
+`followupPending`, the issue submission, an EVIDENCE_RETAINED append and
+a card-run write of the issue. Its recovery runs the same close again and
+submits nothing once the pending record is stored; a submission that
+never reached GitHub ends without an issue, by
+`card close --skip-followups`. Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
 Sync commit: `f490401542be25b3807116254e6ec77e408f9dd2`
@@ -35,15 +40,18 @@ Sync commit: `f490401542be25b3807116254e6ec77e408f9dd2`
 ```
 node --test tests/scenarios/fault-points.test.ts
 ```
-About 11 seconds on Windows at the sync commit (28 tests). CI runs it
+About 40 seconds on a loaded Windows machine (34 tests). CI runs it
 in `npm test` on each push.
 
 ## Bounds and assumptions
 - One fault per run, at each write index of the command as counted by a
   first clean pass, then one recovery step (`card next`, the review it
-  directs, `card next`), then a drive to rest of at most 12 `card next`.
+  directs or the same `card close --followups`, `card next`), then a drive to rest of at most 12 `card next`.
 - Store writes are atomic (temp file and rename in `src/state/store.ts`):
   a failed write throws and changes nothing.
+- The lookup, label and submit calls of `card close --followups` go to
+  a scripted gh; the interruption after its reservation is a throw from
+  a wrapped store update, not the death of a process.
 - A fault is a throw from `fs.renameSync` onto the card-run record or
   from `fs.appendFileSync` onto the goal journal.
 - Fixed fixture clock; git, gh and the reviewers are scripted
@@ -82,7 +90,8 @@ model to pass, and never change product code from this skill.
 ## Extending the check
 When a covered command gains, loses or reorders a write:
 1. Update the expected writes, the invariants and, for a new end state,
-   `FAULT_FREE_CLOSE` or `FAULT_FREE_TIME` in the test file.
+   `FAULT_FREE_CLOSE`, `FAULT_FREE_TIME` or `FAULT_FREE_FOLLOWUPS` in
+   the test file.
 2. Show the new write failing once with a scratch break, as above.
 3. Update the coverage record (files and functions).
 4. Run the check to a pass, then move the sync commit.

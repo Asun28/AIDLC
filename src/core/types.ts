@@ -953,8 +953,10 @@ export const CardRun = z.object({
   redReceipt: z.string().optional(),
   dodReceipt: z.string().optional(),
   mergeVerified: z.boolean().default(false),
-  closure: z
-    .object({
+  /** A run without a closure record has the `followups` step open; a stored closure without the key was written before the step and has it done (card T1-REVIEW-FOLLOWUP-ISSUE-2). */
+  closure: z.preprocess(
+    (stored) => (stored === undefined ? { followups: false } : typeof stored === 'object' && stored !== null && !Array.isArray(stored) && !('followups' in stored) ? { ...stored, followups: true } : stored),
+    z.object({
       metadata: z.boolean().default(false),
       docSync: z.boolean().default(false),
       findings: z.boolean().default(false),
@@ -962,8 +964,16 @@ export const CardRun = z.object({
       cleanup: z.boolean().default(false),
       /** A lesson line appended to docs/LESSONS.md or a recorded reason to skip; `--all` never asserts it. Always false by default: a run persisted as DONE before the predicate existed stays DONE through the state evidence, not through this default. */
       lessons: z.boolean().default(false),
-    })
-    .prefault({}),
+      /** The follow-up issue of the run is recorded, or why there is none (`card close --followups` and `--skip-followups`). */
+      followups: z.boolean(),
+    }),
+  ),
+  /** The follow-up issue the `followups` step recorded, or null when it filed none (card T1-REVIEW-FOLLOWUP-ISSUE-2). */
+  followupIssue: z.number().int().positive().refine(Number.isSafeInteger, 'not a safe integer').nullable().optional(),
+  /** Why the `followups` step filed no issue. */
+  followupNote: z.string().min(1).optional(),
+  /** The one issue submission of the run, stored before the request: while it is stored no other submission is made. */
+  followupPending: z.object({ repository: z.string().min(1), marker: z.string().min(1), at: IsoTimestamp, by: z.string().min(1) }).optional(),
   evidence: z.array(EvidenceRef).default([]),
   stop: StopRecord.optional(),
   /** The continuations of this run, oldest first (card T1-CONTINUE-CORE); a run written before the field has none. */

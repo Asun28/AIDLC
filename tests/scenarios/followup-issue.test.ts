@@ -305,7 +305,9 @@ test('T1-REVIEW-FOLLOWUP-ISSUE-2 acceptance 4: a stored closure without the key 
     assert.equal(next(fx, goalId).kind, 'done');
   });
   withClose((fx, goalId) => {
-    fx.controller.next(goalId);
+    // The registry records the merge, so the goal verifies its arc while the closure is open.
+    writeCard(fx, { id: CARD, title: 'files follow-ups', status: 'merged' });
+    assert.equal(fx.controller.next(goalId).kind, 'verify-arc');
     fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: { evidence: 'ok' } });
     const directive = fx.controller.next(goalId);
     assert.ok(directive.kind === 'close' && directive.missing.includes(`${CARD}: closure.followups`), JSON.stringify(directive));
