@@ -80,7 +80,7 @@ A new test, `tests/surface/layers.test.ts`, checks the imports of `src/` against
 `CLAUDE.md` stated an order and a pure `src/core/`, and no check held either statement. Three imports ran against the stated order. The test stops a new import against the order before it reaches main.
 
 ### How / Behaviour
-The test reads each module specifier from the TypeScript syntax tree. It reports an import against the ranked order, an impure import in `src/core/`, a cycle between top-level units and a unit in no list.
+The test reads each module specifier from the TypeScript syntax tree. The compiler resolves each relative specifier to its file, so `../config.js` names `src/config.ts`. A specifier that resolves to no file keeps its joined path. The test reports an import against the ranked order, an impure import in `src/core/`, a cycle between top-level units and a unit in no list.
 
 ### System impact
 No file under `src/` changes. The Layers sentence of `CLAUDE.md` keeps its three lines, and the file keeps 199 lines.
@@ -89,7 +89,7 @@ No file under `src/` changes. The Layers sentence of `CLAUDE.md` keeps its three
 The change adds no input, secret or network access. The test reads source files and starts no process.
 
 ### Tests and review
-Test 1 covers each import form of R1. Test 2 covers each rule on built lists. Test 3 checks the real tree, and the reversed order. A guard sweep loosened each guard and saw a test fail.
+Test 1 covers each import form of R1. Test 2 covers each rule on built lists. Test 2 also covers a cycle through a `.js`, `.jsx`, extensionless or directory specifier. Test 3 checks the real tree, and the reversed order. A guard sweep loosened each guard, and a test failed for each guard apart from two equivalent forms.
 
 ### Risk
 Low. A future import against the order now fails the test. The author must then move the import or change the order in the card process.
@@ -106,13 +106,13 @@ RED commit 536cbac2 holds `tests/surface/layers.test.ts` with a reader that retu
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/surface/layers.test.ts`, test 1: nine forms each give their specifier; a variable argument, a comment, a string, a template literal, a template-literal argument and a `require` call give none | pass |
-| 2 | Test 2: three order findings name both files; nine imports give none; three core findings; one cycle finding names `audit` and `evals`; eight unplaced cases each give one finding; a package named as a unit gives none | pass |
-| 3 | Test 3: the 83 files under `src/`, `src/index.ts` included, give no finding; the reversed order gives an order finding | pass |
+| 2 | Test 2: three order findings name both files; nine imports give none; three core findings; one cycle finding names `audit` and `evals`; eight unplaced cases each give one finding; a package named as a unit gives none; a cycle through `../config.js`, `../config.jsx`, `../config` and `..` each gives one finding; `../loop/controller.js` gives an order finding that names `src/loop/controller.ts`; `../loop/nothing.js` names its joined path; `../../bench/run.js` gives none | pass |
+| 3 | Test 3: the 83 files under `src/`, `src/index.ts` included, give no finding with each relative specifier resolved by the compiler; the reversed order gives an order finding | pass |
 | 4 | `CLAUDE.md` lines 46 and 47 changed (2 added, 2 deleted), 199 lines; `tests/surface/claude-md-size.test.ts` and `tests/surface/claude-md-reuse.test.ts` pass unchanged (reviewer-verified text) | pass |
 | 5 | One paragraph added at the end of the Module map; `tests/surface/module-map.test.ts` and `tests/surface/prose.test.ts` pass unchanged (reviewer-verified text) | pass |
 | 6 | DoD arm 1, `npm run typecheck`, exit 0 | pass |
 
-DoD: exit 0; tests 34, pass 34, fail 0.
+DoD: exit 0; tests 34, pass 34, fail 0 (candidate after the repair of R3 decision 1).
 
 Guard sweep: each guard loosened alone, `node --test tests/surface/layers.test.ts` run, then restored.
 
@@ -138,3 +138,24 @@ Guard sweep: each guard loosened alone, `node --test tests/surface/layers.test.t
 | dynamic argument a literal | any argument | test 1 |
 | `import('...')` type | not read | test 1 |
 | declaration specifier `isStringLiteral` | dropped | equivalent: the parser puts only a string literal in that place |
+| compiler resolution of a relative specifier | not called | test 2 |
+| CommonJS resolution mode | ECMAScript mode | test 2 |
+| fallback to the joined path | empty path | test 2 |
+| posix form of the resolved path | native separators | tests 2 and 3 |
+
+## Repair of R3 decision 1, F1
+F1: a relative specifier was joined as text, so `../config.js` gave a vertex apart from `src/config.ts` and hid a cycle. `edgeOf` now takes the file that `ts.resolveModuleName` gives, with the options of `tsconfig.json`, in CommonJS mode. The coordinator proposed ECMAScript mode first, then CommonJS mode. A comparison over 385 specifiers (every relative specifier under `src/` and the probe spellings) found no specifier that ECMAScript mode resolves and CommonJS mode does not, and no specifier that they resolve to different files. So the first mode was removed. RED commit f4c4fc1e holds the new assertions alone; test 2 failed there on `../config.js: []` (`0 !== 1`). No `aidlc review repro` record exists: the check and its tests are one file, so the reviewed candidate with this file is the repaired candidate, and both runs would exit 0.
+
+| Input form | Test that covers it |
+|---|---|
+| `../config.js`, root-file cycle | test 2, the cycle loop, first case |
+| `../config.jsx` | test 2, the cycle loop, second case |
+| `../config`, extensionless | test 2, the cycle loop, third case |
+| `..`, directory, to `src/index.ts` | test 2, the cycle loop, fourth case |
+| `.js` to a ranked file | test 2, `../loop/controller.js` names `src/loop/controller.ts` |
+| a specifier that names no file | test 2, `../loop/nothing.js` keeps its joined path |
+| a resolved file outside `src/` | test 2, `../../bench/run.js` gives none |
+| `.ts` and every specifier of the tree | test 3 |
+
+The compiler rejects these forms, so no case exists for them: `.mjs` and `.cjs` (TS2307), another letter case (TS1149). It also rejects a plain extensionless specifier (TS2835) and a directory specifier (TS2307, TS2834) in an ECMAScript import. The check still resolves those two in CommonJS mode, which is stricter, and test 2 covers them.
+
