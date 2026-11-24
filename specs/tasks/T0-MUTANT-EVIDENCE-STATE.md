@@ -1,7 +1,7 @@
 ---
 id: T0-MUTANT-EVIDENCE-STATE
 title: "The formal review prompt states what the mutant report of the candidate is (no report, unusable, for another candidate, or the counts of the sweep), where it prints `- none` for all four today"
-status: todo
+status: merged
 branch: T0-MUTANT-EVIDENCE-STATE
 worktree: D:\wt\AIDLC\T0-MUTANT-EVIDENCE-STATE
 allow_paths:
