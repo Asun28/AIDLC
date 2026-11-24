@@ -220,3 +220,35 @@ test('acceptance 6: a two-card goal that is not stopped gets the card\'s stop li
     assert.deepEqual([r.continued, r.readmitted, s.persisted().state, s.g().state, s.g().stop?.reason, s.readmissions()], [true, false, 'BUILD', 'STOP', 'ci', []]);
   });
 });
+
+test('T0-SMALL-ISSUES-410-411-465 acceptance 1: after card A was continued, shipped and closed and aidlc next stopped the goal again for card B, continuing A is refused with no byte changed; a lift one millisecond before the goal\'s stop is refused and one at the same instant completes the re-admission [R1]', async () => {
+  await scenario(async (s, fx) => {
+    await s.stopCard(SECOND);
+    await s.stopCard();
+    s.stopGoal();
+    assert.equal(s.go().readmitted, true);
+    const card = fx.card(CARD);
+    s.runner.recordAttempt(s.g(), card, s.runner.next(s.g(), card, s.persisted()).run, { outcome: 'success', dodReceipt: 'dod:5', redReceipt: 'red:1', candidateSha: `${CARD}-sha-5` });
+    s.verdicts.push('{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    assert.equal(s.runner.next(s.g(), card, s.persisted()).directive.kind, 'review');
+    assert.equal(s.runner.next(s.g(), card, (await s.runner.formalReview(s.g(), card, s.persisted())).run).directive.kind, 'close');
+    s.runner.markClosure(s.g(), card, s.persisted(), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    assert.equal(s.runner.next(s.g(), card, s.persisted()).directive.kind, 'done');
+    fx.advance(1);
+    s.stopGoal();
+    const held = s.bytes();
+    assert.throws(() => s.go(), /the card run is in DONE, not in STOP/);
+    assert.deepEqual(s.bytes(), held);
+    assert.deepEqual(s.readmissions(), [readmission()]);
+  }, [CARD, SECOND]);
+  for (const [ms, completes] of [[1, false], [0, true]] as const) {
+    await scenario(async (s) => {
+      await s.failedReadmission();
+      s.stopFor('review', { ...s.g().stop!, at: new Date(Date.parse(s.persisted().continuations[0]!.at) + ms).toISOString() });
+      const held = s.bytes();
+      if (completes) return assert.deepEqual([s.go({ decisions: 2 }).readmitted, s.g().state, s.readmissions()], [true, 'CARDS', [readmission()]]);
+      assert.throws(() => s.go(), /the card run is in BUILD, not in STOP/);
+      assert.deepEqual(s.bytes(), held);
+    });
+  }
+});

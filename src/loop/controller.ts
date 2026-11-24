@@ -24,7 +24,7 @@ import { parseIntent } from '../artifacts/intent.ts';
 import { lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { makeStop } from '../core/stop.ts';
 import { terminalGoalRefusal } from '../core/card-goal.ts';
-import type { ContinuationAct } from '../core/continuation.ts';
+import { refuseCiDecisions, type ContinuationAct } from '../core/continuation.ts';
 import { findingsOfCandidate } from '../core/review-policy.ts';
 import { approvalPacket, requireAuthority } from '../core/authorization.ts';
 import { resolveRoleProfile, assessTaskEffort } from '../core/roles.ts';
@@ -106,6 +106,11 @@ function unresolvedNarration(unresolved: OperationRecord[]): string {
     return `Operation ${o.id} (${o.kind}, ${o.status}${card}) ${state}; check the issuing command and provider before recording its current outcome with \`aidlc ops reconcile ${o.id} --status <succeeded|failed|running|cancelled|UNKNOWN>\`.`;
   });
   return `No new mutation is admitted while ${unresolved.length} operation(s) of this goal are unresolved. ${sentences.join(' ')}`;
+}
+
+/** Whether an act that lifted a card's stop at `at` can complete the re-admission of `goal`: it is not earlier than the goal's stop. */
+function actsOnStop(goal: Goal, at: string): boolean {
+  return Date.parse(at) >= Date.parse(goal.stop!.at);
 }
 
 export class GoalController {
@@ -991,7 +996,7 @@ export class GoalController {
    * the goal record without its stop. No deadline moves.
    *
    * The append comes first, so a failure of either write leaves the goal in STOP with the card's stop lifted. The command run
-   * again in that state for a ruled finding of the lifted decision writes no ruling (`ruled: false`) and completes the
+   * again in that state for a ruled finding of the lifted decision, lifted no earlier than the goal's stop, writes no ruling (`ruled: false`) and completes the
    * re-admission with the `by` of the lift; the event is appended only when none follows the goal's last `GOAL_STOPPED`.
    * The goal read, its checks (STOP for review, terminal, the generation), the journal scan, the append and the goal write
    * are one section of the goal lock (`<goal file>.lock`, `updateJson`), which only this method takes: two rulings are
@@ -1008,7 +1013,7 @@ export class GoalController {
     const forReview = goal.state === 'STOP' && goal.stop?.reason === 'review';
     const before = forReview ? this.store.getCardRun(goal.id, card.id) : undefined;
     const lifted = before && before.state !== 'STOP' && !before.stop ? before.review.invocations.filter((i) => i.stopLifted).at(-1) : undefined;
-    const rerun = Boolean(before && lifted?.candidateSha && findingsOfCandidate(before.findings, 'formal', lifted.candidateSha).some((f) => f.id === findingId.toUpperCase() && f.ruling));
+    const rerun = Boolean(before && lifted?.candidateSha && actsOnStop(goal, lifted.stopLifted!.at) && findingsOfCandidate(before.findings, 'formal', lifted.candidateSha).some((f) => f.id === findingId.toUpperCase() && f.ruling));
     const run = rerun ? before! : runner.ruleFinding(goal, card, findingId, ruling);
     if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
@@ -1021,8 +1026,8 @@ export class GoalController {
    * or `reason` and a `decisions` outside 1 to 4 are refused before the card run is read, on every path; they and a throw of the
    * runner before its write leave every record as it was. When the goal is in STOP for the reason of the lifted stop, it is
    * re-admitted as `ruleFinding` re-admits it, with one `GOAL_STATE` from STOP to CARDS whose `continuation` names the card and
-   * `by`. A run out of STOP whose last continuation lifted a stop of the goal's stop reason, while the goal is still in STOP for it,
-   * gets no second continuation (`continued: false`): the call completes the re-admission with the `by` of the recorded one. A
+   * `by`. A run out of STOP whose last continuation lifted a stop of the goal's stop reason, no earlier than that stop, while the goal is still in STOP for it,
+   * gets no second continuation (`continued: false`): the call completes the re-admission with the `by` of the recorded one, and for a `ci` stop refuses a given `decisions`. A
    * failure after the runner's write is thrown and nothing is undone: an event not appended stays owed for `aidlc card next`.
    */
   continueCard(runner: { continueStop(goal: Goal, card: Card, act: Omit<ContinuationAct, 'at'>): CardRun }, goalId: string, card: Card, act: Omit<ContinuationAct, 'at'>): { run: CardRun; goal: Goal; continued: boolean; readmitted: boolean } {
@@ -1036,7 +1041,8 @@ export class GoalController {
     const reason = goal.state === 'STOP' ? goal.stop?.reason : undefined;
     const before = this.store.getCardRun(goal.id, card.id);
     const last = reason && before && before.state !== 'STOP' ? before.continuations.at(-1) : undefined;
-    const rerun = Boolean(last && last.stop.reason === reason);
+    const rerun = Boolean(last && last.stop.reason === reason && actsOnStop(goal, last.at));
+    if (rerun && reason === 'ci') refuseCiDecisions(act);
     const run = rerun ? before! : runner.continueStop(goal, card, act);
     if (!reason) return { run, goal, continued: true, readmitted: false };
     // The section re-admits only a goal in STOP for the reason of the lifted stop.

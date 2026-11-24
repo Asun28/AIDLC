@@ -64,7 +64,7 @@ Later that day the owner created goal g-20261124092245-0787a2 for card T0-LAYER-
 ## Decisions left to the owner
 Settled on 2026-11-24 (Decisions): the goal for card T0-LAYER-ORDER-TEST, the line that supersedes `docs/LESSONS.md` line 32, and the issue for the sweep. One decision is open.
 
-1. Card 1 changes text that every formal review receives, and the paragraph of `docs/OPERATIONS.md` that begins "The reviewer bench stays outside the loop" asks for a reviewer bench comparison before such a change; the main checkout holds no record of one for PR 464. Codex advises the full comparison of the formal stage (30 confirmed cases, 3 trials, the commit before 50008e4d against it, 180 reviews). The coordinator advises reading the kept reviews first: the comparison takes about 4.3 hours of reviewer time at the median of 1.4 minutes per review.
+1. Card 1 changes text that every formal review receives, and the paragraph of `docs/OPERATIONS.md` that begins "The reviewer bench stays outside the loop" asks for a reviewer bench comparison before such a change; the main checkout holds no record of one for PR 464. Codex advises the full comparison of the formal stage (30 confirmed cases, 3 trials, the commit before 50008e4d against it, 180 reviews). The coordinator advises reading the kept reviews first: the comparison takes about 4.3 hours of reviewer time at the median of 1.4 minutes per review. Card T0-MUTANT-STATE-BENCH, `todo` and in no goal, holds the comparison for a later run; its two bench runs are made before its goal is opened.
 
 ## Open questions
 - (none)

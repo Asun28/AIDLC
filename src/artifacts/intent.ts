@@ -74,6 +74,21 @@ export interface IntentValidation {
   intent?: Partial<Intent>;
 }
 
+const LIST_MARKER = /^\s*(?:[-*+]|\d+[.)])(?:\s+|$)/;
+
+/** One item per list item or paragraph: a line with no list marker that follows a line of text continues its item. */
+function openQuestionsOf(section: string): string[] {
+  const items: string[] = [];
+  let open = false;
+  for (const line of section.split('\n')) {
+    const text = line.replace(LIST_MARKER, '').trim();
+    if (open && text && !LIST_MARKER.test(line)) items[items.length - 1] += ` ${text}`;
+    else if (text) items.push(text);
+    open = Boolean(text);
+  }
+  return items.filter((q) => !/^\(none(?:[:;][^()]*)?\)$/.test(q));
+}
+
 export function parseIntent(text: string): IntentValidation {
   const doc = splitFrontMatter(text);
   const problems: string[] = [];
@@ -88,10 +103,7 @@ export function parseIntent(text: string): IntentValidation {
   }
   if (!fm['title']) problems.push('front matter needs title');
   if (!fm['status'] || !['draft', 'review', 'accepted', 'closed'].includes(String(fm['status']))) problems.push('status must be draft|review|accepted|closed');
-  const questions = (sections.get('open questions') ?? '')
-    .split('\n')
-    .map((l) => l.replace(/^\s*-\s*/, '').trim())
-    .filter((l) => l && l !== '(none)');
+  const questions = openQuestionsOf(sections.get('open questions') ?? '');
   return {
     ok: problems.length === 0,
     problems,

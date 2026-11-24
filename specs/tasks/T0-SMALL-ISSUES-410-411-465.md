@@ -1,7 +1,7 @@
 ---
 id: T0-SMALL-ISSUES-410-411-465
 title: "Three small fixes in one card: a lift earlier than the goal's current stop re-admits nothing (issue 410), a ci rerun of card continue refuses --decisions (issue 411), and parseIntent reads a wrapped open question as one (issue 465)"
-status: todo
+status: merged
 branch: T0-SMALL-ISSUES-410-411-465
 worktree: D:\wt\AIDLC\T0-SMALL-ISSUES-410-411-465
 allow_paths:
@@ -61,3 +61,45 @@ npm run typecheck && node --test tests/scenarios/card-continue-goal.test.ts test
 ```
 - Expected exit code: 0
 - Assertion: the rows of acceptance 1 to 5 and every existing test of those files pass.
+
+## PR summary
+
+### What
+This change fixes issues 410, 411 and 465 in one pull request.
+
+### Why / Intent
+An old lift of a stop could re-admit a goal that another card stopped. A repeated ci continuation ignored a wrong option. A wrapped open question counted as more than one question.
+
+### How / Behaviour
+A repeated lift now needs a time that is not earlier than the stop of the goal. A repeated ci continuation refuses the decisions option. The intent parser joins a wrapped line to its question.
+
+### System impact
+The change affects the goal controller, the continuation engine and the intent parser. No stored record changes its form.
+
+### Security
+The change adds no input, no permission and no network call.
+
+### Tests and review
+Five new tests fail on the old code and pass on the new code. The formal review gate reviews the final commit.
+
+### Risk
+A lift and a goal stop in the same millisecond count as one event, as before. A clock that moves back makes the repeated lift fail. The operator then resumes the goal.
+
+### Ownership
+The repository owner owns this change.
+
+### Docs
+The operations and architecture documents state the new rules. The change adds one changelog entry.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `card-continue-goal.test.ts`, test "acceptance 1" of this card | RED at 14a98207, passes |
+| 2 | `review-rule-goal.test.ts`, test "acceptance 2" of this card | RED at 14a98207, passes |
+| 3 | `card-continue-ci.test.ts`, test "acceptance 3" of this card | RED at 14a98207, passes |
+| 4 | `intent.test.ts`, test "acceptance 4" of this card | RED at 14a98207, passes |
+| 5 | `intent.test.ts`, test "acceptance 5" of this card | RED at 14a98207, passes |
+| 6 | the DoD command; the diff of the two documents and the fragment | exit 0; reviewer-verified |
+
+Each rule removed alone fails at least one test: the time check of each method, the comparison at equality, the refusal of `decisions` and its limit to `ci`, the blank line that ends an item, each marker form, and the two limits of the `(none` form.
