@@ -37,6 +37,14 @@ describe('T0-INIT-CLI-PATH: aidlcOnPath', () => {
     assert.equal(aidlcOnPath({ PATH: '"C:\\Program Files\\npm"' }, 'win32', winFs(['C:\\Program Files\\npm\\aidlc.cmd']).isFile), true, 'a quoted entry');
   });
 
+  test('acceptance 1: win32 finds a Path and a PATHEXT held in non-enumerable keys, and takes the first spelling in key order [R2]', () => {
+    const hidden: NodeJS.ProcessEnv = {};
+    Object.defineProperty(hidden, 'Path', { value: 'C:\\two', enumerable: false });
+    Object.defineProperty(hidden, 'PathExt', { value: '.PS1', enumerable: false });
+    assert.equal(aidlcOnPath(hidden, 'win32', winFs(['C:\\two\\aidlc.ps1']).isFile), true);
+    assert.equal(aidlcOnPath({ Path: 'C:\\one', PATH: 'C:\\two' }, 'win32', winFs(['C:\\two\\aidlc.cmd']).isFile), false, 'the first key is Path');
+  });
+
   test('acceptance 1: elsewhere PATH is split by colon and only a file named aidlc counts [R1] [R2]', () => {
     assert.equal(aidlcOnPath({ PATH: '/usr/bin:/home/u/.npm/bin' }, 'linux', fakeFs(['/home/u/.npm/bin/aidlc']).isFile), true);
     assert.equal(aidlcOnPath({ PATH: '/usr/bin:/home/u/.npm/bin' }, 'linux', fakeFs(['/home/u/.npm/bin/aidlc.cmd']).isFile), false);
@@ -91,12 +99,32 @@ describe('T0-INIT-CLI-PATH: initCli', () => {
   });
 });
 
+/** A copy of `source` whose only PATH, in any letter case, is `pathDir`; every other own variable, enumerable or not and `__proto__` included, is an own data property of the copy. */
+function envWithPath(source: NodeJS.ProcessEnv, pathDir: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  const define = (name: string, value: unknown) => Object.defineProperty(env, name, { value, enumerable: true, configurable: true, writable: true });
+  for (const name of Object.getOwnPropertyNames(source)) if (name.toUpperCase() !== 'PATH') define(name, Reflect.get(source, name));
+  define('PATH', pathDir);
+  return env;
+}
+
 describe('T0-INIT-CLI-PATH: the init report', () => {
+  test('acceptance 3: the child environment drops every spelling of PATH and keeps a non-enumerable variable and one named __proto__ [R4]', () => {
+    const source: NodeJS.ProcessEnv = { Path: 'a', PATH: 'b', path: 'c', Kept: 'k', PATHEXT: '.CMD' };
+    Object.defineProperty(source, 'Hidden', { value: 'h', enumerable: false });
+    Object.defineProperty(source, 'pAtH', { value: 'd', enumerable: false });
+    Object.defineProperty(source, '__proto__', { value: 'p', enumerable: true });
+    const env = envWithPath(source, 'dir');
+    assert.deepEqual(Object.getOwnPropertyNames(env).sort(), ['Hidden', 'Kept', 'PATH', 'PATHEXT', '__proto__'].sort());
+    for (const [name, value] of [['Hidden', 'h'], ['Kept', 'k'], ['PATH', 'dir'], ['PATHEXT', '.CMD'], ['__proto__', 'p']] as const) {
+      assert.deepEqual(Object.getOwnPropertyDescriptor(env, name), { value, enumerable: true, configurable: true, writable: true }, name);
+    }
+    assert.equal(Object.getPrototypeOf(env), Object.prototype, 'the prototype is not replaced');
+  });
+
   /** `node src/cli/main.ts init <dir> --json` with PATH, under any case of its key, replaced by `pathDir`. */
   function initWithPath(pathDir: string): Record<string, unknown> {
-    const env: Record<string, string | undefined> = {};
-    for (const [k, v] of Object.entries(process.env)) if (k.toUpperCase() !== 'PATH') env[k] = v;
-    env['PATH'] = pathDir;
+    const env = envWithPath(process.env, pathDir);
     const target = tmpDir('aidlc-init-cli-');
     dirs.push(target);
     const r = spawnSync(process.execPath, [path.join(ROOT, 'src', 'cli', 'main.ts'), 'init', target, '--json'], { encoding: 'utf8', env, windowsHide: true, timeout: 120_000 });
