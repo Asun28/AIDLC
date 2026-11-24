@@ -1,7 +1,7 @@
 ---
 id: T0-DOD-VENV
 title: "The DoD call (dodCall) runs the dod_command with the scripts directory of a Python virtualenv first on PATH when the card worktree or, for the loop-run DoD, the main checkout holds one (.venv, else venv), and the loopDod record names that virtualenv"
-status: todo
+status: merged
 branch: T0-DOD-VENV
 worktree: D:\wt\AIDLC\T0-DOD-VENV
 allow_paths:
