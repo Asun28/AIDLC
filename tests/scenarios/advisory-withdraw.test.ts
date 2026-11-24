@@ -23,6 +23,9 @@ const STANDARDS = `[standards] 9 error handling @ ${FILE}:1: the value is unchec
 const ADVISORY = `${JSON.stringify({ verdict: 'block', reasons: [STANDARDS], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: [STANDARDS] } } })}\n`;
 const SPEC = `[spec] 6 tests missing @ ${FILE}:1: no test covers the value -> add one`;
 const BLOCKING = `${JSON.stringify({ verdict: 'block', reasons: [SPEC], axes: { spec: { verdict: 'block', reasons: [SPEC] }, standards: { verdict: 'pass', reasons: [] } } })}\n`;
+const RERAISED = `[spec] 6 tests missing @ ${FILE}:1: still no test covers the value (re:F1) -> add one`;
+const RERAISE = `${JSON.stringify({ verdict: 'block', reasons: [RERAISED], axes: { spec: { verdict: 'block', reasons: [RERAISED] }, standards: { verdict: 'pass', reasons: [] } } })}
+`;
 const CONFIG = {
   gateRequired: false,
   formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false },
@@ -70,9 +73,13 @@ function setup(verdicts: string[]) {
   const review = () => cardRunner.formalReview(g(), card, stored());
   const withdraw = (): CardRun => cardRunner.withdrawCandidate(g(), card, stored(), FINDING);
   const dispute = (): CardRun => cardRunner.disputeFinding(g(), card, stored(), 'F1', 'tests/t0-aw.test.ts covers the value');
+  const rule = (): unknown => cardRunner.ruleFinding(g(), card, 'F1', { decision: 'rejected', by: 'the owner', reason: 'tests/t0-aw.test.ts covers the value' });
+  /** Append to the ledger, as a ship does, an invocation that copies the last one with `change`. */
+  const record = (change: Partial<CardRun['review']['invocations'][number]>): CardRun =>
+    fx.store.updateCardRun(goal.id, CARD, (run) => ({ ...run!, review: { ...run!.review, invocations: [...run!.review.invocations, { ...run!.review.invocations.at(-1)!, ruled: undefined, ...change }] } }));
   const merges = () => fx.ops.list({ goalId: goal.id, cardId: CARD, kind: 'merge' });
   const events = () => fx.events(goal.id).length;
-  return { fx, goalId: goal.id, stored, next, bind, review, withdraw, dispute, merges, events };
+  return { fx, goalId: goal.id, stored, next, bind, review, withdraw, dispute, rule, record, shipped: () => ship.requests.map((r) => r.candidateSha), merges, events };
 }
 
 async function withSetup(verdicts: string[], body: (s: ReturnType<typeof setup>) => Promise<void>): Promise<void> {
@@ -169,3 +176,24 @@ for (const moved of [false, true]) {
       assert.equal(s.merges().length, 1);
     }));
 }
+
+test('T0-ADVISORY-WITHDRAW acceptance 3: a ruled pass stays the standing decision: an advisory block recorded after it and a moved HEAD reach the ship path as on main [R3]', () =>
+  withSetup([BLOCKING, RERAISE], async (s) => {
+    const c1 = commit(s.fx, 1);
+    assert.equal(await decideFirst(s, c1), 'block-defect');
+    s.next();
+    const c2 = commit(s.fx, 2);
+    s.bind(c2, 2);
+    assert.equal(s.next().directive.kind, 'review');
+    s.dispute();
+    await s.review();
+    assert.equal(s.next().directive.kind, 'stop');
+    s.rule();
+    assert.deepEqual([s.stored().state, s.stored().review.invocations.at(-1)?.ruled], ['SHIP', true]);
+    s.record({ invocationId: 'ship:op-row', reviewer: 'ship-reviewer', outcome: 'block', mergeBlocking: false });
+    const c3 = commit(s.fx, 3);
+    assert.notEqual(c3, c2);
+    const { directive } = s.next();
+    assert.ok(directive.kind !== 'wait' || directive.on !== 'candidate-moved', directive.narration);
+    assert.deepEqual(s.shipped(), [c2], 'the ship path gets the ruled candidate');
+  }));
