@@ -1,7 +1,7 @@
 ---
 id: T0-CHECK-TREE
 title: "npm run check:tree runs the eight test files that read whole directories of the tree, and the card template of this repository names it for every dod_command"
-status: todo
+status: merged
 branch: T0-CHECK-TREE
 worktree: D:\wt\AIDLC\T0-CHECK-TREE
 allow_paths:
