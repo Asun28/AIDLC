@@ -1,0 +1,1 @@
+- T0-UI-VERIFY-SKILL: `aidlc init` installs an optional skill, `ui-verify`: how a project writes its interface verify skill, and which screenshots, and video for motion or timing, a card that changes a user-visible interface keeps with `aidlc evidence retain`; it adds no gate, and the audit does not report an old capture as stale.
