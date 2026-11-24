@@ -66,3 +66,43 @@ npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/i
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass and the existing init, template, mirror, size, command-line, changelog and prose tests pass unchanged.
+
+## PR summary
+### What
+`aidlc init` checks whether `aidlc` is on PATH. When it is not, init prints the `node "<path>/bin/aidlc.js"` command and the `npm link` alternative.
+
+### Why / Intent
+Setup does not put `aidlc` on PATH. The commands in the skill and in CLAUDE.md failed as written (issue 451).
+
+### How / Behaviour
+The init report gains a `cli` field, and the `next` line names the command that works. A path with `$`, a backtick, `%` or `"` gets a plain-text note and no command.
+
+### System impact
+Only `aidlc init` output changes. Entry check 1 of the skill and the CLAUDE.md section get one fallback line each. Three redundant phrases leave SKILL.md to stay under its 4500-byte cap.
+
+### Security
+The check reads PATH and PATHEXT and looks for files. It starts no process, and it skips empty PATH entries.
+
+### Tests and review
+The new test file covers the PATH rules, the output shapes and a real `init` run. R3 blocked decisions 1 to 4. The owner amended R3, R4 and the DoD, and admitted decision 5.
+
+### Risk
+Low. A wrong PATH result changes only the printed hint. Other special characters, such as `&`, keep the quoted command, as the owner ruled.
+
+### Ownership
+The aidlc maintainers own `src/scaffold/init.ts`.
+
+### Docs
+The change updates `docs/OPERATIONS.md`, `README.md` and the changelog fragment.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/init-cli-path.test.ts`, the three `aidlcOnPath` tests. RED at af753892: the file did not load, because the export does not exist. Repair of R3 decision 3: a fourth test covers a Path and a PATHEXT in non-enumerable keys, and two spellings of PATH (the first key in order counts); RED at 2f1abbae, where the lookup read enumerable keys only | pass |
+| 2 | Same file, `acceptance 2: the command is aidlc ...` | pass |
+| 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run. With the `cli` field taken out of the report on the merged tree (48f54d7b), this test fails. Repair of R3 decision 3: `acceptance 3: the child environment replaces every spelling of PATH and PATHEXT ...` covers each input form of the copy: several spellings of PATH and PATHEXT, a non-enumerable one of each, another non-enumerable variable and one named `__proto__`. The copy opens no file and starts no process. Repair of R3 decision 4: the real run also starts from a machine environment with two spellings of `PATHEXT=.EXE;.PS1` and an `aidlc` on PATH; RED on Windows at 1df1e7b9, where that PATHEXT reached the child. The file passes with PATHEXT `.EXE;.PS1` and empty, an `aidlc` on PATH, HOME unset, spaces in TEMP, AIDLC_* set, and a working directory that holds an `aidlc`. A temporary directory whose path holds the PATH delimiter is not covered | pass |
+| 4 | Same file, the two text tests. Both failed on the text of main once the exports existed | pass |
+| 5 | The DoD: init, init-no-package, cli-cwd-paths, templates, coordinator-effort, mirror, claude-md-size, command-lines, changelog-fragments, prose, test-temp | pass; text reviewer-verified |
+| 6 | Same file, `acceptance 6: ...`. RED at 9ae37009: the file did not load, because `initNextLine` did not exist. With the special-path rule disabled on the merged tree (48f54d7b), this test fails | pass |
+
+Correction to the receipt of attempt 1: the full `npm test` run it names started before b3602601 was committed, and files changed while it ran. It is not evidence for that commit; the DoD run on b3602601 is.

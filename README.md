@@ -29,6 +29,8 @@ node bin/aidlc.js next             # one directive: ask | plan | project-cards |
 node bin/aidlc.js run --goal <id> --max-steps 40  # drive a goal with the claude-code provider until attention is needed
 ```
 
+The commands below and in the skills call `aidlc`. Setup does not put it on PATH: run `npm link` in this checkout, or run `node <checkout>/bin/aidlc.js` in its place. When `aidlc` is not on PATH, `aidlc init` prints `aidlc is not on PATH: run each aidlc command as node "<checkout>/bin/aidlc.js" <command>, or run npm link in "<checkout>" to put aidlc on PATH`, and its `next` line names `node "<checkout>/bin/aidlc.js" doctor` in place of `aidlc doctor`. Its JSON report carries the field `cli`: `onPath`, `command` (`aidlc` or the `node` command) and, when `aidlc` is not on PATH, `note`. When the checkout path holds `$`, a backtick, `%` or `"`, which a shell can expand or end a quote at, `init` prints no command: `cli` has no `command`, the note names the checkout in plain text and says to run node with its `bin/aidlc.js`, quoted for your shell, or to run `npm link` there, and the `next` line reads `next: review aidlc.config.json, then run doctor through node as the line above says`.
+
 The loop is `next` -> act -> `report` -> `next`:
 
 ```bash

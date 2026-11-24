@@ -16,6 +16,7 @@ Skill: `.claude/skills/aidlc-loop/SKILL.md`. Review policy: `REVIEW.md`.
 - `aidlc audit verify --goal <id>`     journal chain, operations, manifest, level
 - `aidlc release start --goal <id>`     release attempt for the target set by `aidlc goal new --target`
 - `aidlc monitor check --bands bands.yaml --data <file>`  control bands -> intent
+- No `aidlc` on PATH: run `node <aidlc checkout>/bin/aidlc.js` in its place, or `npm link` in that checkout; `aidlc init` prints the path.
 
 ### Artifact chain (each stage commits what the next consumes)
 intent/<slug>.md -> specs/<slug>.md -> plans/<slug>.md -> specs/tasks/<id>.md
