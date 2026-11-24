@@ -81,3 +81,55 @@ npm run typecheck && npm run check:tree && node --test tests/surface/check-tree.
 ```
 - Expected exit code: 0
 - Assertion: the two new tests and the eight whole-tree files pass, the other test files pass with no line changed, and the typecheck is clean.
+
+## PR summary
+
+### What
+A new script, `npm run check:tree`, runs the eight test files that read whole directories. The card template of this repository names the script.
+
+### Why / Intent
+A test that reads a whole directory can fail on any card. Seven cards passed their DoD and then failed CI on one of these tests.
+
+### How / Behaviour
+`package.json` holds the script with a fixed list of eight files. One comment line in `specs/tasks/_TEMPLATE.md` tells the card writer to run it after the typecheck. No gate checks that a card uses it.
+
+### System impact
+No file under `src/` changes. The script adds about 3.4 seconds to each DoD run that uses it.
+
+### Security
+The change adds no input, secret, permission or network access.
+
+### Tests and review
+Two new tests fail on the base and pass on the change. Eight single wrong edits each make a new test fail. The R3 review gate checks the change.
+
+### Risk
+Low. A card writer can leave the script out. A new whole-tree test is not in the list until a card adds it.
+
+### Ownership
+Card `T0-CHECK-TREE`, goal `g-20261124105958-34f044`. The repository owner asked for the card after a backtest of the failed CI runs.
+
+### Docs
+The card template is the document. The template that `aidlc init` installs does not change. There is no changelog fragment, because no behaviour of the package changes.
+
+## Attempt evidence
+RED: commit 533ebb04c63db68de4f7f5523c981d2bb12d75b8 holds the new test file alone. `node --test tests/surface/check-tree.test.ts` exits 1 there: 2 tests, 2 fail, each with `ERR_ASSERTION`.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/check-tree.test.ts`, test 1: the script equals the command, and each of the eight files exists | pass |
+| 2 | Test 2: the line after `dod_command` equals the comment; `templates/cards/_TEMPLATE.md` does not hold `check:tree` | pass |
+| 3 | DoD arm 2, `npm run check:tree`, exit 0 | pass |
+| 4 | DoD arm 1, exit 0; the eight other test files of DoD arm 3 pass, and the diff of `tests/` holds the new file only | pass |
+
+Guard sweep: each edit made alone, `node --test tests/surface/check-tree.test.ts` run, then the file restored.
+
+| Edit | Test that fails |
+|---|---|
+| the script is removed | test 1 |
+| the last file of the script is dropped | test 1 |
+| two files of the script are swapped | test 1 |
+| the script names a file that does not exist | test 1 |
+| the template line is removed | test 2 |
+| the template line comes after `dod_exit` | test 2 |
+| the template line names another script | test 2 |
+| the installed template holds `check:tree` | test 2 |
