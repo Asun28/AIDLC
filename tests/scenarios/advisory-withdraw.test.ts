@@ -177,20 +177,37 @@ for (const moved of [false, true]) {
     }));
 }
 
-test('T0-ADVISORY-WITHDRAW acceptance 3: a ruled pass stays the standing decision: an advisory block recorded after it and a moved HEAD reach the ship path as on main [R3]', () =>
+/** A candidate c2 that R3 passed by ruling, with an advisory block a ship recorded after it on the same digest. */
+async function ruledThenAdvisory(s: ReturnType<typeof setup>): Promise<string> {
+  const c1 = commit(s.fx, 1);
+  assert.equal(await decideFirst(s, c1), 'block-defect');
+  s.next();
+  const c2 = commit(s.fx, 2);
+  s.bind(c2, 2);
+  assert.equal(s.next().directive.kind, 'review');
+  s.dispute();
+  await s.review();
+  assert.equal(s.next().directive.kind, 'stop');
+  s.rule();
+  assert.deepEqual([s.stored().state, s.stored().review.invocations.at(-1)?.ruled], ['SHIP', true]);
+  s.record({ invocationId: 'ship:op-row', reviewer: 'ship-reviewer', outcome: 'block', mergeBlocking: false });
+  return c2;
+}
+
+test('T0-ADVISORY-WITHDRAW acceptance 6: a candidate with a ruled pass refuses the withdrawal whatever follows it, with nothing written [R1]', () =>
   withSetup([BLOCKING, RERAISE], async (s) => {
-    const c1 = commit(s.fx, 1);
-    assert.equal(await decideFirst(s, c1), 'block-defect');
-    s.next();
-    const c2 = commit(s.fx, 2);
-    s.bind(c2, 2);
-    assert.equal(s.next().directive.kind, 'review');
-    s.dispute();
-    await s.review();
-    assert.equal(s.next().directive.kind, 'stop');
-    s.rule();
-    assert.deepEqual([s.stored().state, s.stored().review.invocations.at(-1)?.ruled], ['SHIP', true]);
-    s.record({ invocationId: 'ship:op-row', reviewer: 'ship-reviewer', outcome: 'block', mergeBlocking: false });
+    await ruledThenAdvisory(s);
+    assert.equal(s.stored().effort?.terminal, 'succeeded', 'a success binds the candidate, so no earlier refusal answers');
+    const run = JSON.stringify(s.stored());
+    const events = s.events();
+    assert.throws(() => s.withdraw(), /^Error: R3 decided candidate/);
+    assert.equal(JSON.stringify(s.stored()), run, 'the stored run is unchanged');
+    assert.equal(s.events(), events, 'the journal is unchanged');
+  }));
+
+test('T0-ADVISORY-WITHDRAW acceptance 7: a ruled pass stays the standing decision: an advisory block recorded after it and a moved HEAD reach the ship path as on main [R3]', () =>
+  withSetup([BLOCKING, RERAISE], async (s) => {
+    const c2 = await ruledThenAdvisory(s);
     const c3 = commit(s.fx, 3);
     assert.notEqual(c3, c2);
     const { directive } = s.next();
