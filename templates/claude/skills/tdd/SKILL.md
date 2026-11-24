@@ -1,10 +1,10 @@
 ---
 name: tdd
 description: >-
-  Test quality reference for a card's RED receipt. Use when about to write
-  or change a test for a card in BUILD, or when judging a test against
-  REVIEW.md dimensions 6 and 11. Not a router: the loop decides when BUILD
-  runs and card-loop.md owns the process rules.
+  Test quality reference. Use when asked to add, write or change a test
+  ("add a test for X"), before a card's RED receipt in BUILD, or when
+  judging a test against REVIEW.md dimensions 6 and 11. Not a router: the
+  loop decides when BUILD runs and card-loop.md owns the process rules.
 ---
 # tdd: tests worth keeping
 

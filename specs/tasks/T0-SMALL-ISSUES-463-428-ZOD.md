@@ -94,3 +94,47 @@ npm run typecheck && npm run check:tree && node --test tests/surface/stdin-scrip
 ```
 - Expected exit code: 0
 - Assertion: the rows of acceptance 1 to 5, every existing test of those files, the tree checks, the build and every benchmark ceiling pass.
+
+## PR summary
+
+### What
+This change adds the hook guard `stdin-script`, rewords two skill descriptions and updates zod to 4.6.7. It closes issue 463 and Dependabot alert 1, and refers to issue 428.
+
+### Why / Intent
+Sessions ran `python -` and `node -` against a written rule, and some of these processes hung. The two descriptions used words that a user does not type. Zod before 4.6.6 can use all the memory on a large array.
+
+### How / Behaviour
+The guard stops a Bash or PowerShell command that feeds a program to Python, node or pwsh on standard input. It gives exit code 2 and the rule. A script file, an inline program and quoted text pass.
+
+### System impact
+Each repository that uses `aidlc init` gets the guard with the next version. The guard runs last and changes no other decision. No stored record changes its form.
+
+### Security
+The zod update removes advisory GHSA-mrhx-c7xc-m3w5. The guard is a reminder and not a security boundary. The change adds no permission and no network call.
+
+### Tests and review
+The new tests fail on the old code and pass on the new code. All 173 loosened forms of the guard fail a test. The formal review gate reviews the final commit.
+
+### Risk
+The guard can stop a correct command in a spelling that no test names. In 21,567 recorded commands it stopped 219, and each one broke the rule. It does not see every spelling.
+
+### Ownership
+The repository owner owns this change.
+
+### Docs
+The README and the operations and architecture documents describe the guard. The change adds one changelog entry.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `stdin-script.test.ts`, test 1 | RED at 726366de (unknown hook name), passes |
+| 2 | same file, test 2 | RED at 726366de, passes |
+| 3 | same file, test 3 | RED at 726366de, passes |
+| 4 | `small-issues-463-428-zod.test.ts`, test 1; `npm ci` in the worktree, then `npm install zod@^4.6.7`, installed version 4.6.7 | RED at 726366de, passes |
+| 5 | same file, test 2 | RED at 726366de, passes |
+| 6 | the diff of the four files; the readme entry is in the GREEN commit, since the RED commit has no such `HookName` | list entries only |
+| 7 | the DoD command | exit 0 |
+| 8 | the diff; `readme.test.ts`, `hook-name.test.ts`, `module-map.test.ts` | reviewer-verified, passes |
+
+Loosening sweep: 173 changed forms of `stdin-script.ts` and `entry.ts` (each prefix word, option, character class, quantifier, anchor, separator, lookbehind, early return and the pass order), each run alone, each fails a test. Forms a first sweep left uncaught were either removed from the source as redundant or given a row.

@@ -52,6 +52,7 @@ test('acceptance 2: a script file, an inline program, a module, quoted text and 
   for (const c of PS_PASSED) assert.deepEqual(runHook(GUARD, shell('PowerShell', c), { cwd: '.', env: {} }), PASSED, c);
   for (const c of [undefined, 7, ['python', '-']]) assert.deepEqual(runHook(GUARD, shell('Bash', c), { cwd: '.', env: {} }), PASSED);
   assert.deepEqual(runHook(GUARD, {}, { cwd: '.', env: {} }), PASSED);
+  assert.deepEqual(runHook(GUARD, shell('Edit', 'python -'), { cwd: '.', env: {} }), PASSED);
 });
 
 test('acceptance 3: both shells run the guard after every other guard, an edit does not, and each entry answers the same [R3]', () => {

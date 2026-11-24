@@ -105,6 +105,7 @@ The hook entries start one process per event, which runs the guards below and re
 | `protect-paths` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, the command, `hooks.frozenPaths` | a file path matches a frozen path, or a command that names one writes files |
 | `protect-tests` | `PreToolUse`: Edit, Write, MultiEdit | the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns` | a fix task is active and the file path matches a test pattern |
 | `secrets-guard` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, `content`, `new_string`, `command` | the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern |
+| `stdin-script` | `PreToolUse`: Bash, PowerShell | the command | the command starts `python`, `py`, `node` or `pwsh` on a program read from standard input, in one of the forms `docs/OPERATIONS.md` lists |
 | `verify-before-done` | `Stop` | goals, card runs, leases, the git status of planning files | never: it adds a reminder of a missing DoD receipt or of uncommitted planning files |
 | `route-new-work` | `UserPromptSubmit` | the prompt, the `aidlc.config.json` error | never: it prints the routing line |
 

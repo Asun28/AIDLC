@@ -43,6 +43,7 @@ const GUARD_CELLS: Record<HookName, [reads: string, blocks: string]> = {
   'protect-paths': ['the file path, the command, `hooks.frozenPaths`', 'a file path matches a frozen path, or a command that names one writes files'],
   'protect-tests': ['the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns`', 'a fix task is active and the file path matches a test pattern'],
   'secrets-guard': ['the file path, `content`, `new_string`, `command`', 'the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern'],
+  'stdin-script': ['the command', 'the command starts `python`, `py`, `node` or `pwsh` on a program read from standard input, in one of the forms `docs/OPERATIONS.md` lists'],
   'verify-before-done': ['goals, card runs, leases, the git status of planning files', 'never: it adds a reminder of a missing DoD receipt or of uncommitted planning files'],
   'route-new-work': ['the prompt, the `aidlc.config.json` error', 'never: it prints the routing line'],
 };
