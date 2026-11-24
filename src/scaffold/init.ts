@@ -230,7 +230,7 @@ export function resolveHookCommand(target: string, hookEntry?: string): string {
 /** The value of `name` in `env`; on Windows, where variable names have no case, the first key equal to it without case. */
 function envValue(env: Record<string, string | undefined>, name: string, platform: NodeJS.Platform): string | undefined {
   if (platform !== 'win32') return env[name];
-  const key = Object.keys(env).find((k) => k.toUpperCase() === name);
+  const key = Object.getOwnPropertyNames(env).find((k) => k.toUpperCase() === name);
   return key === undefined ? undefined : env[key];
 }
 
