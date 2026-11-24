@@ -1,7 +1,7 @@
 ---
 id: T0-UI-VERIFY-SKILL
 title: "An optional ui-verify skill, installed by aidlc init, says how a card that changes a user-visible interface runs the app and keeps screenshots, and video when motion or timing matters"
-status: todo
+status: merged
 branch: T0-UI-VERIFY-SKILL
 worktree: D:\wt\AIDLC\T0-UI-VERIFY-SKILL
 allow_paths:
