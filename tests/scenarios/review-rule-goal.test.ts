@@ -449,3 +449,42 @@ test('R3 decision 1, F3 and F4: the stop of a recorded R3 block decision names t
     }
   }
 });
+
+test('T0-SMALL-ISSUES-410-411-465 acceptance 2: after card A was ruled, shipped and closed and aidlc next stopped the goal again for card B, the ruling of A made again is refused with no byte changed; a lift one millisecond before the goal\'s stop is refused and one at the same instant completes the re-admission [R2]', async () => {
+  const fx = makeFixture(CONFIG);
+  try {
+    const s = await setup(fx, [CARD, SECOND]);
+    await s.stopCard(CARD);
+    await s.stopCard(SECOND);
+    s.stopGoal();
+    for (const id of ['F1', 'F2']) s.rule(id, 'the owner');
+    assert.equal(s.next().directive.kind, 'close');
+    s.runner.markClosure(s.g(), fx.card(CARD), s.persisted(), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    assert.equal(s.next().directive.kind, 'done');
+    fx.advance(1);
+    s.stopGoal();
+    const held = s.bytes();
+    assert.throws(() => s.rule('F2', 'the owner'), /the card run is in DONE, not stopped for review/);
+    assert.deepEqual(s.bytes(), held);
+    assert.deepEqual(s.readmissions(), [readmission(CARD, 'the owner')]);
+  } finally {
+    fx.cleanup();
+  }
+  for (const [ms, completes] of [[1, false], [0, true]] as const) {
+    const row = makeFixture(CONFIG);
+    try {
+      const s = await awaitingRecovery(row);
+      const at = s.persisted().review.invocations.filter((i) => i.stopLifted).at(-1)!.stopLifted!.at;
+      row.store.saveGoal({ ...s.g(), stop: { ...s.g().stop!, at: new Date(Date.parse(at) + ms).toISOString() } });
+      const held = s.bytes();
+      if (completes) {
+        assert.deepEqual([s.rule('F2', 'the owner').readmitted, s.g().state, s.readmissions()], [true, 'CARDS', [readmission(CARD, 'the owner')]]);
+        continue;
+      }
+      assert.throws(() => s.rule('F2', 'the owner'), /the card run is in SHIP, not stopped for review/);
+      assert.deepEqual(s.bytes(), held);
+    } finally {
+      row.cleanup();
+    }
+  }
+});

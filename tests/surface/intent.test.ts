@@ -61,3 +61,29 @@ test('empty open questions render as (none) and parse to []', () => {
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.intent?.openQuestions, []);
 });
+
+const withQuestions = (section: string) => parseIntent(renderIntent({ ...intent, openQuestions: ['SECTION'] }).replace('- SECTION', () => section)).intent!.openQuestions;
+
+test('T0-SMALL-ISSUES-410-411-465 acceptance 4: one open question per list item or paragraph, a wrapped line joined with one space, and parse then render keeps the list [R4]', () => {
+  const rows: Array<[string, string[]]> = [
+    ['- one?\n- two, wrapped\n  over two\n  lines?\n- three?', ['one?', 'two, wrapped over two lines?', 'three?']],
+    ['- one\nunindented?', ['one unindented?']],
+    ['- one\r\n  wrapped?\r\n- two?', ['one wrapped?', 'two?']],
+    ['* one?\n+ two?\n1. three?\n2) four\n   wrapped?', ['one?', 'two?', 'three?', 'four wrapped?']],
+    ['- one?\n  - nested?', ['one?', 'nested?']],
+    ['- one\n  --flag wrapped?', ['one --flag wrapped?']],
+    ['- one?\n\n  a paragraph after a blank line?', ['one?', 'a paragraph after a blank line?']],
+    ['one paragraph\nover two lines?\n\na second?', ['one paragraph over two lines?', 'a second?']],
+    ['- one?\n-\n- two?', ['one?', 'two?']],
+  ];
+  for (const [section, questions] of rows) {
+    const parsed = withQuestions(section);
+    assert.deepEqual(parsed, questions, section);
+    assert.deepEqual(parseIntent(renderIntent({ ...intent, openQuestions: parsed })).intent?.openQuestions, questions, section);
+  }
+});
+
+test('T0-SMALL-ISSUES-410-411-465 acceptance 5: an item that is (none), or (none followed by a colon or a semicolon and a text with no parenthesis inside, is no question; every other text that begins with (none is one [R5]', () => {
+  for (const note of ['(none)', '- (none)', '(none; settled by the owner decisions above)', '- (none: the engineer chose medium,\n  raised dynamically)']) assert.deepEqual(withQuestions(note), [], note);
+  for (const question of ['(none of the vendors answered; whom do we ask?)', '(none: settled) except which region?', '(none: x) and who pays (the owner?)', '(nonessential)', 'none']) assert.deepEqual(withQuestions(`- ${question}`), [question], question);
+});

@@ -198,3 +198,18 @@ test('acceptance 8: the JSON output and the human line hold the state, the conti
   const help = spawnSync(process.execPath, [MAIN, 'card', 'continue', '--help'], { encoding: 'utf8', windowsHide: true }).stdout;
   assert.match(help, /\breview\b.*\bci\b/s);
 });
+
+test('T0-SMALL-ISSUES-410-411-465 acceptance 3: card continue --decisions 1 after a ci continuation whose re-admission failed is refused with the runner\'s message and no byte changed; without --decisions the call completes the re-admission [R3]', () => scenario((s) => {
+  // The act lifts the card's stop and leaves the goal in STOP for ci, as a failed re-admission does.
+  s.go();
+  assert.deepEqual([s.persisted().state, s.g().state, s.g().stop?.reason], ['BUILD', 'STOP', 'ci']);
+  const held = s.bytes();
+  const refused = s.cli('card', 'continue', CARD, '--by', BY, '--reason', REASON, '--decisions', '1');
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /decisions 1 is given: a continuation of a ci stop admits a repair attempt, not R3 decisions/);
+  assert.deepEqual(s.bytes(), held);
+  const done = s.continueCli();
+  assert.equal(done.status, 0, done.stderr);
+  const report = JSON.parse(done.stdout);
+  assert.deepEqual([report.continued, report.readmitted, s.g().state, s.persisted().continuations.length], [false, true, 'CARDS', 1]);
+}));
