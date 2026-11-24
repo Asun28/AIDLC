@@ -180,6 +180,31 @@ describe('templates (Q14 packaging)', () => {
     }
   });
 
+  test('T0-UI-VERIFY-SKILL acceptance 2: ui-verify exists, is ASCII, carries frontmatter, stays within its cap, and its description names the interface, the captures and when to use it [R1]', () => {
+    const file = path.join(tpl, 'claude', 'skills', 'ui-verify', 'SKILL.md');
+    assert.ok(existsSync(file), 'ui-verify/SKILL.md missing');
+    const bytes = statSync(file).size;
+    assert.ok(bytes <= 3000, `ui-verify/SKILL.md is ${bytes} bytes > cap 3000`);
+    const text = readFileSync(file, 'utf8');
+    assert.ok(!/[^ -]/.test(text), 'ui-verify/SKILL.md must be ASCII so bytes == chars');
+    assert.ok(text.startsWith('---
+name: ui-verify
+'), 'ui-verify frontmatter must start with its name');
+    const opener = '
+description: >-
+';
+    assert.ok(text.includes(opener), 'ui-verify folded description');
+    const folded = text.slice(text.indexOf(opener) + opener.length);
+    const close = folded.indexOf('
+---
+');
+    assert.ok(close > 0, 'the frontmatter closes after the description');
+    const description = folded.slice(0, close).replace(/s+/g, ' ').trim().toLowerCase();
+    for (const term of ['interface', 'screenshot', 'video', 'use when']) {
+      assert.ok(description.includes(term), `the ui-verify description must name "${term}": ${description}`);
+    }
+  });
+
   test('REVIEW.md carries the two axes, the nit cap and the verdict contract', () => {
     const review = readFileSync(path.join(tpl, 'REVIEW.md'), 'utf8');
     assert.match(review, /spec/);
