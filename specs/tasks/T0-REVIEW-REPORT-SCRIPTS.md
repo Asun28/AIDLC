@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-REPORT-SCRIPTS
 title: "REVIEW.md says what blocks a report script under `bench/`, the policy version moves to REVIEW.md@8, and the card template and the planner say what a card for such a script asks for"
-status: todo
+status: merged
 branch: T0-REVIEW-REPORT-SCRIPTS
 worktree: D:\wt\AIDLC\T0-REVIEW-REPORT-SCRIPTS
 allow_paths:
