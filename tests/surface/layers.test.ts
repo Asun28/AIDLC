@@ -121,6 +121,18 @@ describe('layers of src/ (T0-LAYER-ORDER-TEST)', () => {
     ];
     for (const imp of none) assert.deepEqual(check([], [imp]), [], imp.join(' -> '));
     assert.deepEqual(check([], [['src/config.ts', 'loop'], ['src/loop/run.ts', '../config.ts']]), [], 'a package named as a unit is no edge');
+    // A relative specifier names the file the compiler resolves it to. These cases resolve against real files of the
+    // tree (src/config.ts, src/audit/manifest.ts, src/index.ts, src/loop/controller.ts, bench/run.ts): a rename fails them.
+    const sources = ['src/config.ts', 'src/audit/manifest.ts', 'src/index.ts'];
+    for (const [first, spec, pair] of [['src/config.ts', '../config.js', /^cycle: among audit, config\.ts$/], ['src/config.ts', '../config.jsx', /^cycle: among audit, config\.ts$/],
+      ['src/config.ts', '../config', /^cycle: among audit, config\.ts$/], ['src/index.ts', '..', /^cycle: among audit, index\.ts$/]] as const) {
+      const found = check(sources, [[first, './audit/manifest.ts'], ['src/audit/manifest.ts', spec]]);
+      assert.equal(found.length, 1, `${spec}: ${JSON.stringify(found)}`);
+      assert.match(found[0]!, pair);
+    }
+    one('src/state/store.ts', '../loop/controller.js', 'src/loop/controller.ts');
+    one('src/state/store.ts', '../loop/nothing.js', 'src/loop/nothing.js');
+    assert.deepEqual(check([], [['src/core/router.ts', '../../bench/run.js']]), [], 'resolved outside src/');
     one('src/core/router.ts', '../artifacts/card.ts', 'src/artifacts/card.ts');
     one('src/core/router.ts', 'node:fs', 'fs');
     one('src/core/router.ts', 'fs', 'fs');
