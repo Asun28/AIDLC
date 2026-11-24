@@ -232,13 +232,13 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 
-  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@7 since T1-REVIEW-SEVERITY-3), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@8 since T0-REVIEW-REPORT-SCRIPTS), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8');
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@8', `${file} policy version`);
     }
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
@@ -629,7 +629,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
   const ARCHITECTURE = 'findings (ids, dispositions, re-raises, revisions), their defect class (`ReviewFinding.class`) and their first-round misses (`outsideDelta`)';
   const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
-  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@7 [R12]', () => {
+  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@8 [R12]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
       const contract = review.slice(review.indexOf('## Output contract'));
@@ -643,15 +643,15 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
       assert.ok(reviewer.indexOf(REVIEWER_STEP) > reviewer.indexOf('8. End your turn'), `${file}: the class step follows step 8`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@8', `${file} policy version`);
     }
   });
 
-  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@7, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
+  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@8, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs');
+    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@8` in both configs');
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(opsHolds(operations), 'OPERATIONS.md carries the class paragraph and the policy version');
     assert.ok(architecture.includes(ARCHITECTURE), 'ARCHITECTURE.md names the finding class in the persisted-state table');
@@ -746,7 +746,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
   };
   const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
-  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@7 [R12] [R13]', () => {
+  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@8 [R12] [R13]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const contract = lf(readFileSync(file, 'utf8')).split('\n## Output contract\n')[1]?.split('\n## ')[0] ?? '';
       const lines = contract.split('\n');
@@ -755,7 +755,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
       assert.equal(lines.indexOf(REVIEW_PRE_EXISTING), tags + 1, `${file}: the pre-existing line follows it`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@7', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@8', `${file} policy version`);
     }
   });
 
@@ -763,7 +763,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const architecture = lf(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'));
     const changelog = lf(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
-    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs');
+    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@8` in both configs');
     const statsHold = (text: string) => sectionOf(text, '### Review statistics').includes(STATS.join(' '));
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(preReviewHolds(operations), 'OPERATIONS.md Pre-review carries the pre-existing paragraph and the policy version');
@@ -774,7 +774,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     for (const sentence of PRE_REVIEW) assert.equal(preReviewHolds(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of STATS) assert.equal(statsHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
-    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@7` in both configs', '')), false, 'removing the version sentence fails');
+    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@8` in both configs', '')), false, 'removing the version sentence fails');
   });
 });
 
@@ -818,15 +818,16 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     }
   });
 
-  test('acceptance 3: OPERATIONS.md names REVIEW.md@7 as the current version with every move before it, and names no earlier version as current; removing a move fails [R2]', () => {
+  test('acceptance 3: OPERATIONS.md names REVIEW.md@8 as the current version with every move before it, and names no earlier version as current; removing a move fails [R2]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const HISTORY = [
-      '(card T1-REVIEW-SEVERITY added the severity section;', ' T0-REVIEW-IMPACT-BAR moved it to `REVIEW.md@6` with the impact bar;',
+      '(card T0-REVIEW-REPORT-SCRIPTS added the report scripts section;', ' T1-REVIEW-SEVERITY moved it to `REVIEW.md@7` with the severity section;',
+      ' T0-REVIEW-IMPACT-BAR moved it to `REVIEW.md@6` with the impact bar;',
       ' T1-REVIEW-PRE-EXISTING moved it to `REVIEW.md@5` with the `[pre-existing]` tag;',
       ' T1-REVIEW-CLASS-SWEEP to `REVIEW.md@4` with the class tag,',
       ' T1-REVIEW-INPUTS to `REVIEW.md@3`)',
     ];
-    const holds = (text: string) => text.includes('`reviewPolicyVersion` is `REVIEW.md@7` in both configs ' + HISTORY.join(''));
+    const holds = (text: string) => text.includes('`reviewPolicyVersion` is `REVIEW.md@8` in both configs ' + HISTORY.join(''));
     assert.ok(holds(operations), 'the current version and every move before it');
     for (const clause of HISTORY) assert.equal(holds(operations.replace(clause, '')), false, `removing this clause still passes: ${clause}`);
     assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');
@@ -863,5 +864,60 @@ describe('the policy version the test titles name (T0-REVIEW-VERSION-TITLES)', (
     assert.equal(titles.length, [...source.matchAll(/^\s*test\(/gm)].length, 'every test title was read');
     const stale = titles.filter((title) => [...title.matchAll(/REVIEW\.md@\d+/g)].some((named) => named[0] !== versions[0]));
     assert.deepEqual(stale, [], `titles naming a version other than ${versions[0]}`);
+  });
+});
+
+describe('the report scripts section and the authoring line (T0-REVIEW-REPORT-SCRIPTS)', () => {
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  const SECTION = [
+    'Applies only to scripts under `bench/` that read this repository\'s records and write reports no loop command consumes.',
+    'For Bugs findings, this section replaces the report-only exception of the Impact bar.',
+    'Block for a named input produced by a repository command or explicitly supported by the card that yields a wrong published result or an incorrect refusal; a write outside designated output paths; or violation of an explicit card requirement or `forbid:` item.',
+    'A regenerable report is not authoritative loop state merely because it is saved.',
+    'Additional robustness for unsupported inputs is a `[suggestion]`.',
+    'Security findings and must-block dimensions retain their existing rules.',
+  ];
+  const section = `## Report scripts\n${SECTION.join(' ')}\n\n`;
+  const sectionHolds = (text: string) => {
+    const at = text.indexOf(`\n\n${section}## Untrusted content\n`);
+    return at >= 0 && text.slice(text.lastIndexOf('\n## ', at)).startsWith('\n## Do not report\n');
+  };
+  const LINE =
+    'A card for a report script under `bench/` names its input-producing commands, any other input it explicitly supports, and the results it publishes; a required refusal covers a failure one of those commands can produce or an explicit owner requirement, and more input validation is a non-goal.';
+  const templateHolds = (text: string) => {
+    const lines = text.split('\n');
+    const at = lines.findIndex((l) => l.startsWith('  # A card that reads input or adds I/O'));
+    return at >= 0 && lines[at + 1] === `  # ${LINE}`;
+  };
+  const plannerHolds = (text: string) => {
+    const rules = (text.split('\nRules:\n')[1] ?? '').split('\n');
+    const at = rules.findIndex((l) => l.startsWith('- Do not expand scope beyond the spec'));
+    return at >= 1 && rules[at - 1] === `- ${LINE}`;
+  };
+
+  test('acceptance 1: both REVIEW.md copies hold the report scripts section between Do not report and Untrusted content and are equal; removing a sentence or moving the section fails [R1]', () => {
+    const [template = '', live = ''] = [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')].map((file) => lf(readFileSync(file, 'utf8')));
+    assert.equal(live, template, 'the two copies are equal');
+    assert.ok(sectionHolds(live), 'the section stands in its place');
+    for (const sentence of SECTION) assert.equal(sectionHolds(live.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    const without = live.replace(section, '');
+    assert.equal(sectionHolds(without.replace('## Cap the nits\n', `${section}## Cap the nits\n`)), false, 'the section moved above Cap the nits still passes');
+    assert.equal(sectionHolds(live.replace('## Report scripts\n', '## Other\nText.\n\n## Report scripts\n')), false, 'another section after Do not report still passes');
+  });
+
+  test('acceptance 3: both card templates and both planner copies hold the authoring line in its place, the planner copies are equal; removing it from one file fails [R5] [R6]', () => {
+    const planners = [path.join(tpl, 'claude', 'agents', 'planner.md'), path.join(root, '.claude', 'agents', 'planner.md')];
+    const files: [string, (text: string) => boolean][] = [
+      [path.join(tpl, 'cards', '_TEMPLATE.md'), templateHolds],
+      [path.join(root, 'specs', 'tasks', '_TEMPLATE.md'), templateHolds],
+      ...planners.map((file): [string, (text: string) => boolean] => [file, plannerHolds]),
+    ];
+    for (const [file, holds] of files) {
+      const text = lf(readFileSync(file, 'utf8'));
+      assert.ok(holds(text), `${file}: the authoring line`);
+      assert.equal(holds(text.replace(LINE, '')), false, `${file}: removing the line still passes`);
+    }
+    const [template, live] = planners.map((file) => lf(readFileSync(file, 'utf8')));
+    assert.equal(live, template, 'the two planner copies are equal');
   });
 });
