@@ -1,7 +1,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { isBuiltin } from 'node:module';
 import path from 'node:path';
+import ts from 'typescript';
 
 const root = path.resolve(import.meta.dirname, '..', '..');
 
@@ -10,19 +12,56 @@ const ORDER = ['core', 'scaffold', 'probes', 'state', 'coordination', 'delivery'
 
 interface Edge { from: string; to: string; builtin: boolean }
 
+/** The top-level units of src/ that have no place in the order; rules R3 to R5 hold for them. */
+const UNRANKED = ['artifacts', 'audit', 'evals', 'maintain', 'providers', 'config.ts', 'index.ts'];
+
 /** The module specifiers of a TypeScript source text, read from its syntax tree [R1]. */
-function importsOf(_text: string, _fileName: string): string[] {
-  return [];
+function importsOf(text: string, fileName: string): string[] {
+  const out: string[] = [];
+  const visit = (n: ts.Node): void => {
+    if ((ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) out.push(n.moduleSpecifier.text);
+    else if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword && n.arguments[0] && ts.isStringLiteral(n.arguments[0])) out.push(n.arguments[0].text);
+    else if (ts.isImportTypeNode(n) && ts.isLiteralTypeNode(n.argument) && ts.isStringLiteral(n.argument.literal)) out.push(n.argument.literal.text);
+    ts.forEachChild(n, visit);
+  };
+  visit(ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS));
+  return out;
 }
 
-/** The edge of one specifier in one file (posix paths from the repository root), or none [R3]. */
-function edgeOf(_from: string, _spec: string): Edge | undefined {
-  return undefined;
+/** The edge of one specifier in one file (posix paths from the repository root): a file under src/, a Node built-in as `node:<name>`, or none [R3]. */
+function edgeOf(from: string, spec: string): Edge | undefined {
+  if (isBuiltin(spec)) return { from, to: spec.startsWith('node:') ? spec : `node:${spec}`, builtin: true };
+  if (!spec.startsWith('.')) return undefined;
+  const to = path.posix.join(path.posix.dirname(from), spec);
+  return to.startsWith('src/') ? { from, to, builtin: false } : undefined;
 }
 
 /** The findings of the four rules over the source files and their imports [R2] [R3] [R4] [R5]. */
-function findings(_sources: string[], _edges: Edge[], _order: string[] = ORDER): string[] {
-  return [];
+function findings(sources: string[], edges: Edge[], order: string[] = ORDER): string[] {
+  const unit = (file: string): string => file.split('/')[1]!;
+  const out: string[] = [];
+  for (const file of sources) if (!order.includes(unit(file)) && !UNRANKED.includes(unit(file))) out.push(`unplaced: ${unit(file)} (${file}) is in no list`);
+  const graph = new Map<string, Set<string>>();
+  for (const { from, to, builtin } of edges) {
+    const a = unit(from);
+    if (builtin) {
+      if (a === 'core' && to !== 'node:crypto') out.push(`core: ${from} imports ${to}`);
+      continue;
+    }
+    const b = unit(to);
+    if (a === b) continue;
+    if (a === 'core') out.push(`core: ${from} imports ${to}`);
+    if (order.includes(a) && order.includes(b) && order.indexOf(a) < order.indexOf(b)) out.push(`order: ${from} imports ${to} (${a} before ${b})`);
+    graph.set(a, (graph.get(a) ?? new Set()).add(b));
+  }
+  // Remove each unit whose imports are all removed; the units left lie on a cycle or import one.
+  const left = new Set([...graph.keys(), ...[...graph.values()].flatMap((s) => [...s])]);
+  for (let moved = true; moved;) {
+    moved = false;
+    for (const u of left) if (![...(graph.get(u) ?? [])].some((d) => left.has(d))) moved = left.delete(u);
+  }
+  if (left.size > 0) out.push(`cycle: among ${[...left].sort().join(', ')}`);
+  return out;
 }
 
 /** The findings of built lists: source files, and imports as [file, specifier]. */
