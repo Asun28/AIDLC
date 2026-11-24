@@ -84,7 +84,7 @@ Only `aidlc init` output changes. Entry check 1 of the skill and the CLAUDE.md s
 The check reads PATH and PATHEXT and looks for files. It starts no process, and it skips empty PATH entries.
 
 ### Tests and review
-The new test file covers the PATH rules, the output shapes and a real `init` run. R3 blocked decisions 1 and 2. The owner amended R3, R4 and the DoD.
+The new test file covers the PATH rules, the output shapes and a real `init` run. R3 blocked decisions 1, 2 and 3. The owner amended R3, R4 and the DoD.
 
 ### Risk
 Low. A wrong PATH result changes only the printed hint. Other special characters, such as `&`, keep the quoted command, as the owner ruled.
@@ -98,9 +98,9 @@ The change updates `docs/OPERATIONS.md`, `README.md` and the changelog fragment.
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `tests/infra/init-cli-path.test.ts`, the three `aidlcOnPath` tests. RED at af753892: the file did not load, because the export does not exist | pass |
+| 1 | `tests/infra/init-cli-path.test.ts`, the three `aidlcOnPath` tests. RED at af753892: the file did not load, because the export does not exist. Repair of R3 decision 3: a fourth test covers a Path and a PATHEXT in non-enumerable keys, and two spellings of PATH (the first key in order counts); RED at 2f1abbae, where the lookup read enumerable keys only | pass |
 | 2 | Same file, `acceptance 2: the command is aidlc ...` | pass |
-| 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run. With the `cli` field taken out of the report on the merged tree (48f54d7b), this test fails | pass |
+| 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run. With the `cli` field taken out of the report on the merged tree (48f54d7b), this test fails. Repair of R3 decision 3: `acceptance 3: the child environment drops every spelling of PATH ...` covers each input form of the copy: several spellings of PATH, a non-enumerable PATH, a non-enumerable variable, one named `__proto__`, and PATHEXT, which stays. The copy opens no file and starts no process | pass |
 | 4 | Same file, the two text tests. Both failed on the text of main once the exports existed | pass |
 | 5 | The DoD: init, init-no-package, cli-cwd-paths, templates, coordinator-effort, mirror, claude-md-size, command-lines, changelog-fragments, prose, test-temp | pass; text reviewer-verified |
 | 6 | Same file, `acceptance 6: ...`. RED at 9ae37009: the file did not load, because `initNextLine` did not exist. With the special-path rule disabled on the merged tree (48f54d7b), this test fails | pass |
