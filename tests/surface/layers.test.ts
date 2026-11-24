@@ -30,14 +30,13 @@ function importsOf(text: string, fileName: string): string[] {
 
 let options: ts.CompilerOptions | undefined;
 
-/** The file the compiler resolves a specifier to, in ECMAScript mode and then in CommonJS mode, as a posix path from the root. */
+/** The file the compiler resolves a relative specifier to, as a posix path from the root, or none. CommonJS mode: for a
+ * relative path it takes every spelling ECMAScript mode takes, to the same file, and also the extensionless and directory
+ * forms that `resolution-mode: require` allows. */
 function resolvedFile(from: string, spec: string): string | undefined {
   options ??= ts.parseJsonConfigFileContent(ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile).config, ts.sys, root).options;
-  for (const mode of [ts.ModuleKind.ESNext, ts.ModuleKind.CommonJS] as const) {
-    const file = ts.resolveModuleName(spec, path.join(root, from), options, ts.sys, undefined, undefined, mode).resolvedModule?.resolvedFileName;
-    if (file) return path.relative(root, file).split(path.sep).join('/');
-  }
-  return undefined;
+  const file = ts.resolveModuleName(spec, path.join(root, from), options, ts.sys, undefined, undefined, ts.ModuleKind.CommonJS).resolvedModule?.resolvedFileName;
+  return file === undefined ? undefined : path.relative(root, file).split(path.sep).join('/');
 }
 
 /** The edge of one specifier in one file (posix paths from the repository root): the file under src/ the specifier resolves
