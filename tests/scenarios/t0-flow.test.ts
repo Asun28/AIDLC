@@ -2104,6 +2104,7 @@ test('R5: PREPARE carries the count and the most recent lessons from docs/LESSON
       assert.deepEqual(r.directive.lessons?.recent, lines.slice(1), 'the five most recent lines');
     }
     assert.ok(r.directive.narration.includes('6 lessons so far'), r.directive.narration);
+    assert.ok(r.directive.narration.includes('docs/LESSONS.md') && !/\bread\b[^.]*docs\/LESSONS\.md/i.test(r.directive.narration), `names docs/LESSONS.md with no instruction to read it: ${r.directive.narration}`);
   } finally {
     fx.cleanup();
   }

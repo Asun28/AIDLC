@@ -2,10 +2,9 @@
  * Durable goal / card-run / release-attempt repository built on the atomic store.
  */
 import path from 'node:path';
-import { existsSync, readdirSync } from 'node:fs';
 import { CardRun, Goal, ReleaseAttempt, nowIso } from '../core/types.ts';
 import { staleLedger } from '../core/review-policy.ts';
-import { StoreError, atomicWriteJson, findInterruptedWrites, listJsonFiles, readJson, recoverInterruptedWrites, updateJson } from './store.ts';
+import { StoreError, atomicWriteJson, findInterruptedWrites, listJsonFiles, readDirNames, readJson, recoverInterruptedWrites, updateJson } from './store.ts';
 import type { StatePaths } from './paths.ts';
 
 export interface GoalStoreOptions {
@@ -113,7 +112,7 @@ export class GoalStore {
   /** Detect and clean interrupted writes across the state tree; returns what was found. */
   recover(): { interrupted: string[] } {
     const dirs = [this.paths.goals, this.paths.releases, this.paths.leases, this.paths.reviewQueue, this.paths.operations];
-    if (existsSync(this.paths.cards)) for (const d of readdirSync(this.paths.cards)) dirs.push(path.join(this.paths.cards, d));
+    for (const d of readDirNames(this.paths.cards)) dirs.push(path.join(this.paths.cards, d));
     const interrupted: string[] = [];
     for (const d of dirs) {
       const found = findInterruptedWrites(d);

@@ -75,6 +75,13 @@ describe('classifyVerdict (Q6)', () => {
     assert.deepEqual(detectQuotaHold('retry-after: 30s'), { hold: true, via: 'text', evidence: 'retry-after', retryAfterMs: 30_000 });
     assert.deepEqual(detectQuotaHold('Retry-After: 2 min'), { hold: true, via: 'text', evidence: 'Retry-After', retryAfterMs: 120_000 });
     assert.deepEqual(detectQuotaHold('all good'), { hold: false, via: 'text' });
+  });
+  test('T0-CLI-LIMIT-HOLD: the Claude CLI model-limit receipt of issue 385 with no verdict is a quota hold that names the phrase [R3]', () => {
+    const stdout = "You've hit your Fable limit · resets 1pm (Pacific/Auckland). Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue.\n";
+    const c = classifyVerdict(undefined, { receipt: { exitCode: 1, stdout, stderr: '' } });
+    assert.equal(c.outcome, 'quota-hold');
+    assert.equal(c.runStatus, 'tool_error');
+    assert.ok(c.reasons.includes('via text: hit your Fable limit'), c.reasons.join(' | '));
     assert.deepEqual(detectQuotaHold(undefined), { hold: false, via: 'text' });
   });
 
@@ -781,5 +788,34 @@ describe('parseVerdictDocument run_status (T0-AUDIT-FIXES R2)', () => {
       assert.equal(policy.parseVerdictDocument({ verdict: 'pass', reasons: [], run_status })?.run_status, run_status);
     }
     assert.equal(classifyVerdict(policy.parseVerdictDocument({ verdict: 'pass', reasons: [], sha: SHA, run_status: 'success' }), { candidateSha: SHA, tier: 'S' }).outcome, 'pass');
+  });
+});
+
+describe('recordReviewOutcome with an admitted count (card T1-CONTINUE-CORE)', () => {
+  const c = classifyVerdict(specBlock, { candidateSha: SHA, tier: 'S' });
+  const seeded = (n: number) => ReviewLedger.parse({ substantiveDecisions: n, substantiveBlocks: n });
+  const block = (n: number, admitted: number, repeated?: string[]) => recordReviewOutcome(seeded(n - 1), { ...inv(`i${n}`), decision: n }, c, specBlock, 0, repeated, admitted);
+
+  test('acceptance 4: the admitted count replaces the four-decision cap in both directions [R5]', () => {
+    const five = block(5, 5, []);
+    assert.equal(five.decision.action, 'stop-review', 'count 5, block on decision 5');
+    const detail = five.decision.action === 'stop-review' ? five.decision.detail : '';
+    assert.match(detail, /continuation/);
+    assert.match(detail, /\b5\b/);
+    assert.equal(five.ledger.invocations.at(-1)?.stopReview, detail, 'the recorded invocation carries the detail');
+    const six = block(5, 6, []);
+    assert.deepEqual(six.decision, { action: 'review-fix', remainingDecisions: 1 }, 'count 6, block on decision 5');
+    assert.deepEqual(recordReviewOutcome(six.ledger, { ...inv('i5'), decision: 5 }, c, specBlock, 0, [], 6).decision, six.decision, 'a replay decides with the same count');
+    assert.equal(block(3, 3, []).decision.action, 'stop-review', 'count 3, block on decision 3');
+  });
+
+  test('acceptance 5: the re-raise stop and a ship-path block decide as without a count [R6]', () => {
+    const reraise = block(2, 9, ['F1']);
+    assert.equal(reraise.decision.action, 'stop-review');
+    assert.match(reraise.decision.action === 'stop-review' ? reraise.decision.detail : '', /^second substantive block re-raised unresolved finding\(s\) F1$/);
+    for (const n of [1, 2, 3]) {
+      const without = recordReviewOutcome(seeded(n - 1), inv(`s${n}`), c, specBlock, 0);
+      assert.deepEqual(recordReviewOutcome(seeded(n - 1), inv(`s${n}`), c, specBlock, 0, undefined, 9), without, `ship-path block on decision ${n}`);
+    }
   });
 });

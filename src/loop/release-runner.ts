@@ -194,8 +194,8 @@ export class ReleaseRunner {
 
   /**
    * Every record of the operation ledger, read strictly: each listed `.json` entry is read and parsed, and one that cannot be
-   * fails the read with a store error (`OperationLedger.list` drops an entry `existsSync` cannot see). A directory that does not
-   * exist (ENOENT) is an empty ledger; any other listing error (ENOTDIR, EACCES) fails the read.
+   * fails the read with a store error (`OperationLedger.list` drops a listed entry whose read finds no entry, such as a link to
+   * nothing). A directory that does not exist (ENOENT) is an empty ledger; any other listing error (ENOTDIR, EACCES) fails the read.
    */
   private strictLedger(): OperationRecord[] {
     const dir = this.ops.dir;

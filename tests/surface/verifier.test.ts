@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { tmpDir } from '../infra/helpers.ts';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { failingFs, fsError, tmpDir } from '../infra/helpers.ts';
 import path from 'node:path';
-import { Journal } from '../../src/state/journal.ts';
+import { GENESIS_HASH, Journal } from '../../src/state/journal.ts';
+import { StoreError } from '../../src/state/store.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 import { OperationLedger } from '../../src/coordination/reconcile.ts';
@@ -202,6 +203,27 @@ test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, l
     assert.equal(finding.detail, `${count} mutation event(s) after terminal disposition`, name);
     assert.equal(report.level, 'recorded', name);
   }
+});
+
+test('T1-CONTINUE-AUDIT acceptance 2: a GOAL_STATE from STOP to CARDS carrying continuation with a string cardId and by ends a stop for review or ci of its generation, and nothing else does', () => {
+  const lifted = (data: Record<string, unknown>, generation = 0): [string, number, Record<string, unknown>] => ['GOAL_STATE', generation, { from: 'STOP', to: 'CARDS', ...data }];
+  const BLOCKS = '1 mutation event(s) after terminal disposition';
+  const rows: Array<[string, number, [string, number, Record<string, unknown>], string | undefined]> = [];
+  for (const reason of ['review', 'ci']) {
+    rows.push(
+      [`${reason}: neither ruling nor continuation`, 0, lifted({}), BLOCKS],
+      [`${reason}: continuation without by`, 0, lifted({ continuation: { cardId: 'T0-X' } }), BLOCKS],
+      [`${reason}: continuation whose cardId is not a string`, 0, lifted({ continuation: { cardId: 7, by: 'owner' } }), BLOCKS],
+      [`${reason}: continuation in another generation`, 1, lifted({ continuation: { cardId: 'T0-X', by: 'owner' } }, 0), BLOCKS],
+      [`${reason}: continuation with a string cardId and by`, 0, lifted({ continuation: { cardId: 'T0-X', by: 'owner' } }), undefined],
+    );
+  }
+  rows.push(['card: continuation with a string cardId and by', 0, lifted({ continuation: { cardId: 'T0-X', by: 'owner' } }), BLOCKS]);
+  rows.push(['ci: ruling with a string cardId and by', 0, lifted({ ruling: { cardId: 'T0-X', by: 'owner' } }), BLOCKS]);
+  rows.forEach(([name, generation, event, expected], i) => {
+    const report = journalOf([['GOAL_STOPPED', generation, { reason: name.split(':')[0] }], event, dispatch(generation)], `g-cont-${i}`);
+    assert.equal(afterTerminal(report)?.detail, expected, `${name}: ${JSON.stringify(report.findings)}`);
+  });
 });
 
 test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state which events re-admit a goal for WORK_AFTER_TERMINAL', () => {
@@ -477,4 +499,17 @@ test('T1-AUDIT-FACTS acceptance 8: docs/OPERATIONS.md (Audit), docs/ARCHITECTURE
     const text = section(file, heading);
     for (const sentence of sentences) assert.ok(text.includes(sentence), `${file.join('/')} (${heading}) states: ${sentence}`);
   }
+});
+
+test('T0-JOURNAL-READ-ENOENT acceptance 4 - verifyAudit refuses a goal journal it cannot read and reports a missing one as level none', () => {
+  const f = fixture();
+  assert.equal(existsSync(f.journal.file), false);
+  const audit = () => verifyAudit({ goalId: f.goalId, journal: f.journal, operations: f.operations, now });
+  const report = audit();
+  assert.deepEqual({ level: report.level, journal: report.journal, findings: report.findings }, { level: 'none', journal: { events: 0, head: GENESIS_HASH, ok: true }, findings: [] });
+  const message = 'EACCES: permission denied, open';
+  assert.throws(
+    () => failingFs('readFileSync', f.journal.file, fsError('EACCES', message), audit),
+    (err: unknown) => err instanceof StoreError && err.code === 'READ_FAILED' && err.file === f.journal.file && err.message === `READ_FAILED: ${message} (${f.journal.file})`,
+  );
 });

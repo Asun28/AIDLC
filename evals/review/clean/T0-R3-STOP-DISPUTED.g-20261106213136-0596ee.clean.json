@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-R3-STOP-DISPUTED.g-20261106213136-0596ee.clean",
+  "candidate": "ae68dd3033f5e65ded272301937f4d320f021ad4",
+  "base": "87e675c1db9efcb08eb4ef18f54f45dd6a3a2199",
+  "card": {
+    "id": "T0-R3-STOP-DISPUTED",
+    "path": "specs/tasks/T0-R3-STOP-DISPUTED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-R3-STOP-DISPUTED clean (goal g-20261106213136-0596ee)",
+  "note": "R3 decision 1 passed (codex)"
+}

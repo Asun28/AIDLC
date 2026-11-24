@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-XHIGH-COORDINATOR-EFFORT.g-20261116225057-912fa3.clean",
+  "candidate": "2ad68c6908d7cd9116b753d4a9a621f1c921c73e",
+  "base": "3bbbebb34a1ea737d51a9f765fb704798db91440",
+  "card": {
+    "id": "T1-XHIGH-COORDINATOR-EFFORT",
+    "path": "specs/tasks/T1-XHIGH-COORDINATOR-EFFORT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-XHIGH-COORDINATOR-EFFORT clean (goal g-20261116225057-912fa3)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -18,9 +18,11 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, findingMarker, followupFindings, followupIssueBody, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
+import { amendedDigest, changedContractFields, contractDigests, invalidatedBy } from '../core/contract.ts';
+import { admittedDecisions, continueCiStop, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
-import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
+import { LeaseStore, FencedError, resourceKeys, type ClaimResult } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { EvidenceStore } from '../audit/manifest.ts';
@@ -28,13 +30,13 @@ import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
-import { decideWorktree } from '../delivery/worktree.ts';
+import { codeSpan, decideWorktree, shellArg, worktreeStartCommands } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { dodCall, mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
 import { REPRO_REQUEST } from '../review/repro.ts';
-import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type MutantEvidence, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson, atomicWriteText, updateJson } from '../state/store.ts';
@@ -182,6 +184,9 @@ interface FormalResult {
 /** What the build and formal repair narrations ask for before the final DoD run (card T0-ACCEPT-TABLE). No code reads the table. */
 const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table in its `## Attempt evidence` section before the final DoD run, one row per acceptance item: the item number, the test or command that proves it, and its result. A row with no proof is unfinished work. Correct the table on every repair.';
 
+/** What the same narrations ask for directly before the table (card T0-PR-SUMMARY-ASK): the section the GitHub ship path makes the pull request text (`prBody`). No gate reads its style. */
+const PR_SUMMARY_ASK = 'When allow_paths lists this card file, write a `## PR summary` section in it before the final DoD run, for a person who reads the pull request: the headings `### What`, `### Why / Intent`, `### How / Behaviour`, `### System impact`, `### Security`, `### Tests and review`, `### Risk`, `### Ownership` and `### Docs` in that order, one to three short sentences under each, in ASD-STE100 style (at most 20 words a sentence, active voice, one meaning for each word) and New Zealand spelling, at most 4000 characters and no `@`. The GitHub ship path makes it the text of the pull request it creates. Correct it on every repair.';
+
 /** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
 const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines. List in the attempt evidence each input form and failure path the repair hunks handle (for a parser, each kind of value it can be given; for I/O, each error it can raise), each with the test that covers it.';
 
@@ -207,6 +212,39 @@ function journalHolds(owed: OwedEvent, events: JournalEvent[]): boolean {
   return events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === owed.data['operationId']);
 }
 
+/** A card lease that is unreleased, not past `expiresAt` and owned by a session or host other than the acting one. */
+function foreignLive(lease: Lease, now: string): boolean {
+  const me = currentActor();
+  return !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now) && !(lease.owner.session === me.session && lease.owner.host === me.host);
+}
+
+/**
+ * A dispatch write refused because the card lease is, at the moment of the write, a live lease of another session or host.
+ * `is` tells one by identity, so a thrown value of any kind (a revoked proxy included) passes through untouched.
+ */
+class ForeignLeaseError extends Error {
+  private static readonly raised = new WeakSet<object>();
+  readonly lease: Lease;
+  constructor(lease: Lease) {
+    super(`the card lease is held by session ${lease.owner.session} at generation ${lease.generation}`);
+    this.lease = lease;
+    ForeignLeaseError.raised.add(this);
+  }
+  static is(value: unknown): value is ForeignLeaseError {
+    return typeof value === 'object' && value !== null && ForeignLeaseError.raised.has(value);
+  }
+}
+
+/**
+ * The run saves and journal appends of a `card next` dispatch, each admitted under the card lease's lock until the dispatch
+ * holds a live lease of its own (`own`, after its renewal or claim), which no other session can take while it is live.
+ */
+interface DispatchWriter {
+  save: (run: CardRun) => CardRun;
+  append: (event: Parameters<Journal['append']>[0]) => void;
+  own: () => void;
+}
+
 /** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
 function discardedDecision(status: CommitReviewStatus): string | undefined {
   switch (status) {
@@ -228,7 +266,7 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
   if (config.shipPath === 'scaffold') return new ScaffoldShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), runner });
   if (config.shipPath === 'github') {
     const gh = config.github;
-    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs });
+    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs, cardsDir: config.cardsDir });
   }
   return new DryRunShipPath();
 }
@@ -253,6 +291,16 @@ function pathKind(p: string): 'directory' | 'other' | 'absent' | 'unknown' {
     const code = (err as NodeJS.ErrnoException).code;
     return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unknown';
   }
+}
+
+/**
+ * The inputs of a card's state selection that are read outside its run record: the unresolved operations of the card and the
+ * kind of a worktree path (read only off the dry-run ship path). Each is read on its first use and kept, so the assessments
+ * that share one `SelectionFacts` select on the same reads (card T0-CONTRACT-GATE-2 R4, R3 decision 1 F1).
+ */
+interface SelectionFacts {
+  unresolved: () => OperationRecord[];
+  worktree: (p: string) => ReturnType<typeof pathKind>;
 }
 
 /** The effect that marks the operation reserving a card's `review-followup` issue (card T1-REVIEW-FOLLOWUP-ISSUE). */
@@ -302,11 +350,13 @@ export class CardRunner {
     const command = card.dod_command;
     if (!worktree) return { ran: false, command, reason: 'no-worktree' };
     if (pathKind(worktree) !== 'directory') return { ran: false, command, reason: 'no-directory' };
-    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs);
+    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs, this.config.shipPath);
     const receipt = this.runner(cmd, args, { ...options, killTree: true });
     const output = Buffer.from(receipt.stdout + receipt.stderr, 'utf8');
     return {
       ran: true,
+      // The shell the call names (card T0-DOD-SCAFFOLD-SHELL): the platform shell, else the scaffold's pwsh.
+      shell: options.shell ? 'platform' : 'pwsh',
       command,
       worktree,
       ...(probe ? { commit: probe.sha, clean: probe.clean } : {}),
@@ -373,23 +423,27 @@ export class CardRunner {
   }
 
   /**
-   * The survivors of the mutant report of the candidate under review (card T1-VERIFY-MUTANTS-PROMPT), as evidence for the formal
-   * prompt. A path inside a checkout is chosen by the candidate, so a report reached through a link, one past a size limit, one
-   * that cannot be read or parsed and one for another candidate all give none: the report never fails or gates a review. The
-   * limits run before the schema, whose issues per element of an array cost far more memory than the file: its two arrays are bounded.
+   * The state of the mutant report of the candidate under review (cards T1-VERIFY-MUTANTS-PROMPT, T0-MUTANT-EVIDENCE-STATE), as
+   * evidence for the formal prompt: the report never fails or gates a review. A path inside a checkout is chosen by the candidate,
+   * so a report reached through a link, one past a size limit, one that cannot be read or parsed and one with more mutants than it
+   * generated are unusable; `missing` is no entry at the path. The limits run before the schema, whose issues per element of an
+   * array cost far more memory than the file: its two arrays are bounded.
    */
-  private survivingMutants(checkout: string, cardId: string, candidateSha: string): MutantReport['mutants'] {
+  private mutantEvidence(checkout: string, cardId: string, candidateSha: string): MutantEvidence {
     const file = mutantsReportPath(checkout, cardId);
     try {
-      const stat = lstatSync(file);
-      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return [];
+      const stat = lstatSync(file, { throwIfNoEntry: false });
+      if (!stat) return { state: 'missing' };
+      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return { state: 'unusable' };
       const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
       const { mutants, operators } = parsed as { mutants?: unknown; operators?: unknown };
-      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return [];
+      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return { state: 'unusable' };
       const report = MutantReport.safeParse(parsed);
-      return report.success && report.data.candidateSha === candidateSha ? report.data.mutants.filter((m) => m.outcome === 'survived') : [];
+      if (!report.success || report.data.generated < report.data.mutants.length) return { state: 'unusable' };
+      if (report.data.candidateSha !== candidateSha) return { state: 'other-candidate' };
+      return { state: 'current', generated: report.data.generated, mutants: report.data.mutants };
     } catch {
-      return [];
+      return { state: 'unusable' };
     }
   }
 
@@ -513,10 +567,16 @@ export class CardRunner {
     return snapshotFindings(run.findings);
   }
 
-  /** The committed sha the stage last decided on (a pass or a block, whichever reviewer recorded it); undefined before the stage's first decision. */
+  /**
+   * The committed sha the stage last decided on (a pass or a block, whichever reviewer recorded it); undefined before the stage's
+   * first decision, and undefined when that decision was requested no later than an amendment that invalidated review (card
+   * T0-AMEND-DELTA), so the next decision is judged as a first one: no delta, no finding marked outside it.
+   */
   private lastReviewedSha(run: CardRun, stage: FindingStage): string | undefined {
-    if (stage === 'pre') return [...run.preReview.rounds].reverse().find((r) => (r.outcome === 'pass' || r.outcome === 'block') && r.candidateSha)?.candidateSha;
-    return [...run.review.invocations].reverse().find((i) => (i.outcome === 'pass' || i.outcome === 'block') && i.candidateSha)?.candidateSha;
+    const decisions: Array<{ outcome: string; candidateSha?: string; requestedAt: string }> = stage === 'pre' ? run.preReview.rounds : run.review.invocations;
+    const last = [...decisions].reverse().find((d) => (d.outcome === 'pass' || d.outcome === 'block') && d.candidateSha);
+    if (!last || run.amendments.some((a) => a.invalidated.includes('review') && last.requestedAt <= a.at)) return undefined;
+    return last.candidateSha;
   }
 
   /** The delta since the candidate the stage last reviewed (R9): the same commit gives an empty delta, another commit its committed diff under the candidate diff's cap. */
@@ -644,6 +704,127 @@ export class CardRunner {
   }
 
   /**
+   * The owner's continuation of a run stopped for review (card T1-CONTINUE-REVIEW-2): one locked update of the record read inside the
+   * lock (`continueReviewStop`), state BUILD for `selectCardState`, no counter, finding, receipt or deadline moved, and one owed
+   * CARD_STATE event with the continuation in its persisted data (`deliverOwed`). A refusal writes and appends nothing.
+   *
+   * A run stopped for ci (card T1-CONTINUE-CI, `continueCiStop`) takes what a CI code defect does in `refutePatch`: the episode
+   * `afterShipFailure` returns, no DoD or blocked receipt, the CI ledger, review, findings, candidate and deadline as they were. The
+   * update also owes the ATTEMPT_FINISHED of the refuted success (`refutedBy` `continuation`) and the ATTEMPT_STARTED of a promoted
+   * running repair, with the data `refuteDirective` journals. The act appends the first two; the promotion stays owed and the next
+   * `card next` appends it, after the controller's GOAL_STATE re-admission, so the audit counts no work after the goal's stop.
+   */
+  continueStop(goal: Goal, card: Card, act: Omit<ContinuationAct, 'at'>): CardRun {
+    const at = this.clock();
+    let owed: OwedEvent[] = [];
+    let hold: string[] = [];
+    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to continue`);
+      if (persisted.state === 'STOP' && persisted.stop?.reason === 'ci') {
+        const { continuation, step } = continueCiStop(persisted, { ...act, at }, checkAdmission(persisted.deadline, at).phase === 'open');
+        owed = [this.owe(goal, 'CARD_STATE', { from: 'STOP', to: 'readmitted', continuation: { by: continuation.by, reason: continuation.reason, stop: 'ci' } })];
+        if (step.refuted) owed.push(this.owe(goal, 'ATTEMPT_FINISHED', { n: step.refuted.n, outcome: 'fail', cause: step.refuted.cause, refutedBy: 'continuation' }));
+        if (step.promoted && step.action.action === 'attempt') {
+          const started = this.owe(goal, 'ATTEMPT_STARTED', { n: step.promoted.n, effort: step.promoted.effort, escalated: step.action.escalated, promoted: true, from: step.promoted.from, reason: 'ship-failure' });
+          owed.push(started);
+          hold = [started.key];
+        }
+        return { ...persisted, effort: step.episode, continuations: [...persisted.continuations, continuation], state: 'BUILD', stop: undefined, blocker: undefined, dodReceipt: undefined, blockedReceipt: undefined, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+      }
+      const { continuation, review } = continueReviewStop(persisted, { ...act, at }, this.config.formalReview.command.length > 0);
+      const { by, reason, decisions, admits } = continuation;
+      owed = [this.owe(goal, 'CARD_STATE', { from: 'STOP', to: 'readmitted', continuation: { by, reason, stop: continuation.stop.reason, decisions, admits } })];
+      return { ...persisted, review, continuations: [...persisted.continuations, continuation], state: 'BUILD', stop: undefined, blocker: undefined, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+    });
+    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key), hold });
+    return next;
+  }
+
+  /**
+   * The owner's amendment of a started card (card T1-CARD-AMEND; docs/ARCHITECTURE.md): one locked update, every refusal decided
+   * before it, that records the changed contract fields and drops the evidence they invalidate; it owes one NOTE event.
+   */
+  amendCard(goal: Goal, card: Card, act: { by: string; reason: string }): CardRun {
+    const [at, by, reason] = [this.clock(), act.by.trim(), act.reason.trim()];
+    let owed: OwedEvent[] = [];
+    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to amend`);
+      const refusal = this.amendmentRefusal(card, persisted, by, reason);
+      if (refusal) throw new Error(refusal);
+      const changed = changedContractFields(persisted.contract!, card);
+      const invalidated = invalidatedBy(changed);
+      const revision = persisted.cardRevision + 1;
+      let run: CardRun = { ...persisted, cardRevision: revision, contract: contractDigests(card), amendments: [...persisted.amendments, { at, by, reason, revision, changed, invalidated }] };
+      if (invalidated.includes('dod')) run = { ...run, dodReceipt: undefined, blockedReceipt: undefined, effort: run.effort?.terminal === 'succeeded' ? reopenAfterReviewBlock(run.effort, `amendment ${revision}`) : run.effort };
+      if (invalidated.includes('review')) {
+        const old = run.candidate?.digest;
+        const digest = old === undefined ? undefined : amendedDigest(old, 1);
+        run = { ...run, blockedReceipt: undefined, candidate: run.candidate && digest ? { ...run.candidate, digest } : run.candidate, ci: { ...run.ci, reruns: run.ci.reruns.map((r) => (digest && r.candidate === old ? { ...r, candidate: digest } : r)) } };
+      }
+      owed = [this.owe(goal, 'NOTE', { amendment: { by, reason, revision, changed, invalidated } })];
+      return { ...run, journalOwed: this.owedWith(goal.id, persisted, ...owed) };
+    });
+    this.deliverOwed(goal, card, next, { keys: owed.map((o) => o.key) });
+    return next;
+  }
+
+  /** Why the locked record admits no amendment (R6); undefined when it admits one. */
+  private amendmentRefusal(card: Card, run: CardRun, by: string, reason: string): string | undefined {
+    if (run.state === 'DONE') return `the card run of ${card.id} is DONE; a change to the card goes to a follow-up card`;
+    if (run.mergeVerified) return 'the candidate is merged; a change to the card goes to a follow-up card';
+    const open = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+    if (open.length) return `operation(s) of this card are unresolved (${open.join(', ')}); reconcile them first`;
+    const flight = this.inFlight(run, 'formal');
+    if (flight) return `${flight}; amend after its verdict lands`;
+    if (run.pendingRepair) return `a ${run.pendingRepair.kind} repair is pending (${run.pendingRepair.detail}); finish it first`;
+    if (!run.contract) return 'the card run holds no contract (it was created before T1-CARD-CONTRACT-2), so no amendment can be recorded';
+    if (!changedContractFields(run.contract, card).length) return "the run's contract equals the card's: no contract field changed";
+    if (!by) return 'by is blank: name who amends the card';
+    if (!reason) return 'reason is blank: say why the card changed';
+    return undefined;
+  }
+
+  /** The inputs of the selection of `card` read outside its run record, each read on first use and kept (`SelectionFacts`). */
+  private selectionFacts(goal: Goal, card: Card): SelectionFacts {
+    let unresolved: OperationRecord[] | undefined;
+    const kinds = new Map<string, ReturnType<typeof pathKind>>();
+    return {
+      unresolved: () => (unresolved ??= this.ops.unresolved(goal.id, card.id)),
+      worktree: (p) => {
+        const kind = kinds.get(p) ?? pathKind(p);
+        kinds.set(p, kind);
+        return kind;
+      },
+    };
+  }
+
+  /**
+   * The contract gate (card T0-CONTRACT-GATE-2 R1): the contract fields, in the order of `CONTRACT_FIELDS`, in which `card`
+   * differs from the contract `run` recorded, when the run holds a `contract`, no `mergeVerified` and is not DONE; empty on
+   * every other record. It reads the card and that one record and nothing else (no operation, no review in flight, no
+   * pending repair), so it does not depend on whether `amendmentRefusal` would admit the owner's amendment.
+   */
+  private contractChanged(card: Card, run: CardRun): string[] {
+    return !run.contract || run.mergeVerified || run.state === 'DONE' ? [] : changedContractFields(run.contract, card);
+  }
+
+  /**
+   * The gate on the record locked where `preReview` reserves its round or `formalReview` its decision (card T0-CONTRACT-GATE-2
+   * R5): the call holds the card it read, so a change found here is an amendment another caller recorded during the call.
+   */
+  private refuseAmendedContract(card: Card, locked: CardRun): void {
+    const changed = this.contractChanged(card, locked);
+    if (changed.length) throw new Error(`the contract of card ${card.id} was amended after this command read the run (${changed.join(', ')}); run the command again`);
+  }
+
+  /** The refusal of `next`, `recordAttempt`, `preReview` and `formalReview` while the gate applies (card T0-CONTRACT-GATE-2 R6). */
+  private contractGate(card: Card, run: CardRun): string | undefined {
+    const changed = this.contractChanged(card, run);
+    if (!changed.length) return undefined;
+    return `card ${card.id} differs from the contract its run recorded in ${changed.join(', ')}: nothing is recorded, reviewed, shipped or built on it until the owner's amendment is recorded with \`aidlc card amend ${card.id} --by <who> --reason <text>\` or the card text is restored to the recorded contract, which is the way on where the amendment is refused`;
+  }
+
+  /**
    * A disposition changes the persisted run under the card-run lock (`GoalStore.updateCardRun`), never the
    * caller's snapshot: the record is read inside the lock, a stop saved meanwhile refuses, the lease is
    * fenced at the run's generation, and only the changed finding is written back into that record, so no
@@ -729,16 +910,18 @@ export class CardRunner {
   /**
    * R2 and R4: append each owed event the goal journal does not hold, in one card-run lock section that writes nothing, once
    * `read` (the run as the command read it) shows one due. The entries named in `own` are the calling command's commit,
-   * appended with `extra`; every other one is completed for an earlier command (`completed: true`).
+   * appended with `extra`; every other one is completed for an earlier command (`completed: true`). The entries named in `hold`
+   * stay owed for a later call (`continueStop`, card T1-CONTINUE-CI).
    */
-  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown> } = { keys: [] }): void {
+  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown>; hold?: string[] } = { keys: [] }): void {
     const journal = this.journal(goal.id);
     const seen = read.journalOwed?.length ? journal.readAll() : [];
-    if (!(read.journalOwed ?? []).some((o) => this.owedDue(o, seen))) return;
+    const held = (o: OwedEvent) => own.hold?.includes(o.key) ?? false;
+    if (!(read.journalOwed ?? []).some((o) => !held(o) && this.owedDue(o, seen))) return;
     this.store.updateCardRun(goal.id, card.id, (current) => {
       const events = journal.readAll();
       for (const owed of current?.journalOwed ?? []) {
-        if (!this.owedDue(owed, events)) continue;
+        if (held(owed) || !this.owedDue(owed, events)) continue;
         const data = own.keys.includes(owed.key) ? { ...owed.data, ...own.extra } : { ...owed.data, completed: true };
         events.push(journal.append({ type: owed.type, goalId: goal.id, cardId: card.id, generation: owed.generation, data }));
       }
@@ -750,27 +933,51 @@ export class CardRunner {
    * Evidence from the persisted facts alone (lease record, operation ledger, run record; no probe), the owner's lease
    * renewal and the state selection, shared by `next`, which then performs the selected state's action, and by
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
-   * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
+   * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it. A dispatch
+   * under another session's live card lease never reaches it: `next` returns that stop first and writes nothing.
+   * `read` hands in the lease `next` read, so the dispatch decides on one read; `dry` makes no save and no journal
+   * append and only selects the state; on a lease this session holds it claims nothing and selects as the renewal would.
+   * `record` and `facts` are the run and the other inputs a dry assessment selects on, read by its caller, so it reads none.
+   * `gated` (the dispatch of `next`) applies the contract gate to the selection this assessment makes, before any write of it
+   * (card T0-CONTRACT-GATE-2 R4).
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter; record?: CardRun; facts?: SelectionFacts; gated?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+    const dry = read?.dry ?? false;
+    if (dry) save = (run) => run;
+    const append = (event: Parameters<Journal['append']>[0]): void => {
+      if (dry) return;
+      if (read?.writer) read.writer.append(event);
+      else this.journal(goal.id).append(event);
+    };
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
-    // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
-    // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
-    // when no record exists yet.
-    let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
+    // takeover, a blocking stop or a review decision landed) writes nothing back, and a stop already persisted there
+    // stays. The caller's copy stands in only when no record exists yet.
+    let run: CardRun = (dry ? read?.record : undefined) ?? this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
-    let lease = this.leases.read(key);
+    let lease = read ? read.lease : this.leases.read(key);
+    // The selection's inputs from outside the record, each read once, where the selection first needs it; a dry assessment
+    // takes its caller's.
+    const facts: SelectionFacts = read?.facts ?? this.selectionFacts(goal, card);
+    // The contract gate (card T0-CONTRACT-GATE-2 R4) refuses BUILD, REVIEW_FIX and SHIP on the record just read, which every
+    // save below is fenced against (`saveCardRun`, by revision). The dry assessment it asks shares this assessment's record,
+    // lease, clock and `facts`, so the state it selects is the state selected below (R3 decision 1 F1: an operation that
+    // completed between two ledger reads let a BUILD through). It assumes the lease renewal, the one input it cannot have
+    // before the refusal; a renewal that does not land keeps an ownership stop, which selects STOP (WAIT on an unknown
+    // operation), never a gated state. It saves nothing, appends nothing and renews no lease; in every other state the
+    // dispatch goes on as before.
+    const gate = read?.gated && !dry ? this.contractGate(card, run) : undefined;
+    if (gate && ['BUILD', 'REVIEW_FIX', 'SHIP'].includes(this.assess(goal, card, run, now, undefined, { lease, dry: true, record: run, facts }).decision.state)) throw new Error(gate);
     // A merged card stopped for ownership is reconciled once the blocking lease is gone (released, expired or ours):
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
-      this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
+      append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
       run = save({ ...run, state: 'CLOSE', stop: undefined });
     }
     // An unmerged run stopped for ownership whose blocking lease is gone (absent or released; never merely expired, which
     // proves nothing) is reconciled the same way: the stop is lifted and the selection proceeds, so the claim is reachable.
     if (run.stop?.reason === 'ownership' && !run.mergeVerified && (!lease || lease.released)) {
-      this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'ownership-stop-reconciled', reason: 'the blocking lease is gone', released: Boolean(lease?.released) } });
+      append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'ownership-stop-reconciled', reason: 'the blocking lease is gone', released: Boolean(lease?.released) } });
       run = { ...run, stop: undefined, blocker: undefined };
     }
     // Heartbeat: the owner's own `card next` renews the card lease it holds at the run's generation; nothing renews
@@ -780,12 +987,17 @@ export class CardRunner {
     let revalidatedStop = false;
     if (lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host && run.ownerGeneration === lease.generation) {
       const wasExpired = Date.parse(lease.expiresAt) < Date.parse(now);
-      const renewal = this.leases.claim(key, { operation: lease.operation, now });
+      // A dry assessment renews nothing: it selects the state as the renewal would leave it.
+      const renewal: ClaimResult = dry ? { status: 'renewed', lease } : this.leases.claim(key, { operation: lease.operation, now });
       if (renewal.status === 'renewed') {
+        read?.writer?.own();
         lease = renewal.lease;
         revalidatedStop = run.stop?.reason === 'ownership';
-        if (wasExpired || revalidatedStop) this.journal(goal.id).append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated: revalidatedStop } });
+        if (wasExpired || revalidatedStop) append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated: revalidatedStop } });
         if (revalidatedStop) run = { ...run, stop: undefined, blocker: undefined };
+      } else if (read && renewal.status === 'held') {
+        // Another session took this session's expired lease before the renewal: the dispatch writes nothing.
+        throw new ForeignLeaseError(renewal.lease);
       }
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
@@ -799,17 +1011,17 @@ export class CardRunner {
       const disputed = kept?.stage === 'formal' || (kept?.round !== undefined && this.blockAnswered(run, { stage: 'pre', cycle: kept.cycle, round: kept.round }).answered);
       const repair = disputed ? run.effort?.attempts.find((a) => a.outcome === 'running') : undefined;
       run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
-      if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
+      if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
     }
-    const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
-    const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
+    const unknownOps = facts.unresolved().filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
+    const runningOp = facts.unresolved().find((o) => o.status === 'running' || o.status === 'issued');
     // A command reviewer's second block alone stops nothing (card T1-EFF-R3-PROGRESS): its ledger decision stops the run on a
     // re-raised finding or the fourth decision; this predicate backs a run left in REVIEW_FIX with no decision left, and a
     // decision recorded as a stop, which stops the card with its own detail even when its commit landed only as history
     // behind a newer candidate (card T1-EFF-R3-PROGRESS-2).
     const recordedStop = run.review.invocations.find((i) => i.stopReview && !i.stopLifted)?.stopReview;
     const reviewExhausted = recordedStop !== undefined || (this.config.formalReview.command.length
-      ? run.review.noVerdictRetriesUsed > 1 || (run.state === 'REVIEW_FIX' && run.review.substantiveBlocks > 0 && run.review.substantiveDecisions >= MAX_R3_DECISIONS)
+      ? run.review.noVerdictRetriesUsed > 1 || (run.state === 'REVIEW_FIX' && run.review.substantiveBlocks > 0 && run.review.substantiveDecisions >= (admittedDecisions(run.continuations) ?? MAX_R3_DECISIONS))
       : run.review.substantiveBlocks >= 2 || run.review.noVerdictRetriesUsed > 1 || (run.review.substantiveDecisions >= 2 && run.review.substantiveBlocks > 0 && run.state === 'REVIEW_FIX'));
     const episode = run.effort;
     const repairExhausted = episode?.terminal && episode.terminal !== 'succeeded' ? `effort episode ${episode.terminal}` : undefined;
@@ -817,15 +1029,16 @@ export class CardRunner {
     // scaffold's advisory ReviewGate only a Tier-S spec block stops a ship, so any other card could be
     // merged with a known defect before this loop reads the verdict. That is STOP/capability, not a
     // reason to change ReviewGate defaults silently.
+    // A pre-ship check: a run whose merge is verified (an adopted merge, card T0-ADOPT-EXTERNAL-MERGE-3 R9) ships nothing more.
     const capabilityBlocker =
-      this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
+      !run.mergeVerified && this.config.shipPath === 'scaffold' && run.mode === 'remote' && !this.config.gateRequired && !(card.tier === 'S' && card.review_gate)
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
         : undefined;
 
     // A recorded worktree counts only while it is a directory, so a run whose worktree was never made, is gone or is a file
     // goes back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record
     // alone counts, as before (R3).
-    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || pathKind(run.worktree) === 'directory' : false;
+    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || facts.worktree(run.worktree) === 'directory' : false;
     const evidence: CardEvidence = {
       now,
       deadline: run.deadline,
@@ -862,13 +1075,46 @@ export class CardRunner {
     // A revalidated ownership stop is persisted with the re-derived state before any action: a ship issued from this call
     // reads the record as persisted and must not find the stop it cleared.
     if (revalidatedStop) next = save(next);
-    if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
+    if (next.state !== run.state) append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
     return { run, next, decision, lease };
   }
 
-  /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
+  /**
+   * Gather evidence and select the next card directive. Performs only the bounded action of the selected state. A write
+   * refused because another session holds a live card lease at that moment ends the dispatch with the holder's stop, and
+   * nothing more is written (card T0-FOREIGN-DISPATCH-NO-WRITE-2).
+   */
   next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
+    try {
+      return this.dispatch(goal, card, caller, options);
+    } catch (err) {
+      if (!ForeignLeaseError.is(err)) throw err;
+      return this.foreignDispatch(goal, card, this.store.getCardRun(goal.id, card.id) ?? caller, err.lease, this.clock());
+    }
+  }
+
+  /**
+   * The writer of a dispatch: until the dispatch holds a live lease of its own, each run save and journal append is made
+   * under the card lease's lock after a read of the lease there, and a live lease of another session or host refuses it
+   * with `ForeignLeaseError`.
+   */
+  private dispatchWriter(goal: Goal, card: Card, now: string): DispatchWriter {
+    const key = resourceKeys.card(this.repo.key, card.id);
+    let owned = false;
+    const admit = (write: () => void): void => {
+      if (owned) return write();
+      this.leases.update(key, (held) => {
+        if (held && foreignLive(held, now)) throw new ForeignLeaseError(held);
+        write();
+        return held;
+      });
+    };
+    return { save: (run) => this.store.saveCardRun(run, admit), append: (event) => admit(() => this.journal(goal.id).append(event)), own: () => (owned = true) };
+  }
+
+  private dispatch(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel }): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    const write = this.dispatchWriter(goal, card, now);
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
@@ -878,8 +1124,25 @@ export class CardRunner {
     // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
     const checkpointMissing = (r: CardRun): boolean => goal.state === 'CARDS' && goal.routing.size === 'T2' && !r.stop && r.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing';
     const checkpointWait = (r: CardRun): { run: CardRun; directive: CardDirective } => ({ run: r, directive: { kind: 'wait', cardId: card.id, on: `goal:${goal.state}:plan-checkpoint`, pollSeconds: 60, narration: `goal ${goal.id} is in CARDS without a plan checkpoint for revision ${goal.revision}: run \`aidlc next --goal ${goal.id}\` and record the approval before this card continues` } });
+    // One read of the card lease decides the dispatch. Under a live lease of another session or host this session only
+    // reads the card, the plan checkpoint missing or not (cards T0-FOREIGN-DISPATCH-NO-WRITE and -2).
+    const key = resourceKeys.card(this.repo.key, card.id);
+    const lease = this.leases.read(key);
+    if (lease && foreignLive(lease, now)) return this.foreignDispatch(goal, card, run, lease, now);
     if (checkpointMissing(run)) return checkpointWait(run);
-    const assessed = this.assess(goal, card, run, now);
+    // A dispatch whose assessment selects PREPARE on a lease this session does not hold claims the lease before any
+    // assessment write, so a lease another session takes after the read leaves the run and the journal as they were.
+    const me = currentActor();
+    let claimed: ClaimResult | undefined;
+    if (!(lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host)) {
+      const selected = this.assess(goal, card, run, now, undefined, { lease, dry: true });
+      if (selected.decision.state === 'PREPARE' && !checkpointMissing(selected.run)) {
+        claimed = this.leases.claim(key, { operation: `card:${card.id}`, now });
+        if (claimed.status === 'held') return this.foreignDispatch(goal, card, run, claimed.lease, now);
+        if (claimed.status !== 'expired') write.own();
+      }
+    }
+    const assessed = this.assess(goal, card, run, now, write.save, { lease, writer: write, gated: true });
     run = assessed.run;
     // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
     // run as it stands now, before any action.
@@ -889,9 +1152,9 @@ export class CardRunner {
 
     switch (decision.state) {
       case 'PREPARE':
-        return this.prepare(goal, card, next);
+        return this.prepare(goal, card, next, claimed, write);
       case 'BUILD':
-        return this.build(goal, card, next, options.effort);
+        return this.build(goal, card, next, options.effort, write.save);
       case 'SHIP':
         return this.ship(goal, card, next);
       case 'REVIEW_FIX': {
@@ -906,7 +1169,7 @@ export class CardRunner {
           const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
           if (action.action === 'stop') {
             const stop = makeStop('card', `${action.reason}: ${action.detail}`, 'record cause, evidence and the next needed action; no counter reset via another session', { at: now, global: false });
-            const stopped = this.save({ ...next, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
+            const stopped = write.save({ ...next, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
             return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: action.detail } };
           }
           if (action.action === 'attempt') {
@@ -916,7 +1179,7 @@ export class CardRunner {
           }
         }
         // The attempt and its owed ATTEMPT_STARTED land in one write; the event is appended after it (card T0-JOURNAL-FAULT-EVENTS).
-        next = this.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
+        next = write.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
         if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
         // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
         const running = episode?.attempts.find((a) => a.outcome === 'running');
@@ -940,23 +1203,23 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running && episode ? ladderNumber(episode, episode.attempts.indexOf(running)) : episode ? episode.attempts.length : 1,
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
+            narration: `Review block to repair: ${quotedList(reasons) || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)} ${REPRO_REQUEST}`,
           },
         };
       }
       case 'WAIT': {
-        next = this.save(next);
+        next = write.save(next);
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: decision.reason, pollSeconds: 60, narration: decision.reason } };
       }
       case 'CLOSE':
-        return this.close(goal, card, next);
+        return this.close(goal, card, next, write.save);
       case 'DONE': {
-        next = this.save(next);
+        next = write.save(next);
         return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Card DONE (child result). The parent still verifies and delivers the goal.' } };
       }
       case 'STOP':
       default: {
-        next = this.save(next);
+        next = write.save(next);
         return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop ?? makeStop('card', decision.reason, 'inspect the card run record', { at: now, global: false }), narration: decision.reason } };
       }
     }
@@ -1058,21 +1321,30 @@ export class CardRunner {
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 
-  private prepare(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
+  /**
+   * The answer to a dispatch under another session's live card lease (card T0-FOREIGN-DISPATCH-NO-WRITE): a stop that names
+   * the holder, and no write to the run record, the goal journal or the lease, which belong to the holder. The returned run
+   * is this session's view, not persisted; a stop other than ownership already on the stored run stays its stop.
+   */
+  private foreignDispatch(goal: Goal, card: Card, run: CardRun, lease: Lease, now: string): { run: CardRun; directive: CardDirective } {
+    const held = makeStop('ownership', `card ${card.id} is held by session ${lease.owner.session} on host ${lease.owner.host} at lease generation ${lease.generation} until ${lease.expiresAt}`, `the holder continues the card; \`aidlc card takeover ${card.id} --goal ${goal.id}\` applies only once the lease has expired and the card's operations are reconciled`, { at: now, global: false });
+    const stop = run.stop && run.stop.reason !== 'ownership' ? run.stop : held;
+    return { run: { ...run, state: 'STOP', stop, blocker: stop.detail }, directive: { kind: 'stop', cardId: card.id, stop, narration: held.detail } };
+  }
+
+  private prepare(goal: Goal, card: Card, run: CardRun, claimed: ClaimResult | undefined, write: DispatchWriter): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const key = resourceKeys.card(this.repo.key, card.id);
-    const claim = this.leases.claim(key, { operation: `card:${card.id}`, now });
-    if (claim.status === 'held') {
-      const stop = makeStop('ownership', `card ${card.id} is owned by session ${claim.lease.owner.session} (generation ${claim.lease.generation})`, `attach read-only, or \`aidlc card takeover ${card.id} --goal ${goal.id}\` once the lease has expired and the old owner's operations are reconciled`, { at: now, global: false });
-      const stopped = this.save({ ...run, state: 'STOP', stop });
-      return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
-    }
+    const claim = claimed ?? this.leases.claim(key, { operation: `card:${card.id}`, now });
+    if (claim.status === 'acquired' || claim.status === 'renewed') write.own();
+    // A lease another session took after the assessment read it: the same stop as a foreign dispatch, and no write.
+    if (claim.status === 'held') return this.foreignDispatch(goal, card, run, claim.lease, now);
     if (claim.status === 'expired') {
       const stop = makeStop('ownership', `card ${card.id} has an expired lease from session ${claim.lease.owner.session}`, `reconcile the old owner's in-flight operations (aidlc ops list --goal ${goal.id}), then \`aidlc card takeover ${card.id} --goal ${goal.id}\``, { at: now, global: false });
-      const stopped = this.save({ ...run, state: 'STOP', stop });
+      const stopped = write.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
-    this.journal(goal.id).append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
+    write.append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
     const worktreeRoot = resolveWorktreeRoot(this.config, this.repo.mainRoot);
     let decision: ReturnType<typeof decideWorktree>;
     if (this.config.shipPath === 'dry-run') {
@@ -1090,7 +1362,7 @@ export class CardRunner {
       // A failed probe is a tool stop nothing lifts (issue 111); an ownership stop is lifted by the owner's `card next`.
       const tool = decision.stopReason === 'tool';
       const stop = makeStop(decision.stopReason, decision.reason, tool ? 'inspect the git error in the detail' : 'resolve the worktree/ownership conflict before starting', { at: now, global: false, ...(tool ? { finalFor: { goalId: goal.id, cardId: card.id, candidate: Boolean(run.candidate) } } : {}) });
-      const stopped = this.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
+      const stopped = write.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }
     const lessons = readLessons(this.lessonsFile());
@@ -1098,7 +1370,7 @@ export class CardRunner {
     // the next `card next` decides again (card T0-PREPARE-WORKTREE R1). An attach, and either decision of the dry-run ship
     // path, which makes no worktree (R3), records the path and opens BUILD.
     const start = decision.action === 'start' && this.config.shipPath !== 'dry-run';
-    const next = this.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
+    const next = write.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
       directive: {
@@ -1108,9 +1380,21 @@ export class CardRunner {
         worktree: decision.path,
         skills: [],
         lessons,
-        narration: `Read docs/LESSONS.md once before the first attempt (${lessons.count} lessons so far; the most recent are in this directive). ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
+        narration: `${lessons.count} lessons so far; the most recent are in this directive, and docs/LESSONS.md holds them all for reference. ` + (decision.action === 'start' ? this.startNarration(card.id, decision.path, decision.reason) : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /**
+   * The start sentence of a `prepare` directive. The scaffold path names its `task.ps1 -Phase start`; the github and dry-run
+   * paths, which have no such script, name `git worktree add` from the base ref and the main checkout's `node_modules` link
+   * when it has one (card T0-PREPARE-START-CMD, issue 376).
+   */
+  private startNarration(cardId: string, worktree: string, reason: string): string {
+    if (this.config.shipPath === 'scaffold') return `Start a new worktree for ${cardId} at ${worktree} (scaffold: pwsh scripts/task.ps1 -TaskId ${cardId} -Phase start from the main checkout). ${reason}`;
+    const ref = this.config.mode === 'local' ? this.config.base : `origin/${this.config.base}`;
+    const linkModules = existsSync(path.join(this.repo.mainRoot, 'node_modules'));
+    return `Start a new worktree for ${cardId} at ${worktree}: ${reason}. ` + worktreeStartCommands({ cardId, path: worktree, mainRoot: this.repo.mainRoot, ref, linkModules, platform: process.platform });
   }
 
   /**
@@ -1131,8 +1415,16 @@ export class CardRunner {
     const kind = entry && !mismatch && (entry.locked || entry.prunable) ? pathKind(entry.path) : undefined;
     if (kind !== 'absent' && kind !== 'other') return undefined;
     const obstruction = kind === 'other' ? 'something that is not a directory is at this path: move or delete it, then ' : '';
-    const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
-    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
+    if (this.config.shipPath === 'scaffold') {
+      // The scaffold reason stays as before card T0-PREPARE-START-CMD, which leaves the scaffold ship path unchanged.
+      const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
+      return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
+    }
+    // Off the scaffold path the path is quoted for the shell of this platform, and each command is one whole code span
+    // (card T0-PREPARE-START-CMD), as in the commands of worktreeStartCommands that follow this reason.
+    const quoted = shellArg(expected, process.platform);
+    const clear = entry!.locked ? `make the locked worktree's directory available again, or run ${codeSpan(`git worktree unlock ${quoted}`)} and \`git worktree prune\`` : 'run `git worktree prune`';
+    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with ${codeSpan(`git worktree add ${quoted} ${cardId}`)}, since the branch exists` };
   }
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
@@ -1141,7 +1433,7 @@ export class CardRunner {
     return bugfix ? ['tdd', 'diagnose'] : ['tdd'];
   }
 
-  private build(goal: Goal, card: Card, run: CardRun, effortOverride?: EffortLevel): { run: CardRun; directive: CardDirective } {
+  private build(goal: Goal, card: Card, run: CardRun, effortOverride?: EffortLevel, save: (run: CardRun) => CardRun = (r) => this.save(r)): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const profile = goal.roleProfiles.find((p) => p.role === 'implementer');
     const ladder = profile?.supportedEfforts ?? ['low', 'medium', 'high'];
@@ -1155,7 +1447,7 @@ export class CardRunner {
       const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
       if (action.action === 'stop') {
         const stop = makeStop('card', `${action.reason}: ${action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
-        const stopped = this.save({ ...run, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
+        const stopped = save({ ...run, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: action.detail } };
       }
       if (action.action === 'attempt') {
@@ -1174,7 +1466,7 @@ export class CardRunner {
       if (id && id !== run.pendingRepair?.rejectedReceipt) redReceipt = id;
     }
     const repairPrefix = run.pendingRepair ? `Pending ${run.pendingRepair.kind} repair: ${JSON.stringify(run.pendingRepair.detail)} ` : '';
-    const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt, ...(started ? { journalOwed: this.owedWith(goal.id, run, started) } : {}) });
+    const next = save({ ...run, state: 'BUILD', effort: episode, redReceipt, ...(started ? { journalOwed: this.owedWith(goal.id, run, started) } : {}) });
     if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
     return {
       run: next,
@@ -1188,9 +1480,12 @@ export class CardRunner {
         effort,
         attempt: attemptNo,
         skills: run.pendingRepair?.kind === 'merge-conflict' ? ['merge-conflicts', ...this.buildSkills(goal, card)] : this.buildSkills(goal, card),
+        // `aidlc card red` records RED on the scaffold ship path only; elsewhere the success attempt carries it (card T0-RED-PATH-TEXT).
         narration: card.tdd && !redReceipt
-          ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${ACCEPTANCE_TABLE}`
-          : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${ACCEPTANCE_TABLE}`,
+          ? this.shipPath instanceof ScaffoldShipPath
+            ? `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first with \`aidlc card red ${card.id}\` (task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`
+            : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: establish behavioural RED first, then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success --dod-receipt "<command: exit code and counts>" --red-receipt "<sha>:<test>"\` or \`aidlc card attempt ${card.id} --outcome fail --cause ...\`. ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`
+          : `${repairPrefix}${attemptLabel(attemptNo, episode, attemptIndex)} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt (\`--dod-receipt "<command: exit code and counts>"\`). ${PR_SUMMARY_ASK} ${ACCEPTANCE_TABLE}`,
       },
     };
   }
@@ -1215,6 +1510,10 @@ export class CardRunner {
     if (markerStat) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
     // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
+    // The contract gate (card T0-CONTRACT-GATE-2 R2) on the record read above, before the one write; an amendment recorded
+    // after that read refuses the write as stale.
+    const gate = this.contractGate(card, run);
+    if (gate) throw new Error(gate);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
     if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
     // A success on a tdd card binds the candidate and ends the episode; without a RED receipt the card could never ship, so
@@ -1253,6 +1552,8 @@ export class CardRunner {
       } else if (input.candidateSha) {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
+      // A digest this call computed takes `amendedDigest` once per amendment that invalidated `review` (card T1-CARD-AMEND R4).
+      if (candidate && candidate !== run.candidate) candidate = { ...candidate, digest: amendedDigest(candidate.digest, (run.amendments ?? []).filter((a) => a.invalidated.includes('review')).length) };
       // A withdrawn candidate takes a repair: nothing is recorded until the success brings another candidate (card T0-CANDIDATE-WITHDRAW).
       if (run.pendingRepair?.kind === 'withdrawn' && candidate?.digest === run.pendingRepair.candidateDigest) throw new Error(`candidate ${(candidate?.sha ?? 'none').slice(0, 12)} is the withdrawn one (${run.pendingRepair.detail}); commit the repair and record the attempt again`);
       // The success that clears a merge-conflict repair records the merge of a moved base: a base-sync candidate
@@ -1529,7 +1830,13 @@ export class CardRunner {
 
   /** Why the record re-read before the ship dispatch is not the one the gate admitted; undefined when it still is. */
   private shipDrift(card: Card, armed: CardRun, issued: CardRun): string | undefined {
+    // An adoption committed after this ship read the run (card T0-ADOPT-EXTERNAL-MERGE-3 R10): the merge is done, nothing ships.
+    if (armed.mergeVerified) return 'the merge of the card was verified meanwhile (adopt-merge)';
     if (armed.stop || armed.state === 'STOP') return `the card run was stopped (${armed.stop?.reason ?? 'STOP'})`;
+    // The contract gate on the record re-read under the lock (card T0-CONTRACT-GATE-2 R5): the ship holds the card it read,
+    // so a change found here is an amendment another caller recorded after the dispatch read the run.
+    const amended = this.contractChanged(card, armed);
+    if (amended.length) return `the contract of the card was amended meanwhile (${amended.join(', ')})`;
     if ((armed.candidate?.digest ?? 'unknown') !== (issued.candidate?.digest ?? 'unknown')) return `the candidate changed (${(issued.candidate?.digest ?? 'unknown').slice(0, 12)} admitted, ${(armed.candidate?.digest ?? 'none').slice(0, 12)} recorded meanwhile)`;
     if (!armed.dodReceipt || (card.tdd && !armed.redReceipt) || armed.candidate?.dirty) return 'the candidate is no longer ready (a receipt was cleared meanwhile)';
     const round = armed.preReview.rounds.find((r) => r.outcome === 'pending');
@@ -1688,10 +1995,19 @@ export class CardRunner {
    */
   private formalAllowance(run: CardRun, card: Card): number {
     if (!this.config.formalReview.command.length) return MAX_SUBSTANTIVE_REVIEW_DECISIONS;
+    // A continuation's admitted count replaces both allowances from the act on (card T1-CONTINUE-REVIEW-2).
+    const admitted = admittedDecisions(run.continuations);
+    if (admitted !== undefined) return admitted;
     if (this.secondPassDue(run)) return MAX_R3_DECISIONS;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     const last = decided[decided.length - 1];
     return last?.outcome === 'block' && this.invocationBlocking(run, card, last) ? MAX_R3_DECISIONS : MAX_SUBSTANTIVE_REVIEW_DECISIONS;
+  }
+
+  /** The allowance a stop detail or a refusal names: the continuation's admitted count, the one for repairs, or the two decisions. */
+  private allowanceName(run: CardRun, allowance: number, noun: string): string {
+    if (admittedDecisions(run.continuations) !== undefined) return `the continuation's admitted count of ${allowance} decisions`;
+    return allowance === MAX_R3_DECISIONS ? `the ${MAX_R3_DECISIONS}-decision ${noun} for repairs` : `the two-decision ${noun}`;
   }
 
   /**
@@ -1754,7 +2070,7 @@ export class CardRunner {
     const baseSyncDecision = this.baseSyncDue(run);
     const allowance = this.formalAllowance(run, card);
     if (run.review.substantiveDecisions >= allowance && !baseSyncDecision) {
-      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision allowance for repairs` : 'two-decision allowance'} (${run.review.substantiveDecisions} used)`, this.reviewNextAction(card.id, run.review, 'return the retained verdict evidence for human adjudication; no counter reset'), { at: now, global: false });
+      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds ${this.allowanceName(run, allowance, 'allowance')} (${run.review.substantiveDecisions} used)`, this.reviewNextAction(card.id, run.review, 'return the retained verdict evidence for human adjudication; no counter reset'), { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -1834,7 +2150,7 @@ export class CardRunner {
    * which can only stop the card. A no-verdict or a quota hold decides nothing, so it stays due.
    */
   private secondPassDue(run: CardRun): boolean {
-    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS - 1) return false;
+    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= (admittedDecisions(run.continuations) ?? MAX_R3_DECISIONS) - 1) return false;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     if (decided.some((i) => i.secondPass)) return false;
     const last = [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest);
@@ -1962,9 +2278,9 @@ export class CardRunner {
     const active = this.formalReviewerNow(current, candidateDigest, now);
     if (active.waitUntil) throw new Error(`formal reviewer ${active.cfg.reviewer} is on a quota hold until ${active.waitUntil}; do not re-run before it clears`);
     if (active.cfg.reviewer !== cfg.reviewer) throw new Error(`the formal reviewer changed since the review was prepared (${cfg.reviewer} prepared, ${active.cfg.reviewer} due now); run the command again`);
-    // Same-candidate rule, keyed by the committed sha and independent of the reviewer's name: a blocked, unchanged
+    // Same-candidate rule, keyed by the committed sha (`ofCurrentCandidate`) and independent of the reviewer's name: a blocked, unchanged
     // candidate (an advisory block included) is re-decided only with every finding of the block disputed.
-    const lastDecided = [...ledger.invocations].reverse().find((i) => ((i.candidateSha ?? i.candidateDigest) === candidateSha || i.candidateDigest === candidateDigest) && (i.outcome === 'pass' || i.outcome === 'block'));
+    const lastDecided = [...ledger.invocations].reverse().find((i) => this.ofCurrentCandidate(current, i, candidateSha, candidateDigest) && (i.outcome === 'pass' || i.outcome === 'block'));
     if (lastDecided?.outcome === 'block') {
       const answered = this.blockAnswered(current, { stage: 'formal', candidateSha });
       if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, 'its last formal decision', answered.open));
@@ -1976,7 +2292,7 @@ export class CardRunner {
     const baseSyncDecision = cfg === this.config.formalReview.baseSync;
     const allowance = this.formalAllowance(current, card);
     if (ledger.substantiveDecisions + pendingDecisions >= allowance && !baseSyncDecision) {
-      throw new Error(`the ${allowance === MAX_R3_DECISIONS ? `${MAX_R3_DECISIONS}-decision review allowance for repairs` : 'two-decision review allowance'} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+      throw new Error(`${this.allowanceName(current, allowance, 'review allowance')} is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
     if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
       throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
@@ -2014,6 +2330,10 @@ export class CardRunner {
       persisted = this.store.getCardRun(goal.id, card.id) ?? committed.run;
     }
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
+    // The contract gate (card T0-CONTRACT-GATE-2 R3) after the commit of a retained result and the stop refusal, before any
+    // reservation or pool request; it is asked again on the record locked for the reservation (R5).
+    const gate = this.contractGate(card, persisted);
+    if (gate) throw new Error(gate);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
     this.refuseDirtyCandidate(persisted, cwd);
@@ -2032,7 +2352,7 @@ export class CardRunner {
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
     const secondPass = this.secondPassDue(persisted);
     // The mutant report is read with them, so a report written during the review never changes what this reviewer receives.
-    const survivingMutants = this.survivingMutants(cwd, card.id, candidateSha);
+    const mutantEvidence = this.mutantEvidence(cwd, card.id, candidateSha);
     // The cap is checked first (R7): a candidate diff or a delta above it is refused before the hand-off, the release of a
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
@@ -2100,6 +2420,7 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
       this.store.updateCardRun(goal.id, card.id, (locked) => {
         const current = locked ?? persisted;
+        this.refuseAmendedContract(card, current);
         this.refuseReplacedCandidate(current, card, 'formal', candidateSha, candidateDigest);
         this.refuseChangedCheckout(current, cwd, candidateSha);
         this.formalAdmission(current, card, candidateSha, candidateDigest, now, cfg);
@@ -2134,7 +2455,7 @@ export class CardRunner {
     // R7, once the dispatch is reserved: a refused reservation cancels nothing of the other reviewer.
     this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, survivingMutants, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, mutantEvidence, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
     let panel: PanelResult | undefined;
     // Whether the reviewer process returned: a failure after that point is a lost result (charged as a no-verdict, the
     // reviewer ran), a failure before it a dispatch that never happened (released, nothing spent).
@@ -2483,7 +2804,7 @@ export class CardRunner {
         // Only the pending reservation is ever released: a decision already committed under this invocation stays with its counters.
         release: (latest) => ({ ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }),
         decide: (latest) => {
-          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, ...(r.secondPass ? { secondPass: true } : {}), verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest));
+          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, ...(r.secondPass ? { secondPass: true } : {}), verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest), admittedDecisions(latest.continuations));
           decision = rec.decision;
           // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
           // A routed skip is not a decision on the findings: it records and resolves nothing.
@@ -2620,6 +2941,16 @@ export class CardRunner {
     return Date.parse(fallbackHold) < Date.parse(primaryHold) ? { cfg: fallbackCfg, waitUntil: fallbackHold } : { cfg: primary, waitUntil: primaryHold };
   }
 
+  /**
+   * Whether a review invocation or pre-review round is a decision of the current candidate in the same-candidate rules (card
+   * T1-CARD-AMEND): its digest is the candidate's, or its commit is and no amendment of the run invalidated `review`; once one
+   * has, a record under an earlier digest of the same commit belongs to an earlier candidate. No record is rewritten.
+   */
+  private ofCurrentCandidate(run: CardRun, entry: { candidateSha?: string; candidateDigest: string }, candidateSha: string, candidateDigest: string): boolean {
+    if (entry.candidateDigest === candidateDigest) return true;
+    return (entry.candidateSha ?? entry.candidateDigest) === candidateSha && !run.amendments.some((a) => a.invalidated.includes('review'));
+  }
+
   /** The R2 guards over one record: stop, an in-flight round, a quota hold, exhausted rounds, the same-candidate rule. Returns the round numbering and the pre-reviewer to run. */
   private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number; reviewer: PreReviewer } {
     const cfg = this.config.preReview;
@@ -2627,7 +2958,7 @@ export class CardRunner {
     // As for R3 (`formalAdmission`): a candidate that passed by ruling takes no pre-review round, so none can be in flight or block it (card T1-REVIEW-RULE-SHIP).
     if (this.ruledPass(current)) throw new Error(`candidate ${candidateSha.slice(0, 12)} passed by ruling; no review may run: ship it with \`aidlc card next ${card.id}\``);
     const cycle = current.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
-    const forCandidate = current.preReview.rounds.filter((r) => (r.candidateSha ?? r.candidateDigest) === candidateSha || r.candidateDigest === candidateDigest);
+    const forCandidate = current.preReview.rounds.filter((r) => this.ofCurrentCandidate(current, r, candidateSha, candidateDigest));
     const inFlight = this.inFlight(current, 'pre');
     if (inFlight) throw new Error(inFlight);
     const rounds = current.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
@@ -2637,7 +2968,7 @@ export class CardRunner {
     // The rounds cap holds whatever the dispositions: exhausted rounds are decided by the gate (STOP, or the hand-off to R3).
     const blocksSoFar = rounds.filter((r) => r.outcome === 'block').length;
     if (blocksSoFar >= cfg.rounds) throw new Error(`the pre-review rounds of cycle ${cycle} are exhausted (${blocksSoFar}/${cfg.rounds} blocks); run \`aidlc card next ${card.id}\`: the gate stops the card or hands the residual findings to R3, it never dispatches another round`);
-    // Same-candidate rule, keyed by the committed sha: a pass stays valid; a block is re-reviewed unchanged only with every finding disputed.
+    // Same-candidate rule, keyed by the committed sha (`ofCurrentCandidate`): a pass stays valid; a block is re-reviewed unchanged only with every finding disputed.
     const lastDecided = [...forCandidate].reverse().find((r) => r.outcome === 'pass' || r.outcome === 'block');
     if (lastDecided?.outcome === 'pass') throw new Error(`candidate ${candidateSha.slice(0, 12)} already holds a pre-review pass (round ${lastDecided.round} of cycle ${lastDecided.cycle}); run \`aidlc card next ${card.id}\` instead of another round`);
     if (lastDecided?.outcome === 'block') {
@@ -2656,6 +2987,10 @@ export class CardRunner {
     this.deliverOwed(goal, card, persisted);
     if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
+    // The contract gate (card T0-CONTRACT-GATE-2 R3) after the stop refusal, before the round is reserved; it is asked again
+    // on the record locked for the reservation (R5).
+    const gate = this.contractGate(card, persisted);
+    if (gate) throw new Error(gate);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
     this.refuseDirtyCandidate(persisted, cwd);
@@ -2700,6 +3035,7 @@ export class CardRunner {
     let seen: Record<string, FindingSnapshot> = {};
     this.store.updateCardRun(goal.id, card.id, (locked) => {
       const current = locked ?? persisted;
+      this.refuseAmendedContract(card, current);
       this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
       this.refuseChangedCheckout(current, cwd, candidateSha);
       const admitted = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
@@ -3234,7 +3570,7 @@ export class CardRunner {
     return this.save({ ...run, ci, state: outcome === 'success' ? 'SHIP' : outcome === 'failure' ? 'BUILD' : 'WAIT' });
   }
 
-  private close(goal: Goal, card: Card, caller: CardRun): { run: CardRun; directive: CardDirective } {
+  private close(goal: Goal, card: Card, caller: CardRun, save: (run: CardRun) => CardRun = (r) => this.save(r)): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     // The stored run is the truth: a card next that read before a concurrent card close never undoes a recorded disposition.
     const run = this.store.getCardRun(goal.id, card.id) ?? caller;
@@ -3247,7 +3583,7 @@ export class CardRunner {
       const claim = this.leases.claim(key, { operation: `card:${card.id}:close`, now });
       if (claim.status === 'held') {
         const stop = makeStop('ownership', `card ${card.id} is owned by session ${claim.lease.owner.session} (generation ${claim.lease.generation}) while it closes`, 'let the owner close it, or take over after its lease expires and its operations are reconciled', { at: now, global: false });
-        const stopped = this.save({ ...run, state: 'STOP', stop });
+        const stopped = save({ ...run, state: 'STOP', stop });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
       }
       if (claim.status === 'expired') {
@@ -3258,7 +3594,7 @@ export class CardRunner {
           this.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: taken.lease.generation, takeover: true, previousOwner: claim.lease.owner.session } });
         } catch (err) {
           const stop = makeStop('ownership', `card ${card.id}: ${(err as Error).message}`, 'reconcile the unresolved operations, then close the card again', { at: now, global: false });
-          const stopped = this.save({ ...run, state: 'STOP', stop });
+          const stopped = save({ ...run, state: 'STOP', stop });
           return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         }
       } else {
@@ -3266,7 +3602,7 @@ export class CardRunner {
         this.journal(goal.id).append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
       }
     }
-    const next = this.save({ ...run, state: missing.length ? 'CLOSE' : 'DONE', ownerGeneration });
+    const next = save({ ...run, state: missing.length ? 'CLOSE' : 'DONE', ownerGeneration });
     if (!missing.length) {
       const key = resourceKeys.card(this.repo.key, card.id);
       try {
@@ -3286,6 +3622,89 @@ export class CardRunner {
     const followupHint = missing.includes('followups') ? ` \`--followups\` (also in \`--all\`) files one GitHub issue labelled review-followup that lists the advisory and deferred findings of the formal review, or finds the one its card, PR and candidate marker names, and records its number; off the github ship path, without \`repository\` or with no such finding it records why none was filed.` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${followupHint}${lessonHint}` } };
+  }
+
+  /**
+   * `aidlc card adopt-merge` (card T0-ADOPT-EXTERNAL-MERGE, issue 358): a merge made outside a ship operation of the loop is
+   * recorded once gh shows PR `pr` as a PR of the card's branch into the base, MERGED there with a head and a merge commit,
+   * and git shows that merge commit on the fetched base with a tree. The run is written once under the card-run lock with
+   * `mergeVerified`, state CLOSE and its stop removed (a final stop too: the verified merge supersedes it), with
+   * `MERGE_ADOPTED` owed in that write and appended after it. Every refusal throws before the write.
+   */
+  adoptMerge(goal: Goal, card: Card, caller: CardRun, pr: number): CardRun {
+    const now = this.clock();
+    const refuse: (why: string) => never = (why) => {
+      throw new Error(`adopt-merge ${card.id} PR #${pr}: ${why}`);
+    };
+    if (!goal.cards.includes(card.id)) refuse(`${card.id} is not listed in goal ${goal.id} (${goal.cards.join(', ')})`);
+    const cardKey = resourceKeys.card(this.repo.key, card.id);
+    const me = currentActor();
+    const verified = `the merge is already verified; run aidlc card next ${card.id} --goal ${goal.id}`;
+    // R2 (b), (c) and (d): checked before gh is asked, and again in the lease section that holds the write.
+    const guard = (current: CardRun, lease: Lease | undefined) => {
+      if (current.mergeVerified) refuse(verified);
+      // Every goal's operations of the card. An `intended` one counts too: `ship` issues it later outside both locks, so only
+      // refusing it keeps an admitted ship from issuing between this check and the write (R3).
+      const open = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+      if (open.length) refuse(`unresolved operation ${open.join(', ')}; reconcile with aidlc ops reconcile first`);
+      if (lease && !lease.released && !(lease.owner.session === me.session && lease.owner.host === me.host) && Date.parse(lease.expiresAt) >= Date.parse(now)) refuse(`the card lease is held by session ${lease.owner.session} (generation ${lease.generation}) until ${lease.expiresAt}`);
+    };
+    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
+    guard(run, this.leases.read(cardKey));
+    const repository = this.config.repository;
+    if (!repository) refuse('no repository is configured (repository in aidlc.config.json), so gh cannot be asked');
+    // A non-empty run branch wins; an absent or empty one falls back to the card's.
+    const branch = run.branch || card.branch;
+    if (!branch) refuse('the run names no branch and the card names no branch');
+    const base = this.config.base.replace(/^origin\//, '');
+    const ask = <T>(what: string, read: () => T): T => {
+      try {
+        return read();
+      } catch (err) {
+        return refuse(`gh ${what} failed: ${oneLine((err as Error).message)}`);
+      }
+    };
+    const listed = ask('pr list', () => this.gh.prsForBranch(repository, branch, base, this.repo.mainRoot));
+    if (!listed.some((p) => p.number === pr)) refuse(`PR #${pr} is not a PR of branch ${branch} into ${base} (gh lists ${listed.map((p) => `#${p.number}`).join(', ') || 'none'})`);
+    const view = ask('pr view', () => this.gh.prView(repository, pr, this.repo.mainRoot));
+    const oid = /^[0-9a-f]{40}$/;
+    if (view.number !== pr) refuse(`gh answered number ${view.number} for it`);
+    if (view.state !== 'MERGED') refuse(`PR #${pr} is ${view.state}, not MERGED`);
+    if (view.baseRefName !== base) refuse(`it targets base ${view.baseRefName ?? '(unreported)'}, not ${base}`);
+    const headSha = view.headRefOid;
+    const mergeSha = view.mergeCommit;
+    if (!headSha || !oid.test(headSha)) refuse(`gh reports head ${JSON.stringify(headSha ?? null)}, not a lowercase 40-character object id`);
+    if (!mergeSha || !oid.test(mergeSha)) refuse(`gh reports merge commit ${JSON.stringify(mergeSha ?? null)}, not a lowercase 40-character object id`);
+    if (this.git.fetchBase(this.repo.mainRoot, base).exitCode !== 0) refuse(`git fetch of ${base} failed`);
+    if (this.git.contains(this.repo.mainRoot, `origin/${base}`, mergeSha) !== true) refuse(`merge commit ${mergeSha} is not on origin/${base}`);
+    const tree = this.git.treeOf(this.repo.mainRoot, mergeSha);
+    if (!tree) refuse(`git cannot read the tree of merge commit ${mergeSha}`);
+    const owed = this.owe(goal, 'MERGE_ADOPTED', { pr, headSha, mergeSha, tree, branch, base });
+    // R3: the record as persisted decides what the adoption supersedes, and the write runs inside the card lease's section
+    // (card-run lock first, then the lease lock), where `ship` records its merge intent and claims and takeovers run, so no
+    // lease or operation is admitted between the re-check and the write.
+    let current: CardRun = run;
+    const written = this.store.updateCardRun(
+      goal.id,
+      card.id,
+      (persisted) => {
+        current = persisted ?? run;
+        const { stop, blocker, ...rest } = current;
+        void blocker;
+        const candidateSha = current.candidate?.sha ?? null;
+        const event = { ...owed, data: { ...owed.data, candidateSha, headMatchesCandidate: candidateSha === headSha, priorState: current.state, priorStop: stop?.reason ?? null } };
+        return { ...rest, state: 'CLOSE', mergeVerified: true, pr: { number: pr, state: 'MERGED', headRefOid: headSha, baseRefName: view.baseRefName, mergeCommit: mergeSha, mergedAt: view.mergedAt, url: view.url }, journalOwed: this.owedWith(goal.id, current, event), updatedAt: now };
+      },
+      (write) => {
+        this.leases.update(cardKey, (lease) => {
+          guard(current, lease);
+          write();
+          return lease;
+        });
+      },
+    );
+    this.deliverOwed(goal, card, written, { keys: [owed.key] });
+    return this.store.getCardRun(goal.id, card.id) ?? written;
   }
 
   /**

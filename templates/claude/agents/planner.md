@@ -8,6 +8,7 @@ effort: high
 Work in plan mode: read, never edit. Inputs: the intent.md and spec.md, the
 project's CLAUDE.md, existing plans and cards (`specs/tasks/`), the code the
 change touches.
+The directive that asks for cards (`plan`, `project-cards`) carries the most recent lessons of `docs/LESSONS.md` in its `lessons` field; check each card against them before it is registered.
 
 Produce `plans/<slug>.md` content with:
 - Files that change (existing paths verified; new files marked `(new)`).
@@ -36,6 +37,12 @@ not run):
 - QA could write a test from every acceptance item as worded.
 - Anything implied but unstated is written down or marked `[TBD: ...]`.
 - Every card states its boundaries: allow_paths, non_goals, forbid.
+  `forbid` holds hard boundaries only (network, credentials, a frozen API
+  named): no incidental line, function-body or import-line restriction,
+  and none restated in `requirements`, which state observable behaviour.
+- A card states each behaviour once: an acceptance item names its proof
+  and its requirement; unique edge cases and rationale stay; fixtures and
+  implementation instructions are not repeated.
 - `depends_on` is acyclic (no circular dependency) and every
   `depends_on` and `plan_ref` resolves to an existing card or section.
 T1/T2 intake questions follow `.claude/skills/grilling/SKILL.md`

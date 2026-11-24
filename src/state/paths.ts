@@ -36,16 +36,28 @@ export interface RepoIdentity {
   key: string;
 }
 
-function gitOut(args: string[], cwd: string): string | undefined {
-  const res = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });
+/**
+ * How long the repository lookup's `git` may run (card T0-DOCTOR-PROBE-TIMEOUT, issue 371): long enough for a cold start
+ * on Windows CI, where the first doctor of a job takes 17-32 s.
+ */
+export const GIT_LOOKUP_TIMEOUT_MS = 120_000;
+
+/**
+ * Runs git through `spawner` (a test seam) and returns its trimmed stdout on exit 0, else undefined. A git that does not exit
+ * within `timeoutMs` is ended by `spawnSync` and throws an error that names the command, the bound and the directory.
+ */
+export function gitOut(args: string[], cwd: string, spawner: typeof spawnSync = spawnSync, timeoutMs: number = GIT_LOOKUP_TIMEOUT_MS): string | undefined {
+  const res = spawner('git', args, { cwd, encoding: 'utf8', windowsHide: true, timeout: timeoutMs });
+  if ((res.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') throw new Error(`git ${args.join(' ')} did not exit within ${timeoutMs} ms in ${cwd}`);
   if (res.status !== 0) return undefined;
   return res.stdout.trim();
 }
 
 /**
  * Repository identity is asked for several times per CLI call (context, state paths, session id, hooks);
- * it costs one `git rev-parse` per process and cwd. The cache is per process and has no reset: an
- * identity resolved before a repository was created in that directory stays until the process ends.
+ * it costs one `git rev-parse` per process and cwd. The cache is per process, and the CLI never resets it: an
+ * identity resolved before a repository was created in that directory stays until the process ends. Only tests
+ * reset it, through `resetRepoIdentityForTests`.
  */
 const identityCache = new Map<string, RepoIdentity>();
 
@@ -84,6 +96,12 @@ type Lookup = { answered: true; out: string | undefined } | { answered: false };
 /** The lookup `prefetchRepoIdentity` started, for the one cwd it was started in. */
 let prefetch: { key: string; lookup: Promise<Lookup> } | undefined;
 
+/** Tests only (the in-process CLI helper): empties the identity cache and drops a pending prefetch, whose git child still runs to its end. */
+export function resetRepoIdentityForTests(): void {
+  identityCache.clear();
+  prefetch = undefined;
+}
+
 /** Ends a child and stops reading it. Each step runs whatever the one before did, and a failure of any step changes nothing. */
 function endChild(steps: (() => void)[]): void {
   for (const step of steps) {
@@ -102,9 +120,12 @@ function endChild(steps: (() => void)[]): void {
  * and stderr together pass `MAX_OUTPUT` (the child is ended and reading stops, as `spawnSync` does, and at most `MAX_OUTPUT`
  * bytes stay buffered). A failed read of a stream leaves the exit status and the bytes read, as it does for `spawnSync`. A
  * spawn that fails in any way is no lookup, so the identity is then asked of git synchronously as before. Every outcome is
- * settled before any cleanup, so a kill that errors or throws cannot change it or leave it pending (R3 decision 2).
+ * settled before any cleanup, so a kill that errors or throws cannot change it or leave it pending (R3 decision 2). A git
+ * still running at `timeoutMs` (`GIT_LOOKUP_TIMEOUT_MS` by default) is no lookup either: the lookup settles as not answered,
+ * then the child is ended, so the identity is asked of git synchronously through `gitOut`, which has the same bound (card
+ * T0-PREFETCH-TIMEOUT, issue 456). `spawner` is a test seam.
  */
-export function prefetchRepoIdentity(cwd: string): void {
+export function prefetchRepoIdentity(cwd: string, spawner: typeof spawn = spawn, timeoutMs: number = GIT_LOOKUP_TIMEOUT_MS): void {
   if (prefetch) return;
   const lookup = new Promise<Lookup>((resolve) => {
     const unanswered = () => resolve({ answered: false });
@@ -112,8 +133,13 @@ export function prefetchRepoIdentity(cwd: string): void {
       /* the `close` event still reports the exit status */
     };
     try {
-      const child = spawn('git', IDENTITY_ARGS, { cwd, windowsHide: true });
-      child.on('error', unanswered);
+      const child = spawner('git', IDENTITY_ARGS, { cwd, windowsHide: true });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stopTimer = () => clearTimeout(timer);
+      child.on('error', () => {
+        stopTimer();
+        unanswered();
+      });
       const { stdout, stderr, stdin } = child;
       if (!stdout || !stderr || !stdin) {
         unanswered();
@@ -126,6 +152,7 @@ export function prefetchRepoIdentity(cwd: string): void {
       const withinLimit = (d: Buffer): boolean => {
         bytes += d.length;
         if (bytes <= MAX_OUTPUT) return true;
+        stopTimer();
         resolve({ answered: true, out: undefined });
         endChild([() => child.kill(), () => stdout.destroy(), () => stderr.destroy()]);
         return false;
@@ -137,7 +164,16 @@ export function prefetchRepoIdentity(cwd: string): void {
         if (withinLimit(d)) chunks.push(d);
       });
       stderr.on('data', withinLimit);
-      child.on('close', (code) => resolve({ answered: true, out: code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined }));
+      child.on('close', (code) => {
+        stopTimer();
+        resolve({ answered: true, out: code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined });
+      });
+      /** Past the bound the lookup is settled as not answered, then the child is ended; the timer alone keeps no process alive. */
+      timer = setTimeout(() => {
+        unanswered();
+        endChild([() => child.kill(), () => stdout.destroy(), () => stderr.destroy()]);
+      }, timeoutMs);
+      timer.unref();
       stdin.end();
     } catch {
       unanswered();

@@ -10,6 +10,7 @@ import { makeFixture, writeCard, goalForCards, InjectedShipPath } from './_harne
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { parseVerdictDocument } from '../../src/core/review-policy.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
+import { scriptedRunner as baseScriptedRunner } from '../../src/probes/exec.ts';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { DryRunShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 
@@ -374,6 +375,8 @@ test('acceptance 7, git-backed (R3 decision 2, re:F1): a commit made on the card
     const wt = path.join(wtRoot, 'T1-RS');
     // git runs for real; the reviewer and gh are scripted, and every command is recorded.
     const verdicts = RERAISE.map(block);
+    // The DoD entry is added by this wrapper so the line below stays as it was (T1-DOD-GATE-FIXTURES acceptance 4: added lines only).
+    const scriptedRunner = (s: Parameters<typeof baseScriptedRunner>[0]) => baseScriptedRunner({ ...s, 'node --test tests/t1-rs.test.ts': { exitCode: 0, stdout: '', stderr: '' } });
     const scripted = scriptedRunner({ 'fake-r3': () => ({ stdout: verdicts.shift()! }), 'gh api user -q .login': { stdout: 'alice\n' } });
     const calls: string[] = [];
     const run: SyncRunner = (cmd, args, o) => { calls.push([cmd, ...args].join(' ')); return cmd === 'git' ? runSync(cmd, args, o) : scripted(cmd, args, o); };
@@ -400,6 +403,8 @@ test('acceptance 7, git-backed (R3 decision 2, re:F1): a commit made on the card
       shas.push(commit(n));
       // The attempt names no sha: the runner records the candidate from the checkout.
       runner.recordAttempt(g(), card, persisted(), { outcome: 'success', dodReceipt: `dod:${n}`, redReceipt: 'red:1' });
+      const dod = persisted().effort?.attempts.at(-1)?.loopDod;
+      assert.deepEqual(dod?.ran === true ? [dod.ran, dod.exitCode] : dod, [true, 0], `the loop-run DoD of success ${n}`);
       assert.deepEqual([next().directive.kind, persisted().candidate?.sha], ['review', shas[n - 1]]);
       if (n === 2) runner.disputeFinding(g(), card, persisted(), 'F1', 'the row exists');
       await runner.formalReview(g(), card, persisted());

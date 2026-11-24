@@ -3,11 +3,21 @@
 import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseCardText } from '../../src/artifacts/card.ts';
-import { CardRun } from '../../src/core/types.ts';
+import { CARD_ID_REGEX, CardRun } from '../../src/core/types.ts';
+
+/** A card id anywhere in a text: `CARD_ID_REGEX` without its anchors, between word boundaries. */
+const CARD_ID_IN_TEXT = new RegExp(`\\b${CARD_ID_REGEX.source.slice(1, -1)}\\b`, 'g');
+
+/** The card ids the `root_cause` and `same_class` of a diagnosis name, other than `own`, unique and sorted. */
+function mentionsOf(own: string, diagnosis: { root_cause: string; same_class?: string | undefined } | undefined): string[] {
+  if (!diagnosis) return [];
+  const ids = `${diagnosis.root_cause}\n${diagnosis.same_class ?? ''}`.match(CARD_ID_IN_TEXT) ?? [];
+  return [...new Set(ids)].filter((id) => id !== own).sort();
+}
 
 /** Every table with its columns, in the key order `writeTables` writes. */
 export const COLUMNS = {
-  cards: ['id', 'status', 'superseded_by', 'depends_on', 'tdd', 'budget'],
+  cards: ['id', 'status', 'superseded_by', 'depends_on', 'tdd', 'budget', 'diagnosis', 'mentions'],
   card_runs: ['goalId', 'cardId', 'startedAt', 'state', 'mergeVerified', 'prNumber', 'stopReason', 'stopDetail', 'substantiveDecisions', 'substantiveBlocks', 'updatedAt'],
   review_decisions: ['goalId', 'cardId', 'stage', 'outcome', 'mergeBlocking', 'reviewer', 'requestedAt', 'candidateSha', 'secondPass', 'baseSync', 'stopReview', 'decision', 'round', 'cycle', 'angles'],
   findings: ['goalId', 'cardId', 'id', 'stage', 'round', 'cycle', 'perspective', 'file', 'class', 'candidateSha', 'raisedAt', 'disposition', 'disputes', 'reraises', 'resolvedAt', 'advisory', 'outsideDelta', 'reason'],
@@ -66,7 +76,7 @@ export function ingestState(input: { stateDir: string; cardsDir: string }): Tabl
     const file = path.join(input.cardsDir, name);
     const parsed = parseCardText(readFileSync(file, 'utf8'), file);
     if ('error' in parsed) problem('card', file, `${parsed.error}: ${parsed.findings.map((f) => f.message).join('; ')}`);
-    else t.cards.push({ id: parsed.card.id, status: parsed.card.status, superseded_by: orNull(parsed.card.superseded_by), depends_on: parsed.card.depends_on, tdd: parsed.card.tdd, budget: orNull(parsed.card.budget) });
+    else t.cards.push({ id: parsed.card.id, status: parsed.card.status, superseded_by: orNull(parsed.card.superseded_by), depends_on: parsed.card.depends_on, tdd: parsed.card.tdd, budget: orNull(parsed.card.budget), diagnosis: parsed.card.diagnosis !== undefined, mentions: mentionsOf(parsed.card.id, parsed.card.diagnosis) });
   }
 
   const runsDir = path.join(input.stateDir, 'cards');

@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync,
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cleanup } from '../infra/helpers.ts';
+import { runCliInProcess } from '../infra/cli-inprocess.ts';
 import { actorA, driveCardToDone, goalForCards, makeFixture, writeCard, T0, type Fixture } from './_harness.ts';
 import type { EnqueueInput } from '../../src/coordination/review-queue.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -20,8 +21,8 @@ import { atomicWriteJson } from '../../src/state/store.ts';
 import type { Goal, JournalEvent, ReviewRequest } from '../../src/core/types.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
 
-/** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
-const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
+/** The CLI entry a child process runs: bin/aidlc.js, which loads the sources unless a build is at least as new as every source file. */
+const BIN = fileURLToPath(new URL('../../bin/aidlc.js', import.meta.url));
 const POOL = 'default';
 const FAR = '2126-01-01T00:00:00.000Z';
 const HELD = 'T1-HELD';
@@ -146,16 +147,38 @@ function preloadArgs(r: Rig): string[] {
   return ['--import', pathToFileURL(file).href];
 }
 
-function cli(r: Rig, args: string[], options: RunOptions = {}): Result {
-  const res = spawnSync(process.execPath, [...(options.preload ? preloadArgs(r) : []), MAIN, ...args], { cwd: r.cwd, env: childEnv(r, options.env, options.session), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+/** The CLI in a child process through bin/aidlc.js. Child process (R1: a module preloaded with --import): every call with `preload` runs here. */
+function cliChild(r: Rig, args: string[], options: RunOptions = {}): Result {
+  const res = spawnSync(process.execPath, [...(options.preload ? preloadArgs(r) : []), BIN, ...args], { cwd: r.cwd, env: childEnv(r, options.env, options.session), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
   return { status: res.status, stdout: res.stdout, stderr: res.stderr };
 }
 
-const resolve = (r: Rig, key: string, flags: string[], options: RunOptions = {}): Result => cli(r, ['review', 'resolve', key, ...flags], options);
+/** The CLI in this process (runCliInProcess), or in a child process (`cliChild`) when `preload` is set. */
+async function cli(r: Rig, args: string[], options: RunOptions = {}): Promise<Result> {
+  if (options.preload) return cliChild(r, args, options);
+  return runCliInProcess(args, { cwd: r.cwd, env: childEnv(r, options.env, options.session) });
+}
 
+/**
+ * A run of the CLI with its exit status also given as a promise of its own: `await resolve(...).status` reads the status where
+ * the synchronous form read `resolve(...).status`, as `await` binds looser than the property access. The status promise is
+ * marked handled; a failed run still rejects where the run or its status is awaited.
+ */
+type Run = Promise<Result> & { status: Promise<number | null> };
+function withStatus(run: Promise<Result>): Run {
+  const status = run.then((res) => res.status);
+  status.catch(() => undefined);
+  return Object.assign(run, { status });
+}
+
+const resolve = (r: Rig, key: string, flags: string[], options: RunOptions = {}): Run => withStatus(cli(r, ['review', 'resolve', key, ...flags], options));
+/** `review resolve` in a child process, for a call made inside a synchronous callback. */
+const resolveChild = (r: Rig, key: string, flags: string[], options: RunOptions = {}): Result => cliChild(r, ['review', 'resolve', key, ...flags], options);
+
+/** Child process (R1: concurrent children): two commands through bin/aidlc.js at once. */
 function cliAsync(r: Rig, args: string[]): Promise<Result> {
   return new Promise((done, reject) => {
-    const child = spawn(process.execPath, [MAIN, ...args], { cwd: r.cwd, env: childEnv(r), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 60_000 });
+    const child = spawn(process.execPath, [BIN, ...args], { cwd: r.cwd, env: childEnv(r), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, timeout: 60_000 });
     const chunks = { out: '', err: '' };
     child.stdout.on('data', (chunk: Buffer) => (chunks.out += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (chunks.err += chunk.toString('utf8')));
@@ -171,12 +194,12 @@ const upper = (key: string): string => key.toUpperCase();
 const slashed = (key: string): string => key.replace('/', '\\');
 
 test('review resolve --verdict completes a lost request and frees its slot', async (t) => {
-  await t.test('two requesters, the next request admitted, one NOTE per goal', (t) => {
+  await t.test('two requesters, the next request admitted, one NOTE per goal', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, bothRequesters(r));
     const next = nextRequest(r.fx);
     assert.deepEqual(r.fx.queue.admit(POOL, actorA, r.fx.now(), next.key), { status: 'busy', active: [lost.key] }, 'control: the lost key holds the slot');
-    const res = resolve(r, lost.key, ['--verdict', 'verdict.json', '--reason', '  looked up  ']);
+    const res = await resolve(r, lost.key, ['--verdict', 'verdict.json', '--reason', '  looked up  ']);
     assert.equal(res.status, 0, res.stderr);
     const stored = r.fx.queue.get(lost.key)!;
     assert.deepEqual(JSON.parse(res.stdout), JSON.parse(JSON.stringify(stored)));
@@ -190,29 +213,29 @@ test('review resolve --verdict completes a lost request and frees its slot', asy
     for (const goal of [r.one, r.two]) assert.deepEqual(Journal.forGoal(r.fx.paths.journal, goal.id).verify().problems, []);
   });
 
-  await t.test('--no-json prints the one line', (t) => {
+  await t.test('--no-json prints the one line', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
-    const res = cli(r, ['--no-json', 'review', 'resolve', lost.key, '--verdict', 'verdict.json', ...LOOKED]);
+    const res = await cli(r, ['--no-json', 'review', 'resolve', lost.key, '--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(res.stdout, `resolved ${lost.key}: completed\n`);
   });
 
   for (const [name, alias] of [['upper-case', upper], ['slash', slashed]] as const) {
-    await t.test(`the ${name} alias of the key settles the stored request`, (t) => {
+    await t.test(`the ${name} alias of the key settles the stored request`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
-      const res = resolve(r, alias(lost.key), ['--verdict', 'verdict.json', ...LOOKED]);
+      const res = await resolve(r, alias(lost.key), ['--verdict', 'verdict.json', ...LOOKED]);
       assert.equal(res.status, 0, res.stderr);
       assert.deepEqual(active(r.fx), []);
       assert.equal(JSON.parse(res.stdout).key, lost.key);
       assert.equal(r.fx.queue.get(lost.key)?.state, 'completed');
       assert.deepEqual(resolvedNotes(r.fx, r.one.id).map((e) => e.data['key']), [lost.key]);
     });
-    await t.test(`the ${name} alias prints the stored key with --no-json`, (t) => {
+    await t.test(`the ${name} alias prints the stored key with --no-json`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
-      const res = cli(r, ['--no-json', 'review', 'resolve', alias(lost.key), '--verdict', 'verdict.json', ...LOOKED]);
+      const res = await cli(r, ['--no-json', 'review', 'resolve', alias(lost.key), '--verdict', 'verdict.json', ...LOOKED]);
       assert.equal(res.status, 0, res.stderr);
       assert.equal(res.stdout, `resolved ${lost.key}: completed\n`);
     });
@@ -220,13 +243,13 @@ test('review resolve --verdict completes a lost request and frees its slot', asy
 });
 
 test('review resolve --no-result requeues a lost request in its place and frees its slot', async (t) => {
-  await t.test('the request is queued at its own seq and the slot is free', (t) => {
+  await t.test('the request is queued at its own seq and the slot is free', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const next = nextRequest(r.fx);
     assert.equal(lost.seq, 0);
     assert.equal(next.seq, 1);
-    const res = resolve(r, lost.key, ['--no-result', ...LOOKED]);
+    const res = await resolve(r, lost.key, ['--no-result', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     const stored = r.fx.queue.get(lost.key)!;
     assert.deepEqual(JSON.parse(res.stdout), JSON.parse(JSON.stringify(stored)));
@@ -239,38 +262,38 @@ test('review resolve --no-result requeues a lost request in its place and frees 
     assert.deepEqual(noteRows(r.fx, r.one.id), [[r.one.id, HELD, 0, lost.key, POOL, 0, 1, 'not-found', 'looked-up', undefined]]);
   });
 
-  await t.test('--no-json prints the one line', (t) => {
+  await t.test('--no-json prints the one line', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
-    const res = cli(r, ['--no-json', 'review', 'resolve', lost.key, '--no-result', ...LOOKED]);
+    const res = await cli(r, ['--no-json', 'review', 'resolve', lost.key, '--no-result', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(res.stdout, `resolved ${lost.key}: queued\n`);
   });
 
   for (const [name, alias] of [['upper-case', upper], ['slash', slashed]] as const) {
-    await t.test(`the ${name} alias of the key frees the stored key`, (t) => {
+    await t.test(`the ${name} alias of the key frees the stored key`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
-      const res = cli(r, ['--no-json', 'review', 'resolve', alias(lost.key), '--no-result', ...LOOKED]);
+      const res = await cli(r, ['--no-json', 'review', 'resolve', alias(lost.key), '--no-result', ...LOOKED]);
       assert.equal(res.status, 0, res.stderr);
       assert.equal(res.stdout, `resolved ${lost.key}: queued\n`);
       assert.deepEqual(active(r.fx), []);
       assert.deepEqual(resolvedNotes(r.fx, r.one.id).map((e) => e.data['key']), [lost.key]);
     });
-    await t.test(`the ${name} alias gives the stored key in the JSON output`, (t) => {
+    await t.test(`the ${name} alias gives the stored key in the JSON output`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
-      const res = resolve(r, alias(lost.key), ['--no-result', ...LOOKED]);
+      const res = await resolve(r, alias(lost.key), ['--no-result', ...LOOKED]);
       assert.equal(res.status, 0, res.stderr);
       assert.equal(JSON.parse(res.stdout).key, lost.key);
     });
   }
 
-  await t.test('queue order: behind, a different base is new, the normalized parts join', (t) => {
+  await t.test('queue order: behind, a different base is new, the normalized parts join', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const next = nextRequest(r.fx);
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     const behind = r.fx.queue.admit(POOL, actorA, r.fx.now(), next.key);
     assert.equal(behind.status === 'behind' && behind.ahead.key, lost.key);
     const other = r.fx.queue.enqueue({ ...enqueueInput('lost', `${r.two.id}:${TWO}`), base: 'next' });
@@ -283,12 +306,12 @@ test('review resolve --no-result requeues a lost request in its place and frees 
     assert.equal(admitted.status, 'admitted');
   });
 
-  await t.test('an admission at the request deadline cancels it as any queued request', (t) => {
+  await t.test('an admission at the request deadline cancels it as any queued request', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r), { deadline: '2026-09-11T01:00:00.000Z' });
     const next = nextRequest(r.fx);
     assert.equal(r.fx.now(), T0);
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     const at = '2026-09-11T01:00:00.000Z';
     const admitted = r.fx.queue.admit(POOL, actorA, at, next.key);
     assert.equal(admitted.status, 'admitted');
@@ -304,9 +327,11 @@ interface Row { name: string; args: string[]; stderr: string; preload?: boolean;
 const aidlc = (message: string): string => `aidlc: ${message}\n`;
 
 /** One refusal: exit 1, the whole message on stderr, nothing written or journaled. */
-function assertRefused(r: Rig, row: Row): void {
+async function assertRefused(r: Rig, row: Row): Promise<void> {
   const before = snapshot(r.fx);
-  const res = cli(r, row.args, { preload: row.preload, env: row.env });
+  // In-process (T1-TEST-INPROC-REST): the owner's follow-up of the T1-TEST-INPROC-A-2/B-2 exception; a row with `preload` stays a
+  // child process in `cli` (R1: a module preloaded with --import), and cliAsync keeps the child-process case of review resolve (R2).
+  const res = await cli(r, row.args, { preload: row.preload, env: row.env });
   assert.equal(res.status, 1, `${row.name}: ${res.stderr}`);
   assert.equal(res.stderr, row.stderr, row.name);
   assert.deepEqual(snapshot(r.fx), before, `${row.name}: the state changed`);
@@ -357,11 +382,11 @@ function optionRows(r: Rig, key: string, queuedKey: string): Row[] {
 }
 
 test('every refusal of review resolve writes nothing and journals nothing', async (t) => {
-  await t.test('an unknown key and a request that is not lost', (t) => {
+  await t.test('an unknown key and a request that is not lost', async (t) => {
     const r = rig(t);
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
-    assertRefused(r, { name: 'unknown key', args: ['review', 'resolve', 'o/r|none|main|p|r', '--no-result', ...LOOKED], stderr: aidlc('unknown review request o/r|none|main|p|r') });
-    assertRefused(r, { name: 'queued, upper-case alias', args: ['review', 'resolve', upper(queued.key), '--no-result', ...LOOKED], stderr: aidlc(`request ${upper(queued.key)} is not lost`) });
+    await assertRefused(r, { name: 'unknown key', args: ['review', 'resolve', 'o/r|none|main|p|r', '--no-result', ...LOOKED], stderr: aidlc('unknown review request o/r|none|main|p|r') });
+    await assertRefused(r, { name: 'queued, upper-case alias', args: ['review', 'resolve', upper(queued.key), '--no-result', ...LOOKED], stderr: aidlc(`request ${upper(queued.key)} is not lost`) });
   });
 
   const states: Array<[string, (r: Rig, key: string) => void]> = [
@@ -372,31 +397,33 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
     ['cancelled', (r, key) => void r.fx.queue.cancel(key, 'cancelled by the test', r.fx.now())],
   ];
   for (const [state, setup] of states) {
-    await t.test(`a ${state} request`, (t) => {
+    await t.test(`a ${state} request`, async (t) => {
       const r = rig(t);
       const key = r.fx.queue.enqueue(enqueueInput(state, `${r.one.id}:${HELD}`)).request.key;
       setup(r, key);
       assert.equal(r.fx.queue.get(key)?.state, state);
-      assertRefused(r, { name: state, args: ['review', 'resolve', key, '--no-result', ...LOOKED], stderr: aidlc(`request ${key} is not lost`) });
+      await assertRefused(r, { name: state, args: ['review', 'resolve', key, '--no-result', ...LOOKED], stderr: aidlc(`request ${key} is not lost`) });
     });
   }
 
   await t.test('a request or goal record that cannot be read', async (t) => {
-    const breakers: Array<[string, string, (file: string) => void]> = [
+    const breakers: Array<[string, string, (file: string) => void, ((file: string) => RunOptions)?]> = [
       ['MALFORMED_JSON', 'a file holding {', (file) => writeFileSync(file, '{')],
       ['SCHEMA_VIOLATION', 'a file holding {}', (file) => writeFileSync(file, '{}')],
       ['READ_FAILED', 'a directory', (file) => mkdirSync(file)],
+      // T0-STORE-READ-ENOENT acceptance 5: the record is not on disk and its read fails with another code than ENOENT, as under a parent that cannot be searched.
+      ['READ_FAILED', 'nothing, with a read that fails with EACCES', () => undefined, (file) => ({ preload: true, env: { FAIL_READ_OF: file, FAIL_READ_CODE: 'EACCES' } })],
     ];
-    for (const [code, what, replace] of breakers) {
+    for (const [code, what, replace, faults] of breakers) {
       for (const record of ['request', 'goal']) {
-        await t.test(`${record} replaced by ${what}`, (t) => {
+        await t.test(`${record} replaced by ${what}`, async (t) => {
           const r = rig(t);
           const lost = lostRequest(r.fx, bothRequesters(r));
           const file = record === 'request' ? requestPath(r, lost.key) : r.fx.store.goalFile(r.one.id);
           rmSync(file);
           replace(file);
           const before = snapshot(r.fx);
-          const res = resolve(r, lost.key, ['--no-result', ...LOOKED]);
+          const res = await resolve(r, lost.key, ['--no-result', ...LOOKED], faults?.(file));
           assert.equal(res.status, 1, res.stderr);
           assert.ok(res.stderr.startsWith(`aidlc: ${code}: `), res.stderr);
           assert.ok(res.stderr.endsWith(` (${file})\n`), res.stderr);
@@ -411,24 +438,44 @@ test('every refusal of review resolve writes nothing and journals nothing', asyn
     }
   });
 
-  await t.test('every option, path and file row, then again under a configuration ctx() refuses', (t) => {
+  await t.test('every option, path and file row, then again under a configuration ctx() refuses', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
     mkdirSync(path.join(r.cwd, 'a-directory'));
     const rows = optionRows(r, lost.key, queued.key);
-    for (const row of rows) assertRefused(r, row);
+    for (const row of rows) await assertRefused(r, row);
     writeFileSync(path.join(r.cwd, 'aidlc.config.json'), '{ not json');
-    const control = resolve(r, lost.key, ['--no-result', ...LOOKED]);
+    const control = await resolve(r, lost.key, ['--no-result', ...LOOKED]);
     assert.equal(control.status, 1);
     assert.ok(control.stderr.startsWith('aidlc: ') && !control.stderr.includes('--verdict'), control.stderr);
     assert.ok(!control.stderr.includes('review resolve:'), `the configuration error is none of M1 to M6: ${control.stderr}`);
-    for (const row of rows) assertRefused(r, { ...row, name: `${row.name}, bad configuration` });
+    for (const row of rows) await assertRefused(r, { ...row, name: `${row.name}, bad configuration` });
   });
 });
 
+test('T0-STORE-READ-ENOENT-2 acceptance 9 - a resolve whose second requester goal cannot be inspected exits 1 with every journal and the queue unchanged, and running it again gives each goal its NOTE', async (t) => {
+  const r = rig(t);
+  const lost = lostRequest(r.fx, bothRequesters(r));
+  assert.deepEqual(lost.requesters, bothRequesters(r));
+  const file = r.fx.store.goalFile(r.two.id);
+  const before = snapshot(r.fx);
+
+  const failed = await resolve(r, lost.key, ['--no-result', ...LOOKED], { preload: true, env: { FAIL_READ_OF: file, FAIL_READ_CODE: 'EACCES' } });
+  assert.equal(failed.status, 1, failed.stderr);
+  assert.equal(failed.stderr, `aidlc: READ_FAILED: injected read failure (${file})\n`);
+  assert.deepEqual(changedPaths(before, snapshot(r.fx)), []);
+
+  const finished = await resolve(r, lost.key, ['--no-result', ...LOOKED]);
+  assert.equal(finished.status, 0, finished.stderr);
+  assert.deepEqual(active(r.fx), []);
+  for (const [goal, card] of [[r.one, HELD], [r.two, TWO]] as const) {
+    assert.deepEqual(noteRows(r.fx, goal.id), [[goal.id, card, goal.generation, lost.key, POOL, lost.seq, lost.attempts, 'not-found', 'looked-up', undefined]]);
+  }
+});
+
 test('every document the verdict-file parser accepts is a found result, read once and digested as bytes', async (t) => {
-  await t.test('every accepted shape completes the request', (t) => {
+  await t.test('every accepted shape completes the request', async (t) => {
     const r = rig(t);
     const sha = 'b'.repeat(40);
     const documents: Array<[string, string]> = [
@@ -442,22 +489,22 @@ test('every document the verdict-file parser accepts is a found result, read onc
       ['branch null', '{"verdict":"pass","branch":null}'],
       ['reasons a string', '{"verdict":"pass","reasons":"x"}'],
     ];
-    documents.forEach(([name, text], index) => {
+    for (const [index, [name, text]] of documents.entries()) {
       const lost = lostRequest(r.fx, oneRequester(r), { digest: `doc-${index}` });
       writeFileSync(path.join(r.cwd, 'doc.json'), text);
-      const res = resolve(r, lost.key, ['--verdict', 'doc.json', ...LOOKED]);
+      const res = await resolve(r, lost.key, ['--verdict', 'doc.json', ...LOOKED]);
       assert.equal(res.status, 0, `${name}: ${res.stderr}`);
       assert.equal(r.fx.queue.get(lost.key)?.state, 'completed', name);
       assert.equal(r.fx.queue.get(lost.key)?.verdictRef, path.join(r.cwd, 'doc.json'), name);
-    });
+    }
   });
 
-  await t.test('the file is read once and its bytes are digested', (t) => {
+  await t.test('the file is read once and its bytes are digested', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const bytes = Buffer.concat([Buffer.from('{"verdict":"pass","reasons":["'), Buffer.from([0xff]), Buffer.from('"]}')]);
     writeFileSync(path.join(r.cwd, 'bytes.json'), bytes);
-    const res = resolve(r, lost.key, ['--verdict', 'bytes.json', ...LOOKED], { preload: true, env: countingEnv(r, { COUNT_READS_OF: path.join(r.cwd, 'bytes.json') }) });
+    const res = await resolve(r, lost.key, ['--verdict', 'bytes.json', ...LOOKED], { preload: true, env: countingEnv(r, { COUNT_READS_OF: path.join(r.cwd, 'bytes.json') }) });
     assert.equal(res.status, 0, res.stderr);
     assert.equal(reads(r), 1);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'completed');
@@ -548,33 +595,33 @@ test('resolveLost runs before after the lost check, then frees the slot of the s
 test('a failed queue write leaves the request lost and running the command again finishes it', async (t) => {
   const modes: Array<[string, string[], 'completed' | 'queued']> = [['--verdict', ['--verdict', 'verdict.json'], 'completed'], ['--no-result', ['--no-result'], 'queued']];
   for (const [mode, flags, final] of modes) {
-    await t.test(`${mode}: a failed write of the pool leaves the slot held`, (t) => {
+    await t.test(`${mode}: a failed write of the pool leaves the slot held`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
-      const failed = resolve(r, lost.key, [...flags, ...LOOKED], { preload: true, env: { FAIL_RENAME_TO: path.basename(poolPath(r)) } });
+      const failed = await resolve(r, lost.key, [...flags, ...LOOKED], { preload: true, env: { FAIL_RENAME_TO: path.basename(poolPath(r)) } });
       assert.equal(failed.status, 1);
       assert.match(failed.stderr, /injected write failure/);
       assert.equal(r.fx.queue.get(lost.key)?.state, 'lost');
       assert.deepEqual(active(r.fx), [lost.key]);
       assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
-      const again = resolve(r, lost.key, [...flags, ...LOOKED]);
+      const again = await resolve(r, lost.key, [...flags, ...LOOKED]);
       assert.equal(again.status, 0, again.stderr);
       assert.equal(r.fx.queue.get(lost.key)?.state, final);
       assert.deepEqual(active(r.fx), []);
       assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
     });
-    await t.test(`${mode}: a failed write of the request leaves the slot free, and the next run keeps another key there`, (t) => {
+    await t.test(`${mode}: a failed write of the request leaves the slot free, and the next run keeps another key there`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
       const next = nextRequest(r.fx);
-      const failed = resolve(r, lost.key, [...flags, ...LOOKED], { preload: true, env: { FAIL_RENAME_TO: path.basename(requestPath(r, lost.key)) } });
+      const failed = await resolve(r, lost.key, [...flags, ...LOOKED], { preload: true, env: { FAIL_RENAME_TO: path.basename(requestPath(r, lost.key)) } });
       assert.equal(failed.status, 1);
       assert.match(failed.stderr, /injected write failure/);
       assert.equal(r.fx.queue.get(lost.key)?.state, 'lost');
       assert.deepEqual(active(r.fx), []);
       assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
       assert.equal(r.fx.queue.admit(POOL, actorA, r.fx.now(), next.key).status, 'admitted');
-      const again = resolve(r, upper(lost.key), [...flags, ...LOOKED]);
+      const again = await resolve(r, upper(lost.key), [...flags, ...LOOKED]);
       assert.equal(again.status, 0, again.stderr);
       assert.equal(r.fx.queue.get(lost.key)?.state, final);
       assert.deepEqual(active(r.fx), [next.key]);
@@ -582,11 +629,11 @@ test('a failed queue write leaves the request lost and running the command again
     });
   }
 
-  await t.test('a journal failure after the slot was freed leaves the request and the pool as they were, and the run again finishes', (t) => {
+  await t.test('a journal failure after the slot was freed leaves the request and the pool as they were, and the run again finishes', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, bothRequesters(r));
     const next = nextRequest(r.fx);
-    const failed = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_RENAME_TO: path.basename(requestPath(r, lost.key)) } });
+    const failed = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_RENAME_TO: path.basename(requestPath(r, lost.key)) } });
     assert.equal(failed.status, 1);
     assert.equal(r.fx.queue.admit(POOL, actorA, r.fx.now(), next.key).status, 'admitted');
     const journal = journalPath(r, r.two);
@@ -595,7 +642,7 @@ test('a failed queue write leaves the request lost and running the command again
     mkdirSync(journal);
     const request = readFileSync(requestPath(r, lost.key), 'utf8');
     const pool = readFileSync(poolPath(r), 'utf8');
-    const blocked = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
+    const blocked = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(blocked.status, 1);
     assert.equal(readFileSync(requestPath(r, lost.key), 'utf8'), request);
     assert.equal(readFileSync(poolPath(r), 'utf8'), pool);
@@ -603,7 +650,7 @@ test('a failed queue write leaves the request lost and running the command again
     assert.deepEqual(active(r.fx), [next.key]);
     rmdirSync(journal);
     writeFileSync(journal, kept);
-    const again = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
+    const again = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(again.status, 0, again.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'completed');
     assert.deepEqual(active(r.fx), [next.key]);
@@ -613,14 +660,14 @@ test('a failed queue write leaves the request lost and running the command again
 });
 
 test('each requester goal journals inside the queue section before the queue is written', async (t) => {
-  await t.test('(a) under a held section, and on a refusal of the queue, no journal is read', (t) => {
+  await t.test('(a) under a held section, and on a refusal of the queue, no journal is read', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const queued = r.fx.queue.enqueue(enqueueInput('queued', `${r.one.id}:${HELD}`)).request;
     const env = countingEnv(r, { COUNT_READS_BASE: `${r.one.id}.jsonl` });
     let held: Result | undefined;
     r.fx.queue.updatePool('other', (pool) => {
-      held = resolve(r, lost.key, ['--no-result', ...LOOKED], { preload: true, env });
+      held = resolveChild(r, lost.key, ['--no-result', ...LOOKED], { preload: true, env });
       return pool;
     });
     assert.equal(held?.status, 1);
@@ -629,44 +676,44 @@ test('each requester goal journals inside the queue section before the queue is 
     assert.deepEqual(resolvedNotes(r.fx, r.one.id), []);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'lost');
     for (const [key, message] of [['o/r|none|main|p|r', 'unknown review request o/r|none|main|p|r'], [queued.key, `request ${queued.key} is not lost`]] as const) {
-      const res = resolve(r, key, ['--no-result', ...LOOKED], { preload: true, env });
+      const res = await resolve(r, key, ['--no-result', ...LOOKED], { preload: true, env });
       assert.equal(res.stderr, aidlc(message));
       assert.equal(reads(r), 0, message);
     }
   });
 
-  await t.test('(b) a journal that cannot be read leaves the request and the pool as they were', (t) => {
+  await t.test('(b) a journal that cannot be read leaves the request and the pool as they were', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, bothRequesters(r));
     const journal = journalPath(r, r.two);
     const kept = readFileSync(journal, 'utf8');
     rmSync(journal);
     mkdirSync(journal);
-    const failed = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
+    const failed = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(failed.status, 1);
     assert.deepEqual(r.fx.queue.get(lost.key), lost);
     assert.deepEqual(active(r.fx), [lost.key]);
     assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
     rmdirSync(journal);
     writeFileSync(journal, kept);
-    const again = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
+    const again = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(again.status, 0, again.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'completed');
     assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
     assert.equal(resolvedNotes(r.fx, r.two.id).length, 1);
   });
 
-  await t.test('(c) a journal append that fails leaves the request and the pool as they were', (t) => {
+  await t.test('(c) a journal append that fails leaves the request and the pool as they were', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, bothRequesters(r));
-    const failed = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_APPEND_TO: `${r.two.id}.jsonl` } });
+    const failed = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_APPEND_TO: `${r.two.id}.jsonl` } });
     assert.equal(failed.status, 1);
     assert.match(failed.stderr, /injected append failure/);
     assert.deepEqual(r.fx.queue.get(lost.key), lost);
     assert.deepEqual(active(r.fx), [lost.key]);
     assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
     assert.equal(resolvedNotes(r.fx, r.two.id).length, 0);
-    const again = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
+    const again = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(again.status, 0, again.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'completed');
     assert.equal(resolvedNotes(r.fx, r.one.id).length, 1);
@@ -687,12 +734,12 @@ test('a NOTE counts only for its type, kind, key, pool, seq, attempts, outcome a
     ['verdict digest', 'NOTE', { verdictSha256: sha256('other bytes') }],
   ];
   for (const [component, type, change] of rows) {
-    await t.test(`a seeded event that differs only in its ${component} does not count`, (t) => {
+    await t.test(`a seeded event that differs only in its ${component} does not count`, async (t) => {
       const r = rig(t);
       const lost = lostRequest(r.fx, oneRequester(r));
       Journal.forGoal(r.fx.paths.journal, r.one.id).append({ type, goalId: r.one.id, cardId: HELD, generation: 0, data: seeded(lost, change) });
       const before = r.fx.events(r.one.id).length;
-      assert.equal(resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]).status, 0);
+      assert.equal(await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]).status, 0);
       const after = r.fx.events(r.one.id);
       assert.equal(after.length, before + 1);
       const last = after.at(-1)!;
@@ -701,72 +748,72 @@ test('a NOTE counts only for its type, kind, key, pool, seq, attempts, outcome a
     });
   }
 
-  await t.test('a seeded event that matches in every component is reused and keeps its reason', (t) => {
+  await t.test('a seeded event that matches in every component is reused and keeps its reason', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     Journal.forGoal(r.fx.paths.journal, r.one.id).append({ type: 'NOTE', goalId: r.one.id, cardId: HELD, generation: 0, data: seeded(lost, {}) });
     const before = r.fx.events(r.one.id).length;
-    assert.equal(resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]).status, 0);
     assert.equal(r.fx.events(r.one.id).length, before);
     assert.deepEqual(resolvedNotes(r.fx, r.one.id).map((e) => e.data['reason']), ['seeded']);
   });
 
-  await t.test('a failed run followed by another outcome, or by other bytes, appends another NOTE', (t) => {
+  await t.test('a failed run followed by another outcome, or by other bytes, appends another NOTE', async (t) => {
     const outcomeRig = rig(t);
     const lost = lostRequest(outcomeRig.fx, bothRequesters(outcomeRig));
-    const failed = resolve(outcomeRig, lost.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_APPEND_TO: `${outcomeRig.two.id}.jsonl` } });
+    const failed = await resolve(outcomeRig, lost.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_APPEND_TO: `${outcomeRig.two.id}.jsonl` } });
     assert.equal(failed.status, 1);
-    assert.equal(resolve(outcomeRig, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(outcomeRig, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.deepEqual(resolvedNotes(outcomeRig.fx, outcomeRig.one.id).map((e) => e.data['outcome']), ['found', 'not-found']);
     const bytesRig = rig(t);
     const second = lostRequest(bytesRig.fx, bothRequesters(bytesRig));
-    const failedAgain = resolve(bytesRig, second.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_APPEND_TO: `${bytesRig.two.id}.jsonl` } });
+    const failedAgain = await resolve(bytesRig, second.key, ['--verdict', 'verdict.json', ...LOOKED], { preload: true, env: { FAIL_APPEND_TO: `${bytesRig.two.id}.jsonl` } });
     assert.equal(failedAgain.status, 1);
     const other = '{"verdict":"block","reasons":["other bytes"]}';
     writeFileSync(path.join(bytesRig.cwd, 'verdict.json'), other);
-    assert.equal(resolve(bytesRig, second.key, ['--verdict', 'verdict.json', ...LOOKED]).status, 0);
+    assert.equal(await resolve(bytesRig, second.key, ['--verdict', 'verdict.json', ...LOOKED]).status, 0);
     assert.deepEqual(resolvedNotes(bytesRig.fx, bytesRig.one.id).map((e) => [e.data['outcome'], e.data['verdictSha256']]), [['found', sha256(PASS)], ['found', sha256(other)]]);
   });
 
-  await t.test('a request admitted again and resolved again gets a NOTE with the next attempts at one seq', (t) => {
+  await t.test('a request admitted again and resolved again gets a NOTE with the next attempts at one seq', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.equal(r.fx.queue.admit(POOL, actorA, r.fx.now(), lost.key).status, 'admitted');
     r.fx.queue.markLost(lost.key, LOST_DETAIL);
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.deepEqual(resolvedNotes(r.fx, r.one.id).map((e) => [e.data['attempts'], e.data['seq']]), [[1, lost.seq], [2, lost.seq]]);
   });
 
-  await t.test('a goal requesting through two cards gets one NOTE with the first card', (t) => {
+  await t.test('a goal requesting through two cards gets one NOTE with the first card', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, [`${r.one.id}:${HELD}`, `${r.one.id}:T1-OTHER`]);
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.deepEqual(noteRows(r.fx, r.one.id).map((row) => row[1]), [HELD]);
   });
 
-  await t.test('a requester naming a goal the store does not hold gets none and the resolution succeeds', (t) => {
+  await t.test('a requester naming a goal the store does not hold gets none and the resolution succeeds', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, ['g-gone:T1-GONE']);
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'queued');
     assert.equal(existsSync(path.join(r.fx.paths.journal, 'g-gone.jsonl')), false);
   });
 
-  await t.test('the NOTE carries the generation of the stored goal', (t) => {
+  await t.test('the NOTE carries the generation of the stored goal', async (t) => {
     const r = rig(t);
     r.fx.store.saveGoal({ ...r.fx.goal(r.one.id), generation: 3 });
     const lost = lostRequest(r.fx, oneRequester(r));
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.deepEqual(noteRows(r.fx, r.one.id).map((row) => row[2]), [3]);
   });
 
-  await t.test('a legacy lost request without attempts gives a NOTE with attempts 0 and resolves', (t) => {
+  await t.test('a legacy lost request without attempts gives a NOTE with attempts 0 and resolves', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     atomicWriteJson(requestPath(r, lost.key), { ...lost, attempts: undefined });
     assert.equal(readFileSync(requestPath(r, lost.key), 'utf8').includes('attempts'), false);
-    const res = resolve(r, lost.key, ['--no-result', ...LOOKED]);
+    const res = await resolve(r, lost.key, ['--no-result', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.deepEqual(noteRows(r.fx, r.one.id).map((row) => row[6]), [0]);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'queued');
@@ -806,28 +853,28 @@ test('review resolve settles the queue request only', async (t) => {
   };
   const touched = (r: Rig, lost: ReviewRequest): string[] => [relative(r, requestPath(r, lost.key)), relative(r, poolPath(r)), relative(r, journalPath(r, r.one))].sort();
 
-  await t.test('--verdict changes the request, the pool and the journal of the requester', (t) => {
+  await t.test('--verdict changes the request, the pool and the journal of the requester', async (t) => {
     const { r, lost } = stopped(t);
     writeFileSync(path.join(r.cwd, 'block.json'), '{"verdict":"block","reasons":["x"]}');
     const before = snapshot(r.fx);
-    const res = resolve(r, lost.key, ['--verdict', 'block.json', ...LOOKED]);
+    const res = await resolve(r, lost.key, ['--verdict', 'block.json', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.state, 'completed');
     assert.deepEqual(changedPaths(before, snapshot(r.fx)), touched(r, lost));
   });
 
-  await t.test('--no-result changes the request, the pool and the journal of the requester', (t) => {
+  await t.test('--no-result changes the request, the pool and the journal of the requester', async (t) => {
     const { r, lost } = stopped(t);
     const before = snapshot(r.fx);
-    assert.equal(resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
+    assert.equal(await resolve(r, lost.key, ['--no-result', ...LOOKED]).status, 0);
     assert.deepEqual(changedPaths(before, snapshot(r.fx)), touched(r, lost));
   });
 
-  await t.test('without a session in the environment the first journal append adds session-default', (t) => {
+  await t.test('without a session in the environment the first journal append adds session-default', async (t) => {
     const { r, lost } = stopped(t);
     assert.equal(existsSync(path.join(r.fx.paths.root, 'session-default')), false);
     const before = snapshot(r.fx);
-    const res = resolve(r, lost.key, ['--no-result', ...LOOKED], { session: false });
+    const res = await resolve(r, lost.key, ['--no-result', ...LOOKED], { session: false });
     assert.equal(res.status, 0, res.stderr);
     assert.deepEqual(changedPaths(before, snapshot(r.fx)), [...touched(r, lost), 'session-default'].sort());
   });
@@ -837,63 +884,63 @@ test('--verdict is read as T0-CLI-CWD-FILE-ARGS-2 reads a file argument, and ver
   const posix = process.platform === 'win32' ? 'POSIX only: Windows resolves .. lexically when it opens a path' : false;
   const windows = process.platform === 'win32' ? false : 'Windows only: drive-relative and network values are refused only there';
 
-  await t.test('a fully qualified value is read and recorded as given', (t) => {
+  await t.test('a fully qualified value is read and recorded as given', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     mkdirSync(path.join(r.cwd, 'abs'));
     writeFileSync(path.join(r.cwd, 'abs', 'verdict.json'), PASS);
     const value = path.join(r.cwd, 'abs', 'verdict.json');
-    const res = resolve(r, lost.key, ['--verdict', value, ...LOOKED]);
+    const res = await resolve(r, lost.key, ['--verdict', value, ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, value);
   });
 
-  await t.test('with -C a fully qualified value is normalized lexically, not read as given', (t) => {
+  await t.test('with -C a fully qualified value is normalized lexically, not read as given', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     mkdirSync(path.join(r.cwd, 'abs'));
-    const res = cli(r, ['-C', r.cwd, 'review', 'resolve', lost.key, '--verdict', `${r.cwd}${path.sep}abs${path.sep}..${path.sep}verdict.json`, ...LOOKED]);
+    const res = await cli(r, ['-C', r.cwd, 'review', 'resolve', lost.key, '--verdict', `${r.cwd}${path.sep}abs${path.sep}..${path.sep}verdict.json`, ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, path.join(r.cwd, 'verdict.json'));
   });
 
-  await t.test('with -C a relative value resolves against the -C directory; without it the value is read against the process directory', (t) => {
+  await t.test('with -C a relative value resolves against the -C directory; without it the value is read against the process directory', async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     rmSync(path.join(r.cwd, 'verdict.json'));
     mkdirSync(path.join(r.cwd, 'lookup'));
     writeFileSync(path.join(r.cwd, 'lookup', 'verdict.json'), PASS);
     const before = snapshot(r.fx);
-    const plain = resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
+    const plain = await resolve(r, lost.key, ['--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(plain.status, 1);
     assert.equal(plain.stderr, aidlc(M4('verdict.json', 'ENOENT')));
     assert.deepEqual(snapshot(r.fx), before);
-    const res = cli(r, ['-C', path.join(r.cwd, 'lookup'), 'review', 'resolve', lost.key, '--verdict', 'verdict.json', ...LOOKED]);
+    const res = await cli(r, ['-C', path.join(r.cwd, 'lookup'), 'review', 'resolve', lost.key, '--verdict', 'verdict.json', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, path.resolve(r.cwd, 'lookup', 'verdict.json'));
   });
 
-  await t.test('POSIX: a .. after a missing directory fails without -C and is read lexically with it', { skip: posix }, (t) => {
+  await t.test('POSIX: a .. after a missing directory fails without -C and is read lexically with it', { skip: posix }, async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const before = snapshot(r.fx);
-    const plain = resolve(r, lost.key, ['--verdict', 'missing/../verdict.json', ...LOOKED]);
+    const plain = await resolve(r, lost.key, ['--verdict', 'missing/../verdict.json', ...LOOKED]);
     assert.equal(plain.status, 1);
     assert.equal(plain.stderr, aidlc(M4('missing/../verdict.json', 'ENOENT')));
     assert.deepEqual(snapshot(r.fx), before);
-    const res = cli(r, ['-C', r.cwd, 'review', 'resolve', lost.key, '--verdict', 'missing/../verdict.json', ...LOOKED]);
+    const res = await cli(r, ['-C', r.cwd, 'review', 'resolve', lost.key, '--verdict', 'missing/../verdict.json', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, `${r.cwd}/verdict.json`);
   });
 
-  await t.test('POSIX: a .. after a directory link is read as the file system reads it, and verdictRef names that file', { skip: posix }, (t) => {
+  await t.test('POSIX: a .. after a directory link is read as the file system reads it, and verdictRef names that file', { skip: posix }, async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     mkdirSync(path.join(r.cwd, 'target', 'inner'), { recursive: true });
     symlinkSync(path.join(r.cwd, 'target', 'inner'), path.join(r.cwd, 'link'), 'dir');
     const linked = '{"verdict":"block","reasons":["link"]}';
     writeFileSync(path.join(r.cwd, 'target', 'verdict.json'), linked);
-    const res = resolve(r, lost.key, ['--verdict', 'link/../verdict.json', ...LOOKED]);
+    const res = await resolve(r, lost.key, ['--verdict', 'link/../verdict.json', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     const ref = r.fx.queue.get(lost.key)?.verdictRef;
     assert.equal(ref, `${r.cwd}/link/../verdict.json`);
@@ -902,28 +949,28 @@ test('--verdict is read as T0-CLI-CWD-FILE-ARGS-2 reads a file argument, and ver
     assert.notEqual(sha256(linked), sha256(PASS));
 
     const second = lostRequest(r.fx, oneRequester(r), { digest: 'second' });
-    const qualified = cli(r, ['-C', r.cwd, 'review', 'resolve', second.key, '--verdict', `${r.cwd}/link/../verdict.json`, ...LOOKED]);
+    const qualified = await cli(r, ['-C', r.cwd, 'review', 'resolve', second.key, '--verdict', `${r.cwd}/link/../verdict.json`, ...LOOKED]);
     assert.equal(qualified.status, 0, qualified.stderr);
     assert.equal(r.fx.queue.get(second.key)?.verdictRef, `${r.cwd}/verdict.json`);
     assert.deepEqual(resolvedNotes(r.fx, r.one.id).filter((e) => e.data['key'] === second.key).map((e) => e.data['verdictSha256']), [sha256(PASS)]);
   });
 
-  await t.test('Windows: a .. after a missing directory is read lexically', { skip: windows }, (t) => {
+  await t.test('Windows: a .. after a missing directory is read lexically', { skip: windows }, async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
-    const res = resolve(r, lost.key, ['--verdict', 'missing\\..\\verdict.json', ...LOOKED]);
+    const res = await resolve(r, lost.key, ['--verdict', 'missing\\..\\verdict.json', ...LOOKED]);
     assert.equal(res.status, 0, res.stderr);
     assert.equal(r.fx.queue.get(lost.key)?.verdictRef, path.join(r.cwd, 'verdict.json'));
   });
 
-  await t.test('Windows: a drive-relative and a network value are refused', { skip: windows }, (t) => {
+  await t.test('Windows: a drive-relative and a network value are refused', { skip: windows }, async (t) => {
     const r = rig(t);
     const lost = lostRequest(r.fx, oneRequester(r));
     const rows: Array<[string, string]> = [
       ['C:verdict.json', '--verdict "C:verdict.json": a drive letter without a separator names the current directory of that drive; pass C:\\ and the full path, or a path relative to the -C directory'],
       ['\\\\x', '--verdict "\\\\\\\\x": a network path needs a server and a share; pass \\\\server\\share\\path, or a path relative to the -C directory'],
     ];
-    for (const [value, message] of rows) assertRefused(r, { name: value, args: ['review', 'resolve', lost.key, '--verdict', value, ...LOOKED], stderr: aidlc(message) });
+    for (const [value, message] of rows) await assertRefused(r, { name: value, args: ['review', 'resolve', lost.key, '--verdict', value, ...LOOKED], stderr: aidlc(message) });
   });
 });
 

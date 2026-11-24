@@ -104,3 +104,22 @@ SELECT * FROM (
     UNION SELECT c.id, p.number FROM cards c JOIN prs p ON p.headRef = c.id WHERE p.mergedAt IS NULL AND p.closedAt IS NOT NULL
   ) GROUP BY cardId
 ) ORDER BY kind, cardId;
+
+-- Card T1-OUTCOME-ESCAPED. Per week (the Monday of its UTC date) that holds a merged card or a revert: the cards of
+-- card_merge merged in it, those whose card has a diagnosis (bugfix cards; a card the registry does not hold is none),
+-- the reverts made in it, and mentions_a_merged_card: the bugfix cards of the week whose mentions name a card of
+-- card_merge merged earlier, plus the reverts of the week whose revertedSha is the merge commit of a card_merge row.
+-- The mention count is a proxy: it counts mentions and is no count of escaped defects.
+CREATE OR REPLACE VIEW summary_escaped AS
+WITH events AS (
+  SELECT m.mergedAt::TIMESTAMPTZ AS ts, true AS merged, coalesce(c.diagnosis, false) AS bugfix, false AS revert,
+    coalesce(c.diagnosis, false) AND EXISTS (SELECT 1 FROM card_merge e WHERE list_contains(c.mentions, e.cardId) AND e.mergedAt::TIMESTAMPTZ < m.mergedAt::TIMESTAMPTZ) AS mention
+  FROM card_merge m LEFT JOIN cards c ON c.id = m.cardId
+  UNION ALL
+  SELECT v.date::TIMESTAMPTZ, false, false, true, EXISTS (SELECT 1 FROM card_merge e WHERE e.mergeCommitSha = v.revertedSha)
+  FROM reverts v WHERE v.date IS NOT NULL
+)
+SELECT strftime(date_trunc('week', timezone('UTC', ts)), '%Y-%m-%d') AS week,
+  count(*) FILTER (WHERE merged) AS merged_cards, count(*) FILTER (WHERE bugfix) AS bugfix_cards,
+  count(*) FILTER (WHERE revert) AS reverts, count(*) FILTER (WHERE mention) AS mentions_a_merged_card
+FROM events GROUP BY week ORDER BY week;

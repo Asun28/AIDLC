@@ -45,7 +45,7 @@ cards follow the same shape through `aidlc card next <id>` /
 **Layers, inner to outer** (`src/`): `core/` (pure decision engines, no I/O),
 `state/`, `coordination/`, `probes/`, `delivery/`, `review/`, `loop/`, `hooks/`,
 `cli/` and `scaffold/`. `docs/ARCHITECTURE.md`, Module map, describes each.
-Four facts it leaves out: state lives under `<main checkout>/.aidlc/`, shared
+Runtime details: state lives under `<main checkout>/.aidlc/`, shared
 by all worktrees; every `ShipPath` adapter (`scaffold`, `github`, `dry-run`)
 prints the same scaffold-style sentinels so `classifyShipOutput` maps outcomes
 uniformly; a review verdict is the last stdout line of JSON, written next to
@@ -72,8 +72,8 @@ what a block or a quota hold does: `docs/OPERATIONS.md`, Pre-review (R2).
 **Every side effect is injectable.** `GoalController`, `CardRunner` and
 `ReleaseRunner` take a deps object (`runner`, `git`, `gh`, `shipPath`, `now`,
 stores). Tests use `scriptedRunner` from `src/probes/exec.ts`,
-`DryRunShipPath`, a fixed clock and a temp `.aidlc`; nothing in `tests/`
-calls `Date.now()`.
+`DryRunShipPath`, a fixed clock and a temp `.aidlc`.
+Some tests read real time to measure or bound a wait, or for a file time.
 
 ## Configuration and environment
 
@@ -94,8 +94,11 @@ calls `Date.now()`.
 - ESM, strict TypeScript with `erasableSyntaxOnly` (no enums, namespaces or
   parameter properties) and `verbatimModuleSyntax` (`import type` for
   types). Relative imports carry an explicit `.ts` extension.
-- Every persisted record has a zod schema in `src/core/types.ts`; parse at
-  the boundary.
+- Before adding a package or writing code, check `package.json` dependencies,
+  Node built-ins, and helpers in `src/` and `tests/` for the needed capability.
+  Read the relevant APIs before choosing reuse or custom code.
+- Parse persisted records with their zod schemas at the boundary.
+  Core schemas: `src/core/types.ts`; manifest: `src/audit/manifest.ts`.
 - Provider and reviewer commands are argv arrays, never shell strings.
 - Tests are `node:test` + `node:assert/strict` under
   `tests/{core,infra,scenarios,surface}`. Shared fixtures:
@@ -110,8 +113,9 @@ calls `Date.now()`.
   caps asserted by `tests/surface/templates.test.ts`. The section below is
   `templates/CLAUDE.aidlc.md`, which `aidlc init` appends to a downstream
   repo's CLAUDE.md; keep the two identical.
-- Record behaviour changes in `CHANGELOG.md` (Unreleased) and, where they
-  touch the loop, in `docs/ARCHITECTURE.md` and `docs/OPERATIONS.md`.
+- Record a behaviour change in a new file `changelog.d/<card id>.md`, not
+  in `CHANGELOG.md` (the form: `changelog.d/README.md`), and, where it
+  touches the loop, in `docs/ARCHITECTURE.md` and `docs/OPERATIONS.md`.
 - This file stays within 200 lines (`tests/surface/claude-md-size.test.ts`):
   every session loads it, and a longer file costs context and adherence, so
   detail goes in `docs/`.
@@ -164,9 +168,12 @@ refuses SHIP without a DoD receipt; the Stop hook only reminds.
 - Review a candidate only through the configured gates (`aidlc review r3`,
   and `aidlc review pre` first where `preReview.command` is set); run no
   other review of it.
-- After a card run starts, do not edit the card's requirements, acceptance
-  or budget. A point the card does not cover becomes a follow-up issue, not
-  a ruling in the card.
+- After a card run starts, a session does not change the card's contract on
+  its own. The owner's amendment is recorded with `aidlc card amend` and a
+  stopped run continues with `aidlc card continue`, each only on the owner's
+  instruction in the session or under a delegation the owner gave and the
+  record names. A point the card does not cover and the owner does not amend
+  becomes a follow-up issue.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
 - Never feed a script to an interpreter on standard input (`python -`, a
   heredoc into `node`): write it to a file outside the worktree and run the

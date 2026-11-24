@@ -6,7 +6,7 @@
  * reported, never silently adopted (plan v5 MS5: "acquire/update it atomically and recover
  * interrupted writes").
  */
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ZodType } from 'zod';
@@ -82,13 +82,16 @@ export function atomicWriteJson(file: string, value: unknown): number {
   return atomicWriteText(file, stableStringify(value) + '\n');
 }
 
-/** Read and validate a JSON record. Missing file returns undefined; invalid content throws. */
+/**
+ * Read and validate a JSON record. A file that is not there (its read fails with the code ENOENT) returns undefined; any
+ * other failure to read it throws READ_FAILED, and invalid content throws MALFORMED_JSON or SCHEMA_VIOLATION.
+ */
 export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
-  if (!existsSync(file)) return undefined;
   let raw: string;
   try {
     raw = readFileSync(file, 'utf8');
   } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined;
     throw new StoreError('READ_FAILED', file, (err as Error).message);
   }
   let parsed: unknown;
@@ -104,10 +107,22 @@ export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
   return result.data;
 }
 
-/** Detect leftover temporary files from interrupted writes in a directory. */
+/**
+ * The names in a directory. A directory that is not there (its listing fails with the code ENOENT) has none; any other
+ * failure to list it throws READ_FAILED naming the directory.
+ */
+export function readDirNames(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException | null)?.code === 'ENOENT') return [];
+    throw new StoreError('READ_FAILED', dir, (err as Error).message);
+  }
+}
+
+/** Detect leftover temporary files from interrupted writes in a directory; a directory that cannot be listed throws READ_FAILED (`readDirNames`). */
 export function findInterruptedWrites(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  return readDirNames(dir)
     .filter((name) => /\.tmp-\d+-[a-f0-9]{8}$/.test(name))
     .map((name) => path.join(dir, name));
 }
@@ -161,8 +176,8 @@ export function createExclusive(file: string, text: string): boolean {
  * is gone is refused like any other, naming the file and the process id for the operator. The write is ownership-checked
  * (a writer whose lock changed hands refuses with `LOCK_LOST`) and runs inside `within` when given, so a caller holds
  * another lock until the record is on disk. The release removes only this writer's lock, and neither it nor an unreadable
- * lock replaces the change's result or error. The lock is not reentrant: nested sections take the card-run lock before the
- * lease lock.
+ * lock replaces the change's result or error. The lock is not reentrant: nested sections take the goal lease lock first, then
+ * the card-run lock, then the card lease lock (card T0-TAKEOVER-DONE-RACE: `card takeover` runs inside a goal lease section).
  */
 export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, opts: { timeoutMs?: number; within?: (write: () => void) => void } = {}): T | undefined {
   const lock = `${file}.lock`;
@@ -273,9 +288,9 @@ function readLockOwner(lock: string): string | undefined {
   }
 }
 
+/** The `.json` files of a directory, sorted by name; a directory that cannot be listed throws READ_FAILED (`readDirNames`). */
 export function listJsonFiles(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir)
+  return readDirNames(dir)
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => path.join(dir, name));

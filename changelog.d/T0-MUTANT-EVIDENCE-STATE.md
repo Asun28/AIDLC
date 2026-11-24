@@ -1,0 +1,1 @@
+- T0-MUTANT-EVIDENCE-STATE: the formal review (R3) prompt opens its `## Surviving mutants` section with the state of the mutant report: no report, a report that is unusable, a report for another candidate, or the counts of the sweep of this candidate, where it printed `- none` for all four; a missing, unusable or other-candidate report is not a finding.

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, w
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { canonical, resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
@@ -18,6 +18,7 @@ import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
 import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { strayProcessesReport } from '../probes/processes.ts';
+import { toolchainReport } from '../probes/toolchain.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
@@ -33,12 +34,12 @@ import { parseSpec } from '../artifacts/spec.ts';
 import { evaluatePlanReadiness, parsePlanCards } from '../artifacts/plan.ts';
 import { formatRouting } from '../core/router.ts';
 import { formatStop } from '../core/stop.ts';
-import { resolveCardGoal, terminalGoalRefusal } from '../core/card-goal.ts';
+import { doneGoalTakeover, resolveCardGoal, terminalGoalRefusal } from '../core/card-goal.ts';
 import { classifyCiFailure } from '../core/ci-policy.ts';
 import { detectDataImpact, buildMigrationPlan, checkMigrationOrdering, assessRecovery } from '../core/migrate.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
-import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
+import { LeaseStore, resourceKeys, type ReconcileReport } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { BoundsReadError, asciiJson, formatBounds, readBoundRecords, summarizeBounds } from '../state/bounds.ts';
@@ -51,7 +52,7 @@ import { ClaudeApiProvider } from '../providers/claude-api.ts';
 import { ClaudeCodeProvider } from '../providers/claude-code.ts';
 import type { ModelProvider } from '../providers/types.ts';
 import { CANDIDATE_BOUND_KINDS, EvidenceStore, Manifest } from '../audit/manifest.ts';
-import { verifyAudit } from '../audit/verifier.ts';
+import { staleCandidateRefusal, verifyAudit } from '../audit/verifier.ts';
 import { evaluateBands, parseBandsYaml, type Sample } from '../maintain/bands.ts';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../maintain/incident.ts';
 import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '../hooks/index.ts';
@@ -140,6 +141,15 @@ export function resolvePathArg(value: string, option: string, base: string, flav
   return { ok: true, path: flavour.resolve(base, value) };
 }
 
+/** What `card adopt-merge` prints for an adopted run (card T0-ADOPT-EXTERNAL-MERGE-3 R1): the same facts and next step in both modes. */
+export function adoptMergeReport(cardId: string, goalId: string, run: CardRun): { json: { state: CardRun['state']; mergeVerified: boolean; pr: CardRun['pr']; next: string }; text: string } {
+  const next = `aidlc card next ${cardId} --goal ${goalId}`;
+  return {
+    json: { state: run.state, mergeVerified: run.mergeVerified, pr: run.pr, next },
+    text: `adopted PR #${run.pr?.number} (merge commit ${run.pr?.mergeCommit}); state=${run.state} mergeVerified=${run.mergeVerified}; next: ${next}`,
+  };
+}
+
 /**
  * `board --watch`: a screen now and one per interval (a terminal cleared first) until `stop` aborts (SIGINT) or `out` fails.
  * Resolves an output failure's errno code, or `undefined` for a stop or a reader that closed the pipe (EPIPE).
@@ -162,7 +172,7 @@ function doctorWorkingTree(c: Ctx): ReturnType<typeof workingTreeReport> {
     isGit: c.repo.isGit,
     status: () => new GitProbe().status(c.repo.mainRoot),
     dirs: c.config,
-    goals: () => (existsSync(c.paths.goals) ? c.store.listGoals() : []),
+    goals: () => c.store.listGoals(),
     readPlan: (ref) => {
       const file = path.join(c.root, ref);
       return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
@@ -201,10 +211,17 @@ function parseData(raw: string | undefined): Record<string, unknown> {
   }
 }
 
-function cardOf(c: Ctx, cardId: string): ParsedCard {
+/** The card from the registry, or nothing: a lookup that never exits, for a caller that holds a lock. */
+function findCard(c: Ctx, cardId: string): ParsedCard | undefined {
   const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
-  const hit = registry.cards.find((p) => p.card.id === cardId);
-  if (!hit) fail(`card ${cardId} not found in ${c.config.cardsDir}`);
+  return registry.cards.find((p) => p.card.id === cardId);
+}
+
+const cardMissing = (c: Ctx, cardId: string): string => `card ${cardId} not found in ${c.config.cardsDir}`;
+
+function cardOf(c: Ctx, cardId: string): ParsedCard {
+  const hit = findCard(c, cardId);
+  if (!hit) fail(cardMissing(c, cardId));
   return hit;
 }
 
@@ -306,30 +323,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       let c: Ctx;
       // Only a configuration that does not parse is a config error; any other failure ends doctor as it ends every command.
       try { c = ctx(g()); } catch (err) { if (err instanceof ConfigError) return fail(`config: ERROR ${err.message}`); throw err; }
-      // Toolchain probes run concurrently: doctor is the entry check of every route and wakeup.
-      const probe = (cmd: string, args: string[]) =>
-        new Promise<string | undefined>((resolve) => {
-          let out = '';
-          const child = spawn(cmd, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-          child.stdout.on('data', (d: Buffer) => (out += d.toString()));
-          child.stderr.on('data', (d: Buffer) => (out += d.toString()));
-          child.on('error', () => resolve(undefined));
-          child.on('close', (code) => resolve(code === 0 ? out.trim().split(/\r?\n/)[0] : undefined));
-        });
       const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
       const validation = validateRegistry(registry, c.config.tierPaths);
       const blocking = [...validation.values()].flat().filter((f) => f.severity === 'block').length;
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
-      const [gitVersion, ghVersion, pwshVersion, avail, strayProcesses] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available(), strayProcessesReport({ isGit: c.repo.isGit, mainRoot: c.repo.mainRoot, config: c.config, runner: run, now: nowIso() })]);
+      // Toolchain probes run concurrently, each ended at its bound: doctor is the entry check of every route and wakeup.
+      const [toolchain, avail, strayProcesses] = await Promise.all([toolchainReport(), provider.available(), strayProcessesReport({ isGit: c.repo.isGit, mainRoot: c.repo.mainRoot, config: c.config, runner: run, now: nowIso() })]);
       // The session line names the source token (env, claude, default) and what it means; default is a warning.
       const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
         source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
       const checks = {
         node: process.version,
-        git: gitVersion ?? 'MISSING',
-        gh: ghVersion ?? 'MISSING (needed for remote ship)',
-        pwsh: pwshVersion ?? 'MISSING (needed for scaffold ship path)',
+        git: toolchain.git,
+        gh: toolchain.gh,
+        pwsh: toolchain.pwsh,
         repository: c.repo.isGit ? c.repo.mainRoot : `${c.root} (not a git repository)`,
         config: c.configFound ? 'aidlc.config.json' : 'defaults (run aidlc init)',
         shipPath: c.config.shipPath,
@@ -466,10 +474,31 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const leases = new LeaseStore(c.paths.leases);
       const ops = new OperationLedger(c.paths.operations);
       const key = resourceKeys.goal(c.repo.key, id);
-      const result = leases.takeover(key, () => {
+      // A DONE goal has nothing to take over (cards T0-TAKEOVER-DONE-GOAL, -2): no lease, no event, exit 0. The command's one
+      // goal read runs inside the goal lease section, where goal close saves DONE (card T0-TAKEOVER-DONE-RACE, issue 387), so a
+      // DONE saved by another session cannot land between the read and the lease write. The section is `LeaseStore.takeover`'s
+      // (the successor, then the reconciliation) behind that read; on a DONE goal it returns the lease record as it is.
+      let done: { state: string; detail: string } | undefined;
+      let report: ReconcileReport | undefined;
+      const lease = leases.update(key, (existing) => {
+        const goalRec = c.store.getGoal(id);
+        if (!goalRec) throw new Error(`unknown goal ${id}`);
+        const detail = doneGoalTakeover(goalRec);
+        if (detail) {
+          done = { state: goalRec.state, detail };
+          return existing;
+        }
+        const next = leases.successor(key, existing, { operation: 'coordinate' });
         const unresolved = ops.unresolved(id).map((o) => o.id);
-        return { reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined };
-      }, { operation: 'coordinate' });
+        report = { reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined };
+        if (!report.reconciled) throw new Error(`takeover refused: old owner effects not reconciled (${report.unresolvedOperations.join(',') || report.note || 'unknown'})`);
+        return next;
+      });
+      if (done) {
+        const { state, detail } = done;
+        return out(c, { goalId: id, state, takenOver: false, detail }, () => detail);
+      }
+      const result = { lease: lease!, report: report! };
       Journal.forGoal(c.paths.journal, id).append({ type: 'GOAL_TAKEOVER', goalId: id, data: { leaseGeneration: result.lease.generation, report: result.report } });
       out(c, result, () => `took over ${id} at lease generation ${result.lease.generation}`);
     });
@@ -620,10 +649,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
    * `cardGoalId` does and, with `guard`, refused when it is stopped or done; a named terminal goal is refused before
    * `holdsRun` reads a run. The command then uses this record, never a reload, up to its first card-run access.
    */
-  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard: boolean | 'rule' = true): Goal => {
+  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard: boolean | 'rule' | 'continue' = true): Goal => {
     const goals = c.store.listGoals();
     const refuse = (goalRec: Goal | undefined) => {
-      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec, guard === 'rule') : undefined;
+      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec, guard === 'continue' ? guard : guard === 'rule') : undefined;
       if (refusal) fail(refusal);
     };
     if (explicit !== undefined) refuse(goals.find((x) => x.id === explicit));
@@ -636,6 +665,19 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   const runCtx = (c: Ctx, goalRec: Goal, cardId: string) => ({ goalRec, parsed: cardOf(c, cardId), run: c.controller.ensureCardRun(goalRec, cardId) });
   // `guard: false` is `card ci-reconcile`: it records an observed CI rerun, so it runs on a stopped goal too.
   const cardCtx = (c: Ctx, cardId: string, goalId?: string, guard = true) => runCtx(c, checkedGoal(c, cardId, goalId, guard), cardId);
+  /**
+   * `review pre` and `review r3` (card T0-REVIEW-NO-RUN-2, issue 328): after the goal checks, the existing run of the goal,
+   * read and never created, refused when there is none or none of its attempts succeeded, so no reviewer runs on a
+   * checkout no attempt bound and nothing is written. A withdrawn candidate keeps the runner's own refusal.
+   */
+  const reviewCtx = (c: Ctx, cardId: string, goalId?: string) => {
+    const goalRec = checkedGoal(c, cardId, goalId);
+    const parsed = cardOf(c, cardId);
+    const run = c.store.getCardRun(goalRec.id, cardId);
+    if (!run) fail(`${cardId} has no card run in goal ${goalRec.id}; run \`aidlc card next ${cardId} --goal ${goalRec.id}\` first`);
+    if (!run.effort?.attempts.some((a) => a.outcome === 'success') && run.pendingRepair?.kind !== 'withdrawn') fail(`${cardId} has no successful attempt in goal ${goalRec.id}; record one first with \`aidlc card attempt ${cardId} --outcome success --dod-receipt "<command: exit code and counts>"\``);
+    return { goalRec, parsed, run };
+  };
   card
     .command('next <cardId>')
     .description('gather evidence, select the card state and perform its bounded action')
@@ -680,6 +722,57 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const updated = runnerFor(c).withdrawCandidate(goalRec, cardOf(c, cardId).card, run, o.cause);
       c.controller.writeBoard(goalRec);
       out(c, { effort: updated.effort, candidate: updated.candidate, pendingRepair: updated.pendingRepair }, () => `withdrew candidate ${updated.candidate?.sha.slice(0, 12)}; the attempt that bound it counts as failed; run \`aidlc card next ${cardId}\``);
+    });
+  card
+    .command('adopt-merge <cardId>')
+    .description('record a merge made outside a ship operation once gh and git verify it: the run gets mergeVerified and moves to CLOSE (card T0-ADOPT-EXTERNAL-MERGE-3)')
+    .option('--goal <id>')
+    .requiredOption('--pr <n>', 'the merged PR of the card branch into the base')
+    .action((cardId: string, o: { goal?: string; pr: string }) => {
+      if (!/^[1-9]\d*$/.test(o.pr)) fail(`--pr must be a positive integer, got ${JSON.stringify(o.pr)}`);
+      const c = ctx(g());
+      const goalRec = checkedGoal(c, cardId, o.goal);
+      // The existing run only, as for withdraw: `ensureCardRun` would start the card's deadline for a command that then refuses.
+      const run = c.store.getCardRun(goalRec.id, cardId);
+      if (!run) fail(`no run record for ${cardId} in ${goalRec.id}; start it with aidlc card next ${cardId} --goal ${goalRec.id}`);
+      const updated = runnerFor(c).adoptMerge(goalRec, cardOf(c, cardId).card, run, Number(o.pr));
+      c.controller.writeBoard(goalRec);
+      const report = adoptMergeReport(cardId, goalRec.id, updated);
+      out(c, report.json, () => report.text);
+    });
+  card
+    .command('continue <cardId>')
+    .description("record the owner's continuation of a run stopped for review or ci: a review stop is lifted with further R3 decisions, a ci stop returns the run to BUILD with the failure counted as a failed attempt, and a goal stopped for that stop is re-admitted (cards T1-CONTINUE-COMMAND, T1-CONTINUE-CI)")
+    .requiredOption('--by <who>', 'who continues the run, as recorded')
+    .requiredOption('--reason <text>', 'why the run goes on')
+    .option('--decisions <n>', 'the further R3 decisions admitted, 1 to 4 (default 1); a review stop only')
+    .option('--goal <id>')
+    .action((cardId: string, o: { by: string; reason: string; decisions?: string; goal?: string }) => {
+      const c = ctx(g());
+      // The existing run only, never created; the command runs on a goal stopped for review or ci too. Every write is the controller's.
+      const goalRec = checkedGoal(c, cardId, o.goal, 'continue');
+      const act = { by: o.by, reason: o.reason, ...(o.decisions === undefined ? {} : { decisions: Number(o.decisions) }) };
+      const { run, goal: goalNow, continued, readmitted } = c.controller.continueCard(runnerFor(c), goalRec.id, cardOf(c, cardId).card, act);
+      const continuation = run.continuations.at(-1)!;
+      // No deadline moves: the deadline is read on the real clock.
+      const late = Date.parse(run.deadline) <= Date.parse(nowIso());
+      const next = `${late ? `the card deadline ${run.deadline} has passed, so run \`aidlc goal extend ${goalRec.id} --until <iso> --by <who> --reason <text>\` and then ` : ''}\`aidlc card next ${cardId}\`${readmitted ? `; goal ${goalNow.id} is re-admitted (${goalNow.state})` : ''}`;
+      out(c, { cardId, state: run.state, continuation, continued, readmitted, next }, () => `${cardId} state=${run.state} continued=${continued} readmitted=${readmitted}; continuation at ${continuation.at} by ${continuation.by}: ${continuation.reason}; lifted stop ${continuation.stop.reason} at ${continuation.stop.at}: ${continuation.stop.detail}${continuation.decisions === undefined ? '' : `; decisions=${continuation.decisions} admits=${continuation.admits}`}; next: ${next}`);
+    });
+  card
+    .command('amend <cardId>')
+    .description("record the owner's amendment of a started card: the contract fields changed in the card file of the main checkout since the run's contract, and the evidence they invalidate (card T1-AMEND-COMMAND); starts no run and lifts no stop")
+    .requiredOption('--by <who>', 'who amends the card, as recorded')
+    .requiredOption('--reason <text>', 'why the card changed')
+    .option('--goal <id>')
+    .action((cardId: string, o: { by: string; reason: string; goal?: string }) => {
+      const c = ctx(g());
+      // The existing run only, never created, on a goal in any state; every write and every refusal of the act are the runner's.
+      const goalRec = checkedGoal(c, cardId, o.goal, false);
+      const run = runnerFor(c).amendCard(goalRec, cardOf(c, cardId).card, { by: o.by, reason: o.reason });
+      const amendment = run.amendments.at(-1)!;
+      const next = run.stop ? `the run stays in STOP for ${run.stop.reason}; on the owner's instruction run \`aidlc card continue ${cardId} --by <who> --reason <text>\`` : `\`aidlc card next ${cardId}\``;
+      out(c, { cardId, state: run.state, amendment, next }, () => `${cardId} state=${run.state}; amendment revision ${amendment.revision} at ${amendment.at} by ${amendment.by}: ${amendment.reason}; changed=${amendment.changed.join(',')} invalidated=${amendment.invalidated.join(',') || 'none'}; next: ${next}`);
     });
   card
     .command('close <cardId>')
@@ -737,9 +830,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = cardGoalId(c, cardId, o.goal);
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}`);
-      // The card lease next to the run: a run stopped for ownership before PREPARE names no owner in its stop, and
-      // the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md, Sessions). An
-      // unreadable record is named by its store error code only, never by its contents.
+      // The card lease next to the run: the stop of a dispatch under another session's live lease names the holder and
+      // is not saved, and the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md,
+      // Sessions). An unreadable record is named by its store error code only, never by its contents.
       const me = currentActor();
       let lease: { owner: { session: string; host: string; pid: number }; generation: number; expiresAt: string; released: boolean; ownedByThisSession: boolean } | { unreadable: string } | null = null;
       let leaseLine = '-';
@@ -762,12 +855,43 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action((cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const id = cardGoalId(c, cardId, o.goal);
-      const goalRec = c.controller.mustGoal(id);
+      // A card of a DONE goal has nothing to take over (cards T0-TAKEOVER-DONE-GOAL, -2): no lease, no event, exit 0, decided on
+      // one read of the goal records that the command then uses; a named DONE goal is reported before `holdsRun` reads a card
+      // run, the resolved one before the stored run is read. A DONE saved by another session after this read is caught by the
+      // re-read inside the goal lease section below (card T0-TAKEOVER-DONE-RACE, issue 387).
+      const goals = c.store.listGoals();
+      const doneReport = (goalRec: Goal | undefined): boolean => {
+        const done = goalRec ? doneGoalTakeover(goalRec) : undefined;
+        if (done) out(c, { cardId, goalId: goalRec!.id, state: goalRec!.state, takenOver: false, detail: done }, () => `${cardId}: ${done}`);
+        return done !== undefined;
+      };
+      if (o.goal !== undefined && doneReport(goals.find((x) => x.id === o.goal))) return;
+      const resolved = resolveCardGoal(goals, cardId, { explicit: o.goal, holdsRun: (goalId) => c.store.getCardRun(goalId, cardId) !== undefined });
+      if (!resolved.ok) fail(resolved.error);
+      const id = resolved.goalId;
+      const goalRec = goals.find((x) => x.id === id)!;
+      if (doneReport(goalRec)) return;
       // The stored run only: a takeover owns an existing run, it never creates one.
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
-      const r = runnerFor(c).takeover(goalRec, cardOf(c, cardId).card, run);
+      // The card takeover runs inside the goal lease section, where goal close saves DONE, and re-reads the goal there first:
+      // a goal saved DONE after the read above writes no card lease, run or event. The goal lease lock is taken before the
+      // card-run and card lease locks; the section returns the goal lease record as it is, so the file is not written. Nothing
+      // in it exits the process (an exit would skip the lock release): a missing card is reported once the section has ended.
+      let taken: ReturnType<CardRunner['takeover']> | undefined;
+      let doneNow = false;
+      let missing = false;
+      new LeaseStore(c.paths.leases).update(resourceKeys.goal(c.repo.key, id), (existing) => {
+        doneNow = doneReport(c.store.getGoal(id));
+        if (doneNow) return existing;
+        const hit = findCard(c, cardId);
+        if (!hit) missing = true;
+        else taken = runnerFor(c).takeover(goalRec, hit.card, run);
+        return existing;
+      });
+      if (missing) fail(cardMissing(c, cardId));
+      if (doneNow || !taken) return;
+      const r = taken;
       c.controller.writeBoard(goalRec);
       // A completed takeover finished the run update of one this session had already taken (the lease was already its own).
       const from = r.previousOwner && r.previousGeneration !== undefined ? { session: r.previousOwner.session, host: r.previousOwner.host, generation: r.previousGeneration } : undefined;
@@ -798,7 +922,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         return;
       }
       const base = cardRun.base?.oid ?? c.config.base;
-      const { report, path: reportPath } = await runMutants({ card: parsed.card, worktree, base, max: Number(o.max), timeoutMs: Number(o.timeoutMs) }, { git: runSync, dod: run, now: nowIso, progress: (line) => process.stderr.write(`${line}\n`) });
+      const { report, path: reportPath } = await runMutants({ card: parsed.card, worktree, base, max: Number(o.max), timeoutMs: Number(o.timeoutMs), shipPath: c.config.shipPath }, { git: runSync, dod: run, now: nowIso, progress: (line) => process.stderr.write(`${line}\n`) });
       out(c, { ...report, path: reportPath }, () => mutantSummaryText(report, reportPath));
     });
   card
@@ -958,15 +1082,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action((key: string, o: { reason: string }) => {
       const c = ctx(g());
       const released = new ReviewQueue(c.paths.reviewQueue).release(key, o.reason, {
-        // Inside the release's section: each goal journals before the slot is freed, once per key, pool and seq (a seq is local to its pool and a cancelled key can move pools), so a run that failed part way is finished by running it again.
+        // Inside the release's section: each goal journals before the slot is freed, once per stored key, pool and seq (a seq is local to its pool and a cancelled key can move pools), so a run that failed part way is finished by running it again.
         before: (request) => {
-          for (const requester of request.requesters) {
+          // Every requester goal is read before any NOTE is appended, so a goal record that cannot be read leaves every journal as it was.
+          const requesters = request.requesters.map((requester) => {
             const [goalId, cardId] = requester.split(':');
-            const goal = goalId ? c.store.getGoal(goalId) : undefined;
+            return { goal: goalId ? c.store.getGoal(goalId) : undefined, cardId };
+          });
+          for (const { goal, cardId } of requesters) {
             if (!goal) continue;
             const journal = Journal.forGoal(c.paths.journal, goal.id);
-            if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === key && e.data['pool'] === request.pool && e.data['seq'] === request.seq)) continue;
-            journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-slot-released', key, pool: request.pool, seq: request.seq, reason: o.reason } });
+            if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === request.key && e.data['pool'] === request.pool && e.data['seq'] === request.seq)) continue;
+            journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-slot-released', key: request.key, pool: request.pool, seq: request.seq, reason: o.reason } });
           }
         },
       });
@@ -1012,9 +1139,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const outcome = verdict ? 'found' : 'not-found';
       const resolved = new ReviewQueue(c.paths.reviewQueue).resolveLost(key, verdict ? { found: true, verdictRef: verdict.ref } : { found: false }, nowIso(), (request) => {
         // Inside the queue's section, before any queue write: each existing goal journals once per key, pool, seq, attempts, outcome and verdict digest, so a run that failed part way is finished by running it again.
-        for (const requester of request.requesters) {
+        // Every requester goal is read before any NOTE is appended, so a goal record that cannot be read leaves every journal as it was.
+        const requesters = request.requesters.map((requester) => {
           const [goalId, cardId] = requester.split(':');
-          const goal = goalId ? c.store.getGoal(goalId) : undefined;
+          return { goal: goalId ? c.store.getGoal(goalId) : undefined, cardId };
+        });
+        for (const { goal, cardId } of requesters) {
           if (!goal) continue;
           const journal = Journal.forGoal(c.paths.journal, goal.id);
           const same = (e: { type: string; data: Record<string, unknown> }): boolean =>
@@ -1031,7 +1161,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action(async (cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = reviewCtx(c, cardId, o.goal);
       const r = await runnerFor(c).preReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
       const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, advisory: r.result.advisory ?? [], coverage: r.round.coverage, policyHash: r.round.policyHash, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
@@ -1043,7 +1173,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action(async (cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = reviewCtx(c, cardId, o.goal);
       let r: Awaited<ReturnType<CardRunner['formalReview']>>;
       try {
         r = await runnerFor(c).formalReview(goalRec, parsed.card, run);
@@ -1178,7 +1308,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--rounds <n>', 'formal stage: review a blocked candidate again inside one decision while a round adds a new P0 or P1 reason (1 to 3)', '1')
     .option('--order <order>', 'where the verdict stands in the schema and the contract line: verdict-first or analysis-first (reasons and axes before the verdict)', 'verdict-first')
     .option('--pre-command <file>', 'pre stage: a JSON file whose command, reviewer and optional answerMarker, timeoutMs and maxDiffBytes replace those of preReview for this run (no configuration is written)')
-    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string; rounds: string; order: string; preCommand?: string }) => {
+    .option('--formal-command <file>', 'formal stage: a JSON file whose command, reviewer and optional timeoutMs, maxDiffBytes and effort replace those of formalReview for this run, with no fallback or base-sync reviewer (no configuration is written)')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string; rounds: string; order: string; preCommand?: string; formalCommand?: string }) => {
       if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
       if (o.order !== 'verdict-first' && o.order !== 'analysis-first') fail(`--order must be verdict-first or analysis-first, not ${o.order}`);
       if (o.rules !== 'newest' && o.rules !== 'matched') fail(`--rules must be newest or matched, not ${o.rules}`);
@@ -1187,7 +1318,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
       // No ctx(): the bench reads no goal state and writes nothing under the state directory.
       const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
-      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials), rounds: Number(o.rounds), order: o.order, preCommand: o.preCommand });
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials), rounds: Number(o.rounds), order: o.order, preCommand: o.preCommand, formalCommand: o.formalCommand });
       out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
       if (report.leftCheckouts.length) process.exitCode = 1;
     });
@@ -1496,8 +1627,13 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = latestActiveGoalId(c, o.goal);
       const goalRec = c.controller.mustGoal(id);
       const ev = new EvidenceStore(c.paths.evidence, id);
+      const journal = Journal.forGoal(c.paths.journal, id);
+      // Refused before any write: the entry the audit reports as stale. A journal whose chain does not verify, or that cannot be read, gives no event (card T0-RETAIN-STALE-CANDIDATE).
+      const verified = () => { try { return journal.verify().ok ? journal.readAll() : []; } catch { return []; } };
+      const stale = staleCandidateRefusal({ id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card }, verified);
+      if (stale) throw new Error(stale);
       const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
-      Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
+      journal.append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
       out(c, { entries: mf.entries.length }, () => `retained ${o.id} (${mf.entries.length} entries)`);
     });
   program

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test, type TestContext } from 'node:test';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { cleanup, makeGoal, tmpDir } from '../infra/helpers.ts';
@@ -84,6 +85,23 @@ function frozenDenial(r: HookResult, label: string): void {
   assert.ok(out.hookSpecificOutput?.permissionDecisionReason?.startsWith('FROZEN'), label);
 }
 
+/** `body` with `fs.readdirSync` throwing `error` for `dir` and listing every other path; the real function is restored after. */
+function failingList<T>(dir: string, error: unknown, body: () => T): T {
+  const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const real = target['readdirSync']!;
+  target['readdirSync'] = (...args: unknown[]) => {
+    if (args[0] === dir) throw error;
+    return real(...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    return body();
+  } finally {
+    target['readdirSync'] = real;
+    syncBuiltinESMExports();
+  }
+}
+
 /** Every `GIT_CEILING_DIRECTORIES` of the real caller, in any letter case: the restore row replaces them with its own. */
 const realCeiling = new Map<string, string>();
 const ceilingNames = () => Object.keys(process.env).filter((k) => k.toUpperCase() === 'GIT_CEILING_DIRECTORIES');
@@ -126,6 +144,32 @@ describe('production gate generation', () => {
       const { dir, env } = seed(t, [run, done]);
       assert.deepEqual(new GoalStore(resolveStatePaths(dir, env)).listGoals().map((g) => g.id), ['g-done', 'g-run']);
       assert.deepEqual(gate(dir, env, 'CHG-1'), { exitCode: 0 }, 'two goals');
+    });
+
+    test('T0-STORE-LIST-ENOENT acceptance 5 - production-gate refuses a plain approval when the goals directory cannot be listed', async (t) => {
+      await t.test('injected, every platform', (t) => {
+        const { dir, env } = seed(t, []);
+        const goals = resolveStatePaths(dir, env).goals;
+        assert.equal(existsSync(goals), false);
+        assert.deepEqual(gate(dir, env, 'rel-1'), { exitCode: 0 }, 'no aidlc state');
+        const denied = Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' });
+        assertRefused(failingList(goals, denied, () => gate(dir, env, 'rel-1')), 'rel-1', 'a goals directory that cannot be listed');
+      });
+      const noModes = process.platform === 'win32' ? 'Windows has no POSIX mode bits, so a directory mode cannot hide a directory' : process.getuid?.() === 0 ? 'root reads through any directory mode' : false;
+      await t.test('real file system, POSIX', { skip: noModes }, (t) => {
+        const { dir, env } = seed(t, [makeGoal('g1', { state: 'RUN', terminal: false })]);
+        const state = env['AIDLC_STATE_DIR']!;
+        let locked: HookResult;
+        try {
+          chmodSync(state, 0o600);
+          locked = gate(dir, env, 'rel-1');
+        } finally {
+          chmodSync(state, 0o755);
+        }
+        assertRefused(locked, 'rel-1', 'a state directory without search permission');
+        // The live goal holds no matching authorization, so the readable directory refuses too: the row tests the listing.
+        assertRefused(gate(dir, env, 'rel-1'), 'rel-1', 'the readable state directory');
+      });
     });
 
     test("production-gate keeps main's first match and counts it only in the goal's current generation", (t) => {

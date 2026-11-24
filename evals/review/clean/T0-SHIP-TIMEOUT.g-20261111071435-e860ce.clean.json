@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-SHIP-TIMEOUT.g-20261111071435-e860ce.clean",
+  "candidate": "f6d5850bfbe948291b3e5e610ceb6c7ec7c13b9e",
+  "base": "886fb4b31565f39a4d1a3e9d5745274054caa4f3",
+  "card": {
+    "id": "T0-SHIP-TIMEOUT",
+    "path": "specs/tasks/T0-SHIP-TIMEOUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-SHIP-TIMEOUT clean (goal g-20261111071435-e860ce)",
+  "note": "R3 decision 1 passed (codex)"
+}

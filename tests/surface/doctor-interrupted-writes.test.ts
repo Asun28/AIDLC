@@ -477,5 +477,31 @@ describe('doctor interruptedWrites (card T0-DOCTOR-INTERRUPTED-WRITES)', () => {
       assert.equal(b.status, 0, b.stderr);
       assert.deepEqual((JSON.parse(b.stdout) as Record<string, unknown>)['interruptedWrites'], ['"goals": unreadable, ENOTDIR']);
     });
+
+    it('T0-STORE-LIST-ENOENT acceptance 6 - doctor names an uncommitted planning file a claim unknown when the goals directory cannot be listed', () => {
+      const dir = fresh();
+      const state = path.join(dir, 'state');
+      mkdirSync(path.join(state, 'leases'), { recursive: true });
+      const env = { ...childEnv(dir, state), FAIL_LIST_OF: path.join(state, 'goals') };
+      const init = spawnSync('git', ['init', '-q'], { cwd: dir, env, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+      assert.equal(init.status, 0, init.stderr);
+      put(dir, 'intent/a.md', '# a\n');
+      assert.equal(existsSync(env.FAIL_LIST_OF), false);
+      // The listing of the goals directory fails with EACCES in the child, as a stat under a parent that cannot be searched would.
+      const failList = 'data:text/javascript,' + encodeURIComponent([
+        "import fs from 'node:fs';",
+        "import path from 'node:path';",
+        "import { syncBuiltinESMExports } from 'node:module';",
+        'const real = fs.readdirSync;',
+        'fs.readdirSync = function (p, ...rest) {',
+        "  if (path.resolve(String(p)) === path.resolve(process.env.FAIL_LIST_OF)) throw Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' });",
+        '  return real.call(this, p, ...rest);',
+        '};',
+        'syncBuiltinESMExports();',
+      ].join('\n'));
+      const r = spawnSync(process.execPath, ['--import', preload, '--import', failList, entry, 'doctor', '--json'], { cwd: dir, env, encoding: 'utf8', timeout: 120_000, windowsHide: true });
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual((JSON.parse(r.stdout) as Record<string, unknown>)['workingTree'], ['"intent/a.md": claim unknown (goal records unreadable: READ_FAILED)']);
+    });
   });
 });

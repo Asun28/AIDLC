@@ -160,6 +160,26 @@ describe('templates (Q14 packaging)', () => {
     assert.match(agent('reviewer'), /fewer verified findings/, 'reviewer verdict budget');
   });
 
+  test('T0-API-REVIEW-SKILL acceptance 1, 2: secure-api-review exists, is ASCII, carries frontmatter, stays within its cap, and its description names what it checks [R4] [R6]', () => {
+    const file = path.join(tpl, 'claude', 'skills', 'secure-api-review', 'SKILL.md');
+    assert.ok(existsSync(file), 'secure-api-review/SKILL.md missing');
+    const bytes = statSync(file).size;
+    assert.ok(bytes <= 2500, `secure-api-review/SKILL.md is ${bytes} bytes > cap 2500`);
+    const text = readFileSync(file, 'utf8');
+    assert.ok(!/[^\x00-\x7F]/.test(text), 'secure-api-review/SKILL.md must be ASCII so bytes == chars');
+    assert.ok(text.startsWith('---\nname: secure-api-review\n'), 'secure-api-review frontmatter must start with its name');
+    const opener = '\ndescription: >-\n';
+    assert.ok(text.includes(opener), 'secure-api-review folded description');
+    // A session decides from the description alone whether to load the skill, so the description names each thing the skill checks.
+    const folded = text.slice(text.indexOf(opener) + opener.length);
+    const close = folded.indexOf('\n---\n');
+    assert.ok(close > 0, 'the frontmatter closes after the description');
+    const description = folded.slice(0, close).replace(/\s+/g, ' ').trim().toLowerCase();
+    for (const term of ['authentication', 'authorization', 'input validation', 'audit', 'pii', 'session', 'error']) {
+      assert.ok(description.includes(term), `the secure-api-review description must name "${term}": ${description}`);
+    }
+  });
+
   test('REVIEW.md carries the two axes, the nit cap and the verdict contract', () => {
     const review = readFileSync(path.join(tpl, 'REVIEW.md'), 'utf8');
     assert.match(review, /spec/);
@@ -193,7 +213,7 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 
-  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@6 since T0-REVIEW-IMPACT-BAR), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@7 since T1-REVIEW-SEVERITY-3), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8');
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
@@ -312,7 +332,7 @@ describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule
   const front = (text: string) => text.slice(0, text.indexOf('\n---', 4));
 
   test('acceptance 1: each agent file names exactly one model and one effort [R1]', () => {
-    const want: Record<string, [string, string]> = { planner: ['opus', 'high'], reviewer: ['opus', 'medium'], 'release-specialist': ['opus', 'medium'], investigator: ['sonnet', 'medium'], verifier: ['sonnet', 'medium'], implementer: ['inherit', 'medium'] };
+    const want: Record<string, [string, string]> = { planner: ['opus', 'high'], reviewer: ['opus', 'medium'], 'release-specialist': ['opus', 'medium'], investigator: ['sonnet', 'medium'], verifier: ['sonnet', 'medium'], implementer: ['opus', 'medium'] };
     for (const [name, [model, effort]] of Object.entries(want)) {
       const fm = front(read(`templates/claude/agents/${name}.md`));
       assert.deepEqual(fm.match(/^model: .*$/gm), [`model: ${model}`], name);
@@ -347,7 +367,7 @@ describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule
 
   test('acceptance 5: OPERATIONS names the six agent defaults and the implementer effort rule; the CHANGELOG Unreleased section names the card [R5]', () => {
     const ops = flat('docs/OPERATIONS.md');
-    for (const phrase of ['the planner on `opus` at `high`', 'the reviewer and the release-specialist on `opus` at `medium`', 'the investigator and the verifier on `sonnet` at `medium`', "the implementer on the session's model (`inherit`) at `medium`", "starts an implementer subagent with the `run-card` directive's `effort`"]) {
+    for (const phrase of ['the planner on `opus` at `high`', 'the reviewer and the release-specialist on `opus` at `medium`', 'the investigator and the verifier on `sonnet` at `medium`', 'the implementer on `opus` at `medium`', "starts an implementer subagent with the `run-card` directive's `effort`"]) {
       assert.ok(ops.includes(phrase), phrase);
     }
     const changelog = read('CHANGELOG.md');
@@ -445,9 +465,53 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
     }
   });
 
-  test('acceptance 4: Shown failing names an existing src/ file and a covered function and holds a TAP excerpt with a not ok line of the check [R10]', () => {
+  test('T0-VERIFY-SYNC-CMD: Keeping in sync names the commit of the Sync commit: line, carries no sha of its own and diffs exactly the coverage record files', () => {
     const text = read(SKILL);
-    const shown = section(text, 'Shown failing');
+    const sync = section(text, 'Keeping in sync');
+    assert.doesNotMatch(sync, /[0-9a-f]{7,}/i, 'Keeping in sync holds no commit sha; the Sync commit: line is the only one');
+    const commands = spansOf(sync).filter((s) => s.startsWith('git diff --name-only '));
+    assert.equal(commands.length, 1, 'one git diff --name-only command');
+    const [, revision, list] = /^git diff --name-only (\S+) -- (.+)$/.exec(commands[0]!) ?? [];
+    assert.ok(revision && list, `the command is git diff --name-only <revision> -- <files>: ${commands[0]}`);
+    const after = sync.slice(sync.indexOf(`\`${commands[0]!}\``) + commands[0]!.length + 2).replace(/\s+/g, ' ');
+    assert.ok(after.startsWith(` (${revision} is the sha on the \`Sync commit:\` line;`), `the text after the command defines ${revision} as the sha on the \`Sync commit:\` line: ${after.slice(0, 80)}`);
+    const files = list.trim().split(/\s+/);
+    assert.deepEqual(files, coverage(section(text, 'Coverage')).map((l) => l.file), 'the command diffs the coverage record files, in order');
+  });
+
+  /** The sections of SKILL.md whose text is in a reference file beside it (card T0-VERIFY-SKILL-REFS): the heading and the file, relative to the skill directory. */
+  const REFERENCES: ReadonlyArray<readonly [heading: string, file: string]> = [['Not covered', 'references/not-covered.md'], ['Shown failing', 'references/shown-failing.md']];
+  const reference = (rel: string) => read(`${path.posix.dirname(SKILL)}/${rel}`);
+  /** A Markdown code fence delimiter: a run of three or more backticks or tildes, at any indentation and also inside a list item or a block quote. */
+  const FENCE = /`{3}|~{3}/;
+  /** The forms of a fenced block that FENCE refuses in a section body: each delimiter, a longer run, an indented one with an info string, one in a list item and one in a block quote. */
+  const FENCED = ['```\nx\n```', '~~~\nx\n~~~', '````\nx\n````', '~~~~~\nx\n~~~~~', '   ```sh\n   x\n   ```', '   ~~~\n   x\n   ~~~', '- a\n  ~~~\n  x\n  ~~~', '> ```\n> x\n> ```'];
+
+  test('T0-VERIFY-SKILL-REFS: the Not covered list and the Shown failing record are reference files beside SKILL.md, and each of the two sections of SKILL.md is at most 400 bytes, names its file and says when to read it', () => {
+    const text = read(SKILL);
+    for (const [heading, rel] of REFERENCES) {
+      assert.ok(existsSync(path.join(root, path.dirname(SKILL), rel)), `${rel} missing beside SKILL.md`);
+      const file = reference(rel);
+      assert.ok(file.startsWith(`# ${heading}\n`), `${rel} opens with the line # ${heading}`);
+      assert.ok(!/[^\x00-\x7F]/.test(file), `${rel} must be ASCII`);
+      for (const marker of [/\bTODO\b/, /\bTBD\b/, /\bFIXME\b/, /<[A-Za-z][^<>\n]*>/]) assert.ok(!marker.test(file), `${rel} carries a placeholder: ${marker}`);
+      const body = section(text, heading);
+      assert.ok(Buffer.byteLength(body, 'utf8') <= 400, `## ${heading} is ${Buffer.byteLength(body, 'utf8')} bytes > 400`);
+      assert.doesNotMatch(body, FENCE, `## ${heading} holds no code fence`);
+      for (const fenced of FENCED) assert.match(`${body}${fenced}\n`, FENCE, `## ${heading} with ${JSON.stringify(fenced)} as its last lines is refused`);
+      assert.ok(spansOf(body).includes(rel), `## ${heading} names \`${rel}\``);
+      assert.ok(body.replace(/\s+/g, ' ').includes(`Read \`${rel}\` when `), `## ${heading} says when to read ${rel}`);
+    }
+    const notCovered = reference('references/not-covered.md').replace(/\s+/g, ' ');
+    assert.match(notCovered, /\blease\b/i, 'references/not-covered.md names the lease');
+    assert.match(notCovered, /\breview[- ]queue\b/i, 'references/not-covered.md names the review queue');
+    assert.match(notCovered, /more than one fault per run/i, 'references/not-covered.md names more than one fault per run');
+    assert.doesNotMatch(text, /not\s+ok/i, 'SKILL.md holds no TAP result line: the excerpt is in references/shown-failing.md');
+  });
+
+  test('acceptance 4: Shown failing (references/shown-failing.md) names an existing src/ file and a covered function and holds a TAP excerpt with a not ok line of the check [R10]', () => {
+    const text = read(SKILL);
+    const shown = reference('references/shown-failing.md');
     const prose = shown.replace(/```[\s\S]*?```/g, '');
     const src = spansOf(prose).filter((s) => isPath(s) && s.startsWith('src/'));
     assert.ok(src.length > 0 && src.every((s) => existsSync(path.join(root, s))), `Shown failing names an existing file under src/: ${src.join(', ')}`);
@@ -546,7 +610,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
   const ARCHITECTURE = 'findings (ids, dispositions, re-raises, revisions), their defect class (`ReviewFinding.class`) and their first-round misses (`outsideDelta`)';
   const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
-  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@5 [R12]', () => {
+  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@7 [R12]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
       const contract = review.slice(review.indexOf('## Output contract'));
@@ -564,7 +628,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
     }
   });
 
-  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@6, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
+  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@7, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
@@ -663,7 +727,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
   };
   const unreleasedOf = (changelog: string) => changelogSince010(changelog);
 
-  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@6 [R12] [R13]', () => {
+  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@7 [R12] [R13]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const contract = lf(readFileSync(file, 'utf8')).split('\n## Output contract\n')[1]?.split('\n## ')[0] ?? '';
       const lines = contract.split('\n');
@@ -735,7 +799,7 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     }
   });
 
-  test('acceptance 3: OPERATIONS.md names REVIEW.md@6 as the current version with every move before it, and names @5 as current nowhere; removing a move fails [R2]', () => {
+  test('acceptance 3: OPERATIONS.md names REVIEW.md@7 as the current version with every move before it, and names no earlier version as current; removing a move fails [R2]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const HISTORY = [
       '(card T1-REVIEW-SEVERITY added the severity section;', ' T0-REVIEW-IMPACT-BAR moved it to `REVIEW.md@6` with the impact bar;',
@@ -747,6 +811,12 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     assert.ok(holds(operations), 'the current version and every move before it');
     for (const clause of HISTORY) assert.equal(holds(operations.replace(clause, '')), false, `removing this clause still passes: ${clause}`);
     assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');
+    const current = Number(/^REVIEW\.md@(\d+)$/.exec((JSON.parse(readFileSync(path.join(root, 'aidlc.config.json'), 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion)?.[1]);
+    const sentence = (n: number) => `\`reviewPolicyVersion\` is \`REVIEW.md@${n}\``;
+    const noEarlier = (text: string) => [...text.matchAll(/`reviewPolicyVersion` is `REVIEW\.md@(\d+)`/g)].every((match) => Number(match[1]) >= current);
+    assert.ok(current > 1 && operations.includes(sentence(current)), `OPERATIONS.md names REVIEW.md@${current} as current`);
+    assert.ok(noEarlier(operations), 'no version before the current one is named as current');
+    for (let n = 1; n < current; n++) assert.equal(noEarlier(operations.replace(sentence(current), sentence(n))), false, `naming REVIEW.md@${n} as current still passes`);
   });
 
   test('acceptance 5: the CHANGELOG Unreleased section carries the entry; removing any sentence fails [R4]', () => {
@@ -762,5 +832,17 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
       assert.ok(sectionOf(text, '## Two axes, never merged').includes(AXES.join('\n')), `${file}: the axes text`);
       assert.equal(text.includes('they never become a silent merge bar'), false, `${file}: the replaced sentence`);
     }
+  });
+});
+
+describe('the policy version the test titles name (T0-REVIEW-VERSION-TITLES)', () => {
+  test('acceptance 1: every REVIEW.md version a test title in this file names is the version both configs carry [R1]', () => {
+    const versions = [path.join(root, 'aidlc.config.json'), path.join(tpl, 'aidlc.config.json')].map((file) => (JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion);
+    assert.equal(versions[1], versions[0], 'both configs carry one version');
+    const source = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+    const titles = [...source.matchAll(/^\s*test\((['"`])(.*?)\1, /gm)].map((match) => match[2] ?? '');
+    assert.equal(titles.length, [...source.matchAll(/^\s*test\(/gm)].length, 'every test title was read');
+    const stale = titles.filter((title) => [...title.matchAll(/REVIEW\.md@\d+/g)].some((named) => named[0] !== versions[0]));
+    assert.deepEqual(stale, [], `titles naming a version other than ${versions[0]}`);
   });
 });

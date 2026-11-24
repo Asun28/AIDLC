@@ -1,0 +1,1 @@
+- T1-CARD-WRITER-LESSONS: the `plan` and `project-cards` directives carry a `lessons` field with the path of docs/LESSONS.md, its count of lesson lines and its ten most recent lines, and their narration names the count and the file and says to check every card against those lessons before it is registered; both card templates and both planner agent copies say the same.

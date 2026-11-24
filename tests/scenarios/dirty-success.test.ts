@@ -80,6 +80,7 @@ function atBuild(ship: 'github' | 'scaffold' | 'dry-run' = 'github', options: { 
     'git diff': { stdout: 'diff --git a/src/t0-ds.ts b/src/t0-ds.ts\n+export const ds = 1;\n' },
     'fake-r2': { stdout: PASS },
     'fake-p': { stdout: PASS },
+    'node --test tests/t0-ds.test.ts': { exitCode: 0, stdout: '', stderr: '' },
   });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: ship, ...(ship === 'github' ? { repository: 'o/r' } : {}) }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
   return {
@@ -415,6 +416,17 @@ describe('T0-DIRTY-SUCCESS: a run stored before the card with a dirty candidate 
         assert.equal(next(c).directive.kind, 'build');
         await assert.rejects(c.runner.preReview(c.g(), c.card, c.run()), /the candidate has uncommitted or untracked inputs \(scratch\.txt\)/);
         await assert.rejects(c.runner.formalReview(c.g(), c.card, c.run()), /the candidate has uncommitted or untracked inputs \(scratch\.txt\)/);
+      },
+    ));
+});
+
+describe('T1-DOD-GATE-FIXTURES: the loop-run DoD of the github fixture [R1]', () => {
+  it('T1-DOD-GATE-FIXTURES acceptance 1 - a clean success of the github fixture carries a loop-run DoD that ran and exited 0', () =>
+    withCtx(
+      () => atBuild('github'),
+      (c) => {
+        const dod = attempt(c, SUCCESS).effort?.attempts.at(-1)?.loopDod;
+        assert.deepEqual(dod?.ran === true ? [dod.ran, dod.exitCode, dod.expectedExit, dod.timedOut] : dod, [true, 0, 0, false]);
       },
     ));
 });

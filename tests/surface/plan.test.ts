@@ -1,4 +1,6 @@
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { evaluatePlanReadiness, parsePlanCards, type Plan } from '../../src/artifacts/plan.ts';
 import { renderPlan } from './_artifacts.ts';
@@ -26,17 +28,11 @@ const full: Plan = {
   ],
 };
 
-test('renderPlan light omits the ten-section skeleton; full includes it', () => {
-  const light = renderPlan(base);
-  assert.ok(!light.includes('## 1. Goal and boundaries'));
-  assert.ok(light.includes('## Files that change'));
-  assert.ok(light.includes('1. Add the status endpoint'));
-  const long = renderPlan(full);
-  assert.ok(long.includes('## 1. Goal and boundaries'));
-  assert.ok(long.includes('none this version'));
-  assert.ok(long.includes('## 7. Task split'));
-  assert.ok(long.includes('| T1-STATUS-API | MUST | status endpoint | - | W1 | yes |'));
-  assert.ok(long.includes('## 10. After merge'));
+test('the plan template aidlc init installs holds the ten-section skeleton and the sections the readiness gates and parsePlanCards read', () => {
+  const template = readFileSync(fileURLToPath(new URL('../../templates/plans/_TEMPLATE.md', import.meta.url)), 'utf8');
+  const headings = template.split('\n').map((l) => l.trimEnd()).filter((l) => l.startsWith('## '));
+  for (const h of ['## 1. Goal and boundaries', '## Files that change', '## Order of work', '## 7. Task split (dependencies and parallel windows)', '## Risks', '## Proof', '## 10. After merge']) assert.ok(headings.includes(h), h);
+  assert.ok(template.includes('none this version'));
 });
 
 test('readiness admits a complete light plan and a complete full plan', () => {

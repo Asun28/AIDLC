@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-README-SCOPE.g-20261004062759-91230b.clean",
+  "candidate": "7445b3c117e4145b82a3072723fb9f5af4b27a16",
+  "base": "75ee6574d2ee6d20875e63d35f6f3a467dca8599",
+  "card": {
+    "id": "T1-README-SCOPE",
+    "path": "specs/tasks/T1-README-SCOPE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T1-README-SCOPE clean (goal g-20261004062759-91230b)",
+  "note": "R3 decision 1 passed (deepseek-v4-pro)"
+}

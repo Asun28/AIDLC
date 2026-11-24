@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-APPROVER-IDENTITY.g-20260925195858-ba8e84.clean",
+  "candidate": "615a5885c0fd253421563b621fa62c6a6bd00d93",
+  "base": "09691b62c46c0a724b128cdf94f8528b2722acdb",
+  "card": {
+    "id": "T0-APPROVER-IDENTITY",
+    "path": "specs/tasks/T0-APPROVER-IDENTITY.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-APPROVER-IDENTITY clean (goal g-20260925195858-ba8e84)",
+  "note": "R3 decision 1 passed (claude-opus-5-5)"
+}

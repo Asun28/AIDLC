@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-ASK-RECLASSIFY.g-20261111062726-54a888.clean",
+  "candidate": "0487c5c1b4667bc7111219d85153e1339dfdf4fa",
+  "base": "c29c594aefb397bba28fb8bc72a515f7e33e5a3b",
+  "card": {
+    "id": "T0-ASK-RECLASSIFY",
+    "path": "specs/tasks/T0-ASK-RECLASSIFY.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-ASK-RECLASSIFY clean (goal g-20261111062726-54a888)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -21,12 +21,15 @@ import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoa
 import { GoalTransitionError, stagesForTarget, transitionGoal } from '../core/goal-machine.ts';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { parseIntent } from '../artifacts/intent.ts';
+import { lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { makeStop } from '../core/stop.ts';
 import { terminalGoalRefusal } from '../core/card-goal.ts';
+import type { ContinuationAct } from '../core/continuation.ts';
 import { findingsOfCandidate } from '../core/review-policy.ts';
 import { approvalPacket, requireAuthority } from '../core/authorization.ts';
 import { resolveRoleProfile, assessTaskEffort } from '../core/roles.ts';
 import { mapRevision } from '../core/amendments.ts';
+import { contractDigests } from '../core/contract.ts';
 import {
   AuthorizationRecord,
   Card,
@@ -35,6 +38,7 @@ import {
   GoalRequest,
   IsoTimestamp,
   MAX_INTEGRATION_REPAIR_CYCLES,
+  MAX_R3_DECISIONS,
   MAX_PLANNING_INVOCATIONS,
   ReleaseAttempt,
   StopReason,
@@ -289,6 +293,16 @@ export class GoalController {
     }
   }
 
+  /**
+   * The lessons the `plan` and `project-cards` directives carry: the count and the ten most recent lines of
+   * docs/LESSONS.md, and the narration sentence that names the count and the file. Lesson text goes in the field,
+   * never in the narration (card T1-CARD-WRITER-LESSONS).
+   */
+  private cardWriterLessons(): { lessons: LessonsContext; checkLessons: string } {
+    const lessons = readLessons(lessonsPath(this.repo.mainRoot), 10);
+    return { lessons, checkLessons: ` ${lessons.count} lessons so far in docs/LESSONS.md: check every card against the lessons of the \`lessons\` field before it is registered.` };
+  }
+
   private nextInPlan(goal: Goal, now: string): Directive {
     const base = this.baseOf(goal);
     if (goal.routing.ambiguity) {
@@ -296,9 +310,10 @@ export class GoalController {
     }
     const size = goal.routing.size;
     const light = size === 'T0' || size === 'T0-bugfix';
+    const { lessons, checkLessons } = this.cardWriterLessons();
     if (light && goal.cards.length) {
       // Existing card: plan is the card's plan_ref; go straight to projection validation.
-      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? 'existing card plan_ref', cardsDir: this.config.cardsDir, outputs: goal.cards, narration: `T0 route with resolved card ${goal.cards.join(',')}: validate the card (aidlc cards validate) and report cards-projected.` });
+      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? 'existing card plan_ref', cardsDir: this.config.cardsDir, outputs: goal.cards, lessons, narration: `T0 route with resolved card ${goal.cards.join(',')}: validate the card (aidlc cards validate) and report cards-projected.${checkLessons}` });
     }
     const allowance = MAX_PLANNING_INVOCATIONS - goal.counters.planningInvocations;
     if (allowance <= 0 && !goal.planRef) {
@@ -306,13 +321,13 @@ export class GoalController {
       return Directive.parse({ kind: 'stop', ...this.baseOf(g), stop: g.stop, narration: 'Planning allowance exhausted.' });
     }
     if (goal.planRef) {
-      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef, cardsDir: this.config.cardsDir, outputs: [], narration: 'Plan accepted; project cards into the registry (human sign-off writes the card files), validate them, then report cards-projected with the card ids.' });
+      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef, cardsDir: this.config.cardsDir, outputs: [], lessons, narration: `Plan accepted; project cards into the registry (human sign-off writes the card files), validate them, then report cards-projected with the card ids.${checkLessons}` });
     }
     const inputs = [goal.revisions[goal.revisions.length - 1]!.request.text];
     const planInputs = goal.intentRef && !light ? [...inputs, goal.intentRef] : inputs;
     const intake = light ? '' : this.intakeNarration(goal);
     const outputs = light ? ['one coherent card (diagnosis + fix + regression test)'] : size === 'T1' ? ['concise plan points (Files that change / Order of work / Risks / Proof)', '2-5 valid cards with depends_on'] : ['brief', 'plan (10 sections)', 'plan-forge audit ready-to-decompose', 'validated card projection'];
-    return Directive.parse({ kind: 'plan', ...base, size, inputs: planInputs, invocationAllowance: allowance, outputs, narration: (light ? 'T0: diagnose and write one card; no planning funnel.' : size === 'T1' ? 'T1: concise plan and cards; no full forge where routing policy permits.' : 'T2: full funnel; one product checkpoint approves plan and projection together.') + intake });
+    return Directive.parse({ kind: 'plan', ...base, size, inputs: planInputs, invocationAllowance: allowance, outputs, lessons, narration: (light ? 'T0: diagnose and write one card; no planning funnel.' : size === 'T1' ? 'T1: concise plan and cards; no full forge where routing policy permits.' : 'T2: full funnel; one product checkpoint approves plan and projection together.') + intake + checkLessons });
   }
 
   private nextInCards(goal: Goal, now: string): Directive {
@@ -323,7 +338,8 @@ export class GoalController {
     const blocking = goal.cards.flatMap((id) => (validation.get(id) ?? []).filter((f) => f.severity === 'block').map((f) => `${id}: ${f.sentinel} ${f.message}`));
     if (!goal.cards.length || missing.length || blocking.length) {
       const problems = [...missing.map((m) => `${m}: not in registry`), ...blocking];
-      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? '', cardsDir: this.config.cardsDir, outputs: goal.cards, narration: problems.length ? `Projection invalid: ${problems.slice(0, 5).join('; ')}` : 'No cards registered for this goal; project and report cards-projected.' });
+      const { lessons, checkLessons } = this.cardWriterLessons();
+      return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef ?? '', cardsDir: this.config.cardsDir, outputs: goal.cards, lessons, narration: (problems.length ? `Projection invalid: ${problems.slice(0, 5).join('; ')}` : 'No cards registered for this goal; project and report cards-projected.') + checkLessons });
     }
     // Authorization: T2 needs the combined plan+projection checkpoint for this revision.
     if (goal.routing.size === 'T2') {
@@ -502,9 +518,9 @@ export class GoalController {
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
-    // The lease is settled before DONE is saved: a refused takeover throws with the goal still in CLOSE.
-    this.releaseGoalLease(goal, now);
-    this.store.saveGoal(next);
+    // The lease is settled and DONE saved under the goal lease lock (issue 387): a refused takeover throws with the goal still
+    // in CLOSE, and a takeover that re-reads the goal inside its lease section sees DONE once that section can run.
+    this.releaseGoalLease(goal, now, () => this.store.saveGoal(next));
     this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
@@ -517,8 +533,11 @@ export class GoalController {
    * bound to the acquisition it precedes. The session's own lease is then released, after `GOAL_TAKEOVER` is journaled for
    * an acquisition whose intent has none yet, so a close interrupted between the steps completes the event on the next call.
    * A lease taken over is completed the same way first, so a takeover whose taker never called again keeps its event.
+   * `saveDone` runs under the goal lease lock (card T0-TAKEOVER-DONE-RACE, issue 387): in the section that leaves an absent
+   * or released lease as it is, and in the release section right after the release write lands, so a failed release write
+   * leaves the goal in CLOSE; a takeover whose section runs after it reads DONE there.
    */
-  private releaseGoalLease(goal: Goal, now: string): void {
+  private releaseGoalLease(goal: Goal, now: string, saveDone: () => void): void {
     const key = resourceKeys.goal(this.repo.key, goal.id);
     const me = currentActor();
     const j = this.journal(goal.id);
@@ -536,7 +555,11 @@ export class GoalController {
       j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, previousOwner, previousGeneration: intent.data['previousGeneration'], acquirer: lease.owner.session } });
     };
     const held = this.leases.update(key, (existing) => {
-      if (!existing || existing.released || mine(existing)) return existing;
+      if (!existing || existing.released) {
+        saveDone();
+        return existing;
+      }
+      if (mine(existing)) return existing;
       const next = this.leases.successor(key, existing, { operation: 'close', now });
       const unresolved = this.ops.unresolved(goal.id).map((o) => o.id);
       if (unresolved.length) throw new Error(`takeover refused: old owner effects not reconciled (${unresolved.join(',')}); reconcile with \`aidlc ops reconcile\` first`);
@@ -544,11 +567,16 @@ export class GoalController {
       j.append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { kind: 'goal-close-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: next.acquiredAt } });
       return next;
     });
-    if (!held || held.released || !mine(held)) return;
+    if (!held || held.released) return;
+    // The section above saved DONE or left the lease to this session; a lease of another session here would close without DONE.
+    if (!mine(held)) throw new FencedError(key, held.generation, 'the goal lease is held by another session after the close section');
     this.leases.update(key, (existing) => {
       if (!existing || existing.released || existing.generation !== held.generation || !mine(existing)) throw new FencedError(key, held.generation, 'the goal lease changed hands before the close released it');
       completeTakeover(existing);
       return { ...existing, released: true };
+    }, (write) => {
+      write();
+      saveDone();
     });
   }
 
@@ -748,11 +776,15 @@ export class GoalController {
   ensureCardRun(goal: Goal, cardId: string): CardRun {
     const existing = this.store.getCardRun(goal.id, cardId);
     if (existing) return existing;
+    // The contract the run starts under (card T1-CARD-CONTRACT-2): the card as the registry of the main checkout holds it now.
+    const card = this.cardRegistry().cards.find((c) => c.card.id === cardId)?.card;
+    if (!card) throw new Error(`card ${cardId} is not in the card registry: no run is created`);
     const now = this.clock();
     const deadline = computeCardDeadline(now, goal.deadlines, this.config.userLimitMs);
     const key = randomUUID();
     const dispatched: OwedEvent = { key, type: 'CARD_DISPATCHED', generation: goal.generation, data: { startedAt: now, deadline, childRef: `card:${cardId}`, eventKey: key } };
     const run = CardRun.parse({
+      contract: contractDigests(card),
       goalId: goal.id,
       cardId,
       cardRevision: goal.cardRevisions[cardId] ?? 0,
@@ -980,8 +1012,46 @@ export class GoalController {
     const run = rerun ? before! : runner.ruleFinding(goal, card, findingId, ruling);
     if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
+    return { run, ...this.readmitAfterLift(goal, card.id, 'review', 'ruling', `ruling on ${card.id} by ${by}`, by), ruled: !rerun };
+  }
+
+  /**
+   * The continuation of a card (card T1-CONTINUE-GOAL-2) through `runner` (`CardRunner.continueStop`) on the existing run, on a goal
+   * that admits card work or is in STOP for `review` or `ci` (`terminalGoalRefusal` with `continue`). A refused goal, a blank `by`
+   * or `reason` and a `decisions` outside 1 to 4 are refused before the card run is read, on every path; they and a throw of the
+   * runner before its write leave every record as it was. When the goal is in STOP for the reason of the lifted stop, it is
+   * re-admitted as `ruleFinding` re-admits it, with one `GOAL_STATE` from STOP to CARDS whose `continuation` names the card and
+   * `by`. A run out of STOP whose last continuation lifted a stop of the goal's stop reason, while the goal is still in STOP for it,
+   * gets no second continuation (`continued: false`): the call completes the re-admission with the `by` of the recorded one. A
+   * failure after the runner's write is thrown and nothing is undone: an event not appended stays owed for `aidlc card next`.
+   */
+  continueCard(runner: { continueStop(goal: Goal, card: Card, act: Omit<ContinuationAct, 'at'>): CardRun }, goalId: string, card: Card, act: Omit<ContinuationAct, 'at'>): { run: CardRun; goal: Goal; continued: boolean; readmitted: boolean } {
+    const goal = this.mustGoal(goalId);
+    const refusal = terminalGoalRefusal(goal, 'continue');
+    if (refusal) throw new Error(refusal);
+    // The act is refused here, with the runner's causes, on every path: the rerun below calls no runner.
+    if (!act.by.trim()) throw new Error('by is blank: name who continues the run');
+    if (!act.reason.trim()) throw new Error('reason is blank: say why the run goes on');
+    if (act.decisions !== undefined && !(Number.isInteger(act.decisions) && act.decisions >= 1 && act.decisions <= MAX_R3_DECISIONS)) throw new Error(`decisions ${act.decisions} is not a whole number from 1 to ${MAX_R3_DECISIONS}`);
+    const reason = goal.state === 'STOP' ? goal.stop?.reason : undefined;
+    const before = this.store.getCardRun(goal.id, card.id);
+    const last = reason && before && before.state !== 'STOP' ? before.continuations.at(-1) : undefined;
+    const rerun = Boolean(last && last.stop.reason === reason);
+    const run = rerun ? before! : runner.continueStop(goal, card, act);
+    if (!reason) return { run, goal, continued: true, readmitted: false };
+    // The section re-admits only a goal in STOP for the reason of the lifted stop.
+    const lifted = run.continuations.at(-1)!;
+    return { run, ...this.readmitAfterLift(goal, card.id, lifted.stop.reason, 'continuation', `continuation of ${card.id} by ${lifted.by}`, lifted.by), continued: !rerun };
+  }
+
+  /**
+   * The re-admission of a goal whose card's stop was lifted by `ruleFinding` or `continueCard`: the goal read, its checks (STOP for
+   * `reason`, terminal, the generation of `goal`, the card run out of STOP), the journal scan for a `GOAL_STATE` from STOP to CARDS
+   * with `key` after the goal's last `GOAL_STOPPED`, the append and the goal write, in one section of the goal lock.
+   */
+  private readmitAfterLift(goal: Goal, cardId: string, reason: StopReason, key: 'ruling' | 'continuation', text: string, by: string): { goal: Goal; readmitted: boolean } {
     // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: a resume, a
-    // cancellation or any other goal write that landed since is kept, and an overlapping ruling waits here.
+    // cancellation or any other goal write that landed since is kept, and an overlapping re-admission waits here.
     let readmitted = false;
     let seen: Goal | undefined;
     const changedSince = (current: Goal): boolean => {
@@ -989,19 +1059,19 @@ export class GoalController {
       return !seen || seen.state !== current.state || seen.terminal !== current.terminal || seen.generation !== current.generation || seen.updatedAt !== current.updatedAt || JSON.stringify(seen.stop) !== JSON.stringify(current.stop);
     };
     const saved = updateJson(this.store.goalFile(goal.id), Goal, (current) => {
-      if (!current || current.state !== 'STOP' || !current.terminal || current.stop?.reason !== 'review' || current.generation !== goal.generation) return current;
-      if (this.store.getCardRun(goal.id, card.id)?.state === 'STOP') return current;
+      if (!current || current.state !== 'STOP' || !current.terminal || current.stop?.reason !== reason || current.generation !== goal.generation) return current;
+      if (this.store.getCardRun(goal.id, cardId)?.state === 'STOP') return current;
       const events = this.journal(goal.id).readAll();
-      const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data['ruling']));
+      const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data[key]));
       if (changedSince(current)) return current;
-      if (!journaled) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: current.generation, data: { from: 'STOP', to: 'CARDS', reason: `ruling on ${card.id} by ${by}`, ruling: { cardId: card.id, by } } });
+      if (!journaled) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: current.generation, data: { from: 'STOP', to: 'CARDS', reason: text, [key]: { cardId, by } } });
       if (changedSince(current)) return current;
       readmitted = true;
       // Re-entry runs through CARDS: the projection is re-validated before `aidlc next` reads the card run.
       return Goal.parse({ ...current, terminal: false, stop: undefined, state: 'CARDS', updatedAt: nowIso() });
     })!;
     if (readmitted) this.writeBoard(saved);
-    return { run, goal: readmitted ? saved : (seen ?? saved), ruled: !rerun, readmitted };
+    return { goal: readmitted ? saved : (seen ?? saved), readmitted };
   }
 
   /** `owners` is the dispatch's decision from `liveOwners`; a caller without it gets that decision at the board's clock. */

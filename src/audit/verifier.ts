@@ -15,11 +15,11 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Journal } from '../state/journal.ts';
-import { CANDIDATE_BOUND_KINDS, fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
+import { CANDIDATE_BOUND_KINDS, EARLIER_CANDIDATE_KIND, fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
 import type { OperationLedger } from '../coordination/reconcile.ts';
 import type { GitProbe } from '../probes/git.ts';
 import type { GhProbe } from '../probes/gh.ts';
-import { ShippedFacts } from '../core/types.ts';
+import { ShippedFacts, type JournalEvent } from '../core/types.ts';
 
 export type AuditLevel = 'none' | 'recorded' | 'traceable' | 'independently-verified';
 
@@ -55,6 +55,31 @@ export interface VerifierInput {
   now: string;
 }
 
+// The merge digests of a card: the distinct candidate digests of its merge intents that have a succeeded result or
+// reconciliation of the same operation and card, in the order of their first intent (card T0-AUDIT-BINDING).
+export function mergeDigests(events: JournalEvent[], card: string): string[] {
+  const succeeded = (operationId: string) => events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === operationId && e.cardId === card && e.data['status'] === 'succeeded');
+  const digests: string[] = [];
+  for (const e of events) {
+    const operationId = e.data['operationId'];
+    const digest = e.data['candidateDigest'];
+    if (e.type === 'OPERATION_INTENT' && e.cardId === card && e.data['kind'] === 'merge' && typeof operationId === 'string' && typeof digest === 'string' && digest && !digests.includes(digest) && succeeded(operationId)) digests.push(digest);
+  }
+  return digests;
+}
+
+/**
+ * Why `aidlc evidence retain` refuses an entry, or undefined (card T0-RETAIN-STALE-CANDIDATE): the entry `verifyAudit` reports as
+ * EVIDENCE_STALE_CANDIDATE through the merges of its card (a candidate-bound kind, one or more merge digests, a digest that is none of
+ * them). An absent or empty digest or card is not checked, as in the verifier; `events` is called only for such a kind with both.
+ */
+export function staleCandidateRefusal(entry: { id: string; kind: string; candidateDigest?: string; cardId?: string }, events: () => JournalEvent[]): string | undefined {
+  if (!CANDIDATE_BOUND_KINDS.includes(entry.kind) || !entry.candidateDigest || !entry.cardId) return undefined;
+  const merged = mergeDigests(events(), entry.cardId);
+  if (!merged.length || merged.includes(entry.candidateDigest)) return undefined;
+  return `evidence ${entry.id} of the candidate-bound kind ${entry.kind} names candidate ${entry.candidateDigest}, and ${entry.cardId} merged ${merged.join(', ')}: aidlc audit verify blocks such an entry (EVIDENCE_STALE_CANDIDATE). Evidence of a merged candidate takes its digest as --candidate; a file of an earlier candidate takes --kind ${EARLIER_CANDIDATE_KIND}`;
+}
+
 export function verifyAudit(input: VerifierInput): AuditReport {
   const findings: AuditFinding[] = [];
   const chain = input.journal.verify();
@@ -82,7 +107,8 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   // a terminal disposition: the resume takeover (it links from an earlier generation and moves to a later one) and the
   // extension of a time stop (GOAL_STATE from STOP to CARDS in the generation of a GOAL_STOPPED for time). The same event ends
   // a stop for review only when it carries `ruling` with the card id and `by`, as the lifting `aidlc review rule` writes it
-  // (card T1-REVIEW-RULE-GOAL-2); without it the event re-admits nothing after a stop for review. A lease takeover
+  // (card T1-REVIEW-RULE-GOAL-2); without it the event re-admits nothing after a stop for review. It ends a stop for review
+  // or ci when it carries `continuation` with the card id and `by` (card T1-CONTINUE-AUDIT). A lease takeover
   // re-admits nothing, and work of a generation below the highest one a resume moved to is a late wakeup of a stopped
   // generation. The chain check guarantees the events are in sequence order. A recovered attempt (`completed: true`, card
   // T0-JOURNAL-FAULT-EVENTS) counts at `startedAt`, the write that committed it, against the last disposition of its generation.
@@ -92,10 +118,11 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   let resumedGeneration: number | undefined;
   let afterTerminal = 0;
   const lastDisposition = new Map<number, string>();
-  const carriesRuling = (data: Record<string, unknown>): boolean => {
-    const ruling = data['ruling'] as { cardId?: unknown; by?: unknown } | null | undefined;
-    return typeof ruling === 'object' && ruling !== null && typeof ruling.cardId === 'string' && typeof ruling.by === 'string';
+  const carries = (data: Record<string, unknown>, key: 'ruling' | 'continuation'): boolean => {
+    const record = data[key] as { cardId?: unknown; by?: unknown } | null | undefined;
+    return typeof record === 'object' && record !== null && typeof record.cardId === 'string' && typeof record.by === 'string';
   };
+  const ends = (reason: unknown, data: Record<string, unknown>): boolean => reason === 'time' || (reason === 'review' && carries(data, 'ruling')) || ((reason === 'review' || reason === 'ci') && carries(data, 'continuation'));
   for (const e of events) {
     if (e.type === 'GOAL_DONE' || e.type === 'GOAL_STOPPED') {
       terminal = e;
@@ -103,7 +130,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
     } else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string') {
       resumedGeneration = Math.max(resumedGeneration ?? 0, generationOf(e));
       if (terminal && generationOf(e) > generationOf(terminal)) terminal = undefined;
-    } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && terminal?.type === 'GOAL_STOPPED' && (terminal.data['reason'] === 'time' || (terminal.data['reason'] === 'review' && carriesRuling(e.data))) && generationOf(e) === generationOf(terminal)) terminal = undefined;
+    } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && terminal?.type === 'GOAL_STOPPED' && ends(terminal.data['reason'], e.data) && generationOf(e) === generationOf(terminal)) terminal = undefined;
     else if (['CARD_DISPATCHED', 'OPERATION_ISSUED', 'ATTEMPT_STARTED'].includes(e.type) && (terminal || (resumedGeneration !== undefined && generationOf(e) < resumedGeneration)) && !committedBefore(e, lastDisposition.get(generationOf(e)))) afterTerminal += 1;
   }
   if (afterTerminal) findings.push({ severity: 'block', code: 'WORK_AFTER_TERMINAL', detail: `${afterTerminal} mutation event(s) after terminal disposition` });
@@ -141,18 +168,6 @@ export function verifyAudit(input: VerifierInput): AuditReport {
       if (sealedAt === undefined || mutating.length) findings.push({ severity: 'block', code: 'MANIFEST_STALE', detail: sealedAt === undefined ? 'manifest journal head is not in the journal' : `${mutating.length} mutation event(s) after the seal (${mutating.map((e) => e.type).join(',')})` });
       else findings.push({ severity: 'warn', code: 'MANIFEST_TRAILING', detail: `${after.length} non-mutating event(s) after the seal` });
     }
-    // The merge digests of a card: the distinct candidate digests of its merge intents that have a succeeded result or
-    // reconciliation of the same operation and card, in the order of their first intent (card T0-AUDIT-BINDING).
-    const succeeded = (operationId: string, card: string) => events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === operationId && e.cardId === card && e.data['status'] === 'succeeded');
-    const mergeDigests = (card: string): string[] => {
-      const digests: string[] = [];
-      for (const e of events) {
-        const operationId = e.data['operationId'];
-        const digest = e.data['candidateDigest'];
-        if (e.type === 'OPERATION_INTENT' && e.cardId === card && e.data['kind'] === 'merge' && typeof operationId === 'string' && typeof digest === 'string' && digest && !digests.includes(digest) && succeeded(operationId, card)) digests.push(digest);
-      }
-      return digests;
-    };
     for (const entry of input.manifest.entries) {
       const file = path.join(input.evidence.dir, entry.path);
       if (!existsSync(file)) findings.push({ severity: 'block', code: 'ARTIFACT_MISSING', detail: `${entry.id}: ${entry.path} missing` });
@@ -163,7 +178,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
         findings.push({ severity: 'warn', code: 'EVIDENCE_UNBOUND', detail: `${entry.id} (${entry.kind}) names no candidate digest` });
         continue;
       }
-      const merged = entry.cardId ? mergeDigests(entry.cardId) : [];
+      const merged = entry.cardId ? mergeDigests(events, entry.cardId) : [];
       if (merged.length && !merged.includes(digest)) {
         findings.push({ severity: 'block', code: 'EVIDENCE_STALE_CANDIDATE', detail: `${entry.id} is bound to candidate ${digest.slice(0, 12)}, ${entry.cardId} merged ${merged.map((d) => d.slice(0, 12)).join(', ')}` });
       } else if (!merged.length && input.finalCandidateDigest && digest !== input.finalCandidateDigest) {

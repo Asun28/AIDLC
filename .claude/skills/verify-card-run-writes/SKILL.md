@@ -14,7 +14,7 @@ This repository only; `aidlc init` never installs it.
 
 ## Property
 Property: after any single failed card-run record write or goal journal append and the card's next step, the stored card run and the goal journal agree and the run reaches the end state of the fault-free run.
-Harm: a card that the journal reports in one state while the run record holds another, so the loop repeats or skips a ship, a review or an attempt.
+Harm: a card the journal reports in one state while the run record holds another, so the loop repeats or skips a ship, a review or an attempt.
 
 ## Coverage
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
@@ -29,14 +29,14 @@ pass (to CLOSE) or past the deadline (STOP/time), and `card close
 --followups` (+ op writes; rerun recovers). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
-Sync commit: `402a07f3d10eb0e90396a3cc3d9293eb045b4f0a`
+Sync commit: `50008e4d56493b84593929a12ad2f83fa89a64cc`
 
 ## Run
 ```
 node --test tests/scenarios/fault-points.test.ts
 ```
-About 11 s on Windows at sync (28 tests); CI runs it
-in `npm test`.
+About 11 seconds on Windows at the sync commit (28 tests). CI runs it
+in `npm test` on each push.
 
 ## Bounds and assumptions
 - One fault per run, at each write index of the command as counted by a
@@ -51,56 +51,25 @@ in `npm test`.
 - Message text: not compared.
 
 ## Not covered
-- Two-session interleavings of the lease and the review queue, and
-  writes to the lease, review-queue, operation-ledger and `.review/` files.
-- More than one fault per run, a crash inside a single write, a process
-  that dies mid-command, a torn journal line.
-- Card-run commands the check does not drive: `CardRunner.takeover`,
-  `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
-  `CardRunner.ruleFinding` (its write, `FINDING_RULED`, lift's
-  `REVIEW_DECIDED` appends: `tests/scenarios/review-rule*.test.ts`),
-  `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
-  (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
-  `GoalStore.updateCardRun` write of the finding's `repro` after both runs
-  and no journal append, so a failed write throws, exits 1 and leaves the
-  run and the journal as they were), failed and
-  not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
-  BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
-  and no worktree path, card T0-PREPARE-WORKTREE), other `card close` flags.
-- A confirmed violation the current code shows is not a pass: it is
-  pinned in `KNOWN_VIOLATIONS` with its counterexample and filed as a
-  T0-bugfix card.
+Two-session interleavings of the lease and the review queue, more than
+one fault per run, the commands the check does not drive (the other `card close` flags
+among them), and the fault
+points pinned in `KNOWN_VIOLATIONS`. Read `references/not-covered.md`
+when deciding whether a change, a command or a write is covered.
 
 ## Shown failing
-Scratch break, never committed: in `src/loop/card-runner.ts`,
-`CardRunner.preReview`, the `PRE_REVIEW_DECIDED` journal append was moved
-from after `this.commitReviewed` (the R2 pass round write) to before it. `git diff --name-only` against the sync commit listed
-`src/loop/card-runner.ts`; the check then failed (exit 1, 2 of 28 failed):
-the record write after the early append failed, and the journal reported
-a pass the run did not hold. `git restore` dropped the change and the
-check passed (28 of 28). From
-`node --test --test-reporter=tap tests/scenarios/fault-points.test.ts`:
-
-```
-    not ok 3 - B preReview R2 pass (review pre): the fault-free run has fault points and no violation, and every fault point and its recovery keep I1 to I6 [R1] [R2] [R3]
-      location: 'D:\\wt\\AIDLC\\T1-VERIFY-SKILL\\tests\\scenarios\\fault-points.test.ts:786:5'
-      error: |-
-        Expected values to be strictly deep-equal:
-        +   'B preReview R2 pass (review pre) k=3 of 3, failed renameSync cards\\g-20260911000000-af8e3f\\T1-FP.json; the command threw: EIO: injected fault 3, renameSync cards\\g-20260911000000-af8e3f\\T1-FP.json; recovery: next -> wait, next -> wait; after the command: I3: PRE_REVIEW_DECIDED seq 9 (cycle 0, round 1, outcome pass, decision undefined) names no pass round the card run holds (preReview.rounds)',
-    not ok 11 - every fault point of A to E reaches its command's fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]
-```
-
-The broken-order self-test proves the enumerator can fail; this section
-proves the check fails on the real code.
+A scratch break of `CardRunner.preReview` in `src/loop/card-runner.ts`
+made the check fail on the real code. Read
+`references/shown-failing.md` when you doubt that the check can fail, or
+when Extending the check asks for a scratch break of your own.
 
 ## Bug or modelling error
 Replay the counterexample against the real code step by step: the
 command, the write that failed, the stored run and the journal after it,
-each recovery step. If a step cannot happen in the code (a write the code
-never makes, an order the code never uses, a recovery move no directive
-names), the check is wrong: correct the check, show it failing once on a
-scratch break, and record the correction under Extending the check. If
+each recovery step. If a step cannot happen in the code (a write or an
+order the code never makes, a recovery move no directive names), the
+check is wrong: correct the check, show it failing once on a scratch
+break, and record the correction under Extending the check. If
 every step can happen, it is a bug.
 
 ## Findings
@@ -122,16 +91,17 @@ A new command is added to `COVERED` with its stage and named end.
 
 ## Keeping in sync
 Tell whether a change touches covered code:
-`git diff --name-only 402a07f3d10eb0e90396a3cc3d9293eb045b4f0a -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
-(the sync commit and the record's files). Then exactly one outcome:
+`git diff --name-only SYNC -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
+(SYNC is the sha on the `Sync commit:` line; the files are the record's).
+Then exactly one outcome:
 - **in sync**: covered files unchanged, or changed without a change to a
   write or its order, and the check passes; the sync commit may move.
 - **updated**: the check and the record were changed to match the code
   (Extending the check); then the sync commit moves.
 - **bug**: the check fails on the real code and the replay confirms it;
   go to Findings.
-- **blocked**: the check cannot be brought in line without a decision;
+- **blocked**: the check cannot match the code without a decision;
   stop and ask.
-The sync commit moves only after confirming that the check describes the
-code at the new commit, and only to a commit on main, since a squash
+The sync commit moves only after confirming the check describes the
+code at the new commit, and only to a commit on main, as a squash
 merge drops branch commits.

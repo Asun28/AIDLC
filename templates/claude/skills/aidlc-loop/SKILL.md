@@ -67,12 +67,12 @@ step.
 Shared checks apply when T0 skips arc.md.
 
 ## Effort (MA1/MA2)
-Assess each task alone (uncertainty, scope, risk, verification burden);
-coordinator effort is irrelevant. At most 4 counted attempts: baseline + 2
+Assess each task alone (uncertainty, scope, risk, verification burden),
+never by the coordinator's effort; start helpers (search, fetch) as named
+agents at `medium`, not as forks. At most 4 counted attempts: baseline + 2
 repairs + 1 justified escalation to the next supported level. Same cause
 twice with no progress => stop early. Quota, expected RED, tool outage and
-env setup do not count. `aidlc card attempt` records every attempt; limits
-persist across session changes.
+env setup do not count.
 
 ## Output
 Concise progress: state, evidence refs, blocker, next action. STOP always

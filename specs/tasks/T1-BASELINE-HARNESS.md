@@ -9,40 +9,45 @@ allow_paths:
   - evals/baseline/
   - tsconfig.test.json
   - tests/surface/baseline.test.ts
-  - CHANGELOG.md
+  - changelog.d/T1-BASELINE-HARNESS.md
   - specs/tasks/T1-BASELINE-HARNESS.md
 dod_command: npm run typecheck && node --test tests/surface/baseline.test.ts
 dod_exit: 0
 requirements:
   - R1. The harness shall prepare every trial in a fresh checkout at the task's base SHA with no later commit reachable, and give both arms the same model, effort, turn cap, wall-clock cap and task text.
-  - R2. The harness shall record per run the oracle result, the input and output tokens and cost from the provider's usage, the wall clock, the count of directives or stops that needed a human, and the bound that fired.
+  - R2. The harness shall record per run the oracle result, the input and output tokens and cost from the provider's usage, the wall clock, the count of directives or stops that needed a human, the bound that fired, and the SHA-256 of the bytes of `evals/baseline/tasks.json` as read when that run was prepared (`tasksDigest`).
   - R3. The analysis shall report per task and per axis the paired difference (arm B mean minus arm A mean over the runs), and across tasks the mean, SD, a 95% interval, a sign-flip permutation p-value and the minimum detectable difference at alpha 0.05 and power 0.8.
   - R4. The task list shall hold 12 real tasks taken in reverse merge order by the selection rule written in `evals/baseline/README.md`, with no task skipped except by that rule.
   - R5. WHEN a run reaches its token or wall-clock cap, the harness shall stop it and record the cap as the bound that fired.
+  - R6. The report text `analyze.ts` generates shall state the `tasksDigest` its run records share.
+  - R7. IF the run records carry more than one `tasksDigest`, THEN `analyze.ts` shall exit 1 naming each digest and write no report.
 acceptance:
   - 1. `analyze.ts` on a fixture of 12 tasks x 2 arms x 3 runs returns the per-task differences computed by hand, the MDE as 0.888 x SD of the paired differences ((2.201 + 0.876) / sqrt(12)), and the same permutation p-value on two calls with one seed (tests/surface/baseline.test.ts). [R3] [dod arm 1]
   - 2. The prepare step, driven by a scripted runner, checks out the base SHA with `git rev-list --count HEAD` equal to 1; for arm A it removes the target's `.claude/` hooks and aidlc sections and writes exactly one Stop hook that runs the repository's check command; for arm B it runs `aidlc init --ship-path github` from the pinned aidlc SHA with the sandbox repository as remote (tests/surface/baseline.test.ts). [R1] [dod arm 1]
-  - 3. The run record has a zod schema requiring `resolved`, `usage` (input, output, cost), `wallClockMs`, `interventions` and `boundFired` (null when none); a record missing any one fails to parse (tests/surface/baseline.test.ts). [R2] [dod arm 1]
+  - 3. The run record has a zod schema requiring `resolved`, `usage` (input, output, cost), `wallClockMs`, `interventions`, `boundFired` (null when none) and `tasksDigest` (64 lowercase hexadecimal characters); a record missing any one fails to parse (tests/surface/baseline.test.ts). [R2] [dod arm 1]
   - 4. A scripted run whose reported cost passes the per-run cap of plan decision D3 ($10) is stopped and recorded with `boundFired: "token-cap"`, and one that passes the 3 h wall-clock cap with `"wall-clock-cap"`; no run starts once recorded cost reaches the $500 total (tests/surface/baseline.test.ts). [R5] [dod arm 1]
   - 5. `evals/baseline/tasks.json` holds 12 tasks from `Asun28/MyInspection` (plan decision D1) with unique ids, each naming repository, base SHA, PR number, task text, hidden oracle files and oracle command; `evals/baseline/README.md` states the selection rule, the caps of plan decision D3 ($10 per run, $500 in total, 3 h wall clock per run) and how to run a trial; a test reads both and fails with a task or a field removed (tests/surface/baseline.test.ts). [R4] [dod arm 1]
   - 6. `analyze.ts --check` exits 0 when `evals/baseline/REPORT.md` equals the text it regenerates from `evals/baseline/results/`, and 1 otherwise, on fixture directories (tests/surface/baseline.test.ts). [R3] [dod arm 1]
   - 7. A pilot of one task, one run per arm, completes end to end; both run records are retained with `aidlc evidence retain` and named in the close-out. [R1] [R2]
-  - 8. `git diff --numstat origin/main...HEAD -- src` is empty, and `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads the entry (tests/surface/baseline.test.ts). [R1] [dod arm 1]
+  - 8. `git diff --numstat origin/main...HEAD -- src` is empty, and `changelog.d/T1-BASELINE-HARNESS.md` holds the entry under this card id followed by one line feed; a test reads the entry with `fragmentEntry` of `tests/infra/changelog.ts` (tests/surface/baseline.test.ts). [R1] [dod arm 1]
+  - 9. A scripted trial writes a run record whose `tasksDigest` is the SHA-256 of the bytes of the task list file that trial read; the text `analyze.ts` generates for a fixture whose records share one digest names that digest; on a fixture whose records carry two digests `analyze.ts` exits 1, names both and writes no report (tests/surface/baseline.test.ts). [R2] [R6] [R7] [dod arm 1]
 depends_on: []
 budget: 900
 tdd: true
 forbid: [any change under src/, choosing or dropping a task after seeing a result of either arm, network access from a test, a PR opened on any repository other than the private sandbox `Asun28/aidlc-baseline-sandbox` of plan decision D2]
 non_goals: [the 72 measurement runs (an operator step between this card and T1-BASELINE-REPORT), REPORT.md, a change to src/evals/runner.ts, a new CLI command]
 hygiene: "Plan decisions D1-D3, decided again by the user on 2026-11-09: D1 task repository Asun28/MyInspection; D2 a new private sandbox repository Asun28/aidlc-baseline-sandbox for the arm B PRs, which the user creates before the pilot; D3 $10 per run and $500 in total. Reuses src/ exports only: ClaudeCodeProvider for the model call and its usage, the evals runner's command check for the oracle. Run the mutation sweep over analyze.ts before the first review (docs/LESSONS.md 2026-09-24)."
-doc_sync: CHANGELOG.md
+doc_sync: changelog.d/T1-BASELINE-HARNESS.md
 ---
 
 # T1-BASELINE-HARNESS
 
 Deferred on 2026-09-26 and released on 2026-11-09, when the user decided plan decisions D1-D3 again (hygiene). The oracle runs MyInspection's unit tests through Gradle, so the machine that runs a trial needs the JDK and Android SDK that repository's README names; the pilot (acceptance 7) proves it. The pilot needs the sandbox repository to exist.
 
+Amended on 2026-11-23, before any run, by the owner's decision in the session (`intent/auto-ontology-study.md`, Decisions, Q1). The changelog entry is the card's own file under `changelog.d/`, as `changelog.d/README.md` requires since T1-CHANGELOG-FRAGMENTS. Each run record carries the SHA-256 of the task list it ran (R2, acceptance 3 and 9), and the generated report states it (R6, R7): a digest taken from the working tree when the report is written would not show which task list the runs used.
+
 ## Deliverable
-`evals/baseline/` holds a task list of 12 real tasks, a harness that runs one trial per arm in a fresh checkout and records oracle result, tokens, cost, wall clock, human interventions and the bound that fired, and an analysis that reports per-task paired differences and the minimum detectable difference. A one-task pilot proves the harness end to end. src/ is unchanged.
+`evals/baseline/` holds a task list of 12 real tasks, a harness that runs one trial per arm in a fresh checkout and records oracle result, tokens, cost, wall clock, human interventions, the bound that fired and the digest of the task list, and an analysis that reports per-task paired differences and the minimum detectable difference and names that digest. A one-task pilot proves the harness end to end. src/ is unchanged.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell

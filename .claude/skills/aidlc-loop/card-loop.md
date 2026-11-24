@@ -45,8 +45,8 @@ defect before you read the verdict, or a required gate with no reviewer
 => STOP/capability. Tier S / scaffold-core => task-loop, same admission.
 
 ## BUILD
-TDD: prove behavioral RED first (`aidlc card red <id>`; scaffold: task.ps1
--Phase red). Bugs keep a reproducing test before the fix. Non-TDD docs use
+TDD: prove behavioral RED first (`card attempt --red-receipt`; scaffold:
+`card red`). Bugs keep a reproducing test before the fix. Non-TDD docs use
 `tdd: false`. Tests are proportionate; new units get new files. Never weaken
 or delete a test to hide a failure; a wrong test is
 corrected with evidence and re-validated. Checks = DoD + changed paths +

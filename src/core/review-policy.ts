@@ -122,7 +122,8 @@ export type LedgerDecision =
 /**
  * Record one reviewer invocation outcome in the ledger and decide the next action. `repeated` is a command reviewer's
  * list of the findings this decision re-raises (`repeatedFindings`, card T1-EFF-R3-PROGRESS); absent for a ship-path
- * reviewer and a base-sync decision, which keep the second-block stop.
+ * reviewer and a base-sync decision, which keep the second-block stop. `admitted` is the decision count a continuation admits
+ * (`admittedDecisions`, card T1-CONTINUE-CORE): a command reviewer's block compares with it in place of MAX_R3_DECISIONS.
  */
 export function recordReviewOutcome(
   ledger: ReviewLedger,
@@ -131,11 +132,12 @@ export function recordReviewOutcome(
   verdict: Verdict | undefined,
   scriptCounterDelta = 0,
   repeated?: string[],
+  admitted?: number,
 ): { ledger: ReviewLedger; decision: LedgerDecision } {
   const existing = ledger.invocations.find((i) => i.invocationId === invocation.invocationId);
   if (existing) {
     // Duplicate by invocation identity: idempotent replay; a recorded stop is returned as it was recorded.
-    return { ledger, decision: existing.stopReview ? { action: 'stop-review', detail: existing.stopReview } : decideFromLedger(ledger, classified, repeated, invocation.decision) };
+    return { ledger, decision: existing.stopReview ? { action: 'stop-review', detail: existing.stopReview } : decideFromLedger(ledger, classified, repeated, invocation.decision, admitted) };
   }
   const record: ReviewInvocation = {
     ...invocation,
@@ -163,7 +165,7 @@ export function recordReviewOutcome(
     if (classified.outcome === 'block-defect') next.substantiveBlocks = ledger.substantiveBlocks + 1;
   }
   if (classified.outcome === 'no-verdict') next.noVerdictRetriesUsed = ledger.noVerdictRetriesUsed + 1;
-  const decision = decideFromLedger(next, classified, repeated, record.decision);
+  const decision = decideFromLedger(next, classified, repeated, record.decision, admitted);
   // A stopping decision records its detail, so a commit that only lands as history (a newer candidate superseded it) still
   // stops the card with that detail at the next assessment, and admission refuses another decision (card T1-EFF-R3-PROGRESS-2).
   if (decision.action === 'stop-review') {
@@ -176,7 +178,7 @@ export function recordReviewOutcome(
 const ORDINALS = ['first', 'second', 'third', 'fourth'];
 const ordinal = (n: number): string => ORDINALS[n - 1] ?? `${n}th`;
 
-function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, repeated?: string[], dispatched?: number): LedgerDecision {
+function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, repeated?: string[], dispatched?: number, admitted?: number): LedgerDecision {
   switch (classified.outcome) {
     case 'pass':
     case 'routed-skip':
@@ -199,10 +201,13 @@ function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, r
         if ((dispatched ?? ledger.substantiveDecisions) >= 2 && repeated.length) {
           return { action: 'stop-review', detail: `${ordinal(ledger.substantiveBlocks)} substantive block re-raised unresolved finding(s) ${repeated.join(', ')}` };
         }
-        if (ledger.substantiveDecisions >= MAX_R3_DECISIONS) {
-          return { action: 'stop-review', detail: `${ordinal(ledger.substantiveDecisions)} decision blocked: the ${MAX_R3_DECISIONS}-decision allowance for repairs is used` };
+        // A continuation's admitted count replaces the cap in both directions (card T1-CONTINUE-CORE).
+        const cap = admitted ?? MAX_R3_DECISIONS;
+        if (ledger.substantiveDecisions >= cap) {
+          const allowance = admitted === undefined ? `the ${MAX_R3_DECISIONS}-decision allowance for repairs` : `the continuation's admitted count of ${admitted} decisions`;
+          return { action: 'stop-review', detail: `${ordinal(ledger.substantiveDecisions)} decision blocked: ${allowance} is used` };
         }
-        return { action: 'review-fix', remainingDecisions: MAX_R3_DECISIONS - ledger.substantiveDecisions };
+        return { action: 'review-fix', remainingDecisions: cap - ledger.substantiveDecisions };
       }
       if (ledger.substantiveBlocks >= 2) return { action: 'stop-review', detail: 'second substantive block' };
       if (ledger.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {

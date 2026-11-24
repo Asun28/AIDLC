@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-R3-RECONCILE-TIMEOUT.g-20260927010818-b6a49f.clean",
+  "candidate": "7bbc2fb23afedee881978a60a25aa86877a7ba30",
+  "base": "9376ec8a41e78a06917b4cbc68e27dbe5ae8bcff",
+  "card": {
+    "id": "T0-R3-RECONCILE-TIMEOUT",
+    "path": "specs/tasks/T0-R3-RECONCILE-TIMEOUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "a clean draft of a card run whose first R3 decision passed, whose card file has status merged and no superseded_by, scorable and on no candidate of evals/review/replay/, one per card (the smallest id), taken in sha256 order of the id with distinct candidates, the first 15; no person checked this case",
+  "origin": "T0-R3-RECONCILE-TIMEOUT clean (goal g-20260927010818-b6a49f)",
+  "note": "R3 decision 1 passed (codex)"
+}

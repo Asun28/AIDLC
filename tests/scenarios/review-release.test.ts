@@ -15,6 +15,7 @@ import { hostName, shortKey } from '../../src/state/paths.ts';
 import { atomicWriteJson, listJsonFiles } from '../../src/state/store.ts';
 import type { ActorIdentity, ReviewRequest } from '../../src/core/types.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
+import { deadPid as unheldPid } from '../infra/dead-pid.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -25,7 +26,7 @@ const FAR = '2126-01-01T00:00:00.000Z';
 const REASON = 'the owner died';
 
 const deadPid = (): number => {
-  const pid = spawnSync(process.execPath, ['-e', '']).pid;
+  const pid = unheldPid();
   assert.ok(pid > 0);
   return pid;
 };
@@ -79,6 +80,21 @@ function cliFailingWrite(fx: Fixture, key: string, file: string): SpawnSyncRetur
     '',
   ].join('\n'));
   return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, MAIN, 'review', 'release', key, '--reason', REASON], { cwd: fx.tmp, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-B', FAIL_WRITE_TO: file } });
+}
+
+/** The CLI with a preload that fails every read of one file with an error of the given code, as a read under a parent that cannot be searched fails. */
+function cliFailingRead(fx: Fixture, key: string, file: string, code: string): SpawnSyncReturns<string> {
+  const preload = path.join(fx.tmp, 'fail-read.mjs');
+  writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const read = fs.readFileSync;',
+    "fs.readFileSync = (file, ...rest) => { if (typeof file !== 'number' && path.resolve(String(file)) === path.resolve(process.env.FAIL_READ_OF)) throw Object.assign(new Error('injected read failure'), { code: process.env.FAIL_READ_CODE }); return read(file, ...rest); };",
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, MAIN, 'review', 'release', key, '--reason', REASON], { cwd: fx.tmp, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-B', FAIL_READ_OF: file, FAIL_READ_CODE: code } });
 }
 
 const poolFile = (fx: Fixture): string => readdirSync(fx.paths.reviewQueue).find((name) => name.startsWith('_pool-'))!;
@@ -614,6 +630,56 @@ test('acceptance 6: a release whose second journal cannot be written exits non-z
     assert.equal(finished.status, 0, finished.stderr);
     assert.deepEqual(fx.queue.pool(POOL).active, []);
     assert.equal(fx.queue.get(request.key)?.state, 'cancelled');
+    assert.deepEqual(noteFields(fx, one.id), [[one.id, CARD, request.key, request.seq, REASON]]);
+    assert.deepEqual(noteFields(fx, two.id), [[two.id, 'T1-TWO', request.key, request.seq, REASON]]);
+  });
+});
+
+test('T0-STORE-READ-ENOENT acceptance 6 - a release whose requester goal cannot be inspected exits 1 with the slot held and no NOTE, and running it again finishes it', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const request = running(fx, ownerOf(deadPid()), `${goal.id}:${CARD}`);
+    const file = fx.store.goalFile(goal.id);
+    const kept = readFileSync(file, 'utf8');
+    rmSync(file);
+    const before = queueFiles(fx);
+
+    const failed = cliFailingRead(fx, request.key, file, 'EACCES');
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.equal(failed.stderr, `aidlc: READ_FAILED: injected read failure (${file})\n`);
+    assert.deepEqual(queueFiles(fx), before);
+    assert.deepEqual(notes(fx, goal.id), []);
+
+    writeFileSync(file, kept);
+    const finished = cli(fx, request.key);
+    assert.equal(finished.status, 0, finished.stderr);
+    assert.deepEqual(fx.queue.pool(POOL).active, []);
+    assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, request.key, request.seq, REASON]]);
+  });
+});
+
+test('T0-STORE-READ-ENOENT-2 acceptance 9 - a release whose second requester goal cannot be inspected exits 1 with both journals and the queue unchanged, and running it again gives each goal its NOTE', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    writeCard(fx, { id: 'T1-TWO', title: 'second requester' });
+    const one = goalForCards(fx, [CARD]);
+    const two = goalForCards(fx, ['T1-TWO']);
+    const request = running(fx, ownerOf(deadPid()), `${one.id}:${CARD}`);
+    fx.queue.enqueue(input(`${two.id}:T1-TWO`));
+    assert.deepEqual(fx.queue.get(request.key)?.requesters, [`${one.id}:${CARD}`, `${two.id}:T1-TWO`]);
+    const file = fx.store.goalFile(two.id);
+    const journals = (): string[] => [one, two].map((goal) => readFileSync(path.join(fx.paths.journal, `${goal.id}.jsonl`), 'utf8'));
+    const before = { queue: queueFiles(fx), journals: journals() };
+
+    const failed = cliFailingRead(fx, request.key, file, 'EACCES');
+    assert.equal(failed.status, 1, failed.stderr);
+    assert.equal(failed.stderr, `aidlc: READ_FAILED: injected read failure (${file})\n`);
+    assert.deepEqual({ queue: queueFiles(fx), journals: journals() }, before);
+
+    const finished = cli(fx, request.key);
+    assert.equal(finished.status, 0, finished.stderr);
+    assert.deepEqual(fx.queue.pool(POOL).active, []);
     assert.deepEqual(noteFields(fx, one.id), [[one.id, CARD, request.key, request.seq, REASON]]);
     assert.deepEqual(noteFields(fx, two.id), [[two.id, 'T1-TWO', request.key, request.seq, REASON]]);
   });

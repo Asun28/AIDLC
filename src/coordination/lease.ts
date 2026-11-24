@@ -10,10 +10,10 @@
  * This coordinates sessions on one machine sharing one state directory. It does not claim to
  * enforce an account limit across uncoordinated machines (MS5).
  */
-import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { ActorIdentity, Lease, addMs, nowIso } from '../core/types.ts';
-import { readJson, updateJson } from '../state/store.ts';
+import { readDirNames, readJson, updateJson } from '../state/store.ts';
 import { currentActor } from '../state/journal.ts';
 import { shortKey } from '../state/paths.ts';
 
@@ -41,9 +41,12 @@ export class LeaseStore {
     this.lock = lock;
   }
 
-  /** One lease section: `change` receives the record under the lease's lock (`updateJson`); every lease write goes through it. */
-  update(resourceKey: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
-    return updateJson(this.file(resourceKey), Lease, change, this.lock);
+  /**
+   * One lease section: `change` receives the record under the lease's lock (`updateJson`); every lease write goes through it.
+   * `within`, when given, runs the write and is `updateJson`'s: a caller does more after the write lands, still under the lock.
+   */
+  update(resourceKey: string, change: (existing: Lease | undefined) => Lease | undefined, within?: (write: () => void) => void): Lease | undefined {
+    return updateJson(this.file(resourceKey), Lease, change, within ? { ...this.lock, within } : this.lock);
   }
 
   file(resourceKey: string): string {
@@ -133,10 +136,10 @@ export class LeaseStore {
     return Boolean(existing && !existing.released && existing.generation === generation);
   }
 
+  /** Every lease file of the directory that parses, skipping one that cannot be read or parsed; a directory that cannot be listed throws READ_FAILED (`readDirNames`). */
   list(): Lease[] {
-    if (!existsSync(this.dir)) return [];
     const out: Lease[] = [];
-    for (const name of readdirSyncSafe(this.dir)) {
+    for (const name of readDirNames(this.dir)) {
       if (!name.endsWith('.json')) continue;
       try {
         const parsed = Lease.safeParse(JSON.parse(readFileSync(path.join(this.dir, name), 'utf8')));
@@ -154,14 +157,6 @@ export class LeaseStore {
       if (existing?.released) unlinkSync(this.file(resourceKey));
       return existing;
     });
-  }
-}
-
-function readdirSyncSafe(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
   }
 }
 

@@ -640,6 +640,8 @@ export type NotCountedReason = z.infer<typeof NotCountedReason>;
 export const LoopDod = z.discriminatedUnion('ran', [
   z.object({
     ran: z.literal(true),
+    /** The shell that ran the DoD (card T0-DOD-SCAFFOLD-SHELL); absent on a record written before that card. */
+    shell: z.enum(['pwsh', 'platform']).optional(),
     command: z.string(),
     worktree: z.string(),
     commit: z.string().optional(),
@@ -863,11 +865,13 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
  * A decision event a card-run write owes to the goal journal (card T0-JOURNAL-FAULT-EVENTS): the write that commits the
  * decision records it, and the command appends it after that write; an append that did not land is made by the next
  * `card next`, `card attempt`, `review pre` or `review r3` on the card. `FINDING_RULED` is the event the ruling write of
- * `aidlc review rule` owes (card T1-REVIEW-RULE-2).
+ * `aidlc review rule` owes (card T1-REVIEW-RULE-2). `CARD_STATE` is the event the write recording the continuation of a
+ * stopped run owes (card T1-CONTINUE-REVIEW), and `NOTE` the event the write recording the amendment of a started card
+ * owes (card T1-CARD-AMEND) (card T1-OWED-EVENT-TYPES).
  */
 export const OwedEvent = z.object({
   key: z.string().min(1),
-  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT', 'FINDING_RULED']),
+  type: z.enum(['CARD_DISPATCHED', 'ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT', 'FINDING_RULED', 'MERGE_ADOPTED', 'CARD_STATE', 'NOTE']),
   generation: z.number().int().nonnegative(),
   data: z.record(z.string(), z.unknown()),
 });
@@ -892,6 +896,29 @@ export const ReviewBenchCase = z
   .discriminatedUnion('kind', [z.strictObject({ kind: z.literal('bug'), ...reviewBenchFields, expected: z.array(ReviewBenchSite).min(1) }), z.strictObject({ kind: z.literal('clean'), ...reviewBenchFields })])
   .refine((c) => !c.confirmed || c.confirmedBy !== undefined, { message: 'a confirmed case names confirmedBy', path: ['confirmedBy'] });
 export type ReviewBenchCase = z.infer<typeof ReviewBenchCase>;
+
+/**
+ * A recorded act that lifts a stop for review or ci and lets the run go on (card T1-CONTINUE-CORE): who, when and why, the lifted
+ * stop, and for a review stop `decisions`, the further R3 decisions admitted, and `admits`, the decision count the run may reach.
+ */
+export const Continuation = z.object({
+  at: IsoTimestamp,
+  by: z.string().min(1),
+  reason: z.string().min(1),
+  stop: z.object({ reason: z.enum(['review', 'ci']), detail: z.string(), at: IsoTimestamp }),
+  decisions: z.number().int().nonnegative().optional(),
+  admits: z.number().int().nonnegative().optional(),
+});
+export type Continuation = z.infer<typeof Continuation>;
+
+/** The contract fields of a card, in the order `src/core/contract.ts` digests and reports them (card T1-CARD-CONTRACT-2). */
+export const CONTRACT_FIELDS = ['requirements', 'acceptance', 'allow_paths', 'forbid', 'non_goals', 'dod_command', 'dod_exit', 'budget', 'tdd'] as const;
+export const ContractField = z.enum(CONTRACT_FIELDS);
+export type ContractField = z.infer<typeof ContractField>;
+
+/** One amendment of a run's card: who, when, why, the new card revision, the fields that changed and the evidence they invalidated. */
+export const CardAmendment = z.object({ at: IsoTimestamp, by: z.string().min(1), reason: z.string().min(1), revision: z.number().int().nonnegative(), changed: z.array(ContractField), invalidated: z.array(z.enum(['dod', 'review'])) });
+export type CardAmendment = z.infer<typeof CardAmendment>;
 
 export const CardRun = z.object({
   goalId: z.string().min(1),
@@ -943,6 +970,12 @@ export const CardRun = z.object({
   followupNote: z.string().optional(),
   evidence: z.array(EvidenceRef).default([]),
   stop: StopRecord.optional(),
+  /** The continuations of this run, oldest first (card T1-CONTINUE-CORE); a run written before the field has none. */
+  continuations: z.array(Continuation).default([]),
+  /** The SHA-256 of each contract field of the card when `ensureCardRun` created the run (card T1-CARD-CONTRACT-2); a run created before the field has none. */
+  contract: z.record(ContractField, z.string()).optional(),
+  /** The amendments of the run's card, oldest first; a run written before the field has none. */
+  amendments: z.array(CardAmendment).default([]),
   blocker: z.string().optional(),
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing', 'withdrawn']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional(), /** The candidate a `withdrawn` repair replaces: the repair's success must record another one (card T0-CANDIDATE-WITHDRAW). */ candidateDigest: z.string().optional() }).optional(),
@@ -1106,6 +1139,7 @@ export const JournalEventType = z.enum([
   'MANIFEST_SEALED',
   'INTENT_FILED',
   'NOTE',
+  'MERGE_ADOPTED',
 ]);
 export type JournalEventType = z.infer<typeof JournalEventType>;
 

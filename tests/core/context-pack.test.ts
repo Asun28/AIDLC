@@ -27,11 +27,11 @@ test('Unicode word characters do not split module or literal path names', () => 
   assert.deepEqual(JSON.parse(contextPack(input, { planSection: '', lessons })).lessons, ['- loop: keep']);
 });
 
-test('budget removes lesson tail before plan text and preserves complete acceptance', () => {
+test('budget removes lessons from the start before plan text and preserves complete acceptance', () => {
   const full = contextPack(input, sources, 285);
   assert.ok(Buffer.byteLength(full) <= 285, full);
   const pack = JSON.parse(full);
-  assert.deepEqual(pack.lessons, ['- loop: first']);
+  assert.deepEqual(pack.lessons, ['- router: second']);
   assert.equal(pack.planSection, 'Plan text.');
   assert.deepEqual(pack.truncated, { lessons: 1, plan: false });
   const long = JSON.parse(contextPack(input, { ...sources, planSection: '日本語😀'.repeat(1000) }, 400));
@@ -43,4 +43,12 @@ test('budget removes lesson tail before plan text and preserves complete accepta
   for (const budget of [0, -1, 1.5, NaN, Infinity]) assert.throws(() => contextPack(input, sources, budget), /budget/i);
   assert.throws(() => contextPack(input, sources, 20), /mandatory/i);
   assert.throws(() => contextPack(input, { planSection: '', lessons: '' }, 251), /mandatory/i);
+});
+
+test('budget removes the earliest matching lesson first and keeps the newest in file order', () => {
+  const text = contextPack(input, { ...sources, lessons: '- loop: first\n- router: second\n- loop: third' }, 300);
+  assert.ok(Buffer.byteLength(text) <= 300, text);
+  const pack = JSON.parse(text);
+  assert.deepEqual(pack.lessons, ['- router: second', '- loop: third']);
+  assert.equal(pack.truncated.lessons, 1);
 });

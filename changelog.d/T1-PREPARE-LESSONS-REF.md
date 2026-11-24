@@ -1,0 +1,1 @@
+- T1-PREPARE-LESSONS-REF: the PREPARE narration gives the lesson count, says the five most recent lessons are in the directive and names `docs/LESSONS.md` for reference, with no instruction to read the whole file; the Lessons paragraph of `docs/OPERATIONS.md` says the loop reads the file at PREPARE.

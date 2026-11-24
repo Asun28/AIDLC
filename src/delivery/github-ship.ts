@@ -37,6 +37,8 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
+  /** The directory of the card files in the worktree, `specs/tasks` when undefined (card T0-PR-SUMMARY-CARDS-DIR). */
+  cardsDir?: string;
   /** The writer of the base-sync CHANGELOG.md merge (card T0-BASE-SYNC-CHANGELOG-EDGES); injectable for tests. */
   writeFile?: (file: string, text: string) => void;
 }
@@ -230,6 +232,56 @@ function checksJson(runs: Array<{ name: string; status?: string; conclusion: str
     .replace(/\//g, '\\/'); // escaped, a check name never forms the `runs/<id>` the card runner reads as a rerun's run (T0-CI-RED-LOGS)
 }
 
+/** The headings of a card's `## PR summary`, in order, and the largest summary in characters (card T0-PR-SUMMARY). */
+const PR_SUMMARY_HEADINGS = ['What', 'Why / Intent', 'How / Behaviour', 'System impact', 'Security', 'Tests and review', 'Risk', 'Ownership', 'Docs'].map((h) => `### ${h}`);
+const PR_SUMMARY_MAX = 4000;
+
+/**
+ * The text of a new pull request (card T0-PR-SUMMARY): the `## PR summary` section of the card file, which the author
+ * writes for a person, then a rule and one line that names the card and the formal review. The section runs from the
+ * first line that reads `## PR summary` (trailing white space ignored) to the next line that starts with `# ` or `## `.
+ * Any other text gets the fixed line and the first reason that applies; with no `@` in the text GitHub notifies no account.
+ * Both lines name `<cardsDir>/<cardId>.md`, `cardsDir` as given and `specs/tasks` when undefined (card T0-PR-SUMMARY-CARDS-DIR).
+ */
+export function prBody(cardText: string | undefined, cardId: string, reviewed: boolean, cardsDir?: string): { body: string; reason?: string } {
+  const card = `${cardsDir ?? 'specs/tasks'}/${cardId}.md`;
+  const fixed = (reason: string) => ({ body: `Closed loop: worktree + TDD + independent review. DoD in ${card}.`, reason });
+  if (cardText === undefined) return fixed('no card file');
+  const text = cardText.replace(/\r\n/g, '\n').split('\n');
+  const start = text.findIndex((l) => l.trimEnd() === '## PR summary');
+  if (start < 0) return fixed('no PR summary section');
+  const after = text.slice(start + 1);
+  const end = after.findIndex((l) => /^##? /.test(l));
+  const summary = (end < 0 ? after : after.slice(0, end)).join('\n').trim();
+  const lines = summary.split('\n');
+  const heads = lines.flatMap((l, i) => (l.startsWith('### ') ? [i] : []));
+  if (heads.length !== PR_SUMMARY_HEADINGS.length || heads.some((at, n) => lines[at]!.trimEnd() !== PR_SUMMARY_HEADINGS[n])) return fixed('the headings are not the nine in order');
+  if (heads.some((at, n) => lines.slice(at + 1, heads[n + 1]).every((l) => l.trim() === ''))) return fixed('no text under a heading');
+  if (summary.length > PR_SUMMARY_MAX) return fixed(`over ${PR_SUMMARY_MAX} characters`);
+  if (summary.includes('@')) return fixed('the character @');
+  // No process starts with an argument that holds U+0000, so such a summary cannot be the `--body` of `gh pr create`.
+  if (summary.includes('\0')) return fixed('a NUL character');
+  return { body: `${summary}\n\n---\nCard: ${card}. Formal review: ${reviewed ? 'pass' : 'no pass recorded for this commit'}.` };
+}
+
+/** A pull request text with each CRLF made LF and trailing white space removed: the form two texts are compared in. */
+const normalBody = (body: string): string => body.replace(/\r\n/g, '\n').trimEnd();
+
+/**
+ * Whether the ship wrote a pull request text (card T0-PR-SUMMARY-REUSED): after `normalBody`, the text is the fixed line
+ * or its last line is one of the two `Card:` lines `prBody` writes, for the card path of `cardsDir` (`specs/tasks` when
+ * undefined) or of `specs/tasks`, the path of every text written before card T0-PR-SUMMARY-CARDS-DIR. Any other text is
+ * one a person wrote, and the ship keeps it.
+ */
+export function shipWroteBody(body: string, cardId: string, cardsDir?: string): boolean {
+  const text = normalBody(body);
+  const last = text.slice(text.lastIndexOf('\n') + 1);
+  return [cardsDir ?? 'specs/tasks', 'specs/tasks'].some((dir) => {
+    const card = `${dir}/${cardId}.md`;
+    return text === prBody(undefined, cardId, false, dir).body || last === `Card: ${card}. Formal review: pass.` || last === `Card: ${card}. Formal review: no pass recorded for this commit.`;
+  });
+}
+
 export class GitHubShipPath implements ShipPath {
   readonly name = 'github';
   readonly options: GitHubShipOptions;
@@ -355,13 +407,28 @@ export class GitHubShipPath implements ShipPath {
     const unknownPush = effectUnknown(`git push -u origin ${req.cardId}`, push, PUSH_MS, prNumber);
     if (unknownPush) return fail('[SHIP-EFFECT-UNKNOWN]', unknownPush, prNumber);
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr, prNumber);
+    // The text of the pull request (card T0-PR-SUMMARY): a card file that cannot be read is no text, and the review counts
+    // as passed only for a pass verdict whose `sha` is absent or this head and whose review completed. An empty `sha` is
+    // not absent (R3 decision 1): the gates above take it as none, this line does not.
+    let cardText: string | undefined;
+    try {
+      cardText = readFileSync(path.join(wt, this.options.cardsDir ?? 'specs/tasks', `${req.cardId}.md`), 'utf8');
+    } catch {
+      cardText = undefined;
+    }
+    const reviewed = v.verdict?.verdict === 'pass' && (v.verdict.sha === undefined || v.verdict.sha === head) && (v.verdict.run_status ?? 'success') === 'success';
+    const text = prBody(cardText, req.cardId, reviewed, this.options.cardsDir);
+    const which = text.reason === undefined ? 'the PR summary of the card' : `the fixed line (${text.reason})`;
     if (!prNumber) {
-      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
+      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', text.body], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
       const unknownCreate = effectUnknown(`gh pr create --base ${base} --head ${req.cardId}`, create, GH_MS);
       if (unknownCreate) return fail('[SHIP-EFFECT-UNKNOWN]', unknownCreate);
       if (create.exitCode !== 0) return fail('[SHIP-PR-NUMBER-FAIL]', create.stderr);
       prNumber = Number(create.stdout.match(/\/pull\/(\d+)/)?.[1]);
       if (!prNumber) return fail('[SHIP-PR-NUMBER-FAIL]', create.stdout);
+      log.push(`PR body: ${which}`);
+    } else {
+      log.push(this.rewriteBody(prNumber, text.body, which, req.cardId, wt, limit, unfinished));
     }
     log.push(`PR #${prNumber}`);
     // CI gate
@@ -425,6 +492,43 @@ export class GitHubShipPath implements ShipPath {
     this.writeToken(req.cardId, `tip=${head}\nmerged_pr=#${prNumber}\nutc=${new Date().toISOString()}`);
     log.push('[SAGA-DONE]');
     return { ...classifyShipOutput(this.receipt(log, 0, started)), prNumber };
+  }
+
+  /**
+   * The text of an open pull request the ship uses again (card T0-PR-SUMMARY-REUSED): the current text is read, and the new
+   * one is written only when it differs and the ship wrote the current one (`shipWroteBody`). Returns the one `PR body:` line
+   * of the ship output. The text is no gate: a read or an edit that fails, times out or ends without an exit code is that
+   * line, its detail flattened and encoded as every failure detail of the path, and the ship goes on.
+   */
+  private rewriteBody(
+    prNumber: number,
+    body: string,
+    which: string,
+    cardId: string,
+    wt: string,
+    limit: (bound: number) => number,
+    unfinished: (label: string, r: ExecReceipt, bound: number) => string | undefined,
+  ): string {
+    const notUpdated = (detail: string): string => `PR body: not updated (${encodeUntrusted(flat(detail))})`;
+    const view = this.runner('gh', ['pr', 'view', String(prNumber), '--repo', this.options.repository, '--json', 'body'], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
+    const unread = (why: string): string => notUpdated(`could not read the current text: ${why}`);
+    const viewUnfinished = unfinished(`gh pr view ${prNumber}`, view, GH_MS);
+    if (viewUnfinished) return unread(viewUnfinished);
+    if (view.exitCode !== 0) return unread(`gh pr view ${prNumber} exit ${view.exitCode}: ${view.stderr}`);
+    let current: unknown;
+    try {
+      current = (JSON.parse(view.stdout) as { body?: unknown } | null)?.body;
+    } catch {
+      return unread('the output is not JSON');
+    }
+    if (typeof current !== 'string') return unread('no string body in the output');
+    if (normalBody(current) === normalBody(body)) return 'PR body: unchanged';
+    if (!shipWroteBody(current, cardId, this.options.cardsDir)) return 'PR body: kept (the current text was not written by the ship)';
+    const edit = this.runner('gh', ['pr', 'edit', String(prNumber), '--repo', this.options.repository, '--body', body], { cwd: wt, timeoutMs: limit(GH_MS), killTree: true });
+    const editUnfinished = unfinished(`gh pr edit ${prNumber}`, edit, GH_MS);
+    if (editUnfinished) return notUpdated(`${editUnfinished}; it may have taken effect`);
+    if (edit.exitCode !== 0) return notUpdated(`gh pr edit ${prNumber} exit ${edit.exitCode}: ${edit.stderr}`);
+    return `PR body: updated, ${which}`;
   }
 
   /**
