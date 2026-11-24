@@ -68,7 +68,7 @@ npm run typecheck && node --test tests/scenarios/advisory-withdraw.test.ts tests
 Issue 449. After an advisory R3 finding, no command could bind the fix commit. The ship then failed on a stale verdict and stopped with a wrong reason.
 
 ### How / Behaviour
-`withdrawalRefusal` reads the latest R3 decision on the candidate and admits an advisory block. After an advisory block, `CardRunner.ship` reads the checkout HEAD after the R3 gate. When HEAD is not the candidate, it returns a `candidate-moved` wait and writes nothing. A pass or a ruled pass ships as before, by the owner's ruling.
+`withdrawalRefusal` reads the latest R3 decision on the candidate and admits an advisory block. After an advisory block, `CardRunner.ship` reads the checkout HEAD after the R3 gate. When HEAD is not the candidate, it returns a `candidate-moved` wait and writes nothing. A pass or a ruled pass ships as before, by the owner's ruling. A ruled pass also refuses a withdrawal, whatever follows it.
 
 ### System impact
 Only the card runner and the CLI help text change. A pass and a merge-blocking block still refuse a withdrawal.
@@ -91,8 +91,10 @@ The aidlc loop maintainers.
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `tests/scenarios/advisory-withdraw.test.ts`, test `acceptance 1`. RED at b9e23dd911: `card next` returned `close` (the moved HEAD merged) | pass after the fix |
+| 1 | `tests/scenarios/advisory-withdraw.test.ts`, the three `acceptance 1` tests. RED at b9e23dd911: `card next` returned `close` (the moved HEAD merged). HEAD at the candidate and a HEAD that cannot be read ship as on main | pass after the fix |
 | 2 | Same file, test `acceptance 2`. RED at b9e23dd911: the withdrawal was refused with `R3 decided candidate` | pass after the fix |
-| 3 | Same file, the five `acceptance 3` tests: spec block (after a dispute settles the repair) and pass refuse with nothing written; after a pass, HEAD at the candidate and HEAD moved past it both ship with no `candidate-moved` wait (these four also pass on main). Fifth (base-sync R3, F3): a ruled pass, then an advisory block and a moved HEAD, reaches the ship path; RED without the `ruledPass` condition in `movedHead`, where `card next` returned the `candidate-moved` wait | pass |
+| 3 | Same file, the four `acceptance 3` tests: spec block (after a dispute settles the repair) and pass refuse with nothing written; after a pass, HEAD at the candidate and HEAD moved past it both ship with no `candidate-moved` wait (these four also pass on main) | pass |
 | 4 | DoD: `candidate-withdraw`, `candidate-pins`, `card-amend-continue`, `fault-points`, `review-rule-ship` (acceptance 7 still ends in the stale-verdict stop) unchanged | pass |
 | 5 | `src/cli/main.ts` withdraw description, the docs and the fragment; `changelog-fragments`, `prose` | reviewer-verified; pass |
+| 6 | Same file, test `acceptance 6`. RED at 5b86f598: the withdrawal was admitted (no exception) | pass after the fix |
+| 7 | Same file, test `acceptance 7` (base-sync R3, F3). RED at e4d1f890: `card next` returned the `candidate-moved` wait | pass after the fix |

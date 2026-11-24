@@ -1578,7 +1578,8 @@ export class CardRunner {
   }
 
   /**
-   * The author withdraws a bound candidate no R3 decision has decided (card T0-CANDIDATE-WITHDRAW, issue 128). The finding
+   * The author withdraws a bound candidate no R3 decision has decided (card T0-CANDIDATE-WITHDRAW, issue 128), or whose latest
+   * R3 decision is an advisory block (card T0-ADVISORY-WITHDRAW). The finding
    * refutes the success that bound it as a failed ship does, so that attempt is a counted failure with the finding as its
    * cause and the repair is the ladder's next attempt: no review allowance pays for a withdrawal, so the ladder bounds it.
    * Every refusal is decided before the one write, which carries the owed event, and writes nothing: an event an earlier
@@ -1616,9 +1617,10 @@ export class CardRunner {
     const flight = this.inFlight(run, 'pre') ?? this.inFlight(run, 'formal');
     if (flight) return `${flight}; withdraw after its verdict lands`;
     // The latest R3 decision on the candidate refuses unless it is an advisory block (card T0-ADVISORY-WITHDRAW, issue 449): the
-    // advisory finding may be an introduced defect, and its fix goes back through the DoD and its own R3 decision.
+    // advisory finding may be an introduced defect, and its fix goes back through the DoD and its own R3 decision. A ruled pass is
+    // the standing decision and refuses whatever invocation follows it.
     const decided = [...run.review.invocations].reverse().find((i) => i.candidateDigest === candidate.digest && (i.outcome === 'pass' || i.outcome === 'block'));
-    if (decided && !(decided.outcome === 'block' && !this.invocationBlocking(run, card, decided))) return `R3 decided candidate ${candidate.sha.slice(0, 12)}, so it cannot be withdrawn; ship it, repair a block, or take the defect to a follow-up card`;
+    if (this.ruledPass(run) || (decided && !(decided.outcome === 'block' && !this.invocationBlocking(run, card, decided)))) return `R3 decided candidate ${candidate.sha.slice(0, 12)}, so it cannot be withdrawn; ship it, repair a block, or take the defect to a follow-up card`;
     const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
     return open.length ? `operation(s) of this card are unresolved (${open.join(', ')}); reconcile them first` : undefined;
   }

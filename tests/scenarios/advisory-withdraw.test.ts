@@ -57,7 +57,11 @@ function setup(verdicts: string[]) {
   git(fx.tmp, ['checkout', '-q', '-b', CARD]);
   const queue = [...verdicts];
   const reviewer = scriptedRunner({ 'fake-r3': () => ({ stdout: queue.length > 1 ? queue.shift()! : queue[0]! }) });
-  const runner: SyncRunner = (command, args, options) => (command === 'git' ? runSync(command, args, options) : reviewer(command, args, options));
+  let headUnreadable = false;
+  const runner: SyncRunner = (command, args, options) => {
+    if (command !== 'git') return reviewer(command, args, options);
+    return headUnreadable && args.includes('HEAD') ? { ...runSync('git', ['rev-parse', '--verify', 'no-such-ref'], options) } : runSync(command, args, options);
+  };
   const ship = new DryRunShipPath(['merged', 'merged']);
   const cardRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner });
   const goal = fx.controller.createGoal({ text: `implement ${CARD}`, source: 'card', ref: CARD, affectedSurfaces: [] }, { cards: [CARD] });
@@ -79,7 +83,7 @@ function setup(verdicts: string[]) {
     fx.store.updateCardRun(goal.id, CARD, (run) => ({ ...run!, review: { ...run!.review, invocations: [...run!.review.invocations, { ...run!.review.invocations.at(-1)!, ruled: undefined, ...change }] } }));
   const merges = () => fx.ops.list({ goalId: goal.id, cardId: CARD, kind: 'merge' });
   const events = () => fx.events(goal.id).length;
-  return { fx, goalId: goal.id, stored, next, bind, review, withdraw, dispute, rule, record, shipped: () => ship.requests.map((r) => r.candidateSha), merges, events };
+  return { fx, goalId: goal.id, stored, next, bind, review, withdraw, dispute, rule, record, hideHead: () => void (headUnreadable = true), shipped: () => ship.requests.map((r) => r.candidateSha), merges, events };
 }
 
 async function withSetup(verdicts: string[], body: (s: ReturnType<typeof setup>) => Promise<void>): Promise<void> {
@@ -174,6 +178,21 @@ for (const moved of [false, true]) {
       assert.ok(directive.kind !== 'wait' || directive.on !== 'candidate-moved', directive.narration);
       assert.equal(s.stored().mergeVerified, true);
       assert.equal(s.merges().length, 1);
+    }));
+}
+
+for (const unreadable of [false, true]) {
+  test(`T0-ADVISORY-WITHDRAW acceptance 1: after an advisory R3 block, ${unreadable ? 'a HEAD that cannot be read' : 'HEAD at the candidate'} ships as on main [R3]`, () =>
+    withSetup([ADVISORY], async (s) => {
+      const c1 = commit(s.fx, 1);
+      assert.equal(await decideFirst(s, c1), 'block-advisory');
+      if (unreadable) {
+        commit(s.fx, 2);
+        s.hideHead();
+      }
+      s.next();
+      assert.deepEqual(s.shipped(), [c1]);
+      assert.equal(s.stored().mergeVerified, true);
     }));
 }
 
