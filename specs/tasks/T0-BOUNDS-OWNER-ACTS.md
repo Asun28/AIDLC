@@ -141,4 +141,6 @@ Fixture values: `summarizeBounds` and `formatBounds` give the values of the Fixt
 
 Guards: 33 loosened forms of the new conditions were run one at a time against `tests/infra/bounds.test.ts`, and a test failed for each.
 
+Mutants: `aidlc card mutants` at 5b1b5ffe ran 18 mutants under the DoD, 17 killed and 1 survived. `equivalent:` the survivor, `a < b` to `a <= b` in the sort of `grouped`, since the keys of a Map are distinct and no comparison sees two equal ones.
+
 DoD: exit 0; tests 83, pass 83, fail 0.
