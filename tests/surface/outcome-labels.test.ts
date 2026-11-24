@@ -5,8 +5,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { claudeAnswer, codexAnswer, labelOf, labelRows, LABELS, mayCall, promptFor, readInside, readLog, selectFindings, type Labelled, type Selected } from '../../bench/outcome/labels.ts';
+import { claudeAnswer, CODEX_CALL_BOUND_USD, codexAnswer, labelOf, labelRows, LABELS, mayCall, promptFor, readInside, readLog, runLabels, selectFindings, type Labelled, type Selected } from '../../bench/outcome/labels.ts';
 import type { Row, Tables } from '../../bench/outcome/ingest.ts';
+import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -126,6 +127,59 @@ test('the log decides what is asked again and what was spent', () => {
   assert.deepEqual([ask('K', 'claude'), ask('K', 'codex'), ask('L', 'claude'), ask('L', 'codex')], [['speculative', false], [null, false], [null, true], [null, true]]);
   assert.ok(Math.abs(log.spend - 0.65) < 1e-12, String(log.spend));
   assert.deepEqual([mayCall(47.25), mayCall(47.26)], [true, false]);
+});
+
+test('T0-BENCH-FOLLOWUPS acceptance 3: a Codex call over its bound or of unreadable cost ends the run with exit 3 after its log lines, and one at the bound goes on', async (t) => {
+  const dir = tmpDir('aidlc-labels-run-');
+  t.after(() => cleanup(dir));
+  const price = (JSON.parse(readFileSync(path.join(root, 'bench', 'outcome', 'prices.json'), 'utf8')) as Record<string, { output: number }>)['gpt-5.6-sol']!.output;
+  const tokens = (usd: number): number => Math.round((usd * 1e6) / price);
+  const answer = message({ text: 'r\ntrue-defect' });
+  const CLAUDE_OUT = JSON.stringify({ is_error: false, result: 'r\nspeculative', total_cost_usd: 0.04 });
+  const claudeLine = (findingId: string): object => ({ goalId: 'g1', cardId: 'A', findingId, model: 'claude', label: 'speculative', cost: 0.04, exitCode: 0, timedOut: false, tail: 'r\nspeculative' });
+  const codexLine = (findingId: string, cost: number, events: unknown[], extra: object = {}): object => ({ goalId: 'g1', cardId: 'A', findingId, model: 'codex', label: 'true-defect', cost, exitCode: 0, timedOut: false, tail: 'r\ntrue-defect', events, ...extra });
+  let runs = 0;
+  const labelled = async (codex: () => Partial<ExecReceipt>): Promise<{ code: number; calls: string[]; git: string[]; said: string; log: Record<string, unknown>[]; files: boolean[] }> => {
+    const [mainRoot, calls, git, said] = [path.join(dir, String(runs += 1)), [] as string[], [] as string[], [] as string[]];
+    const outDir = path.join(mainRoot, 'out');
+    mkdirSync(outDir, { recursive: true });
+    const script = scriptedRunner({ 'claude --version': {}, 'codex --version': {}, 'claude -p': { stdout: CLAUDE_OUT }, 'codex exec': codex });
+    const code = await runLabels(undefined, {
+      mainRoot, cardsDir: 'specs/tasks', outDir, say: (s) => said.push(s), git: (args) => { git.push(args.slice(0, 2).join(' ')); return 0; },
+      tables: tablesOf({ cards: [{ id: 'A', superseded_by: 'X' }], findings: [finding('A', 'F1'), finding('A', 'F2')] }),
+      run: async (cmd, args, options) => { calls.push(`${cmd} ${args[0]!}`); return script(cmd, args, options); },
+    });
+    const logDir = path.join(mainRoot, '_local', 'outcome', 'labels');
+    const log = readFileSync(path.join(logDir, 'raw.jsonl'), 'utf8').trimEnd().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    return { code, calls, git, said: said.join(''), log, files: [path.join(outDir, 'labels.jsonl'), path.join(logDir, 'disagreements.jsonl')].map((f) => existsSync(f)) };
+  };
+  const VERSIONS = ['claude --version', 'codex --version'];
+  const over = [answer, usageEvent(tokens(CODEX_CALL_BOUND_USD) + 1)];
+  const [noUsage, badUsage] = [[answer], [answer, { type: 'turn.completed', usage: null }]];
+  const failed = [answer, usageEvent(tokens(1))];
+  const stops: Array<[string, () => Partial<ExecReceipt>, object]> = [
+    ['a cost above the bound', () => ({ stdout: lines(over) }), codexLine('F1', ((tokens(CODEX_CALL_BOUND_USD) + 1) * price) / 1e6, over)],
+    ['a cost above the bound of a call that exits 1', () => ({ exitCode: 1, stdout: lines(failed) }), codexLine('F1', 1, failed, { label: null, exitCode: 1 })],
+    ['no usage event', () => ({ stdout: lines(noUsage) }), codexLine('F1', CODEX_CALL_BOUND_USD, noUsage)],
+    ['an unreadable usage', () => ({ stdout: lines(badUsage) }), codexLine('F1', CODEX_CALL_BOUND_USD, badUsage)],
+    ['a call that throws', () => { throw new Error('spawn failed'); }, codexLine('F1', CODEX_CALL_BOUND_USD, [], { label: null, exitCode: null, tail: 'spawn failed' })],
+  ];
+  for (const [name, codex, line] of stops) {
+    const r = await labelled(codex);
+    assert.equal(r.code, 3, name);
+    assert.match(r.said, /^codex call over bound: /, name);
+    assert.deepEqual(r.calls, [...VERSIONS, 'claude -p', 'codex exec'], `${name}: no call for the next finding`);
+    assert.deepEqual([...r.log].sort((a, b) => (String(a['model']) < String(b['model']) ? -1 : 1)), [claudeLine('F1'), line], name);
+    assert.deepEqual(r.files, [false, false], `${name}: no output written`);
+    assert.deepEqual(r.git.slice(-2), ['worktree add', 'worktree remove'], `${name}: the checkout is removed`);
+  }
+  const at = [answer, usageEvent(tokens(CODEX_CALL_BOUND_USD))];
+  const r = await labelled(() => ({ stdout: lines(at) }));
+  assert.equal(r.code, 0, r.said);
+  assert.deepEqual(r.calls, [...VERSIONS, 'claude -p', 'codex exec', 'claude -p', 'codex exec']);
+  const key = (l: Record<string, unknown>): string => `${String(l['findingId'])} ${String(l['model'])}`;
+  assert.deepEqual([...r.log].sort((a, b) => (key(a) < key(b) ? -1 : 1)), ['F1', 'F2'].flatMap((f) => [claudeLine(f), codexLine(f, CODEX_CALL_BOUND_USD, at)]));
+  assert.deepEqual(r.files, [true, true]);
 });
 
 test("final is the common label or the owner's ruling, and a bad ruling refuses", () => {

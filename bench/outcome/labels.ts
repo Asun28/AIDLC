@@ -2,6 +2,7 @@
 // clean cards and second-pass blocks, asks Claude and Codex for one of five labels each in a detached checkout of the candidate, logs
 // every call with its cost to _local/outcome/labels/raw.jsonl under the main checkout, stops at SPEND_CEILING_USD, merges the owner's
 // rulings from bench/outcome/labels-rulings.jsonl and writes bench/outcome/labels.jsonl and the sheet of open disagreements (T1-OUTCOME-ADJUDICATE).
+// The log line of a Codex call holds the events its label and cost were read from (T0-BENCH-FOLLOWUPS).
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -12,7 +13,7 @@ import { parseCardText } from '../../src/artifacts/card.ts';
 import { loadProjectConfig } from '../../src/config.ts';
 import { FINDING_LOCATION } from '../../src/core/review-policy.ts';
 import { resolvesInside } from '../../src/evals/runner.ts';
-import { run, runSync } from '../../src/probes/exec.ts';
+import { run, runSync, type Runner } from '../../src/probes/exec.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { ingestState, type Row, type Tables } from './ingest.ts';
 
@@ -25,6 +26,10 @@ export type Group = 'superseded' | 'clean' | 'second-pass';
 export type Model = 'claude' | 'codex';
 export interface Selected { group: Group; finding: Row }
 export interface Answer { label: Label | null; cost: number | null; text: string }
+/** `events`: the agent messages and turn completions of the stdout in order, which the label and the cost are read from. */
+export interface CodexAnswer extends Answer { events: Record<string, unknown>[] }
+/** What a labelling run reads, runs and writes: `main` passes this repository's own. `outDir` holds the rulings and labels.jsonl, `say` writes to stderr. */
+export interface LabelRun { mainRoot: string; cardsDir: string; outDir: string; tables: Tables; run: Runner; git: (args: string[]) => number | null; say: (text: string) => void }
 export interface LabelRow { goalId: string; cardId: string; findingId: string; group: Group; candidate: string | null; labelA: Label | null; labelB: Label | null; final: Label | null; ownerRuled: boolean; left: string | null }
 export interface Labelled { selected: Selected; labelA: Label | null; labelB: Label | null; left: string | null }
 export type Prices = Record<string, { input: number; cacheRead: number; output: number }>;
@@ -109,16 +114,21 @@ export function claudeAnswer(stdout: string): Answer {
   return { label: p['is_error'] === true ? null : labelOf(text), cost: typeof p['total_cost_usd'] === 'number' ? p['total_cost_usd'] : null, text };
 }
 
-export function codexAnswer(stdout: string, prices: Prices): Answer {
+export function codexAnswer(stdout: string, prices: Prices): CodexAnswer {
   let [text, usage] = ['', undefined as Record<string, unknown> | undefined];
+  const events: Record<string, unknown>[] = [];
   for (const e of stdout.split(/\r?\n/).map(object)) {
-    const item = e?.['item'] as Record<string, unknown> | undefined;
-    if (e?.['type'] === 'item.completed' && item?.['type'] === 'agent_message' && typeof item['text'] === 'string') text = item['text'];
-    if (e?.['type'] === 'turn.completed') usage = typeof e['usage'] === 'object' && e['usage'] !== null ? (e['usage'] as Record<string, unknown>) : undefined;
+    const item = e?.['item'] as Record<string, unknown> | null | undefined;
+    const message = e?.['type'] === 'item.completed' && item?.['type'] === 'agent_message';
+    if (!e || !(message || e['type'] === 'turn.completed')) continue;
+    events.push(e);
+    // The last message is the answer: one without text ends with no label and never keeps an earlier message's.
+    if (message) text = typeof item['text'] === 'string' ? item['text'] : '';
+    else usage = typeof e['usage'] === 'object' && e['usage'] !== null ? (e['usage'] as Record<string, unknown>) : undefined;
   }
   const [input, cached, output, price] = [usage?.['input_tokens'], usage?.['cached_input_tokens'], usage?.['output_tokens'], prices['gpt-5.6-sol']];
   const cost = typeof input === 'number' && typeof cached === 'number' && typeof output === 'number' && price ? ((input - cached) * price.input + cached * price.cacheRead + output * price.output) / 1e6 : null;
-  return { label: labelOf(text), cost, text };
+  return { label: labelOf(text), cost, text, events };
 }
 
 /** The spend, and per finding and model the logged label, whether to ask (no label and fewer than two lines) and the last tail (R5). */
@@ -167,22 +177,16 @@ export function labelRows(items: Labelled[], rulingsText: string | null): { rows
   }) };
 }
 
-async function main(): Promise<number> {
-  const { values } = parseArgs({ options: { limit: { type: 'string' } } });
-  const limit = values.limit === undefined ? undefined : Number(values.limit);
-  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 0)) throw new Error(`--limit takes a whole number, not ${String(values.limit)}`);
-  const mainRoot = resolveRepoIdentity().mainRoot;
-  const cardsDir = loadProjectConfig(mainRoot).config.cardsDir;
-  const tables = ingestState({ stateDir: resolveStatePaths().root, cardsDir: path.join(mainRoot, cardsDir) });
+/** One labelling run over the tables: the exit code, 2 for a CLI that does not answer and 3 for a stop on spend. */
+export async function runLabels(limit: number | undefined, { mainRoot, cardsDir, outDir, tables, run, git, say }: LabelRun): Promise<number> {
   if (tables.ingest_errors.length > 0) throw new Error(`ingestState returned ${tables.ingest_errors.length} ingest_errors rows, the first ${JSON.stringify(tables.ingest_errors[0])}`);
   const selected = selectFindings(tables);
   if (selected.length === 0) throw new Error('no finding is selected');
   const logDir = path.join(mainRoot, '_local', 'outcome', 'labels');
   const logFile = path.join(logDir, 'raw.jsonl');
   const log = (): ReturnType<typeof readLog> => readLog(existsSync(logFile) ? readFileSync(logFile, 'utf8') : '');
-  const rulingsFile = path.join(here, 'labels-rulings.jsonl');
+  const rulingsFile = path.join(outDir, 'labels-rulings.jsonl');
   const rulingsText = existsSync(rulingsFile) ? readFileSync(rulingsFile, 'utf8') : null;
-  const git = (args: string[]): number | null => runSync('git', args, { cwd: mainRoot }).exitCode;
   const found = new Map<string, boolean>();
   const left = selected.map(({ finding: f }) => {
     const sha = f['candidateSha'];
@@ -201,19 +205,19 @@ async function main(): Promise<number> {
   const options = { env, timeoutMs: 300000, shell: process.platform === 'win32' };
   for (const cli of due.length > 0 ? ['claude', 'codex'] : []) {
     const r = await run(cli, ['--version'], options).catch((err: Error) => ({ exitCode: null, stderr: err.message }));
-    if (r.exitCode !== 0) return (process.stderr.write(`labels: ${cli} --version did not exit 0: ${r.stderr.trim()}\n`), 2);
+    if (r.exitCode !== 0) return (say(`labels: ${cli} --version did not exit 0: ${r.stderr.trim()}\n`), 2);
   }
   const prices = JSON.parse(readFileSync(path.join(here, 'prices.json'), 'utf8')) as Prices;
-  const call = async (m: Model, prompt: string, cwd: string): Promise<{ entry: Omit<Answer, 'text'> & { exitCode: number | null; timedOut: boolean; tail: string }; read: boolean }> => {
+  const call = async (m: Model, prompt: string, cwd: string): Promise<{ entry: Omit<Answer, 'text'> & { exitCode: number | null; timedOut: boolean; tail: string; events?: CodexAnswer['events'] }; read: boolean }> => {
     const [cmd, ...args] = m === 'claude' ? CLAUDE : CODEX;
     const unread = m === 'claude' ? CALL_CEILING_USD : CODEX_CALL_BOUND_USD;
     try {
       const r = await run(cmd!, args, { ...options, cwd, input: prompt });
-      const a = m === 'claude' ? claudeAnswer(r.stdout) : codexAnswer(r.stdout, prices);
+      const a: Answer & Partial<CodexAnswer> = m === 'claude' ? claudeAnswer(r.stdout) : codexAnswer(r.stdout, prices);
       const read = typeof a.cost === 'number' && Number.isFinite(a.cost);
-      return { entry: { label: r.exitCode === 0 && !r.timedOut ? a.label : null, cost: read ? a.cost : unread, exitCode: r.exitCode, timedOut: r.timedOut, tail: (a.text || r.stderr).slice(-600) }, read };
+      return { entry: { label: r.exitCode === 0 && !r.timedOut ? a.label : null, cost: read ? a.cost : unread, exitCode: r.exitCode, timedOut: r.timedOut, tail: (a.text || r.stderr).slice(-600), ...(a.events ? { events: a.events } : {}) }, read };
     } catch (err) {
-      return { entry: { label: null, cost: unread, exitCode: null, timedOut: false, tail: (err as Error).message.slice(-600) }, read: false };
+      return { entry: { label: null, cost: unread, exitCode: null, timedOut: false, tail: (err as Error).message.slice(-600), ...(m === 'codex' ? { events: [] } : {}) }, read: false };
     }
   };
   const candidates = [...new Set(due.map((s) => String(s.finding['candidateSha'])))];
@@ -224,33 +228,43 @@ async function main(): Promise<number> {
       if (git(['worktree', 'add', '--detach', checkout, sha]) !== 0) throw new Error(`git worktree add --detach of ${sha} failed`);
       for (const { finding: f } of due.filter((s) => s.finding['candidateSha'] === sha)) {
         const spend = log().spend;
-        if (!mayCall(spend)) return (process.stderr.write(`spend ceiling: ${spend.toFixed(4)} USD of ${SPEND_CEILING_USD}\n`), 3);
+        if (!mayCall(spend)) return (say(`spend ceiling: ${spend.toFixed(4)} USD of ${SPEND_CEILING_USD}\n`), 3);
         const read = (rel: string): string | null => readInside(checkout, rel);
         const prompt = promptFor(f, read(`${cardsDir}/${String(f['cardId'])}.md`), typeof f['file'] === 'string' ? read(f['file']) : null, cardsDir);
         mkdirSync(logDir, { recursive: true });
         const asks = (['claude', 'codex'] as const).filter((m) => pair(log(), f, m).ask);
         const calls = await Promise.all(asks.map(async (model) => { const r = await call(model, prompt, checkout); appendFileSync(logFile, `${JSON.stringify({ goalId: f['goalId'], cardId: f['cardId'], findingId: f['id'], model, ...r.entry })}\n`); return { model, ...r }; }));
-        const over = calls.find((c) => c.model === 'codex' && (!c.read || (c.entry.cost ?? Infinity) > CODEX_CALL_BOUND_USD)); if (over) return (process.stderr.write(`codex call over bound: ${String(over.entry.cost)} USD\n`), 3);
+        const over = calls.find((c) => c.model === 'codex' && (!c.read || (c.entry.cost ?? Infinity) > CODEX_CALL_BOUND_USD)); if (over) return (say(`codex call over bound: ${String(over.entry.cost)} USD\n`), 3);
       }
     } finally {
       git(['worktree', 'remove', '--force', checkout]);
       rmSync(dir, { recursive: true, force: true });
     }
   }
-  process.stderr.write(`labels: spend ${log().spend.toFixed(4)} USD after ${due.length} findings asked in this run\n`);
+  say(`labels: spend ${log().spend.toFixed(4)} USD after ${due.length} findings asked in this run\n`);
   if (limit !== undefined) return 0;
 
   const result = labelRows(items(), rulingsText);
   if ('error' in result) throw new Error(result.error);
-  const out = path.join(here, 'labels.jsonl');
+  const out = path.join(outDir, 'labels.jsonl');
   writeFileSync(`${out}.tmp`, result.rows.map((r) => `${JSON.stringify(r)}\n`).join(''));
   renameSync(`${out}.tmp`, out);
   const l = log();
   const open = result.rows.flatMap((r, i) => (r.final === null && r.left === null ? [{ goalId: r.goalId, cardId: r.cardId, findingId: r.findingId, group: r.group, candidate: r.candidate, file: selected[i]!.finding['file'], reason: selected[i]!.finding['reason'], labelA: r.labelA, labelB: r.labelB, tailA: pair(l, selected[i]!.finding, 'claude').tail, tailB: pair(l, selected[i]!.finding, 'codex').tail }] : []));
   mkdirSync(logDir, { recursive: true });
   writeFileSync(path.join(logDir, 'disagreements.jsonl'), open.map((r) => `${JSON.stringify(r)}\n`).join(''));
-  process.stderr.write(`disagreements: ${open.length}\n`);
+  say(`disagreements: ${open.length}\n`);
   return 0;
+}
+
+async function main(): Promise<number> {
+  const { values } = parseArgs({ options: { limit: { type: 'string' } } });
+  const limit = values.limit === undefined ? undefined : Number(values.limit);
+  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 0)) throw new Error(`--limit takes a whole number, not ${String(values.limit)}`);
+  const mainRoot = resolveRepoIdentity().mainRoot;
+  const cardsDir = loadProjectConfig(mainRoot).config.cardsDir;
+  const tables = ingestState({ stateDir: resolveStatePaths().root, cardsDir: path.join(mainRoot, cardsDir) });
+  return runLabels(limit, { mainRoot, cardsDir, outDir: here, tables, run, git: (args) => runSync('git', args, { cwd: mainRoot }).exitCode, say: (text) => { process.stderr.write(text); } });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
