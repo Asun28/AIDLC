@@ -16,7 +16,7 @@ allow_paths:
   - README.md
   - changelog.d/T0-INIT-CLI-PATH.md
   - specs/tasks/T0-INIT-CLI-PATH.md
-dod_command: npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/init.test.ts tests/surface/init-no-package.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/templates.test.ts tests/surface/coordinator-effort.test.ts tests/surface/mirror.test.ts tests/surface/claude-md-size.test.ts tests/surface/command-lines.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts
+dod_command: npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/init.test.ts tests/surface/init-no-package.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/templates.test.ts tests/surface/coordinator-effort.test.ts tests/surface/mirror.test.ts tests/surface/claude-md-size.test.ts tests/surface/command-lines.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts tests/surface/test-temp.test.ts
 dod_exit: 0
 review_gate: codex {verdict:pass}
 requirements:
@@ -62,7 +62,7 @@ From issue 451.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/init.test.ts tests/surface/init-no-package.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/templates.test.ts tests/surface/coordinator-effort.test.ts tests/surface/mirror.test.ts tests/surface/claude-md-size.test.ts tests/surface/command-lines.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts
+npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/init.test.ts tests/surface/init-no-package.test.ts tests/surface/cli-cwd-paths.test.ts tests/surface/templates.test.ts tests/surface/coordinator-effort.test.ts tests/surface/mirror.test.ts tests/surface/claude-md-size.test.ts tests/surface/command-lines.test.ts tests/surface/changelog-fragments.test.ts tests/surface/prose.test.ts tests/surface/test-temp.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass and the existing init, template, mirror, size, command-line, changelog and prose tests pass unchanged.
