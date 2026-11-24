@@ -44,6 +44,8 @@ Amended on 2026-11-23, before any run, by the owner's decision in the session (`
 
 Amended on 2026-11-24, before any run, by the owner's instruction in the session (the plan's amendment of that date). The report compares Claude Ship with aidlc's review and ship on the same aidlc-built candidates, not plain Claude Code with aidlc. The results hold a record per build beside the records per arm run (R1), the report gives the end states and the count of candidates that already passed the oracle (R2), and it says how Claude Ship was started and where arm A's cost came from (R4). The budget rises from 3000 to 4500 for the build records.
 
+Deferred again on 2026-11-24 by the owner in the session, with T1-BASELINE-HARNESS: the owner has no Claude organization on a Team or Enterprise plan, which the Claude Ship agents need. The card stays registered as amended, for a later run, and does not run until the owner releases it.
+
 ## Deliverable
 The first comparison of aidlc's review and ship stage against Claude Ship on the same aidlc-built candidates of real tasks, judged by an external oracle, reported as per-task paired differences with the smallest difference the design could detect, including every axis on which aidlc loses.
 

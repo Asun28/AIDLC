@@ -60,6 +60,8 @@ Amended on 2026-11-24, before any run, by the owner's instruction in the session
 
 The pilot needs Claude Ship to be available to the operator in one of its two forms: its agents enabled on the sandbox repository, or the `/ship` command in a Claude Code session outside native Windows.
 
+Deferred again on 2026-11-24 by the owner in the session: the owner has no Claude organization on a Team or Enterprise plan, which the Claude Ship agents need. The card stays registered as amended, for a later run, and does not run until the owner releases it; until then no sandbox repository is created.
+
 ## Deliverable
 `evals/baseline/` holds a task list of 12 real tasks, a harness that builds each task with aidlc in a fresh checkout, opens the arm A pull request for Claude Ship and continues the card run as arm B, records for the build and for each arm the oracle result, tokens, cost, wall clock, human interventions, end state, the bound that fired and the digest of the task list, and an analysis that reports per-task paired differences and the minimum detectable difference and names that digest. A one-task pilot proves the harness end to end. src/ is unchanged.
 

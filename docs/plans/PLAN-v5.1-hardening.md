@@ -329,8 +329,8 @@ a different measure; each card sets both.
 | T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W5 | - |
 | T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W6 | - |
 | T1-RUN-DRIVER | SHOULD | aidlc run, board --watch, per-card context pack | T1-README-SCOPE, T1-BOUND-TELEMETRY | W7 | - |
-| T1-BASELINE-HARNESS | COULD | W0 harness, task list, analysis, one-task pilot per arm (released 2026-11-09; amended 2026-11-23: each run record carries the task-list digest; amended 2026-11-24: aidlc builds each candidate, arm A is Claude Ship on a pull request of its own, arm B is aidlc's review and ship) | - | - | - |
-| T1-BASELINE-REPORT | COULD | REPORT.md with paired differences and the MDE (released 2026-11-09; amended 2026-11-23: the report names the task-list digest, and a CI job runs its check; amended 2026-11-24: Claude Ship against aidlc's review and ship on the same candidates) | T1-BASELINE-HARNESS | - | - |
+| T1-BASELINE-HARNESS | COULD | W0 harness, task list, analysis, one-task pilot per arm (released 2026-11-09; amended 2026-11-23: each run record carries the task-list digest; amended 2026-11-24: aidlc builds each candidate, arm A is Claude Ship on a pull request of its own, arm B is aidlc's review and ship; deferred again 2026-11-24) | - | - | - |
+| T1-BASELINE-REPORT | COULD | REPORT.md with paired differences and the MDE (released 2026-11-09; amended 2026-11-23: the report names the task-list digest, and a CI job runs its check; amended 2026-11-24: Claude Ship against aidlc's review and ship on the same candidates; deferred again 2026-11-24) | T1-BASELINE-HARNESS | - | - |
 | T1-BOUND-STATS | SHOULD | W4 redesign: `aidlc bounds`, firings derived read-only from goal and card-run records | - | - | - |
 | T1-BOARD-WATCH | SHOULD | W5 (b): read-only `aidlc board --watch` under a stated output contract | - | - | - |
 
@@ -422,6 +422,9 @@ New findings from running the waves are appended here by the card that meetsthem
   stage and the control arm is Claude Ship, not plain Claude Code; the D2
   sandbox receives the pull requests of both arms, and a run under D3 is a
   build or one arm of it. D1 stands.
+  Deferred again with W0 on 2026-11-24 (section 2026-11-09 follow-up cards):
+  D1-D3 stay recorded for the later run, no sandbox repository is created and
+  nothing is spent until the owner releases the cards.
 - D4 (W3 primitive): accepted as designed, the O_EXCL locked update, not
   `git update-ref`, for the reasons in 4.5.
 - D5 (W5 overlap), met. `T0-UNATTENDED-RUNS` merged in PR #61 (b7898d8):
@@ -526,3 +529,5 @@ What the product's pages state, read on 2026-11-24 and not run here (`claude.com
 So no session and no harness starts `/ship`. The harness opens the arm A pull request and records how Claude Ship was started on it: `agents`, by the pull request event, or `command`, by the operator typing `/ship` with the pull request's URL. Arm A's wall clock is read from the pull request, from its creation to its last commit, comment, review or check completion. Arm A's interventions and cost are what the operator states when the run is closed, the typed `/ship` line counted as one intervention; the cost is the session's in `command` mode and the analytics page's figure in `agents` mode, and the record marks it as stated by the operator or as absent. The harness cannot stop Claude Ship at the $10 cap: in `agents` mode the owner sets the repository's Steward spend cap and the Code Review spend limit in the organization's settings. Arm B's cost counts its driving session from the candidate, with the review commands it starts outside it, as on 2026-11-09. REPORT.md states the mode and the source of each arm's cost.
 
 One limit of the design, stated before any run: where a candidate already passes the oracle, the stage can keep that result or break it, so the resolved axis moves only on candidates that fail it. The report gives the count of each. The analysis and the minimum detectable difference of 4.5 are unchanged. D1 and the caps of D3 stand. The budgets rise for the added steps and records: T1-BASELINE-HARNESS from 900 to 1200, T1-BASELINE-REPORT from 3000 to 4500; neither card changes src/.
+
+Deferred again on 2026-11-24 by the owner in the session, after the amendment above: the owner has no Claude organization on a Team or Enterprise plan, which the Claude Ship agents need. T1-BASELINE-HARNESS and T1-BASELINE-REPORT stay registered as amended, as a comparison to run later, and do not run: no goal is opened for them, no sandbox repository is created and nothing is spent on runs. The owner releases them again in a session. The other form of Claude Ship, the `/ship` command typed by the operator outside native Windows, needs no organization and stays possible; the owner did not choose it. Also left for later and not carded: building the second pull request into the aidlc ship path, or Claude's local `/code-review` into the pre-review slot, which the owner asked about in the session.
