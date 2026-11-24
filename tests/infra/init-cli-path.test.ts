@@ -122,9 +122,9 @@ describe('T0-INIT-CLI-PATH: the init report', () => {
     assert.equal(Object.getPrototypeOf(env), Object.prototype, 'the prototype is not replaced');
   });
 
-  /** `node src/cli/main.ts init <dir> --json` with PATH, under any case of its key, replaced by `pathDir`. */
-  function initWithPath(pathDir: string): Record<string, unknown> {
-    const env = envWithPath(process.env, pathDir);
+  /** `node src/cli/main.ts init <dir> --json` in the environment `envWithPath` makes of `source`. */
+  function initWithPath(pathDir: string, source: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+    const env = envWithPath(source, pathDir);
     const target = tmpDir('aidlc-init-cli-');
     dirs.push(target);
     const r = spawnSync(process.execPath, [path.join(ROOT, 'src', 'cli', 'main.ts'), 'init', target, '--json'], { encoding: 'utf8', env, windowsHide: true, timeout: 120_000 });
@@ -140,6 +140,12 @@ describe('T0-INIT-CLI-PATH: the init report', () => {
     dirs.push(linked);
     writeFileSync(path.join(linked, process.platform === 'win32' ? 'aidlc.cmd' : 'aidlc'), '');
     assert.deepEqual(initWithPath(linked)['cli'], { onPath: true, command: 'aidlc' });
+    // A machine whose PATHEXT leaves out .CMD, under two spellings, and whose PATH holds an aidlc: neither reaches the child.
+    const machine = envWithPath(process.env, linked);
+    machine['PATHEXT'] = '.EXE;.PS1';
+    machine['PathExt'] = '.EXE;.PS1';
+    assert.deepEqual(initWithPath(linked, machine)['cli'], { onPath: true, command: 'aidlc' });
+    assert.deepEqual(initWithPath(empty, machine)['cli'], initCli(path.join(ROOT, 'bin', 'aidlc.js'), false));
   });
 });
 
