@@ -255,7 +255,7 @@ export function aidlcOnPath(env: Record<string, string | undefined> = process.en
   return dirs.some((d) => names.some((n) => isFile(join(d, n))));
 }
 
-/** Characters a shell expands inside double quotes or that end the quote or a Markdown code span: the set `ABSOLUTE_DISPATCHER` refuses. */
+/** Characters a shell can expand inside double quotes, or that end the quote or a code span: the four the owner ruled on, a subset of those `ABSOLUTE_DISPATCHER` refuses. */
 const SHELL_SPECIAL = /[$`%"]/;
 
 /** What `init` prints about running the CLI; `command` is absent when no command can be printed safely. */

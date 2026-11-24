@@ -72,35 +72,37 @@ npm run typecheck && node --test tests/infra/init-cli-path.test.ts tests/infra/i
 `aidlc init` checks whether `aidlc` is on PATH. When it is not, init prints the `node "<path>/bin/aidlc.js"` command and the `npm link` alternative.
 
 ### Why / Intent
-Issue 451. Setup does not put `aidlc` on PATH, so the commands in the skill and in CLAUDE.md failed as written, and no text said what to run.
+Setup does not put `aidlc` on PATH. The commands in the skill and in CLAUDE.md failed as written (issue 451).
 
 ### How / Behaviour
-`aidlcOnPath` searches the PATH directories for `aidlc`, with a PATHEXT extension on Windows. `initCli` gives the command and the note. The init report gains a `cli` field, and the `next` line names that command. A path with `$`, a backtick, `%` or `"` gets a plain-text note and no command, so no printed command can name the wrong file.
+The init report gains a `cli` field, and the `next` line names the command that works. A path with `$`, a backtick, `%` or `"` gets a plain-text note and no command.
 
 ### System impact
 Only `aidlc init` output changes. Entry check 1 of the skill and the CLAUDE.md section get one fallback line each. Three redundant phrases leave SKILL.md to stay under its 4500-byte cap.
 
 ### Security
-The check reads PATH and PATHEXT and calls `stat` on candidate files. It starts no process and skips empty PATH entries, so it never searches the current directory.
+The check reads PATH and PATHEXT and looks for files. It starts no process, and it skips empty PATH entries.
 
 ### Tests and review
-`tests/infra/init-cli-path.test.ts` covers the PATH rules on both platforms, the three `initCli` shapes, the `next` line forms, a real `init` run with a controlled PATH, and the new text. The existing init, template and doc tests pass unchanged. R3 decision 1 blocked on the README text and on shell-special paths; the owner amended R3 and R4 for the second.
+The new test file covers the PATH rules, the output shapes and a real `init` run. R3 blocked decisions 1 and 2. The owner amended R3, R4 and the DoD.
 
 ### Risk
-Low. A wrong PATH result changes only the printed hint; init writes the same files.
+Low. A wrong PATH result changes only the printed hint. Other special characters, such as `&`, keep the quoted command, as the owner ruled.
 
 ### Ownership
-aidlc maintainers, `src/scaffold/init.ts`.
+The aidlc maintainers own `src/scaffold/init.ts`.
 
 ### Docs
-`docs/OPERATIONS.md` (Setup), `README.md` (Quick start) and `changelog.d/T0-INIT-CLI-PATH.md`.
+The change updates `docs/OPERATIONS.md`, `README.md` and the changelog fragment.
 
 ## Attempt evidence
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `tests/infra/init-cli-path.test.ts`, the three `aidlcOnPath` tests. RED at af753892: the export does not exist | pass |
+| 1 | `tests/infra/init-cli-path.test.ts`, the three `aidlcOnPath` tests. RED at af753892: the file did not load, because the export does not exist | pass |
 | 2 | Same file, `acceptance 2: the command is aidlc ...` | pass |
-| 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run | pass |
-| 4 | Same file, the two text tests | pass |
-| 5 | The DoD: init, init-no-package, cli-cwd-paths, templates, coordinator-effort, mirror, claude-md-size, command-lines, changelog-fragments, prose | pass; text reviewer-verified |
-| 6 | Same file, `acceptance 6: a CLI path with $, a backtick, % or a double quote ...`. RED at 9ae37009: `initNextLine` did not exist and the special paths got the command | pass |
+| 3 | Same file, `acceptance 3: with no aidlc on PATH ...`, a real `node src/cli/main.ts init` run. With the `cli` field taken out of the report on the merged tree (48f54d7b), this test fails | pass |
+| 4 | Same file, the two text tests. Both failed on the text of main once the exports existed | pass |
+| 5 | The DoD: init, init-no-package, cli-cwd-paths, templates, coordinator-effort, mirror, claude-md-size, command-lines, changelog-fragments, prose, test-temp | pass; text reviewer-verified |
+| 6 | Same file, `acceptance 6: ...`. RED at 9ae37009: the file did not load, because `initNextLine` did not exist. With the special-path rule disabled on the merged tree (48f54d7b), this test fails | pass |
+
+Correction to the receipt of attempt 1: the full `npm test` run it names started before b3602601 was committed, and files changed while it ran. It is not evidence for that commit; the DoD run on b3602601 is.
