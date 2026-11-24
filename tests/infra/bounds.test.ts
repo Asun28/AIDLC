@@ -125,7 +125,7 @@ describe('the line (acceptance 4)', () => {
     assert.deepEqual(bounds.summarizeBounds([], []).bounds.map((b) => b.bound), ['Card admission', 'Arc admission', 'Reconciliation grace', 'Substantive review decisions', 'No-verdict retry', 'Transient CI rerun', 'Implementation attempts', 'Planning invocations', 'Integration repair cycles']);
   });
   test('prints `Bounds: none fired` and `Extensions: none` when nothing fired and nothing was extended', () => {
-    assert.equal(bounds.formatBounds(bounds.summarizeBounds([g1()], [r1()])), 'Bounds: none fired\nExtensions: none');
+    assert.equal(bounds.formatBounds(bounds.summarizeBounds([g1()], [r1()])), 'Bounds: none fired\nExtensions: none\nActs: none\nBy: none\nStopped: none');
   });
   test('reports each goal extension count; a time STOP that an extension lifted is not counted', () => {
     const extension = (n: number) => ({ at: at(n * H), by: 'user', newDeadline: at((n + 3) * H), reason: 'more time' });
@@ -134,7 +134,7 @@ describe('the line (acceptance 4)', () => {
     const stats = bounds.summarizeBounds([extended, goal({ id: 'g-none' })], [cardRun({ goalId: 'g-ext', deadline: at(H) })]);
     assert.deepEqual(fired(stats), {});
     assert.deepEqual(stats.extensions, [{ goalId: 'g-ext', count: 2 }, { goalId: 'g-none', count: 0 }]);
-    assert.equal(bounds.formatBounds(stats), 'Bounds: none fired\nExtensions: "g-ext" 2');
+    assert.equal(bounds.formatBounds(stats), 'Bounds: none fired\nExtensions: "g-ext" 2\nActs: 2026-09 extensions 2 (0 after the deadline), continuations 0, amendments 0, rulings 0\nBy: "user" extensions 2, continuations 0, amendments 0, rulings 0\nStopped: none');
   });
   test('the arc deadline is the effective one: a goal time STOP before an extended deadline is not the arc bound', () => {
     const ext = { at: at(H), by: 'user', newDeadline: at(6 * H), reason: 'more time' };
@@ -143,5 +143,142 @@ describe('the line (acceptance 4)', () => {
   test('a record-sourced id reaches the line as a JSON string with every code point outside U+0020..U+007E escaped', () => {
     const odd = goal({ id: 'g-\u001b[31mé', deadlines: { ...g1().deadlines, extensions: [{ at: at(H), by: 'u', newDeadline: at(6 * H), reason: 'r' }] } });
     assert.equal(bounds.formatBounds(bounds.summarizeBounds([odd], [])).split('\n')[1], 'Extensions: "g-\\u001b[31m\\u00e9" 1');
+  });
+});
+
+/** The records of the Fixture section of card T0-BOUNDS-OWNER-ACTS; hours are offsets from T0. */
+const OCT = '2026-10-01T00:00:00.000Z';
+const h = (hours: number) => at(hours * H);
+const extension = (when: string, newDeadline: string, by = 'owner') => ({ at: when, by, newDeadline, reason: 'r' });
+const extended = (extensions: unknown[], over: Record<string, unknown> = {}) => g1({ deadlines: { ...g1().deadlines, extensions }, ...over });
+const continuation = (when: string, stoppedAt: string, by = 'owner') => ({ at: when, by, reason: 'r', stop: { reason: 'review', detail: 'd', at: stoppedAt } });
+const amendment = (when: string, by = 'owner') => ({ at: when, by, reason: 'r', revision: 1, changed: ['acceptance'], invalidated: ['dod'] });
+const ruling = (when: string, by = 'owner') => ({ at: when, by, decision: 'deferred', reason: 'r' });
+const finding = (id: string, ruled?: unknown) => ({ id, stage: 'formal', round: 1, reason: 'x', raisedAt: h(1), disposition: 'open', ...(ruled ? { ruling: ruled } : {}) });
+
+const G1_EXTENSIONS = [extension(h(2), h(6)), extension(h(8), h(12)), extension(h(13), h(20), ''), extension(h(20), h(40))];
+const actGoals = (g1Extensions = G1_EXTENSIONS) => [extended(g1Extensions), extended([extension(OCT, '2026-10-02T00:00:00.000Z')], { id: 'g2' })];
+const actRun = () => r1({
+  continuations: [continuation(h(10), h(4)), continuation(h(11.5), h(11)), continuation(h(12), h(9))],
+  amendments: [amendment(h(5))],
+  findings: [finding('F1', ruling(h(7))), finding('F2'), finding('F3', ruling('2026-10-03T00:00:00.000Z', 'second'))],
+});
+const SEPTEMBER = { month: '2026-09', extensions: 4, extensionsAfterDeadline: 2, hoursLateMedian: 1, continuations: 3, hoursFromStopMedian: 3, amendments: 1, rulings: 1 };
+const OCTOBER = { month: '2026-10', extensions: 1, extensionsAfterDeadline: 1, hoursLateMedian: 477, continuations: 0, hoursFromStopMedian: null, amendments: 0, rulings: 1 };
+
+describe('recorded owner acts by month and by recorder (card T0-BOUNDS-OWNER-ACTS, acceptance 1)', () => {
+  const acts = (goals: Goal[], runs: CardRun[] = []) => bounds.summarizeBounds(goals, runs).acts;
+  const late = (extensions: unknown[]) => acts([extended(extensions)]).map((m) => [m.extensions, m.extensionsAfterDeadline, m.hoursLateMedian]);
+
+  test('the fixture gives exactly its acts and actors', () => {
+    const stats = bounds.summarizeBounds(actGoals(), [actRun()]);
+    assert.deepEqual(stats.acts, [SEPTEMBER, OCTOBER]);
+    assert.deepEqual(stats.actors, [
+      { by: '', extensions: 1, continuations: 0, amendments: 0, rulings: 0 },
+      { by: 'owner', extensions: 4, continuations: 3, amendments: 1, rulings: 1 },
+      { by: 'second', extensions: 0, continuations: 0, amendments: 0, rulings: 1 },
+    ]);
+  });
+  test('records with no act give no month and no actor', () => {
+    const stats = bounds.summarizeBounds([g1()], [r1({ findings: [finding('F1')] })]);
+    assert.deepEqual([stats.acts, stats.actors], [[], []]);
+  });
+  test('an extension at the deadline in force is not after it, and one a millisecond later is', () => {
+    const later = G1_EXTENSIONS.with(3, extension(at(20 * H + 1), h(40)));
+    assert.deepEqual(acts(actGoals(later), [actRun()]), [{ ...SEPTEMBER, extensionsAfterDeadline: 3 }, OCTOBER]);
+  });
+  test('an extension whose by is the empty text has an actor of its own', () => {
+    const named = G1_EXTENSIONS.with(2, extension(h(13), h(20)));
+    const actors = bounds.summarizeBounds(actGoals(named), [actRun()]).actors;
+    assert.deepEqual(actors.map((a) => [a.by, a.extensions]), [['owner', 5], ['second', 0]]);
+  });
+  test('an even count of after-deadline extensions gives the lower of the two middle values, an odd count the middle one', () => {
+    assert.deepEqual(late([extension(h(5), h(6)), extension(h(7), h(8))]), [[2, 2, 1]]);
+    assert.deepEqual(late([extension(h(8), h(9)), extension(h(10), h(11)), extension(h(13), h(14))]), [[3, 3, 2]]);
+    // 10, 1, 4 and 3 h late: the lower middle value of the numbers is 3, of their texts 1.
+    assert.deepEqual(late([extension(h(13), h(14)), extension(h(15), h(16)), extension(h(20), h(21)), extension(h(24), h(25))]), [[4, 4, 3]]);
+  });
+  test('a median is in hours rounded to one decimal place', () => {
+    assert.deepEqual(late([extension(h(4.26), h(9))]), [[1, 1, 1.3]]);
+    assert.deepEqual(acts([g1()], [r1({ continuations: [continuation(h(2.24), h(1))] })]).map((m) => m.hoursFromStopMedian), [1.2]);
+  });
+  test('the deadline in force is the newDeadline of the entry before it in the order of the array', () => {
+    // 5 h after +3 h, then before +12 h, then 1 h after +6 h.
+    assert.deepEqual(late([extension(h(8), h(12)), extension(h(2), h(6)), extension(h(7), h(7.5))]), [[3, 2, 1]]);
+  });
+  test('a month with no extension after a deadline has a null hoursLateMedian, and one with no continuation a null hoursFromStopMedian', () => {
+    assert.deepEqual(acts([extended([extension(h(2), h(6))])]), [{ month: '2026-09', extensions: 1, extensionsAfterDeadline: 0, hoursLateMedian: null, continuations: 0, hoursFromStopMedian: null, amendments: 0, rulings: 0 }]);
+  });
+  test('an act at the first instant of a month counts in that month, and one a millisecond earlier in the month before', () => {
+    const goals = [extended([extension('2026-09-30T23:59:59.999Z', OCT)]), extended([extension(OCT, OCT)], { id: 'g2' })];
+    assert.deepEqual(acts(goals).map((m) => [m.month, m.extensions]), [['2026-09', 1], ['2026-10', 1]]);
+  });
+  test('each kind of act opens its own month, earliest month first', () => {
+    const run = r1({
+      continuations: [continuation('2026-12-01T00:00:00.000Z', h(1))],
+      amendments: [amendment('2027-01-01T00:00:00.000Z')],
+      findings: [finding('F1', ruling('2026-11-01T00:00:00.000Z'))],
+    });
+    const months = acts([extended([extension(OCT, OCT)])], [run]).map((m) => [m.month, m.extensions, m.continuations, m.amendments, m.rulings]);
+    assert.deepEqual(months, [['2026-10', 1, 0, 0, 0], ['2026-11', 0, 0, 0, 1], ['2026-12', 0, 1, 0, 0], ['2027-01', 0, 0, 1, 0]]);
+  });
+  test('actors are ordered by code unit, and each kind of act counts under its own by', () => {
+    const run = r1({ continuations: [continuation(h(2), h(1), 'b')], amendments: [amendment(h(3), 'B')], findings: [finding('F1', ruling(h(4), 'é'))] });
+    const actors = bounds.summarizeBounds([extended([extension(h(1), h(6), 'a')])], [run]).actors;
+    assert.deepEqual(actors.map((a) => [a.by, a.extensions, a.continuations, a.amendments, a.rulings]), [['B', 0, 0, 1, 0], ['a', 1, 0, 0, 0], ['b', 0, 1, 0, 0], ['é', 0, 0, 0, 1]]);
+  });
+});
+
+const stoppedRun = (goalId: string, reason: string, when: string, cardId: string) => cardRun({ goalId, cardId, state: 'STOP', stop: stop(reason, when) });
+const STOPPED_GOALS = () => [g1({ state: 'STOP', stop: stop('review') }), goal({ id: 'g3', state: 'DONE' }), goal({ id: 'g4', state: 'STOP', stop: stop('cancelled') })];
+const STOPPED_RUNS = () => [
+  stoppedRun('g1', 'review', h(1), 'T1-A'),
+  stoppedRun('g1', 'time', '2026-10-02T00:00:00.000Z', 'T1-B'),
+  stoppedRun('g3', 'review', h(1), 'T1-C'),
+  stoppedRun('g4', 'review', h(1), 'T1-D'),
+];
+
+describe('card runs left in STOP by month (card T0-BOUNDS-OWNER-ACTS, acceptance 2)', () => {
+  const stopped = (goals: Goal[], runs: CardRun[]) => bounds.summarizeBounds(goals, runs).stopped;
+
+  test('the four runs give the two entries; the runs of the DONE goal and of the cancelled goal are in neither', () => {
+    assert.deepEqual(stopped(STOPPED_GOALS(), STOPPED_RUNS()), [{ month: '2026-09', reasons: { review: 1 } }, { month: '2026-10', reasons: { time: 1 } }]);
+  });
+  test('a run in STOP whose goal is not among the goals given is counted', () => {
+    assert.deepEqual(stopped([], [STOPPED_RUNS()[2]!]), [{ month: '2026-09', reasons: { review: 1 } }]);
+  });
+  test('a run that is not in STOP, or is in STOP with no stop, is not counted', () => {
+    assert.deepEqual(stopped([g1()], [r1({ state: 'BUILD', stop: stop('review') }), r1({ cardId: 'T1-B', state: 'STOP' })]), []);
+  });
+  test('the reasons of a month come in StopReason order whatever order the runs come in, and the months earliest first', () => {
+    const runs = [stoppedRun('g1', 'time', OCT, 'T1-A'), stoppedRun('g1', 'time', h(1), 'T1-B'), stoppedRun('g1', 'card', h(2), 'T1-C'), stoppedRun('g1', 'time', h(3), 'T1-D')];
+    assert.deepEqual(stopped([g1()], runs).map((m) => [m.month, Object.entries(m.reasons)]), [['2026-09', [['card', 1], ['time', 2]]], ['2026-10', [['time', 1]]]]);
+  });
+});
+
+describe('the three lines of the owner acts (card T0-BOUNDS-OWNER-ACTS, acceptance 3)', () => {
+  const lines = (goals: Goal[], runs: CardRun[]) => bounds.formatBounds(bounds.summarizeBounds(goals, runs)).split('\n');
+
+  test('the fixture prints its Acts and By lines after the first two lines', () => {
+    assert.deepEqual(lines(actGoals(), [actRun()]), [
+      'Bounds: none fired',
+      'Extensions: "g1" 4; "g2" 1',
+      'Acts: 2026-09 extensions 4 (2 after the deadline, median 1.0 h late), continuations 3 (median 3.0 h after the stop), amendments 1, rulings 1; 2026-10 extensions 1 (1 after the deadline, median 477.0 h late), continuations 0, amendments 0, rulings 1',
+      'By: "" extensions 1, continuations 0, amendments 0, rulings 0; "owner" extensions 4, continuations 3, amendments 1, rulings 1; "second" extensions 0, continuations 0, amendments 0, rulings 1',
+      'Stopped: none',
+    ]);
+  });
+  test('the stopped runs print their line, and a month with two reasons prints both', () => {
+    assert.equal(lines(STOPPED_GOALS(), STOPPED_RUNS())[4], 'Stopped: 2026-09 review 1; 2026-10 time 1');
+    assert.equal(lines([g1()], [stoppedRun('g1', 'time', h(1), 'T1-A'), stoppedRun('g1', 'card', h(2), 'T1-B')])[4], 'Stopped: 2026-09 card 1, time 1');
+  });
+  test('records with no act and no stopped run print none on each line', () => {
+    assert.deepEqual(lines([], []), ['Bounds: none fired', 'Extensions: none', 'Acts: none', 'By: none', 'Stopped: none']);
+  });
+  test('a month with no extension and no continuation prints no bracket', () => {
+    assert.equal(lines([], [r1({ amendments: [amendment(h(1))] })])[2], 'Acts: 2026-09 extensions 0, continuations 0, amendments 1, rulings 0');
+  });
+  test('a by text reaches the line as a JSON string with every code point outside U+0020..U+007E escaped', () => {
+    assert.equal(lines([], [r1({ amendments: [amendment(h(1), 'o-\u001b[31mé')] })])[3], 'By: "o-\\u001b[31m\\u00e9" extensions 0, continuations 0, amendments 1, rulings 0');
   });
 });

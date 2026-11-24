@@ -36,6 +36,9 @@ function cli(dir: string, args: string[]) {
 interface Payload {
   bounds: { bound: string; fired: number; outcomes: { DONE: number; open: number; STOP: Record<string, number> } }[];
   extensions: { goalId: string; count: number }[];
+  acts: unknown[];
+  actors: unknown[];
+  stopped: unknown[];
 }
 
 test('aidlc bounds: JSON when piped, --goal narrows, unknown goal and unreadable run exit 1, state unchanged (acceptance 5)', () => {
@@ -61,10 +64,11 @@ test('aidlc bounds: JSON when piped, --goal narrows, unknown goal and unreadable
     const narrow = JSON.parse(narrowed.stdout) as Payload;
     assert.deepEqual(firedOf(narrow), { 'Integration repair cycles': 1 }, '--goal narrows to that goal and its runs');
     assert.deepEqual(narrow.extensions, [{ goalId: 'g-bounds-b', count: 0 }]);
+    for (const p of [payload, narrow]) assert.deepEqual([p.acts, p.actors, p.stopped], [[], [], []], 'the records hold no act and no stopped run');
 
     const human = cli(dir, ['--no-json', 'bounds', '--goal', 'g-bounds-b']);
     assert.equal(human.status, 0, human.stderr);
-    assert.equal(human.stdout, 'Bounds: Integration repair cycles 1 (DONE 0, open 1)\nExtensions: none\n');
+    assert.equal(human.stdout, 'Bounds: Integration repair cycles 1 (DONE 0, open 1)\nExtensions: none\nActs: none\nBy: none\nStopped: none\n');
 
     const unknown = cli(dir, ['bounds', '--goal', 'g-missing']);
     assert.equal(unknown.status, 1);

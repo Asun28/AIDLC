@@ -129,7 +129,7 @@ export function keep(m: Measures): Keep {
  * and round outcomes for its kind, unique ids per trial, `trials` trials, the formal stage, `options.formalCommand` on a Fable
  * report only, and the rounds rule of the bench (src/review/bench.ts:209 and 405): with `options.rounds` above 1 every case holds
  * `rounds` with at most that many entries, a scored case at least one whose last outcome is the case's, an unscored case
- * (no-verdict, error) possibly none; with one round no case holds `rounds`. A refusal string, or the report.
+ * (no-verdict, error) possibly none, and what `brokenRounds` checks; with one round no case holds `rounds`. A refusal string, or the report.
  */
 function validateReport(name: string, text: string | undefined, trials: number): string | Report {
   if (text === undefined) return `${name}: missing`;
@@ -156,6 +156,8 @@ function validateReport(name: string, text: string | undefined, trials: number):
         : rs.length === 0 ? (scored(c) ? `is scored (${c.outcome}) with no round` : undefined)
         : rs.at(-1)!.outcome !== c.outcome ? `has outcome ${c.outcome} but its last round ${rs.at(-1)!.outcome}` : undefined;
       if (roundFault) return `${name}: case ${c.id} ${roundFault}`;
+      const broken = rs && brokenRounds(c, rs);
+      if (broken) return `${name}: case ${c.id}: rounds ${broken}`;
     }
   }
   if (r.trialResults.length !== trials) return `${name}: ${r.trialResults.length} trials, not ${trials === 1 ? 'one trial' : 'three trials'}`;
@@ -164,6 +166,21 @@ function validateReport(name: string, text: string | undefined, trials: number):
   if (fable && r.options?.formalCommand === undefined) return `${name}: a Fable report without options.formalCommand`;
   if (!fable && r.options?.formalCommand !== undefined) return `${name}: a Codex report with options.formalCommand`;
   return r;
+}
+/**
+ * The rule of the bench's round loop (src/review/bench.ts:386-399) that the rounds of a case break: a round after the first runs
+ * only when the round before cites a new P0 or P1 reason, a count is above 0 only on a block, an unscored round ends the loop, and
+ * a case the bench cannot score is an error in every round. A count cannot show which reasons a round cites.
+ */
+function brokenRounds(c: CaseResult, rs: NonNullable<CaseResult['rounds']>): string | undefined {
+  if (rs.slice(0, -1).some((x) => x.cited === 0)) return 'rule 1: a round before the last cites no reason';
+  const unscored = rs.find((x) => x.outcome !== c.outcome && [x.outcome, c.outcome].some((o) => o === 'error' || o === 'no-verdict'));
+  if (unscored) return `rule 2: a round has outcome ${unscored.outcome} in a case of outcome ${c.outcome}`;
+  if (rs.find((x) => x.outcome === 'hit')?.cited === 0) return 'rule 3: the first hit round cites no reason';
+  if (rs.some((x) => x.outcome === 'pass' && x.cited > 0)) return 'rule 3: a pass round cites a reason';
+  const total = rs.reduce((sum, x) => sum + x.cited, 0);
+  if (c.outcome !== 'error' && (c.cited.length > total || (c.cited.length === 0 && total > 0))) return `rule 4: ${c.cited.length} cited reasons in all, ${total} over its rounds`;
+  return undefined;
 }
 /** The file and line range a cited reason names; mirrors `citedSite` (src/review/bench.ts:437-444), which is not exported. */
 function citedSite(reason: string): { file: string; from: number; to: number } | undefined {
@@ -220,8 +237,8 @@ function load(read: AssembleInput['read'], names: string[], trials: number): str
 /**
  * The one pairing check, run per report file before any concatenation: for every comparison actually scored (stage 1, and each
  * stage 2 trial with its rotating Codex pair), the results of each member's report of one kind (miss or replay, clean) hold
- * exactly the ids of that kind's case directory (sorted arrays compared element by element, so every member pairs with every
- * other), each case has its case file's kind, and each scored bug case's outcome is the one its evidence gives (`rescored`).
+ * exactly the ids of `files`, the cases of that kind's case directory and in stage 2 its confirmed ones (sorted arrays compared
+ * element by element, so every member pairs with every other), each case has its case file's kind, and each scored bug case's outcome is the one its evidence gives (`rescored`).
  */
 function checkFile(label: string, members: Array<[string, CaseResult[]]>, dir: string, files: ReviewBenchCase[]): string | undefined {
   const want = files.map((c) => c.id).sort(), byId = new Map(files.map((c) => [c.id, c]));
@@ -265,8 +282,10 @@ export function assemble(input: AssembleInput, write: (text: string) => void): {
     const two = load(input.read, STAGE2, 3);
     if (typeof two === 'string') return { refusal: two };
     const [cr, fr, cc, fcl] = two;
-    const [replayFiles, clean2Files] = [caseFiles(input, DIRS.replay), caseFiles(input, DIRS.clean2)];
-    if (typeof replayFiles === 'string' || typeof clean2Files === 'string') return { refusal: typeof replayFiles === 'string' ? replayFiles : clean2Files as string };
+    const [replayAll, clean2All] = [caseFiles(input, DIRS.replay), caseFiles(input, DIRS.clean2)];
+    if (typeof replayAll === 'string' || typeof clean2All === 'string') return { refusal: typeof replayAll === 'string' ? replayAll : clean2All as string };
+    // `aidlc review bench run` scores the confirmed cases of a directory (src/review/bench.ts:193).
+    const [replayFiles, clean2Files] = [replayAll, clean2All].map((files) => files.filter((c) => c.confirmed)) as [ReviewBenchCase[], ReviewBenchCase[]];
     // Codex+Codex in trial t pairs Codex trial t with Codex trial t+1 (mod 3): every panel makes two calls per triple.
     const of = (r: Report, t: number): CaseResult[] => r.trialResults[t]!.cases;
     // Every trial of every report is checked against its case directory, so the rotating pair (trial t with trial t+1) holds the same ids too.
