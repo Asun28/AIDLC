@@ -71,6 +71,7 @@ When stdout is not a TTY every command prints one JSON document; pass `--json` t
 .claude/skills/merge-conflicts/SKILL.md
 .claude/skills/secure-api-review/SKILL.md
 .claude/skills/tdd/SKILL.md
+.claude/skills/ui-verify/SKILL.md
 .github/workflows/agent-evals.yml
 .github/workflows/aidlc-ci.yml
 .github/workflows/security-scanners.yml

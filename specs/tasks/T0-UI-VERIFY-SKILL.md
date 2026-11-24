@@ -57,3 +57,40 @@ npm run typecheck && node --test tests/infra/init.test.ts tests/surface/template
 ```
 - Expected exit code: 0
 - Assertion: dod arm 1 is the typecheck, dod arm 2 the `node --test` command.
+
+## PR summary
+### What
+This change adds one optional skill, `ui-verify`. The `aidlc init` command installs it.
+### Why / Intent
+The owner asked for run, screenshot and video checks of interface changes. No shipped text told a project how to write such a check.
+### How / Behaviour
+The skill applies only when a card asks for it or changes a covered interface file. It asks for captures before and after, and an asserted end state.
+### System impact
+No source file changes. The loop has no new gate, state or configuration key.
+### Security
+The skill permits made-up data only. It keeps captures outside the worktree and out of git.
+### Tests and review
+Two test files failed before the skill and pass with it. One trial followed the skill on a scratch page.
+### Risk
+The audit does not report an old capture as stale. The documents state this limit.
+### Ownership
+The owner approved card T0-UI-VERIFY-SKILL on 2026-11-24.
+### Docs
+README, OPERATIONS and a changelog fragment name the skill.
+
+## Attempt evidence
+RED `7fff6de2dc0fa8a0759ca58400c855d39ca14261`: `.claude/skills/ui-verify/SKILL.md not created` and the Setup sentence (`tests/infra/init.test.ts`), `ui-verify/SKILL.md missing` (`tests/surface/templates.test.ts`). The commit before it, `9dd88254`, does not compile and is not the receipt. The change adds no guard to a source file.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/init.test.ts`: the list of an empty directory and the Setup sentence | pass (failed at RED) |
+| 2 | `tests/surface/templates.test.ts`, the new test; the file is 2469 of 3000 bytes | pass (failed at RED) |
+| 3 | `tests/surface/mirror.test.ts` and `tests/surface/readme.test.ts`, no change | pass |
+| 4 | the skill text and the OPERATIONS paragraph after the Companion skills table | for the reviewer |
+| 5 | the trial below | met, with the steps not run listed |
+
+Trial, in a scratch git repository outside the worktree, base `2b191779`, candidate `5c2d4c22` (one line of `page.html`). A `verify-page` skill was written with the five parts and run once. `node drive.mjs <page> <capture> <expected>` starts headless Edge at 800x600 with a file URL, drives it through Node's WebSocket on the loopback address, types `Sample note` in the field labelled Title, presses the button with test id `save`, reads the text of the status role, captures, and stops the browser by pid.
+- Before: `Saved` as expected, exit 0, `c3a3c0e1d95125cffa5b493bc43b69a3e29cbc16237f660bf3a41898b84856b4`.
+- After, and again through `verify-page`: `Saved: Sample note` as expected, exit 0, `1c1808e43759dc0179a91b949d39ea2e2f1ca513809cd5002ea55b6475459578` both times.
+- Negative: the base page against the candidate's expected text, exit 1.
+- Not run: video and numbered captures (the item has no motion, timing or second step), a device bridge, and the retain command, which follows the recorded success. No browser process or profile was left.
