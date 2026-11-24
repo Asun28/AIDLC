@@ -644,6 +644,8 @@ export const LoopDod = z.discriminatedUnion('ran', [
     shell: z.enum(['pwsh', 'platform']).optional(),
     command: z.string(),
     worktree: z.string(),
+    /** The Python virtualenv the DoD ran with (card T0-DOD-VENV); absent when neither root held one, and on older records. */
+    virtualenv: z.string().optional(),
     commit: z.string().optional(),
     clean: z.boolean().optional(),
     exitCode: z.number().int().nullable(),

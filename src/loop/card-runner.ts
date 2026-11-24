@@ -18,6 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffor
 import { acceptFinding, blockClasses, findingMarker, followupFindings, followupIssueBody, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
+import { envValue } from '../core/env-name.ts';
 import { amendedDigest, changedContractFields, contractDigests, invalidatedBy } from '../core/contract.ts';
 import { admittedDecisions, continueCiStop, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
 import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -350,8 +351,10 @@ export class CardRunner {
     const command = card.dod_command;
     if (!worktree) return { ran: false, command, reason: 'no-worktree' };
     if (pathKind(worktree) !== 'directory') return { ran: false, command, reason: 'no-directory' };
-    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs, this.config.shipPath);
+    // The worktree, then the main checkout, for a Python virtualenv (card T0-DOD-VENV): an untracked one is usually only in the main checkout.
+    const [cmd, args, options] = dodCall(card, worktree, this.dodTimeoutMs, this.config.shipPath, [worktree, this.repo.mainRoot]);
     const receipt = this.runner(cmd, args, { ...options, killTree: true });
+    const virtualenv = options.env ? envValue(options.env, 'VIRTUAL_ENV', process.platform) : undefined;
     const output = Buffer.from(receipt.stdout + receipt.stderr, 'utf8');
     return {
       ran: true,
@@ -359,6 +362,7 @@ export class CardRunner {
       shell: options.shell ? 'platform' : 'pwsh',
       command,
       worktree,
+      ...(virtualenv !== undefined ? { virtualenv } : {}),
       ...(probe ? { commit: probe.sha, clean: probe.clean } : {}),
       exitCode: receipt.timedOut ? null : receipt.exitCode,
       timedOut: receipt.timedOut,
