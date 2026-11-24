@@ -180,6 +180,15 @@ cited and found each as described.
   T1-CARD-WRITER-LESSONS and T1-PACK-KEEP-NEWEST, on the owner's word. The next outcome
   report names that goal, gives its coordinator spend per card as an estimate and leaves the
   shared work unallocated.
+- The place of the archive (outcome b). The owner's word later on 2026-11-24 ("folder for
+  now", "we can review this later"), after Codex gpt-6-astra advised on the question: for
+  now the archive is a folder on the owner's machine, outside the checkout, and its path
+  stays out of this repository. Codex advised a folder with an encrypted, versioned copy off
+  the machine and a tested restore. That copy, the encryption and the restore test are
+  deferred, and the place is reviewed with them (issue 469). Until then an extract in the
+  folder has one copy: it keeps the requests that the live logs later drop, and it is lost
+  with the disk that holds the folder. So the words "that has a backup" of outcome b and of
+  the bullet Kept extracts are not yet met.
 - `aidlc intent validate` reads a wrapped question of the list below as one item per line
   (issue 465).
 
@@ -187,4 +196,3 @@ cited and found each as described.
 - Which goal runs under `aidlc run` for outcome 4, and with what spend ceiling?
 - For outcome 7, does the alternating assignment apply to interactive sessions (the
   implementer subagent's model) or only to workers the driver starts?
-- Where is the private archive of outcome b: a private repository or a folder with a backup?
