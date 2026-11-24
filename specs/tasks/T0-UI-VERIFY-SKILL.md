@@ -70,7 +70,7 @@ No source file changes. The loop has no new gate, state or configuration key.
 ### Security
 The skill permits made-up data only. It keeps captures outside the worktree and out of git.
 ### Tests and review
-Two test files failed before the skill and pass with it. One trial followed the skill on a scratch page. The first formal review found two defects, and this version corrects them.
+Two test files failed before the skill and pass with it. One trial followed the skill on a scratch page. The first two formal reviews found three defects, and this version corrects them.
 ### Risk
 The audit does not report an old capture as stale. The documents state this limit.
 ### Ownership
@@ -84,17 +84,19 @@ RED `7fff6de2dc0fa8a0759ca58400c855d39ca14261`: `.claude/skills/ui-verify/SKILL.
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/infra/init.test.ts`: the list of an empty directory and the Setup sentence | pass (failed at RED) |
-| 2 | `tests/surface/templates.test.ts`, the new test; the file is 2606 of 3000 bytes | pass (failed at RED) |
+| 2 | `tests/surface/templates.test.ts`, the new test; the file is 2828 of 3000 bytes | pass (failed at RED) |
 | 3 | `tests/surface/mirror.test.ts` and `tests/surface/readme.test.ts`, no change | pass |
 | 4 | the skill text and the OPERATIONS paragraph after the Companion skills table | for the reviewer |
 | 5 | the trial below | met, with the steps not run listed |
 
-Trial, outside the worktree in `C:\Users\Admin\AppData\Local\Temp\claude\ba6303180ca8049b\e9455d99-f3cd-438b-ab2f-f72bc5a1b2c6\scratchpad\ui-trial`: `app` is a git repository, base `2b191779`, candidate `5c2d4c22` (one line of `page.html`). `drive.mjs` starts headless Edge at 800x600 with a file URL, drives it through Node's WebSocket on the loopback address, types `Sample note` in the field labelled Title, presses the button with test id `save`, asserts the text of the status role, captures, and stops the browser by pid. Commands 1 to 3 ran in that directory, command 4 in `app`, from the Launch line of `app/.claude/skills/verify-page/SKILL.md`, which holds the five parts.
-1. Before, `app` at the base: `node drive.mjs app/page.html captures/item1-before.png "Saved"`: status `Saved`, exit 0, sha256 `c3a3c0e1d95125cffa5b493bc43b69a3e29cbc16237f660bf3a41898b84856b4`.
-2. After, `app` at the candidate: `node drive.mjs app/page.html captures/item1-after.png "Saved: Sample note"`: status `Saved: Sample note`, exit 0, sha256 `1c1808e43759dc0179a91b949d39ea2e2f1ca513809cd5002ea55b6475459578`.
-3. Negative, `git -C app show HEAD~1:page.html > base-page.html`, then `node drive.mjs base-page.html captures/neg.png "Saved: Sample note"`: status `Saved`, exit 1, sha256 as in 1.
-4. Through `verify-page`: `node ../drive.mjs page.html ../captures/item1-skill-run.png "Saved: Sample note"`: exit 0, sha256 as in 2.
+Trial, outside the worktree in `C:\Users\Admin\AppData\Local\Temp\claude\ba6303180ca8049b\e9455d99-f3cd-438b-ab2f-f72bc5a1b2c6\scratchpad\ui-trial`: `app` is a git repository, base `2b191779`, candidate `5c2d4c22` (one line of `page.html`). `drive.mjs` starts headless Edge at 800x600 with a file URL, drives it through Node's WebSocket on the loopback address, types `Sample note` in the field labelled Title, presses the button with test id `save`, asserts the text of the status role, captures, and stops the browser by pid. The first three commands ran in that directory, the last in `app`, from the Launch line of `app/.claude/skills/verify-page/SKILL.md`, which holds the five parts. No browser process or profile was left.
 
-Not run: video and numbered captures (the item has no motion, timing or second step), a device bridge, and the retain command, which follows the recorded success. No browser process or profile was left.
+| Target | Source | Expected | Actual | Evidence | Verdict |
+|---|---|---|---|---|---|
+| save, `app` at the base | `node drive.mjs app/page.html captures/item1-before.png "Saved"` | `Saved` | `Saved`, exit 0 | `item1-before.png`, sha256 `c3a3c0e1d95125cffa5b493bc43b69a3e29cbc16237f660bf3a41898b84856b4` | Met |
+| save, `app` at the candidate | `node drive.mjs app/page.html captures/item1-after.png "Saved: Sample note"` | `Saved: Sample note` | `Saved: Sample note`, exit 0 | `item1-after.png`, sha256 `1c1808e43759dc0179a91b949d39ea2e2f1ca513809cd5002ea55b6475459578` | Met |
+| base against the new text | `git -C app show HEAD~1:page.html > base-page.html`, then `node drive.mjs base-page.html captures/neg.png "Saved: Sample note"` | exit 1 | `Saved`, exit 1 | `neg.png`, sha256 as in row 1 | Met |
+| save, through `verify-page` | `node ../drive.mjs page.html ../captures/item1-skill-run.png "Saved: Sample note"` | `Saved: Sample note` | `Saved: Sample note`, exit 0 | `item1-skill-run.png`, sha256 as in row 2 | Met |
+| video, numbered captures, device bridge, retain | the skill | not run | the item has no motion, timing or second step, and no device; retain follows the recorded success | none | Unverified |
 
-R3 decision 1 blocked on one id for several captures (F2, F3, F5, F6: each file has its own id in both copies) and on trial commands without their arguments (F1, F4: the list above). The repair hunks are text that a person or agent follows; they read no input and add no I/O, so no test row and no `review repro` applies (acceptance 4 is reviewer-verified). The two copies of the skill hold the only retain command with an id in the diff.
+R3 decision 1 blocked on one id for several captures (F2, F3, F5, F6: each file has its own id in both copies) and on trial commands without their arguments (F1, F4: the list above). The repair hunks are text that a person or agent follows; they read no input and add no I/O, so no test row and no `review repro` applies (acceptance 4 is reviewer-verified). The two copies of the skill hold the only retain command with an id in the diff. R3 decision 2 blocked on an assertion that the skill did not record beside its capture: both copies now ask for a row per capture and a retain note, the trial is recorded in that form, and the description names both conditions of R2.

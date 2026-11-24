@@ -3,9 +3,9 @@ name: ui-verify
 description: >-
   Runtime check of a user-visible interface change: run the app, drive the
   changed flow, keep screenshots, and video when motion or timing matters.
-  Use when a card's acceptance asks for it, or to write or run the
-  project's verify skill for its interface. Not for a change a user cannot
-  see.
+  Use when a card's acceptance asks for it, when the card changes a file
+  the project's interface verify skill covers, or to write that skill.
+  Not for a change a user cannot see.
 ---
 # ui-verify: run it, drive it, keep the proof
 
@@ -30,20 +30,22 @@ Run it end to end once before it is committed.
 ## Evidence for each interface acceptance item
 1. Capture before (on the base) and after (on the candidate), at the same
    viewport and with the same data. A new screen has no before: say so.
-2. Assert the end state as text, role or stored data. A picture alone is
-   not a pass.
+2. Assert the end state as text, role or stored data, and record the
+   assertion beside its capture: one row per capture in the table of
+   `.claude/agents/verifier.md`, with the expected state, the observed
+   state, the capture and the verdict. A picture alone is not a pass.
 3. Record video only when the item concerns motion, timing or a flow of
    several steps. With no recorder, take one numbered capture per step.
 4. Use made-up data only: no real user data, secret or signed-in account.
-5. Report a flow you did not run as `Unverified` with the reason, never as
-   a pass, in the table of `.claude/agents/verifier.md`.
+5. A flow you did not run is a row too: `Unverified` with the reason, never
+   a pass.
 
 ## Keep it
 Write captures outside the worktree and never commit them. After
 `aidlc card attempt` records the success, read `candidate.digest` from
 `aidlc card status <card> --json` and keep each file:
 
-    aidlc evidence retain --goal <goal> --card <card> --candidate <digest> --kind <screenshot|video> --id <card>-<sha7>-<item>-<capture>.<ext> --file <path>
+    aidlc evidence retain --goal <goal> --card <card> --candidate <digest> --kind <screenshot|video> --id <card>-<sha7>-<item>-<capture>.<ext> --file <path> --note "<expected>; <observed>; <verdict>"
 
 `<sha7>` is the candidate commit and `<capture>` is `before`, `after`,
 `step-<n>` or `video`. Give every file its own id: an id used again
