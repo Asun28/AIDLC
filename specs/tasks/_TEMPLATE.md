@@ -18,6 +18,7 @@ acceptance:            # CLOSED numbered list the reviewer judges against; requi
   # A change of 30 src lines or fewer gets a card of about 400 words or fewer.
   # Doc text is proved with `(reviewer-verified against the diff)` unless a program reads that exact text.
   # A card that reads input or adds I/O names in these items each input form and failure path it handles; non_goals names each form it leaves out and what the code does with it (refuse, ignore or fail closed).
+  # A card for a report script under `bench/` names its input-producing commands, any other input it explicitly supports, and the results it publishes; a required refusal covers a failure one of those commands can produce or an explicit owner requirement, and more input validation is a non-goal.
   # The directive that asks for cards (`plan`, `project-cards`) carries the most recent lessons of `docs/LESSONS.md`; check this card against them before it is registered.
   # State each behaviour once: an item names its proof and its requirement; unique edge cases and rationale stay; fixtures and implementation instructions are not repeated.
   - 1. <one fact that means done, naming the assertion that covers it>. [dod arm 1]
