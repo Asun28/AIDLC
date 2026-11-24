@@ -2,6 +2,7 @@
 id: T1-REVIEW-FOLLOWUP-ISSUE
 title: A closure step files one GitHub issue labelled review-followup per merged card run that lists its advisory and deferred formal findings, found again by a marker in its body so a retry never files a second one
 status: todo
+superseded_by: T1-REVIEW-FOLLOWUP-ISSUE-2
 branch: T1-REVIEW-FOLLOWUP-ISSUE
 worktree: D:\wt\AIDLC\T1-REVIEW-FOLLOWUP-ISSUE
 plan_ref: plans/review-recall.md#order-of-work
