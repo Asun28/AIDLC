@@ -10,7 +10,7 @@ source: human
 # Intent: Card the practices of the Uncle Bob article on agents and code quality that this repository's records support
 Author: asun28 (owner); drafted by the coordinator session. Status: accepted.
 
-The status is accepted under the owner's instruction quoted below, which asked for cards from what the coordinator and Codex agree. The owner has not read this result.
+The status is accepted under the owner's instruction quoted below, which asked for cards from what the coordinator and Codex agree. The owner read the coordinator's report of this result on 2026-11-24 and gave the instructions recorded under Decisions.
 
 ## Problem
 The owner pasted on 2026-11-24 an article by jexchan, written from a live conversation between Matt Pocock and Robert C. Martin (Uncle Bob), and asked: "aidlc disscuss with codex astra max: see if we can adopt below experienses from a blog: [the pasted article], use data to support and list with a P0 P1 P2 and make them into cards after both of you agreed. don't ask me I am away".
@@ -33,7 +33,7 @@ The coordinator (Claude Fable 5.2) and Codex gpt-6-astra, read-only at reasoning
 ## Proposed outcome
 1. P0, card T0-MUTANT-EVIDENCE-STATE: the formal prompt opens its `## Surviving mutants` section with the state of the report for the candidate (no report, unusable, for another candidate, or the counts of the sweep), and its statement says that a report that is missing, unusable or for another candidate is not a finding. No throughput gain is claimed.
 2. P1: empty.
-3. P2, card T0-LAYER-ORDER-TEST: one test reads every import under `src/` from the syntax tree and fails on an import against the stated order outside three allowed file pairs, on a dependency of `src/core/` on another directory or on a Node built-in other than `crypto`, on a cycle between top-level units, and on a unit that is in no list.
+3. P2, card T0-LAYER-ORDER-TEST, as amended on 2026-11-24 (Decisions): `CLAUDE.md` states an order the tree obeys (`core`, `scaffold`, `probes`, `state`, `coordination`, `delivery`, `review`, `loop`, `hooks`, `cli`), and one test reads every import under `src/` from the syntax tree and fails on an import against that order, on a dependency of `src/core/` on another directory or on a Node built-in other than `crypto`, on a cycle between top-level units, and on a unit that is in no list. As first registered, the card kept the sentence of `CLAUDE.md` and allowed the three imports that run against it.
 4. Not carded, each with what would reopen it:
    - A complexity, CRAP or coverage gate and a size ceiling: adjudicated defects and repair time at equal change size, by card family, then a prospective comparison.
    - A sweep before every first decision, in the repair after a dimension 6 block, or as a gate: adjudicated relevant survivors per minute on blocked against passed candidates, a rising repeat rate, or a cheaper sweep; a pilot must measure adherence and repair time.
@@ -42,24 +42,28 @@ The coordinator (Claude Fable 5.2) and Codex gpt-6-astra, read-only at reasoning
    - New agent roles, a relaxed RED receipt, disposable specifications, an architecture viewer: a measured need.
 
 ## Affected users and systems
-Through card 1: `src/loop/card-runner.ts`, `src/review/pre-review.ts`, their two test files, `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, a changelog fragment, and every formal review prompt, the reviewer bench included. Through card 2: a new test file and one paragraph of `docs/ARCHITECTURE.md`. No file under `templates/`, so no downstream repository changes.
+Through card 1: `src/loop/card-runner.ts`, `src/review/pre-review.ts`, their two test files, `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, a changelog fragment, and every formal review prompt, the reviewer bench included. Through card 2: a new test file, the Layers sentence of `CLAUDE.md` and one paragraph of `docs/ARCHITECTURE.md`. No file under `templates/`, so no downstream repository changes.
 
 ## Constraints
 - Outside figures are leads, never evidence.
 - No new blocking gate on a card run (`intent/review-verification.md`, Constraints), no new dependency, no change to `REVIEW.md`, to the verdict schema or to the allowance constants.
 - The agreements of 2026-11-17 (Plan A), 2026-11-18 (Plan B) and 2026-11-23 (lesson delivery) stand.
-- `CLAUDE.md` is not changed: it holds 198 of its 200 lines.
+- `CLAUDE.md` keeps its count of lines (199 of 200 on 2026-11-24): card 2 rewrites the Layers sentence on the lines it has and changes no other sentence.
 - No goal is opened by this intent: a goal's deadlines start when it is created.
 
 ## Limits of the measurements
 Review citations are not adjudicated defects, and runs of one card family are correlated. The function measurements are observations: they count added-side changed lines inside functions and leave out changes outside every function. Coverage comes from one run and is a lower bound. Kept reports do not show every sweep that ran. The replay is six candidates, 20 mutants each at most, two of them with the settings of an earlier run, and no survivor was adjudicated.
 
+## Decisions (owner, 2026-11-24, in the session)
+Card T0-MUTANT-EVIDENCE-STATE was run by another session and merged as PR 464 (50008e4d) on 2026-11-24. The owner then read the coordinator's report of this result and replied "adk codex for advise". The coordinator put the decisions this intent left to the owner to Codex gpt-6-astra (read-only, reasoning effort max) with facts measured that day, and reported the advice. The owner replied "just record the card for now". The coordinator took that as the instruction to record card T0-LAYER-ORDER-TEST as the advice amends it, and to do nothing else: no goal is opened, and the decisions that remain are in the next section, each with the advice on it.
+
+The amendment settles the order of the Layers sentence of `CLAUDE.md`. As first registered, the card kept the sentence and allowed three imports. `CLAUDE.md` lists `scaffold/` last and `state/` before `probes/`, and the tree contradicts both: `scaffold/` imports no other unit under `src/` and `src/probes/hook-wiring.ts` and `src/cli/main.ts` import it, and `src/state/claims.ts` imports `src/probes/git.ts`. Codex advised restating the sentence to an order the tree obeys and allowing no import against it. The coordinator had favoured keeping the sentence, and agreed after reading that `src/state/paths.ts` runs `git rev-parse` itself and that the Module map of `docs/ARCHITECTURE.md` states no rule that keeps `src/state/` clear of `src/probes/`. The card now carries the order `core`, `scaffold`, `probes`, `state`, `coordination`, `delivery`, `review`, `loop`, `hooks`, `cli`, and `CLAUDE.md` is one of its paths. A probe of main at e1f17a05 finds no import against that order (83 source files, 375 relative imports inside `src/`), and the whole suite passes on a clone of main at 9278ab1d whose `CLAUDE.md` holds the restated sentence (4,175 tests, 0 fail, 32 skipped). Codex read the amended card and this intent before they were committed, asked for two corrections of fact, which were made, and then answered CONFIRM.
+
 ## Decisions left to the owner
-1. Open a goal for each card when it should run.
-2. `CLAUDE.md` lines 45 to 47 state an order the tree contradicts in two places (`scaffold/` is listed last and imports nothing; `state/` is listed before `probes/`). Card 2 keeps the sentence and allows the three imports.
-3. Card 1 changes text that every formal review receives; a reviewer bench comparison before and after calls models and is the owner's option.
-4. `docs/LESSONS.md` line 32 asks for a mutation sweep before every first R3 decision; superseding it is the owner's.
-5. Whether to file issues for the items of outcome 4.
+1. Open a goal for card T0-LAYER-ORDER-TEST when it should run.
+2. Card 1 changes text that every formal review receives, and the paragraph of `docs/OPERATIONS.md` that begins "The reviewer bench stays outside the loop" asks for a reviewer bench comparison before such a change; the main checkout holds no record of one for PR 464. Codex advises the full comparison of the formal stage (30 confirmed cases, 3 trials, the commit before 50008e4d against it, 180 reviews). The coordinator advises reading the kept reviews first: the comparison takes about 4.3 hours of reviewer time at the median of 1.4 minutes per review.
+3. `docs/LESSONS.md` line 32 asks for a mutation sweep before every first R3 decision. Codex and the coordinator both advise a line that supersedes it.
+4. Whether to file issues for the items of outcome 4. Codex and the coordinator both advise one issue, for the item on the sweep, to adjudicate the survivors of the replay.
 
 ## Open questions
 - (none)
