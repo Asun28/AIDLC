@@ -28,11 +28,24 @@ function importsOf(text: string, fileName: string): string[] {
   return out;
 }
 
-/** The edge of one specifier in one file (posix paths from the repository root): a file under src/, a Node built-in as `node:<name>`, or none [R3]. */
+let options: ts.CompilerOptions | undefined;
+
+/** The file the compiler resolves a specifier to, in ECMAScript mode and then in CommonJS mode, as a posix path from the root. */
+function resolvedFile(from: string, spec: string): string | undefined {
+  options ??= ts.parseJsonConfigFileContent(ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile).config, ts.sys, root).options;
+  for (const mode of [ts.ModuleKind.ESNext, ts.ModuleKind.CommonJS] as const) {
+    const file = ts.resolveModuleName(spec, path.join(root, from), options, ts.sys, undefined, undefined, mode).resolvedModule?.resolvedFileName;
+    if (file) return path.relative(root, file).split(path.sep).join('/');
+  }
+  return undefined;
+}
+
+/** The edge of one specifier in one file (posix paths from the repository root): the file under src/ the specifier resolves
+ * to, else its joined path; a Node built-in as `node:<name>`; or none [R3]. */
 function edgeOf(from: string, spec: string): Edge | undefined {
   if (isBuiltin(spec)) return { from, to: spec.startsWith('node:') ? spec : `node:${spec}`, builtin: true };
   if (!spec.startsWith('.')) return undefined;
-  const to = path.posix.join(path.posix.dirname(from), spec);
+  const to = resolvedFile(from, spec) ?? path.posix.join(path.posix.dirname(from), spec);
   return to.startsWith('src/') ? { from, to, builtin: false } : undefined;
 }
 
