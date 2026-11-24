@@ -259,6 +259,10 @@ describe('probes/gh (review follow-up issues)', () => {
     assert.deepEqual(full.probe.issuesWithLabel(REPO, 'review-followup'), issues(1, 100));
     assert.deepEqual(full.calls.map((c) => c.args), [PAGE_ARGS(1), PAGE_ARGS(2)]);
 
+    const short = recording({ [`${PAGE}1`]: { stdout: JSON.stringify(issues(1, 99)) } });
+    assert.deepEqual(short.probe.issuesWithLabel(REPO, 'review-followup'), issues(1, 99));
+    assert.deepEqual(short.calls.map((c) => c.args), [PAGE_ARGS(1)]);
+
     const pulls = issues(1, 40).map((i) => ({ ...i, pull_request: { url: 'u' } }));
     const mixed = recording({ [`${PAGE}1`]: { stdout: JSON.stringify([...pulls, ...issues(41, 60)]) }, [`${PAGE}2`]: { stdout: JSON.stringify([...issues(101, 1), ...pulls.slice(0, 1)]) } });
     assert.deepEqual(mixed.probe.issuesWithLabel(REPO, 'review-followup'), issues(41, 61));
