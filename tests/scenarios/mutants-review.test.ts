@@ -1,4 +1,5 @@
 // Card T1-VERIFY-MUTANTS-PROMPT: the R3 prompt lists the survivors of the candidate's report, the report never gates, and an attempt refuses while a marker exists.
+// Card T0-MUTANT-EVIDENCE-STATE: the section opens with the state of the report.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -25,6 +26,10 @@ const SURVIVED_EMPTY = { ...mutant(9, 'survived', 'record(a);', ''), operator: '
 const KILLED = mutant(6, 'killed', '>', '>=');
 const LINE_ONE = `- ${JSON.stringify(`${FILE}:4:3 boundary: < -> <=`)}`;
 const LINE_TWO = `- ${JSON.stringify(`${FILE}:9:3 drop-statement: record(a); -> (nothing)`)}`;
+const MISSING = '- no mutant report';
+const UNUSABLE = '- mutant report unusable';
+const OTHER_CANDIDATE = '- the mutant report is for another candidate';
+const SWEEP_3 = '- sweep of this candidate: 3 of 3 mutants run, 1 killed, 2 survived, 0 timed out';
 
 function reportText(candidateSha: string): string {
   return JSON.stringify(MutantReport.parse({ schemaVersion: 1, cardId: CARD, candidateSha, base: 'main', dodCommand: 'node --test', operators: [...MUTATION_OPERATORS], max: 30, timeoutMs: 120000, baselineDurationMs: 7, generated: 3, skipped: 0, totals: { killed: 1, survived: 2, timeout: 0 }, startedAt: T0, finishedAt: T0, mutants: [SURVIVED, KILLED, SURVIVED_EMPTY] }));
@@ -78,8 +83,8 @@ function writeReport(s: Setup, text: string): void {
   writeFileSync(s.report, text);
 }
 
-/** Drives the card to its first R3 decision, passed by the scripted reviewer, and returns the section of that prompt with the run. */
-async function firstDecision(s: Setup): Promise<{ section: string; run: CardRun }> {
+/** Drives the card to its first R3 decision, passed by the scripted reviewer, and returns the section of that prompt with the run. `beforeR3` runs after the pre-review. */
+async function firstDecision(s: Setup, beforeR3?: () => void): Promise<{ section: string; run: CardRun }> {
   const { fx, runner, goalId } = s;
   const g = () => fx.goal(goalId);
   const card = fx.card(CARD);
@@ -90,6 +95,7 @@ async function firstDecision(s: Setup): Promise<{ section: string; run: CardRun 
   const round = await runner.preReview(g(), card, r.run);
   r = runner.next(g(), card, round.run);
   assert.equal(r.directive.kind, 'review', r.directive.narration);
+  beforeR3?.();
   const decided = await runner.formalReview(g(), card, r.run);
   assert.equal(decided.classified.outcome, 'pass');
   assert.equal(decided.run.review.substantiveDecisions, 1, 'the decision is recorded');
@@ -110,24 +116,24 @@ function assertShips(s: Setup, run: CardRun): void {
 }
 
 describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUTANTS-PROMPT)', () => {
-  test('acceptance 3: a report for the pinned candidate puts exactly its two survivors in the formal prompt [R1] [R2]', withSetup(async (s) => {
+  test('acceptance 3: a report for the pinned candidate puts the counts of its sweep and then exactly its two survivors in the formal prompt [R1] [R2]', withSetup(async (s) => {
     writeReport(s, reportText(SHA));
     const { section } = await firstDecision(s);
-    assert.deepEqual(entriesOf(section), [LINE_ONE, LINE_TWO]);
+    assert.deepEqual(entriesOf(section), [SWEEP_3, LINE_ONE, LINE_TWO]);
   }));
 
-  test('acceptance 3: a report for another candidate puts - none there and the decision is recorded [R1] [R2]', withSetup(async (s) => {
+  test('acceptance 3: a report for another candidate puts the other-candidate entry there and the decision is recorded [R1] [R2]', withSetup(async (s) => {
     writeReport(s, reportText('sha-other'));
     const { section } = await firstDecision(s);
-    assert.deepEqual(entriesOf(section), ['- none']);
+    assert.deepEqual(entriesOf(section), [OTHER_CANDIDATE]);
   }));
 
-  test('acceptance 3: a file that does not parse, as JSON and as a report, puts - none there [R1] [R2]', async () => {
+  test('acceptance 3: a file that does not parse, as JSON and as a report, puts the unusable entry there [R1] [R2]', async () => {
     for (const text of ['{ not json', JSON.stringify({ cardId: CARD, candidateSha: SHA, mutants: [SURVIVED] })]) {
       await withSetup(async (s) => {
         writeReport(s, text);
         const { section } = await firstDecision(s);
-        assert.deepEqual(entriesOf(section), ['- none'], text);
+        assert.deepEqual(entriesOf(section), [UNUSABLE], text);
       })();
     }
   });
@@ -136,9 +142,9 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
     assert.deepEqual([MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS], [1048576, 1000]);
   });
 
-  test('acceptance 3: a report of exactly the byte limit counts, and one byte more puts - none there [R1]', async () => {
+  test('acceptance 3: a report of exactly the byte limit counts, and one byte more puts the unusable entry there [R1]', async () => {
     const padded = (bytes: number) => reportText(SHA) + ' '.repeat(bytes - Buffer.byteLength(reportText(SHA), 'utf8'));
-    for (const [bytes, expected] of [[MUTANT_REPORT_MAX_BYTES, [LINE_ONE, LINE_TWO]], [MUTANT_REPORT_MAX_BYTES + 1, ['- none']]] as const) {
+    for (const [bytes, expected] of [[MUTANT_REPORT_MAX_BYTES, [SWEEP_3, LINE_ONE, LINE_TWO]], [MUTANT_REPORT_MAX_BYTES + 1, [UNUSABLE]]] as const) {
       await withSetup(async (s) => {
         writeReport(s, padded(bytes));
         const { section } = await firstDecision(s);
@@ -147,48 +153,48 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
     }
   });
 
-  test('acceptance 3: a report of exactly the mutant limit counts, and one more mutant puts - none there [R1]', async () => {
-    for (const [count, expected] of [[MUTANT_REPORT_MAX_MUTANTS, [LINE_ONE]], [MUTANT_REPORT_MAX_MUTANTS + 1, ['- none']]] as const) {
+  test('acceptance 3: a report of exactly the mutant limit counts, and one more mutant puts the unusable entry there [R1]', async () => {
+    for (const [count, expected] of [[MUTANT_REPORT_MAX_MUTANTS, ['- sweep of this candidate: 1000 of 1000 mutants run, 999 killed, 1 survived, 0 timed out', LINE_ONE]], [MUTANT_REPORT_MAX_MUTANTS + 1, [UNUSABLE]]] as const) {
       await withSetup(async (s) => {
         const report = JSON.parse(reportText(SHA)) as MutantReport;
-        writeReport(s, JSON.stringify({ ...report, mutants: [SURVIVED, ...Array.from({ length: count - 1 }, () => KILLED)] }));
+        writeReport(s, JSON.stringify({ ...report, generated: count, mutants: [SURVIVED, ...Array.from({ length: count - 1 }, () => KILLED)] }));
         const { section } = await firstDecision(s);
         assert.deepEqual(entriesOf(section), expected, `${count} mutants`);
       })();
     }
   });
 
-  test('acceptance 3: a report with more operators than exist puts - none there, though the schema accepts a repeat [R1]', withSetup(async (s) => {
+  test('acceptance 3: a report with more operators than exist puts the unusable entry there, though the schema accepts a repeat [R1]', withSetup(async (s) => {
     const report = JSON.parse(reportText(SHA)) as MutantReport;
     writeReport(s, JSON.stringify({ ...report, operators: [...MUTATION_OPERATORS, 'boundary'] }));
     const { section } = await firstDecision(s);
-    assert.deepEqual(entriesOf(section), ['- none']);
+    assert.deepEqual(entriesOf(section), [UNUSABLE]);
   }));
 
-  test('acceptance 3: a small file of 10000 empty records and a report whose arrays are missing put - none there [R1]', async () => {
+  test('acceptance 3: a small file of 10000 empty records and a report whose arrays are missing put the unusable entry there [R1]', async () => {
     for (const text of [JSON.stringify({ candidateSha: SHA, operators: [], mutants: Array.from({ length: 10000 }, () => ({})) }), JSON.stringify({ candidateSha: SHA }), 'null']) {
       await withSetup(async (s) => {
         writeReport(s, text);
         const { section } = await firstDecision(s);
-        assert.deepEqual(entriesOf(section), ['- none'], text.slice(0, 40));
+        assert.deepEqual(entriesOf(section), [UNUSABLE], text.slice(0, 40));
       })();
     }
   });
 
-  test('acceptance 3: a report reached through a linked .review puts - none there [R1]', withSetup(async (s) => {
+  test('acceptance 3: a report reached through a linked .review puts the unusable entry there [R1]', withSetup(async (s) => {
     const dir = realpathSync.native(tmpDir('aidlc-mutants-outside-'));
     try {
       writeFileSync(path.join(dir, `${CARD}.mutants.json`), reportText(SHA));
       symlinkSync(dir, path.dirname(s.report), 'junction');
       const { section } = await firstDecision(s);
-      assert.deepEqual(entriesOf(section), ['- none']);
+      assert.deepEqual(entriesOf(section), [UNUSABLE]);
     } finally {
       rmSync(path.dirname(s.report), { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
     }
   }));
 
-  test('acceptance 3: a report with a second hard link puts - none there [R1]', withSetup(async (s) => {
+  test('acceptance 3: a report with a second hard link puts the unusable entry there [R1]', withSetup(async (s) => {
     const dir = realpathSync.native(tmpDir('aidlc-mutants-outside-'));
     try {
       const outside = path.join(dir, 'report.json');
@@ -196,7 +202,7 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
       mkdirSync(path.dirname(s.report), { recursive: true });
       linkSync(outside, s.report);
       const { section } = await firstDecision(s);
-      assert.deepEqual(entriesOf(section), ['- none']);
+      assert.deepEqual(entriesOf(section), [UNUSABLE]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -222,7 +228,53 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
     await runner.formalReview(g(), card, r.run);
     assert.ok(written, 'the fixture wrote the report at the first mutation');
     const prompt = s.prompts.at(-1)!;
-    assert.deepEqual(entriesOf(prompt.slice(prompt.indexOf('## Surviving mutants'), prompt.indexOf('## Candidate'))), ['- none']);
+    assert.deepEqual(entriesOf(prompt.slice(prompt.indexOf('## Surviving mutants'), prompt.indexOf('## Candidate'))), [MISSING]);
+  }));
+
+  test('T0-MUTANT-EVIDENCE-STATE acceptance 3: with no report in .review, and with no .review directory, the entry is the missing one [R1]', async () => {
+    await withSetup(async (s) => {
+      const { section } = await firstDecision(s, () => {
+        mkdirSync(path.dirname(s.report), { recursive: true });
+        assert.equal(existsSync(s.report), false);
+      });
+      assert.deepEqual(entriesOf(section), [MISSING]);
+    })();
+    await withSetup(async (s) => {
+      const { section } = await firstDecision(s, () => {
+        rmSync(path.dirname(s.report), { recursive: true, force: true });
+        assert.equal(existsSync(path.dirname(s.report)), false);
+      });
+      assert.deepEqual(entriesOf(section), [MISSING]);
+    })();
+  });
+
+  test('T0-MUTANT-EVIDENCE-STATE acceptance 3: a directory at the report path gives the unusable entry [R1]', withSetup(async (s) => {
+    mkdirSync(s.report, { recursive: true });
+    const { section } = await firstDecision(s);
+    assert.deepEqual(entriesOf(section), [UNUSABLE]);
+  }));
+
+  test('T0-MUTANT-EVIDENCE-STATE acceptance 3: a report whose generated is below its mutant count gives the unusable entry, also when it names another candidate [R1]', async () => {
+    for (const sha of [SHA, 'sha-other']) {
+      await withSetup(async (s) => {
+        writeReport(s, JSON.stringify({ ...(JSON.parse(reportText(sha)) as MutantReport), generated: 2 }));
+        const { section } = await firstDecision(s);
+        assert.deepEqual(entriesOf(section), [UNUSABLE], sha);
+      })();
+    }
+  });
+
+  test('T0-MUTANT-EVIDENCE-STATE acceptance 3: a report with every mutant killed gives the sweep summary alone [R2] [R3]', withSetup(async (s) => {
+    writeReport(s, JSON.stringify({ ...(JSON.parse(reportText(SHA)) as MutantReport), mutants: [KILLED, KILLED, KILLED], totals: { killed: 3, survived: 0, timeout: 0 } }));
+    const { section } = await firstDecision(s);
+    assert.deepEqual(entriesOf(section), ['- sweep of this candidate: 3 of 3 mutants run, 3 killed, 0 survived, 0 timed out']);
+  }));
+
+  test('T0-MUTANT-EVIDENCE-STATE acceptance 3: run and the three outcome counts come from the list of mutants, not from totals or max [R2]', withSetup(async (s) => {
+    const timedOut = mutant(8, 'timeout', '+', '-');
+    writeReport(s, JSON.stringify({ ...(JSON.parse(reportText(SHA)) as MutantReport), generated: 5, max: 3, mutants: [KILLED, SURVIVED, timedOut], totals: { killed: 7, survived: 8, timeout: 9 } }));
+    const { section } = await firstDecision(s);
+    assert.deepEqual(entriesOf(section), ['- sweep of this candidate: 3 of 5 mutants run, 1 killed, 1 survived, 1 timed out', LINE_ONE]);
   }));
 });
 
@@ -236,7 +288,7 @@ describe('the report never gates (card T1-VERIFY-MUTANTS-PROMPT)', () => {
   test('acceptance 4: a card whose current report lists survivors passes R2 and R3 and reaches CLOSE with the merge verified [R5]', withSetup(async (s) => {
     writeReport(s, reportText(SHA));
     const { run, section } = await firstDecision(s);
-    assert.equal(entriesOf(section).length, 2, 'the survivors reached the reviewer');
+    assert.equal(entriesOf(section).length, 3, 'the sweep and the survivors reached the reviewer');
     assertShips(s, run);
   }));
 });
