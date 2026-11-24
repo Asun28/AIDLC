@@ -2,6 +2,7 @@
 id: T1-ARMS-REPORT
 title: docs/reliability/arms.md reports the rounds, field-order and DeepSeek R2 arms against the owner's keep rules from bench/outcome/arms.json, assembled from the arms run, and CHANGELOG.md carries the entry of goal review-recall
 status: todo
+superseded_by: T1-ARMS-REPORT-2
 branch: T1-ARMS-REPORT
 worktree: D:\wt\AIDLC\T1-ARMS-REPORT
 plan_ref: plans/review-recall.md#order-of-work
