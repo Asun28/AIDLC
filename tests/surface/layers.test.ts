@@ -94,6 +94,7 @@ describe('layers of src/ (T0-LAYER-ORDER-TEST)', () => {
       "const s = \"import { l } from './l.ts'\";",
       "const t = `import { m } from './m.ts'`;",
       'const n = await import(`./n.ts`);',
+      "const o = require('./o.ts');",
     ];
     for (const text of none) assert.deepEqual(importsOf(text, 'src/x.ts'), [], text);
   });
@@ -119,6 +120,7 @@ describe('layers of src/ (T0-LAYER-ORDER-TEST)', () => {
       ['src/core/router.ts', '../../bench/run.ts'],
     ];
     for (const imp of none) assert.deepEqual(check([], [imp]), [], imp.join(' -> '));
+    assert.deepEqual(check([], [['src/config.ts', 'loop'], ['src/loop/run.ts', '../config.ts']]), [], 'a package named as a unit is no edge');
     one('src/core/router.ts', '../artifacts/card.ts', 'src/artifacts/card.ts');
     one('src/core/router.ts', 'node:fs', 'fs');
     one('src/core/router.ts', 'fs', 'fs');
