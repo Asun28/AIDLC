@@ -228,6 +228,20 @@ aidlc monitor check --bands bands.yaml --data samples.json --file-intent
 
 Each filing writes a file of its own and never replaces one (card T0-INCIDENT-INTENT-LEDGER): when `intent/incident-<metric>-<rule>-<date>.md` is taken, by a file or a directory, the intent is written to `incident-<metric>-<rule>-<date>-2.md`, then `-3`, up to `-999`, with the front matter `slug` equal to the name it was given; when all 999 names are taken the command stops with an error naming the directory and the slug. With `--file-intent` the command reads `incidents.json` once before it files anything, also when no breach or only a log-tier breach was found. A file that is not JSON (empty, cut short, or with a byte order mark included), a JSON value that is not an object of valid records, a JSON document with an own `__proto__` key at any depth, a JSON document that nests objects or arrays more than 64 deep (the ledger object is level 1, a record level 2; the refusal names the path at which the limit is passed, and `write` applies the same limit), or a ledger that cannot be read stops the command (cannot be read: a directory at the path, a read error, or a stat of the path that fails with anything but "no entry" or shows that it is not a regular file, which on POSIX includes a path under a regular file and an unreadable parent directory; on Windows a path under a regular file reports no entry and is read as an absent ledger): it prints the breach output with `filed` empty, writes `aidlc: ` and the error naming the file to stderr and exits 1, and files, attaches and journals nothing. A ledger the command refused is never repaired, renamed or replaced by it, so the operator repairs or moves it. The value handed to a ledger write is validated with the schema before it is serialized, and is then written to a temporary file that is renamed into place, so a write that fails before the rename leaves the previous ledger. Without `--file-intent` the ledger is not read.
 
+#### Scheduling the check in the project's own CI
+
+This is opt-in: `aidlc init` installs no schedule, watcher or daemon, and a project that wants the check on a schedule adds the job to its own CI. A filed intent enters the loop only when a person runs `aidlc goal new`.
+
+1. Collect the samples. This is the project's own step: it reads the project's telemetry and writes the `samples.json` form shown above.
+2. Put the kept ledger back at `.aidlc/incidents/incidents.json`, from the second run on.
+3. Run `aidlc monitor check --bands bands.yaml --data samples.json --file-intent`.
+4. Keep the ledger for the next run, for example in storage the CI system carries from run to run.
+5. Keep each intent file the run wrote (under `intent/` unless `intentDir` says otherwise), as an artifact of the run or as a pull request.
+
+When it files an intent, the command writes the intent file, `.aidlc/incidents/incidents.json` and the journal under `.aidlc/journal/`, and it publishes none of them. A fresh runner that discards them loses the intent, and the next run has no record to dedupe against. Two scheduled runs must not overlap, since each rewrites the whole ledger, so give the job a concurrency limit of one.
+
+The job needs no model credential. Reading the project's telemetry, or keeping the ledger and the intent, may need permissions that the CI token does not have.
+
 ### Unattended runs (`/goal`, `/loop`)
 
 `/goal` in Claude Code keeps a session working toward a condition: after each turn a small model reads the conversation and, while the condition does not hold, Claude starts the next turn without a prompt. The evaluator runs no command and reads no file, so the condition names what `aidlc next` prints:
