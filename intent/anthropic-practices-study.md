@@ -68,5 +68,15 @@ Review findings are not adjudicated defects, and runs of one card family are cor
 6. The sources name `/doctor prompt-audit` and `/skill-doctor` for CLAUDE.md and the skills; whether the installed Claude Code has them was not checked.
 7. Whether to file issues for the rows of outcome 6.
 
+## Decisions (owner, 2026-11-24, in the session)
+- Standing delegation for small decisions. The coordinator had proposed that a new Codex session advise when a decision waits for the owner, and that no timeout decide anything. The owner answered: "if this is small P3 P4 level not costing security architecture or big issues and then both claude and codex or recomandaed the same option, then don't need my answer just go". It holds for every goal of this repository until the owner withdraws it.
+- The coordinator's reading of it, which the owner has not checked:
+  - Covered: a decision that would otherwise wait for the owner's answer, that both parties call small, and on which both recommend the same option. The parties are the coordinator session and a new Codex gpt-6-astra session in a read-only sandbox, which answers before it sees the coordinator's recommendation.
+  - Small: the decision changes no security boundary, no architecture, no hard limit of `CLAUDE.md`, no review policy, allowance or deadline rule, and nothing that is hard to reverse. `REVIEW.md` has no P3 or P4; the reading is "below what this repository calls big", and the owner's instruction of 2026-11-16 read big as P0 or P1 (`intent/review-recall.md`, Decisions). A finding tagged `[P0]` or `[P1]`, a finding with no severity tag and a Security finding are not small.
+  - Examples the reading covers: one extension of a goal's deadline while the run still holds attempts and review decisions; a card amendment that corrects a row or a command and does not change what the card delivers; a continuation of one further review decision; the deferral of a `[P2]` or advisory finding at a stop.
+  - Not covered: production, tag, publish and data operations, which keep their recorded authority; a change of scope; the limits of a goal; the three cards that wait for a ruling on `[P1]` findings. A difference between the two recommendations, or a doubt of either party that the decision is small, leaves it with the owner.
+  - Record: the act is recorded as today (`aidlc goal extend`, `aidlc card amend`, `aidlc card continue`), with `--by` naming the session "under the owner's delegation of 2026-11-24" and the reason naming both recommendations and where Codex's answer is kept. The consult answers the question put to the owner; it is not a review of a candidate, which stays with the configured gates.
+- A limit of the written rules. `CLAUDE.md` (Hard limits) lets an amendment and a continuation be recorded under a delegation the owner gave and the record names, and this section is such a record. It says that a review ruling is recorded only on the owner's instruction in the session, so a ruling in another session still needs the owner's word there until a card changes that sentence.
+
 ## Open questions
 - (none)
