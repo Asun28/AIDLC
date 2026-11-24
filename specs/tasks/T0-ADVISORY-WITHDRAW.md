@@ -1,7 +1,7 @@
 ---
 id: T0-ADVISORY-WITHDRAW
 title: "A candidate whose last R3 decision is an advisory (non-merge-blocking) block can be withdrawn so its repair goes back to the DoD and R3, and card next at SHIP after such a block ships nothing while the review checkout HEAD is not the bound candidate"
-status: todo
+status: merged
 branch: T0-ADVISORY-WITHDRAW
 worktree: D:\wt\AIDLC\T0-ADVISORY-WITHDRAW
 allow_paths:
