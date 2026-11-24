@@ -184,7 +184,7 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
     cli('card', 'attempt', 'T0-LESSON', '--goal', goal, '--outcome', 'success', '--dod-receipt', 'dod:cli', '--candidate-sha', 'sha-cli');
     const close = cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive'];
     assert.equal(close['kind'], 'close', String(close['narration']));
-    assert.deepEqual(close['missing'], ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
+    assert.deepEqual(close['missing'], ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons', 'followups']);
     return { tmp, goal, cli, env };
   }
 

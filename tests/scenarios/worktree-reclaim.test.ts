@@ -655,7 +655,7 @@ test('T0-WORKTREE-RECLAIM-2 acceptance 8: a sweep that throws leaves the whole s
     assert.equal(thrown.status, 0, thrown.stderr);
     assert.equal(thrown.status, without.status);
     assert.equal(thrown.stdout, without.stdout);
-    assert.deepEqual(JSON.parse(thrown.stdout), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: false });
+    assert.deepEqual(JSON.parse(thrown.stdout), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: false, followups: true });
     assert.match(thrown.stderr, /worktree sweep did not finish/);
     assert.equal(existsSync(path.join(rootOf(broken), CARD, TRACKED)), true);
   } finally {

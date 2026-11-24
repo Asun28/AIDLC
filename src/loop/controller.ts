@@ -521,7 +521,7 @@ export class GoalController {
       for (const [k, v] of Object.entries(run.closure)) if (!v && !(run.state === 'DONE' && k === 'lessons')) missing.push(`${id}: closure.${k}`);
     }
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
-    if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
+    if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/followups/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
     // The lease is settled and DONE saved under the goal lease lock (issue 387): a refused takeover throws with the goal still
     // in CLOSE, and a takeover that re-reads the goal inside its lease section sees DONE once that section can run.
@@ -672,8 +672,8 @@ export class GoalController {
         const existing = this.store.getCardRun(goal.id, input.cardId);
         if (!existing) throw new Error(`no run record for ${input.cardId}; start it with aidlc card next`);
         const patch = d['run'] && typeof d['run'] === 'object' ? (d['run'] as Record<string, unknown>) : d;
-        for (const owned of ['closure', 'mergeVerified', 'ownerGeneration']) {
-          if (Object.prototype.hasOwnProperty.call(patch, owned)) throw new Error(`${owned} is loop-owned evidence (closure predicates come from aidlc card close, the lesson step from --lesson or --skip-lesson), never set by a raw patch`);
+        for (const owned of ['closure', 'mergeVerified', 'ownerGeneration', 'followupIssue', 'followupNote', 'followupPending']) {
+          if (Object.prototype.hasOwnProperty.call(patch, owned)) throw new Error(`${owned} is loop-owned evidence (closure predicates come from aidlc card close, the lesson step from --lesson or --skip-lesson, the follow-up fields from --followups or --skip-followups), never set by a raw patch`);
         }
         if (patch['state'] === 'DONE' || patch['state'] === 'CLOSE') throw new Error(`${String(patch['state'])} is derived from a verified merge and the closure record, never set by a raw patch`);
         const run = CardRun.parse({ ...existing, ...patch, goalId: goal.id, cardId: input.cardId, updatedAt: now });

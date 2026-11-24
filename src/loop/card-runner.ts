@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, ladderNumber, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, classRepairText, classifyVerdict, findingIdentity, findingMarker, followupFindings, followupIssueBody, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, findingsOfCandidate, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, liftRuledStop, stoppingDecision, repeatedFindings, rerunAllowed, ruleFinding, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { envValue } from '../core/env-name.ts';
@@ -303,6 +303,9 @@ interface SelectionFacts {
   unresolved: () => OperationRecord[];
   worktree: (p: string) => ReturnType<typeof pathKind>;
 }
+
+/** The label of the follow-up issues (card T1-REVIEW-FOLLOWUP-ISSUE-2). */
+const FOLLOWUP_LABEL = 'review-followup';
 
 export class CardRunner {
   readonly paths: StatePaths;
@@ -3649,8 +3652,9 @@ export class CardRunner {
     const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.' : '';
     const checked = flagged.includes('evidence') ? ` \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${card.id}\`; \`aidlc audit seal\` also needs \`--candidate <digest>\` on each retained \`dod-receipt\`, \`review-verdict\`, \`ci-run\`, \`test-output\` or \`health\` file.` : '';
     const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}${checked}` : '';
+    const followupHint = missing.includes('followups') ? ` \`--followups\`, which \`--all\` includes, records the GitHub issue of the advisory and deferred findings, found by its marker or submitted once, or why there is none; \`--skip-followups "<why>"\` records the step with no issue and no gh call.` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
-    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
+    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${followupHint}${lessonHint}` } };
   }
 
   /**
@@ -3744,9 +3748,15 @@ export class CardRunner {
    * as pending before the file changes and as recorded once the closure is saved; a retry reuses the pending line, so a
    * completed append is recognised even across a date rollover and no line is written twice. A line the file already
    * holds for the same card, kind, rule and source, under any date (written by hand or by an earlier close), is the
-   * lesson: nothing is appended and that line is recorded.
+   * lesson: nothing is appended and that line is recorded. Every write merges its changes into the run as stored under the
+   * card-run lock and the card lease lock. The follow-up step (`followups`, or `disposition.skipFollowups` with the reason
+   * it files no issue) runs after the other steps are recorded, so its failure takes none of them back.
    */
-  markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string } = {}): CardRun {
+  markClosure(goal: Goal, card: Card, run: CardRun, requested: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string; skipFollowups?: string } = {}): CardRun {
+    const { followups, ...flags } = requested;
+    const skipFollowups = disposition.skipFollowups?.trim();
+    if (skipFollowups === '') throw new Error('--skip-followups needs a reason: --skip-followups "<why>"');
+    if (skipFollowups !== undefined && followups) throw new Error('--skip-followups is not combined with --followups or --all');
     const now = this.clock();
     const assertLiveGoal = () => {
       const persisted = this.store.getGoal(goal.id) ?? goal;
@@ -3757,7 +3767,26 @@ export class CardRunner {
     const current = this.store.getCardRun(goal.id, card.id) ?? run;
     if (current.state !== 'CLOSE' || !current.mergeVerified) throw new Error(`card ${card.id} is ${current.state}${current.mergeVerified ? '' : ' without a verified merge'}; closure flags apply to a CLOSE run with its merge verified`);
     if (current.ownerGeneration === undefined) throw new Error(`card ${card.id} holds no card lease; run aidlc card next ${card.id} to hold it before closing`);
-    this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
+    const generation = current.ownerGeneration;
+    this.leases.fence(resourceKeys.card(this.repo.key, card.id), generation, currentActor(), now);
+    const failures: string[] = [];
+    // A call that asks for the follow-up step alone records nothing else.
+    const only = Object.keys(flags).length === 0 && (followups === true || skipFollowups !== undefined);
+    let saved = only ? current : this.recordClosure(goal, card, current, generation, flags, disposition, assertLiveGoal, failures);
+    if (followups || skipFollowups !== undefined) {
+      try {
+        saved = this.recordFollowups(goal, card, generation, skipFollowups);
+      } catch (err) {
+        failures.push(`followups: ${(err as Error).message}`);
+      }
+    }
+    if (failures.length) throw new Error(failures.join('; '));
+    return saved;
+  }
+
+  /** The steps of `markClosure` but the follow-up step: a step that fails goes to `failures` and the others are recorded. */
+  private recordClosure(goal: Goal, card: Card, current: CardRun, generation: number, flags: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string }, assertLiveGoal: () => void, failures: string[]): CardRun {
+    const now = this.clock();
     const file = this.lessonsFile();
     const data: Record<string, unknown> = {};
     if (flags.lessons) {
@@ -3784,7 +3813,6 @@ export class CardRunner {
     }
     const recorded = { ...flags };
     const lowered: Partial<CardRun['closure']> = {};
-    const failures: string[] = [];
     const perform = (step: 'evidence' | 'cleanup' | 'metadata', work: () => void) => {
       if (!flags[step]) return;
       assertLiveGoal();
@@ -3805,16 +3833,131 @@ export class CardRunner {
     const closure = { ...current.closure, ...recorded };
     assertLiveGoal();
     // A failed step lowers its flag before the journal write, so a journal that fails too leaves no earlier true behind.
-    const base = failures.length ? this.save({ ...current, closure: { ...current.closure, ...lowered } }) : current;
+    if (failures.length) this.writeClosure(goal, card, generation, (stored) => ({ ...stored, closure: { ...stored.closure, ...lowered } }));
     try {
       this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
     } catch (err) {
       if (!failures.length) throw err;
       throw new Error(`${failures.join('; ')}; journal: ${(err as Error).message}`);
     }
-    const saved = this.save({ ...base, closure });
-    if (failures.length) throw new Error(failures.join('; '));
-    return saved;
+    return this.writeClosure(goal, card, generation, (stored) => ({ ...stored, closure: { ...stored.closure, ...recorded } }));
+  }
+
+  /**
+   * One closure write (card T1-REVIEW-FOLLOWUP-ISSUE-2): `change` receives the run as stored under the card-run lock, which
+   * must still be a CLOSE run with its merge verified at the caller's lease generation. The write runs inside the card lease
+   * section, after a fence on a clock read there; `before` runs there too, right before the write.
+   */
+  private writeClosure(goal: Goal, card: Card, generation: number, change: (stored: CardRun) => CardRun, before?: (next: CardRun) => void): CardRun {
+    const key = resourceKeys.card(this.repo.key, card.id);
+    let next: CardRun;
+    return this.store.updateCardRun(
+      goal.id,
+      card.id,
+      (stored) => {
+        if (!stored || stored.state !== 'CLOSE' || !stored.mergeVerified) throw new Error(`card ${card.id} is ${stored?.state ?? 'without a run'}${stored?.mergeVerified ? '' : ' without a verified merge'} now; nothing is written`);
+        if (stored.ownerGeneration !== generation) throw new Error(`card ${card.id} is at lease generation ${stored.ownerGeneration ?? 'none'} now, this close started at ${generation}; nothing is written`);
+        return (next = change(stored));
+      },
+      (write) => {
+        this.leases.update(key, (lease) => {
+          this.leases.fence(key, generation, currentActor(), this.clock());
+          before?.(next);
+          write();
+          return lease;
+        });
+      },
+    );
+  }
+
+  /**
+   * A write of the follow-up step: `writeClosure` on a run whose step is open, with the persisted goal live and at the
+   * caller's generation inside the lock sections.
+   */
+  private writeFollowups(goal: Goal, card: Card, generation: number, change: (stored: CardRun) => CardRun, before?: (next: CardRun) => void): CardRun {
+    return this.writeClosure(
+      goal,
+      card,
+      generation,
+      (stored) => {
+        if (stored.closure.followups) throw new Error(`the step was recorded meanwhile (${stored.followupIssue ? `issue #${stored.followupIssue}` : (stored.followupNote ?? 'no issue')})`);
+        return change(stored);
+      },
+      (next) => {
+        const persisted = this.store.getGoal(goal.id);
+        if (!persisted || persisted.terminal) throw new Error(`goal ${goal.id} is terminal (${persisted?.state ?? 'no record'}); closure cannot change`);
+        if (persisted.generation !== goal.generation) throw new Error(`goal ${goal.id} is at generation ${persisted.generation}, the caller holds ${goal.generation}; reload the goal before closing`);
+        before?.(next);
+      },
+    );
+  }
+
+  /**
+   * The follow-up step (card T1-REVIEW-FOLLOWUP-ISSUE-2): one GitHub issue of the run's advisory and deferred findings. The
+   * issue is looked up by its marker among the issues of the label; with none found, `followupPending` is stored and the
+   * issue submitted once. A submission whose outcome is unknown leaves `followupPending`, and from then on the step only looks
+   * the issue up, in the stored repository and by the stored marker, until the operator skips the step with a reason.
+   */
+  private recordFollowups(goal: Goal, card: Card, generation: number, skip: string | undefined): CardRun {
+    const run = this.store.getCardRun(goal.id, card.id);
+    if (!run) throw new Error(`card ${card.id} has no run in goal ${goal.id}`);
+    if (run.closure.followups) return run;
+    type Target = { repository: string; marker: string };
+    /** `target` is what the caller looked up; null when it decided on a run with no pending record; undefined for a skip. */
+    const dispose = (issue: number | null, note: string | undefined, target: Target | null | undefined): CardRun =>
+      this.writeFollowups(
+        goal,
+        card,
+        generation,
+        (stored) => {
+          const { followupNote, followupPending: pending, ...rest } = stored;
+          void followupNote;
+          if (pending && target !== undefined && !(target && pending.repository === target.repository && pending.marker === target.marker)) throw new Error(`a submission for ${pending.marker} in ${pending.repository} was stored meanwhile by session ${pending.by}`);
+          return { ...rest, closure: { ...stored.closure, followups: true }, followupIssue: issue, ...(note === undefined ? {} : { followupNote: note }) };
+        },
+        (next) => void this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'followups-recorded', closure: next.closure, followupIssue: issue, ...(note === undefined ? {} : { followupNote: note }) } }),
+      );
+    if (skip !== undefined) return dispose(null, skip, undefined);
+    const pending = run.followupPending;
+    let target: Target;
+    let sha = '';
+    if (pending) target = { repository: pending.repository, marker: pending.marker };
+    else {
+      const repository = this.config.repository;
+      if (this.config.shipPath !== 'github') return dispose(null, `no issue: the ship path is ${this.config.shipPath}, not github`, null);
+      if (!repository) return dispose(null, 'no issue: no repository is configured', null);
+      if (!followupFindings(run).length) return dispose(null, 'no issue: the run has no advisory or deferred finding', null);
+      sha = run.candidate?.sha ?? run.pr?.headRefOid ?? '';
+      if (!sha) throw new Error(`the run has neither a candidate nor a PR head, so no marker names its issue; record the step with \`aidlc card close ${card.id} --skip-followups "<why>"\``);
+      target = { repository, marker: findingMarker(card.id, run.pr?.number, sha, 'review followups') };
+    }
+    const record = (issue: number): CardRun => {
+      try {
+        return dispose(issue, undefined, target);
+      } catch (err) {
+        throw new Error(`issue #${issue} of ${target.repository} holds the follow-ups and is not recorded: ${(err as Error).message}`);
+      }
+    };
+    const main = this.repo.mainRoot;
+    const found = this.gh
+      .issuesWithLabel(target.repository, FOLLOWUP_LABEL, main)
+      .filter((issue) => issue.body.split(/\r?\n/).findLast((line) => line !== '') === target.marker)
+      .map((issue) => issue.number);
+    if (found.length) return record(Math.min(...found));
+    const recovery = `run \`aidlc card close ${card.id} --followups\` again later, which records the issue once it is listed, or \`aidlc card close ${card.id} --skip-followups "<why>"\``;
+    if (pending) throw new Error(`no issue of ${pending.repository} ends with ${pending.marker}, which session ${pending.by} submitted at ${pending.at} with an unknown outcome; nothing is submitted again: ${recovery}`);
+    this.gh.ensureLabel(target.repository, FOLLOWUP_LABEL, main);
+    const reserved = this.writeFollowups(goal, card, generation, (stored) => {
+      if (stored.followupPending) throw new Error(`a submission for ${stored.followupPending.marker} was stored meanwhile by session ${stored.followupPending.by}`);
+      return { ...stored, followupPending: { ...target, at: this.clock(), by: currentActor().session } };
+    });
+    let issue: number;
+    try {
+      issue = this.gh.submitIssue(target.repository, `Review follow-ups: ${card.id}`, followupIssueBody(card.id, run.pr?.number, sha, followupFindings(reserved), target.marker), FOLLOWUP_LABEL, main);
+    } catch (err) {
+      throw new Error(`the submission for ${target.marker} in ${target.repository} may have filed the issue: ${(err as Error).message}; ${recovery}`);
+    }
+    return record(issue);
   }
 
   /**

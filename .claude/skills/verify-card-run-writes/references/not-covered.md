@@ -14,8 +14,9 @@
   `src/review/repro.ts`, T1-FINDING-REPRO-2: one `GoalStore.updateCardRun`
   write of the finding's `repro` after both runs, no journal append: a
   failed write exits 1, changes neither), failed and not-counted attempts,
-  R2/R3 blocks, no-verdict results, `card next` PREPARE, BUILD and CLOSE
-  steps (T0-PREPARE-WORKTREE: PREPARE start writes PREPARE, no worktree
+  R2/R3 blocks, no-verdict results, the other flags of `card close`
+  (fault rows: `tests/scenarios/card-close-cleanup.test.ts`), `card next`
+  PREPARE, BUILD and CLOSE steps (T0-PREPARE-WORKTREE: PREPARE start writes PREPARE, no worktree
   path).
 - A confirmed violation the current code shows is not a pass: it is
   pinned in `KNOWN_VIOLATIONS` with its counterexample and filed as a

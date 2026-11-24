@@ -14,10 +14,10 @@ const CARD = 'T0-DUP';
 const TEXT = 'NEVER write the lesson line twice (source: lesson-dup scenario)';
 const TODAY = T0.slice(0, 10);
 const LINE = `- ${TODAY} ${CARD}: ${TEXT}`;
-const FIVE = { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true };
+const FIVE = { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, followups: true };
 const LESSON_HINT = `Record the lesson step with \`aidlc card close ${CARD} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.`;
 
-/** A card of a fresh goal driven to CLOSE (merge verified, all six closure steps missing). */
+/** A card of a fresh goal driven to CLOSE (merge verified, all seven closure steps missing). */
 function atClose(fx: Fixture) {
   writeCard(fx, { id: CARD, title: 'closes with a lesson' });
   const goal = goalForCards(fx, [CARD]);
@@ -86,10 +86,10 @@ test('T0-LESSON-DUP acceptance 3: the close directive leaves the lesson step out
   const fx = makeFixture();
   try {
     const { goalId, runner, card, close } = atClose(fx);
-    if (close.directive.kind === 'close') assert.deepEqual(close.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
+    if (close.directive.kind === 'close') assert.deepEqual(close.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons', 'followups']);
     assert.equal(
       close.directive.narration,
-      `Merge verified. Complete only the missing closure steps (metadata, docSync, findings, evidence, cleanup), then mark them with \`aidlc card close ${CARD} --metadata\`. \`--cleanup\` and \`--metadata\` do their step: cleanup copies \`.review/\` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run \`--cleanup\` or \`--all\` after the doc_sync, findings and evidence steps, because it removes the worktree that holds \`.review/\`. \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${CARD}\`; \`aidlc audit seal\` also needs \`--candidate <digest>\` on each retained \`dod-receipt\`, \`review-verdict\`, \`ci-run\`, \`test-output\` or \`health\` file. ${LESSON_HINT}`,
+      `Merge verified. Complete only the missing closure steps (metadata, docSync, findings, evidence, cleanup, followups), then mark them with \`aidlc card close ${CARD} --metadata\`. \`--cleanup\` and \`--metadata\` do their step: cleanup copies \`.review/\` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run \`--cleanup\` or \`--all\` after the doc_sync, findings and evidence steps, because it removes the worktree that holds \`.review/\`. \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${CARD}\`; \`aidlc audit seal\` also needs \`--candidate <digest>\` on each retained \`dod-receipt\`, \`review-verdict\`, \`ci-run\`, \`test-output\` or \`health\` file. \`--followups\`, which \`--all\` includes, records the GitHub issue of the advisory and deferred findings, found by its marker or submitted once, or why there is none; \`--skip-followups "<why>"\` records the step with no issue and no gh call. ${LESSON_HINT}`,
     );
     const marked = runner.markClosure(fx.goal(goalId), card, close.run, FIVE);
     const open = runner.next(fx.goal(goalId), card, marked);

@@ -242,3 +242,33 @@ describe('types: fields kept for compatibility (T0-AUDIT-DOC-TRUTH)', () => {
     }
   });
 });
+
+describe('types: the followups closure step (T1-REVIEW-FOLLOWUP-ISSUE-2 acceptance 4)', () => {
+  const { closure: _closure, ...without } = cardRun();
+  const five = { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true };
+  const followups = (closure: unknown) => CardRun.parse({ ...without, closure }).closure.followups;
+  const accepted = (fields: Record<string, unknown>) => CardRun.safeParse({ ...without, ...fields }).success;
+
+  test('a run without a closure record has the step open, a stored closure without the key has it done, and a stored value is kept [R1]', () => {
+    assert.equal(CardRun.parse(without).closure.followups, false);
+    assert.equal(followups(undefined), false);
+    assert.equal(followups({}), true, 'an empty stored closure is a closure without the key');
+    assert.equal(followups(five), true);
+    for (const value of [true, false]) assert.equal(followups({ ...five, followups: value }), value);
+    const historical = CardRun.parse({ ...without, closure: five });
+    assert.deepEqual(CardRun.parse(JSON.parse(JSON.stringify(historical))), historical);
+    for (const bad of [null, [], 'closed', { followups: 'true' }, { followups: null }]) assert.equal(accepted({ closure: bad }), false, JSON.stringify(bad));
+  });
+
+  test('followupIssue, followupNote and followupPending are optional, and a value of another form fails the parse [R2]', () => {
+    const run = CardRun.parse(without);
+    for (const key of ['followupIssue', 'followupNote', 'followupPending']) assert.equal(key in run, false, key);
+    const pending = { repository: 'acme/widgets', marker: 'm', by: 'win-A', at: T0 };
+    for (const ok of [1, 471, Number.MAX_SAFE_INTEGER, null]) assert.equal(CardRun.parse({ ...without, followupIssue: ok }).followupIssue, ok);
+    for (const bad of [0, -1, 1.5, '7', 2 ** 53, Number.NaN, true]) assert.equal(accepted({ followupIssue: bad }), false, String(bad));
+    assert.equal(CardRun.parse({ ...without, followupNote: 'why' }).followupNote, 'why');
+    for (const bad of ['', null, 5]) assert.equal(accepted({ followupNote: bad }), false, String(bad));
+    assert.deepEqual(CardRun.parse({ ...without, followupPending: pending }).followupPending, pending);
+    for (const bad of [null, 'x', {}, ...(['repository', 'marker', 'by', 'at'] as const).flatMap((key) => [{ ...pending, [key]: undefined }, { ...pending, [key]: '' }, { ...pending, [key]: null }]), { ...pending, at: 'yesterday' }]) assert.equal(accepted({ followupPending: bad }), false, JSON.stringify(bad));
+  });
+});

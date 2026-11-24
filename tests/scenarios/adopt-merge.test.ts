@@ -120,7 +120,7 @@ test('T0-ADOPT-EXTERNAL-MERGE acceptance 1: issue 358 - a goal in CLOSE reaches 
       const runner = runnerWith(fx, exec);
       let r = runner.next(fx.goal(goalId), fx.card(id), run(id));
       assert.equal(r.directive.kind, 'close', r.directive.narration);
-      const closed = runner.markClosure(fx.goal(goalId), fx.card(id), r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+      const closed = runner.markClosure(fx.goal(goalId), fx.card(id), r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'fixture: no rule learned' });
       r = runner.next(fx.goal(goalId), fx.card(id), closed);
       assert.equal(r.directive.kind, 'done', r.directive.narration);
     }

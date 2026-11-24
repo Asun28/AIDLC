@@ -121,7 +121,7 @@ Goal states (`src/core/goal-machine.ts`):
 | WAIT | child result, provider hold or dependency pending | evidence permits progress |
 | VERIFY_ARC | integrated acceptance on the final SHA | `arc-verified` or one bounded repair cycle |
 | DELIVER | opt-in package/staging/production attempt | requested target verified |
-| CLOSE | closure predicates (status, doc sync, findings, evidence, cleanup) | all verified |
+| CLOSE | closure predicates (status, doc sync, findings, evidence, cleanup, lessons, follow-up issue) | all verified |
 | DONE / STOP | terminal; late wakeups do no new work | never (a resume links a new generation) |
 
 Card states (`src/core/card-machine.ts`) are selected from evidence in a fixed precedence: reconcile unknown operations first, then STOP conditions, DONE, WAIT, CLOSE, admission deadline, exhausted allowances, PREPARE, REVIEW_FIX, BUILD, SHIP.

@@ -429,7 +429,7 @@ test('scripted provider drives plan, projection, card, verification and closure 
     const card = fx.card('T1-ONE');
     let shipped = operator.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, card.id)!);
     assert.equal(shipped.directive.kind, 'close');
-    const closed = operator.markClosure(fx.goal(goal.id), card, shipped.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    const closed = operator.markClosure(fx.goal(goal.id), card, shipped.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true, followups: true }, { skipped: 'fixture: no rule learned' });
     shipped = operator.next(fx.goal(goal.id), card, closed);
     assert.equal(shipped.directive.kind, 'done');
     const directive = await runGoal(goal.id, 8, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });

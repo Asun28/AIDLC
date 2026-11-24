@@ -100,3 +100,59 @@ npm run typecheck && node --test tests/scenarios/followup-issue.test.ts tests/sc
 ```
 - Expected exit code: 0
 - Assertion: at most one submission per run under every failure named above, each run ending with a recorded issue, a recorded reason or a pending record, and every test that closes a card passes with the step added.
+
+## PR summary
+
+### What
+`aidlc card close --followups` records one GitHub issue for the advisory and deferred findings of a merged card. `--all` includes the step. `--skip-followups` records the step with a reason and no issue.
+
+### Why / Intent
+The owner decided on 2026-11-16 to log these findings as one issue per shipped card. Main recorded the findings and created no issue.
+
+### How / Behaviour
+The step looks for the issue by its marker. When it finds none, it stores a pending record and submits the issue once. A submission with an unknown outcome is never repeated. Later calls look for the issue, or the operator skips the step.
+
+### System impact
+The card run gains one closure flag and three optional fields. A closure stored before this change has the step done. Each closure write now merges into the stored run under two locks.
+
+### Security
+Reviewer text goes to the issue body through `followupIssueBody`, which neutralises mentions. The gh calls use argv arrays. A raw patch cannot set the new fields.
+
+### Tests and review
+`tests/scenarios/followup-issue.test.ts` covers the step with a scripted gh. The fault-point test fails each write of the command. R3 reviews the candidate.
+
+### Risk
+Medium. The step writes to GitHub. A crash between the pending record and the request leaves no issue until the operator skips the step.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, `docs/REQUIREMENTS-TRACEABILITY.md`, `README.md`, the verify skill and the changelog fragment state the change.
+
+## Attempt evidence
+RED: `fe2728518ac4fc15cf031a455c7ca6d7ebae61cb`, `node --test tests/scenarios/followup-issue.test.ts tests/core/types.test.ts`: 36 tests, 23 pass, 13 fail, each new test among the failures.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/followup-issue.test.ts`, acceptance 1 (`--followups` alone, `--all` over a real worktree, and a finding recorded during the label call) | RED at fe272851, pass |
+| 2 | Same file, acceptance 2 (4 found rows, 7 rows that are not the issue, one pull request) | RED, pass |
+| 3 | Same file, acceptance 3 | RED, pass |
+| 4 | Same file, acceptance 4; `tests/core/types.test.ts`, the describe "the followups closure step" | RED, pass |
+| 5 | Same file, acceptance 5, through `adoptMerge` for the run without a candidate | RED, pass |
+| 6 | Same file, acceptance 6 | RED, pass |
+| 7 | Same file, acceptance 7 (4 submit answers by 8 changes in between) | RED, pass |
+| 8 | Same file, acceptance 8 (12 changes during the list call and the label call, and the fence inside both locks) | RED, pass |
+| 9 | Same file, acceptance 9 | RED, pass |
+| 10 | Same file, acceptance 10 and "acceptance 10, CLI" (PATH names an empty directory, so no gh runs) | RED, pass |
+| 11 | `tests/scenarios/fault-points.test.ts`, stage F of COVERED, and the describe "the pending record of card close --followups" | pass; with the reservation write removed from the source 4 tests fail |
+| 12 | `npm run check` in the worktree at `898866143fe9e8e15b0a436c1e269be633adad41` | exit 0; 4249 tests, 4217 pass, 0 fail, 32 skipped |
+| 13 | The docs, the fragment and the verify skill in the diff; `changelog-fragments`, `prose`, `templates`, `removed-surface` | reviewer-verified; pass |
+
+Changed existing-test lines (line numbers of main), each for the new step: `_harness.ts` 154, `adopt-merge` 123, `audit` 164, `card-close-cleanup` 323, `card-continue-goal` 235, `review-rule-goal` 291 and 462, `run-driver` 432, `t0-flow` 95, 249 and 2178 and `lesson-dup` 17 add the flag; `t0-flow` 90 and 2144, `lesson-dup` 89, `lessons` 187 and `worktree-reclaim` 658 add it to the expected missing steps or record; `lesson-dup` 92 is the narration; `card-close-cleanup` 30 and `lesson-dup` 20 are step counts in comments; `removed-surface` 103 is the R19 pin. In `fault-points`: 3, 17, 28, 40, 44, 54, 78, 125, 280, 298, 306, 331, 370, 387, 653, 698 to 701, 709, 720, 733, 737, 742 and 752 (imports, stage type, fixture, counters, recovery, end states, documentation pins). Every other changed line of an existing test file is an addition.
+
+Guards: 20 changed forms of the source were run one at a time against `followup-issue.test.ts` (19) and `fault-points.test.ts` (1): the state, merge, generation, fence, open-step, goal-terminal, goal-generation, second-reservation and other-target checks, the early return of a recorded step, the pending target and refusal, the lowest number, the last line, the working directory of the submit, the findings of the reserved record, the merge into the stored record, the raw-patch name, the historical default and the stored reservation. Each was caught.
+
+Attempt 1 (09fb3d0a) passed R3 twice and failed CI on PR 477: PR 475 had merged after its base sync with two tests that close a card, in `card-continue-goal.test.ts` and `review-rule-goal.test.ts`. Attempt 2 merges main and adds the flag to both.
+
+The first `npm run check`, at 611113d4, failed `t0-flow.test.ts:251`: that test reads the last EVIDENCE_RETAINED event of a close as the lesson event. The step journals a NOTE instead, and the test keeps its assertion.

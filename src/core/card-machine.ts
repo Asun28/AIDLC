@@ -25,7 +25,7 @@ export interface CardEvidence {
   prepared: boolean;
   /** Merge verified on the intended base (PR MERGED and base contains the commit). */
   mergeVerified: boolean;
-  /** All closure predicates hold (metadata, docSync, findings, evidence, cleanup, lessons), or the run is persisted as DONE. */
+  /** All closure predicates hold (metadata, docSync, findings, evidence, cleanup, lessons, followups), or the run is persisted as DONE. */
   closureComplete: boolean;
   /** Fresh substantive review block on the current candidate that still has allowance. */
   reviewBlockPending: boolean;
