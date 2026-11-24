@@ -37,6 +37,11 @@ export function continueReviewStop(run: Pick<CardRun, 'state' | 'stop' | 'review
   };
 }
 
+/** A continuation of a ci stop takes no `decisions`: refused by the act that lifts the stop and by the rerun that completes its re-admission. */
+export function refuseCiDecisions(act: Pick<ContinuationAct, 'decisions'>): void {
+  if (act.decisions !== undefined) throw new Error(`decisions ${act.decisions} is given: a continuation of a ci stop admits a repair attempt, not R3 decisions`);
+}
+
 /**
  * The entry and the effort step of a continuation of a ci stop: what a CI failure of class `code-defect` does to the run
  * (`afterShipFailure`), with the cause `continuation by <by>: <reason>`. Throws, changing nothing, when a condition does not hold,
@@ -46,7 +51,7 @@ export function continueCiStop(run: Pick<CardRun, 'state' | 'stop' | 'effort'>, 
   const stop = run.stop;
   if (run.state !== 'STOP' || !stop) throw new Error(`the card run is in ${run.state}, not in STOP: a continuation lifts a stop`);
   if (stop.reason !== 'ci') throw new Error(`the stop reason ${stop.reason} is not ci: this continuation lifts a stop for ci`);
-  if (act.decisions !== undefined) throw new Error(`decisions ${act.decisions} is given: a continuation of a ci stop admits a repair attempt, not R3 decisions`);
+  refuseCiDecisions(act);
   const by = act.by.trim();
   const reason = act.reason.trim();
   if (!by) throw new Error('by is blank: name who continues the run');
