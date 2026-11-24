@@ -1,0 +1,1 @@
+- T0-REVIEW-REPORT-SCRIPTS: `REVIEW.md` gains the report scripts section, which says what blocks a report script under `bench/`; `reviewPolicyVersion` is `REVIEW.md@8` in both configs; the card template and the planner gain the authoring line, which says what a card for such a script names.

@@ -902,7 +902,7 @@ describe('the report scripts section and the authoring line (T0-REVIEW-REPORT-SC
     for (const sentence of SECTION) assert.equal(sectionHolds(live.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     const without = live.replace(section, '');
     assert.equal(sectionHolds(without.replace('## Cap the nits\n', `${section}## Cap the nits\n`)), false, 'the section moved above Cap the nits still passes');
-    assert.equal(sectionHolds(live.replace('## Report scripts\n', '## Other\nText.\n\n## Report scripts\n')), false, 'another section after Do not report still passes');
+    for (const next of ['## Report scripts\n', '## Untrusted content\n']) assert.equal(sectionHolds(live.replace(next, `## Other\nText.\n\n${next}`)), false, `another section before ${next.trim()} still passes`);
   });
 
   test('acceptance 3: both card templates and both planner copies hold the authoring line in its place, the planner copies are equal; removing it from one file fails [R5] [R6]', () => {

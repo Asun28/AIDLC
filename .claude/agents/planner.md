@@ -26,6 +26,7 @@ Produce `plans/<slug>.md` content with:
 Rules:
 - Ask at most one sizing question, only when context cannot resolve it.
 - Never invent numbers; write `[TBD: <closed question>]` instead.
+- A card for a report script under `bench/` names its input-producing commands, any other input it explicitly supports, and the results it publishes; a required refusal covers a failure one of those commands can produce or an explicit owner requirement, and more input validation is a non-goal.
 - Do not expand scope beyond the spec; list cut/deferred items as non-goals.
 - Hand the plan to `aidlc plan check <file>`; a `needs-clarification`
   verdict lists the questions to resolve before approval.
