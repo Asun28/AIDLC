@@ -36,7 +36,7 @@ import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipR
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { dodCall, mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
 import { REPRO_REQUEST } from '../review/repro.ts';
-import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type MutantEvidence, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson, atomicWriteText } from '../state/store.ts';
@@ -420,23 +420,27 @@ export class CardRunner {
   }
 
   /**
-   * The survivors of the mutant report of the candidate under review (card T1-VERIFY-MUTANTS-PROMPT), as evidence for the formal
-   * prompt. A path inside a checkout is chosen by the candidate, so a report reached through a link, one past a size limit, one
-   * that cannot be read or parsed and one for another candidate all give none: the report never fails or gates a review. The
-   * limits run before the schema, whose issues per element of an array cost far more memory than the file: its two arrays are bounded.
+   * The state of the mutant report of the candidate under review (cards T1-VERIFY-MUTANTS-PROMPT, T0-MUTANT-EVIDENCE-STATE), as
+   * evidence for the formal prompt: the report never fails or gates a review. A path inside a checkout is chosen by the candidate,
+   * so a report reached through a link, one past a size limit, one that cannot be read or parsed and one with more mutants than it
+   * generated are unusable; `missing` is no entry at the path. The limits run before the schema, whose issues per element of an
+   * array cost far more memory than the file: its two arrays are bounded.
    */
-  private survivingMutants(checkout: string, cardId: string, candidateSha: string): MutantReport['mutants'] {
+  private mutantEvidence(checkout: string, cardId: string, candidateSha: string): MutantEvidence {
     const file = mutantsReportPath(checkout, cardId);
     try {
-      const stat = lstatSync(file);
-      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return [];
+      const stat = lstatSync(file, { throwIfNoEntry: false });
+      if (!stat) return { state: 'missing' };
+      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return { state: 'unusable' };
       const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
       const { mutants, operators } = parsed as { mutants?: unknown; operators?: unknown };
-      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return [];
+      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return { state: 'unusable' };
       const report = MutantReport.safeParse(parsed);
-      return report.success && report.data.candidateSha === candidateSha ? report.data.mutants.filter((m) => m.outcome === 'survived') : [];
+      if (!report.success || report.data.generated < report.data.mutants.length) return { state: 'unusable' };
+      if (report.data.candidateSha !== candidateSha) return { state: 'other-candidate' };
+      return { state: 'current', generated: report.data.generated, mutants: report.data.mutants };
     } catch {
-      return [];
+      return { state: 'unusable' };
     }
   }
 
@@ -2371,7 +2375,7 @@ export class CardRunner {
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
     const secondPass = this.secondPassDue(persisted);
     // The mutant report is read with them, so a report written during the review never changes what this reviewer receives.
-    const survivingMutants = this.survivingMutants(cwd, card.id, candidateSha);
+    const mutantEvidence = this.mutantEvidence(cwd, card.id, candidateSha);
     // The cap is checked first (R7): a candidate diff or a delta above it is refused before the hand-off, the release of a
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
@@ -2474,7 +2478,7 @@ export class CardRunner {
     // R7, once the dispatch is reserved: a refused reservation cancels nothing of the other reviewer.
     this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, survivingMutants, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, mutantEvidence, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
     let panel: PanelResult | undefined;
     // Whether the reviewer process returned: a failure after that point is a lost result (charged as a no-verdict, the
     // reviewer ran), a failure before it a dispatch that never happened (released, nothing spent).
