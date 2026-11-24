@@ -1,7 +1,7 @@
 ---
 id: T0-BENCH-FOLLOWUPS
 title: "Bench follow-ups of issues 319, 381 and 391: labels.ts drops a stale Codex message and logs the events behind a Codex label, panel.ts pairs stage 2 with the confirmed cases and refuses rounds the bench cannot write, and the --formal-command text stands in the Reviewer bench section"
-status: todo
+status: merged
 branch: T0-BENCH-FOLLOWUPS
 worktree: D:\wt\AIDLC\T0-BENCH-FOLLOWUPS
 allow_paths:
