@@ -77,3 +77,65 @@ npm run typecheck && node --test tests/surface/outcome-labels.test.ts tests/surf
 ```
 - Expected exit code: 0
 - Assertion: the rules of R1 to R6 hold with their tests, and the fragments and the prose check pass.
+
+## PR summary
+
+### What
+The labelling script reads a Codex label from the last message only, and logs the events behind it. The panel script pairs stage 2 with confirmed cases and refuses impossible rounds. One document paragraph moves to its section.
+
+### Why / Intent
+Issues 319, 381 and 391 hold follow-ups that the owner deferred. Issues 319 and 391 must be fixed before those scripts run again.
+
+### How / Behaviour
+A last Codex message without text gives no label, so the call can be asked again. A report of the confirmed cases is accepted in stage 2. A multi-round report that breaks one of four round rules is refused, and nothing is written.
+
+### System impact
+No file under `src/` changes. The labelling run is now an exported function that takes its commands and paths as arguments. `panel.json`, computed again from the saved inputs, is identical.
+
+### Security
+The change adds no input, secret or network access. The log keeps model messages and usage in a directory that git ignores.
+
+### Tests and review
+Five tests failed before the source changed. A table of 49 mutations has no survivor. The R3 review gate checks the change.
+
+### Risk
+Low. The round rules hold for the 79 cases of the two saved multi-round reports. A rule that is too strict refuses a report and changes no number.
+
+### Ownership
+The aidlc maintainers own the bench scripts and their documents.
+
+### Docs
+`docs/OPERATIONS.md` keeps every other word of the moved paragraph. `docs/reliability/panel.md` states the new refusals. Two changelog fragments are added, one for T1-BENCH-FORMAL-COMMAND.
+
+## Attempt evidence
+RED commit 6556b03655b346959d21ec2dc63b4d149fa83f00 holds the tests of items 1, 2 and 4 to 8 on the sources of main: 45 tests, 5 failed (items 1, 2, 6, 7 and 8), each on its assertion. Item 4 passes on main, as the card says. The run test of item 3 came with the exported run it calls, and the mutations below show it fails.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/outcome-labels.test.ts` "acceptance 1": a missing, null, numeric or empty last text gives null and an empty text; a later label is kept | pass, RED before |
+| 2 | Same file, "acceptance 2": the five message and usage events in order, the other events and lines left out, the same label and cost when read again | pass, RED before |
+| 3 | Same file, "acceptance 3": five stops with exit 3 (above the bound, above it with exit 1, no usage event, an unreadable usage, a throw), and a run at the bound | pass |
+| 4 | Same file, the two "acceptance 4" tests and the labelled line in "the log decides what is asked again and what was spent" | pass, mutations below |
+| 5 | Same file: the two assertions stand in "an answer gives a label only when its last line is one of the five" | pass |
+| 6 | `tests/surface/outcome-panel.test.ts` "acceptance 6" | pass, RED before |
+| 7 | Same file, "acceptance 7": 14 refusals and 6 accepted reports | pass, RED before |
+| 8 | `tests/surface/review-bench.test.ts`, T1-REVIEW-BENCH acceptance 9 with the paragraph in `OPERATIONS_SECTION` | pass, RED before |
+| 9 | Document diff (reviewer-verified); `tests/surface/changelog-fragments.test.ts` | pass |
+
+`node bench/outcome/panel.ts assemble` on the saved stage 1 inputs, at the commit `panel.json` names, writes a file identical to the committed `panel.json`.
+
+Mutations, each applied alone, its test file run and the file restored. All 49 fail a test.
+
+| File | Mutations | Failing test |
+|---|---|---|
+| labels.ts, `selectFindings` | each of the seven join predicates removed; the round guard and the candidate guard removed | "acceptance 4: a finding is second-pass only" |
+| labels.ts, `selectFindings` | replacement target kept; goal order removed; dedupe removed | "acceptance 4: a merged replacement target" |
+| labels.ts, `readLog` | label ignored when a pair has one line | "the log decides what is asked again" |
+| labels.ts, `codexAnswer` | an earlier text kept for a last message without a text, and for an empty one | "acceptance 1" |
+| labels.ts, `codexAnswer` | events without usage, without messages, with every object; `item.started` read; any item type read | "acceptance 2" |
+| labels.ts, `runLabels` | events not logged, not logged for a throw; unreadable cost goes on; bound inclusive; stop removed; exit 0; checkout kept | "acceptance 3" |
+| panel.ts, stage 2 | filter removed, for replay only, for clean only; filter applied in stage 1 | "acceptance 6" |
+| panel.ts, rule 1 | removed; first round only; every round | "acceptance 7" |
+| panel.ts, rule 2 | removed; error only; no-verdict only; the round's outcome only; the case's outcome only; every difference | "acceptance 7" |
+| panel.ts, rule 3 | hit part removed; every hit round; pass part removed | "acceptance 7" |
+| panel.ts, rule 4 | each half removed; at least; equal; error case not exempt; all rules not run | "acceptance 7" |

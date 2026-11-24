@@ -42,7 +42,9 @@ const report = (trials: CaseResult[][], o: ReportOpts = {}): string =>
   JSON.stringify({ stage: o.stage ?? 'formal', policyHash: o.policyHash ?? POLICY, options: o.options ?? { rounds: 1 }, leftCheckouts: [], cases: trials[0], trialResults: trials.map((cases) => ({ cases })) });
 /** Codex round 1 is `rounds[0]`; after three rounds the run hits one more case (b10), which round 1 missed. */
 const withRounds = (cases: CaseResult[]): CaseResult[] =>
-  cases.map((c) => ({ ...c, rounds: [{ outcome: c.id === 'b10' ? 'miss' : c.outcome, durationMs: c.durationMs, cited: 0 }, { outcome: c.outcome, durationMs: 1, cited: 0 }] }));
+  cases.map((c) => c.id === 'b10'
+    ? { ...c, cited: [reason('src/other.ts', 10), ...c.cited], rounds: [{ outcome: 'miss', durationMs: c.durationMs, cited: 1 }, { outcome: c.outcome, durationMs: 1, cited: 1 }] }
+    : { ...c, rounds: [{ outcome: c.outcome, durationMs: c.durationMs, cited: c.cited.length }] });
 
 /** The three-round Codex bug cases: b28 is an error no round reviewed, so it carries an empty `rounds` (src/review/bench.ts:209). */
 const roundsMiss = (): CaseResult[] => withRounds(bugs(30, range(0, 11), { 28: 'error' })).map((c) => (c.id === 'b28' ? { ...c, rounds: [] } : c));
@@ -192,6 +194,63 @@ test('T1-PANEL-ARMS-REPORT acceptance 2: assemble refuses each input fault of R2
   assert.equal(cli.status, 1, cli.stderr);
   assert.match(cli.stderr, /panel: arms\/rounds-miss\.json: missing/);
   assert.equal(existsSync(out), false, 'no panel.json on a refusal');
+});
+
+test('T0-BENCH-FOLLOWUPS acceptance 6: stage 2 pairs with the confirmed cases of its directories, stage 1 with every case of its own', () => {
+  const s12 = { ...stage1(8), ...stage2() };
+  const unconfirmed = (id: string, kind: 'bug' | 'clean', triple: number): ReviewBenchCase => { const { confirmedBy: _, ...c } = caseFile(id, kind, triple); return { ...c, confirmed: false } as ReviewBenchCase; };
+  const dirs = { ...CASE_DIRS, 'evals/review/replay': [...bugFiles(10), unconfirmed('b10', 'bug', 5)], 'evals/review/clean': [...cleanFiles(5), unconfirmed('c5', 'clean', 105)] };
+  const r = run(s12, dirs);
+  assert.equal(r.refusal, undefined);
+  assert.deepEqual(r.doc!.measures, run(s12).doc!.measures);
+  const refused = (files: Record<string, string>, d: Record<string, ReviewBenchCase[]>, why: RegExp): void => { const x = run(files, d); assert.match(x.refusal ?? '(no refusal)', why); assert.deepEqual(x.written, []); };
+  const three = <T>(f: () => T): T[] => [0, 1, 2].map(f);
+  refused({ ...s12, 'panel-arms/stage2/codex-clean.json': report(three(() => cleans(6, []))) }, dirs, /stage 2 trial 1: the case ids differ: panel-arms\/stage2\/codex-clean\.json against evals\/review\/clean/);
+  refused({ ...s12, 'panel-arms/stage2/codex-replay.json': report(three(() => bugs(11, []))) }, dirs, /stage 2 trial 1: the case ids differ: panel-arms\/stage2\/codex-replay\.json against evals\/review\/replay/);
+  refused(s12, { ...dirs, 'arms/miss25': [...bugFiles(30), unconfirmed('b30', 'bug', 15)] }, /stage 1: the case ids differ: arms\/rounds-miss\.json against arms\/miss25/);
+  refused(s12, { ...dirs, 'panel-arms/clean15': [...cleanFiles(3), unconfirmed('c3', 'clean', 103)] }, /stage 1: the case ids differ: arms\/rounds-clean\.json against panel-arms\/clean15/);
+});
+
+test('T0-BENCH-FOLLOWUPS acceptance 7: a multi-round report whose rounds the bench cannot write is refused, and one it can write assembles', () => {
+  type Round = [Outcome, number];
+  const ok = stage1(8);
+  const put = (rel: string, cases: CaseResult[], i: number, patch: Partial<CaseResult>, rounds: Round[]): Record<string, string> =>
+    ({ ...ok, [rel]: report([cases.map((c, j) => (j === i ? { ...c, ...patch, rounds: rounds.map(([outcome, cited]) => ({ outcome, durationMs: 1, cited })) } : c))], { options: { rounds: 3 } }) });
+  const miss = (i: number, patch: Partial<CaseResult>, ...rounds: Round[]): Record<string, string> => put('arms/rounds-miss.json', roundsMiss(), i, patch, rounds);
+  const clean = (i: number, patch: Partial<CaseResult>, ...rounds: Round[]): Record<string, string> => put('arms/rounds-clean.json', withRounds(cleans(3, [0])), i, patch, rounds);
+  const other = (...at: number[]): string[] => at.map((line) => reason('src/other.ts', line));
+  const hit3 = reason('src/f3.ts', 10);
+  // b3 is stored as a hit of one cited reason, b20 as a miss citing none, b28 as an error; c0 is a false block of one cited reason, c1 a pass.
+  const faults: Array<[string, Record<string, string>, RegExp]> = [
+    ['rule 1: a round before the last cites nothing', miss(20, { cited: other(1) }, ['miss', 0], ['miss', 1]), /arms\/rounds-miss\.json: case b20: rounds rule 1/],
+    ['rule 1: the middle round cites nothing', miss(20, { cited: other(1, 2) }, ['miss', 2], ['miss', 0], ['miss', 0]), /case b20: rounds rule 1/],
+    ['rule 2: an error round in a scored case', miss(20, { cited: other(1, 2) }, ['error', 1], ['miss', 1]), /case b20: rounds rule 2/],
+    ['rule 2: a scored round in an error case', miss(28, {}, ['miss', 1], ['error', 0]), /case b28: rounds rule 2/],
+    ['rule 2: a no-verdict round in a scored case', miss(20, { cited: other(1, 2) }, ['no-verdict', 1], ['miss', 1]), /case b20: rounds rule 2/],
+    ['rule 2: a no-verdict round in an error case', miss(28, {}, ['no-verdict', 1], ['error', 0]), /case b28: rounds rule 2/],
+    ['rule 2: a scored round in a no-verdict case', miss(20, { outcome: 'no-verdict', runStatus: 'tool_error' }, ['miss', 1], ['no-verdict', 0]), /case b20: rounds rule 2/],
+    ['rule 3: the first hit round cites nothing', miss(3, { cited: [hit3] }, ['miss', 1], ['hit', 0]), /case b3: rounds rule 3/],
+    ['rule 3: a round 1 hit that cites nothing (issue 391, F4)', miss(3, {}, ['hit', 0]), /case b3: rounds rule 3/],
+    ['rule 3: a pass round that cites a reason', clean(0, { cited: other(1, 2) }, ['pass', 1], ['false-block', 1]), /arms\/rounds-clean\.json: case c0: rounds rule 3/],
+    ['rule 4: no cited reason where a round cites one', miss(20, {}, ['miss', 1]), /case b20: rounds rule 4/],
+    ['rule 4: a cited reason where no round cites one', miss(20, { cited: other(1) }, ['miss', 0]), /case b20: rounds rule 4/],
+    ['rule 4: more cited reasons than the rounds cite', miss(20, { cited: other(1, 2) }, ['miss', 1]), /case b20: rounds rule 4/],
+    ['rule 4: a no-verdict round that cites a reason', miss(20, { outcome: 'no-verdict', runStatus: 'tool_error' }, ['no-verdict', 1]), /case b20: rounds rule 4/],
+  ];
+  for (const [name, files, why] of faults) {
+    const r = run(files);
+    assert.match(r.refusal ?? '(no refusal)', why, name);
+    assert.deepEqual(r.written, [], `${name}: nothing written`);
+  }
+  const good: Array<[string, Record<string, string>]> = [
+    ['three rounds, the hit in round 2 and a last round that cites nothing', miss(3, { cited: [...other(1), hit3] }, ['miss', 1], ['hit', 1], ['hit', 0])],
+    ['a reason cited again in a later round', miss(20, { cited: other(1, 2) }, ['miss', 2], ['miss', 1])],
+    ['an error case of a reviewed group', miss(28, {}, ['error', 2], ['error', 0])],
+    ['a no-verdict case with its one round', miss(20, { outcome: 'no-verdict', runStatus: 'tool_error' }, ['no-verdict', 0])],
+    ['a false block that cites nothing on the changed paths', clean(0, { cited: [] }, ['false-block', 0])],
+    ['a false block that a round 2 pass follows', clean(0, {}, ['false-block', 1], ['false-block', 0])],
+  ];
+  for (const [name, files] of good) assert.equal(run(files).refusal, undefined, name);
 });
 
 const tally = (hits: number, falseBlocks: number) => ({ hits, falseBlocks });
