@@ -235,6 +235,42 @@ export function findingMarker(cardId: string, prNumber: number | undefined, sha:
   return `aidlc-finding:${cardId}:${prNumber ?? 'nopr'}:${sha.slice(0, 12)}:${slug}`;
 }
 
+export interface FollowupFinding {
+  /** The id of the recorded finding; absent on an advisory reason no finding repeats. */
+  id?: string;
+  text: string;
+}
+
+/**
+ * The follow-up findings of a card run (card T1-REVIEW-FOLLOWUP-CORE), in this order: the advisory reasons of its formal
+ * invocations that decided, its advisory formal findings, and its findings deferred by a ruling that names no issue. Entries
+ * with the same trimmed text are one, at the first position with the first id any of them has; blank texts are left out.
+ */
+export function followupFindings(run: Pick<CardRun, 'review' | 'findings'>): FollowupFinding[] {
+  const byText = new Map<string, FollowupFinding>();
+  const add = (reason: string, id?: string): void => {
+    const text = reason.trim();
+    if (!text) return;
+    const entry = byText.get(text) ?? { text };
+    if (id !== undefined && entry.id === undefined) entry.id = id;
+    byText.set(text, entry);
+  };
+  for (const i of run.review.invocations) if (i.outcome === 'pass' || i.outcome === 'block') for (const reason of i.advisory ?? []) add(reason);
+  for (const f of run.findings) if (f.stage === 'formal' && f.advisory === true) add(f.reason, f.id);
+  for (const f of run.findings) if (f.ruling?.decision === 'deferred' && f.ruling.issue === undefined) add(f.reason, f.id);
+  return [...byText.values()];
+}
+
+/**
+ * The body of the follow-up issue of a card (card T1-REVIEW-FOLLOWUP-CORE). A reviewer wrote the texts, so each is kept to one
+ * list item on one line, with a zero-width space after an `@` that would mention a name; the marker is the last line.
+ */
+export function followupIssueBody(cardId: string, prNumber: number | undefined, sha: string, findings: readonly FollowupFinding[], marker: string): string {
+  const oneLine = (text: string): string => text.replace(/\s+/g, ' ').replace(/@(?=[A-Za-z0-9])/g, '@\u200B');
+  const items = findings.map((f) => `- ${f.id === undefined ? '' : `${f.id}: `}${oneLine(f.text)}`);
+  return [`Review follow-ups of card ${cardId}, PR ${prNumber === undefined ? 'none' : `#${prNumber}`}, candidate ${sha}.`, '', ...items, '', marker, ''].join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Review findings: identity, dispositions, re-raises (T1-REVIEW-FINDINGS)
 // ---------------------------------------------------------------------------

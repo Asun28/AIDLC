@@ -205,12 +205,12 @@ describe('probes/gh (review follow-up issues)', () => {
   const ISSUE_ARGS = ['issue', 'create', '--repo', REPO, '--title', 'Review follow-ups', '--label', 'review-followup', '--body-file', '-'];
 
   it('T1-GH-ISSUES acceptance 1: issuesWithLabel passes the argv of R1 and parses number and body', () => {
-    const { probe, calls } = recording({ 'gh issue list': { stdout: JSON.stringify([{ number: 12, body: 'first' }, { number: 3, body: '' }]) } });
+    const { probe, calls } = recording({ 'gh api repos/Asun28/repo/issues?': { stdout: JSON.stringify([{ number: 12, body: 'first' }, { number: 3, body: null }]) } });
     assert.deepEqual(probe.issuesWithLabel(REPO, 'review-followup'), [
       { number: 12, body: 'first' },
       { number: 3, body: '' },
     ]);
-    assert.deepEqual(calls, [{ args: ['issue', 'list', '--repo', REPO, '--label', 'review-followup', '--state', 'all', '--limit', '100', '--json', 'number,body'], input: undefined }]);
+    assert.deepEqual(calls, [{ args: ['api', 'repos/Asun28/repo/issues?labels=review-followup&state=all&per_page=100&page=1'], input: undefined }]);
   });
 
   it('T1-GH-ISSUES acceptance 2: createIssue creates the label, then the issue with the body on stdin, and returns the number from the URL', () => {
@@ -239,10 +239,86 @@ describe('probes/gh (review follow-up issues)', () => {
     }
 
     for (const stdout of ['not json', JSON.stringify({ number: 1, body: 'x' }), JSON.stringify([{ number: '1', body: 'x' }]), JSON.stringify([{ number: 1 }])]) {
-      const { probe } = recording({ 'gh issue list': { stdout } });
+      const { probe } = recording({ 'gh api repos/Asun28/repo/issues?': { stdout } });
       assert.throws(() => probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, `unparsable list output: ${stdout}`);
     }
-    const listFails = recording({ 'gh issue list': { exitCode: 1, stderr: 'HTTP 404', stdout: '[]' } });
+    const listFails = recording({ 'gh api repos/Asun28/repo/issues?': { exitCode: 1, stderr: 'HTTP 404', stdout: '[]' } });
     assert.throws(() => listFails.probe.issuesWithLabel(REPO, 'review-followup'), GhProbeError, 'a failed list call is an error, not an empty list');
+  });
+
+  const PAGE = 'gh api repos/Asun28/repo/issues?labels=review-followup&state=all&per_page=100&page=';
+  const PAGE_ARGS = (page: number) => ['api', `repos/Asun28/repo/issues?labels=review-followup&state=all&per_page=100&page=${page}`];
+  const issues = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ number: from + i, body: `issue ${from + i}` }));
+
+  it('T1-REVIEW-FOLLOWUP-CORE acceptance 2: issuesWithLabel reads pages until one has fewer than 100 entries, pull requests counted and left out', () => {
+    const two = recording({ [`${PAGE}1`]: { stdout: JSON.stringify(issues(1, 100)) }, [`${PAGE}2`]: { stdout: JSON.stringify(issues(101, 1)) } });
+    assert.deepEqual(two.probe.issuesWithLabel(REPO, 'review-followup'), issues(1, 101));
+    assert.deepEqual(two.calls.map((c) => c.args), [PAGE_ARGS(1), PAGE_ARGS(2)]);
+
+    const full = recording({ [`${PAGE}1`]: { stdout: JSON.stringify(issues(1, 100)) }, [`${PAGE}2`]: { stdout: '[]' } });
+    assert.deepEqual(full.probe.issuesWithLabel(REPO, 'review-followup'), issues(1, 100));
+    assert.deepEqual(full.calls.map((c) => c.args), [PAGE_ARGS(1), PAGE_ARGS(2)]);
+
+    const short = recording({ [`${PAGE}1`]: { stdout: JSON.stringify(issues(1, 99)) } });
+    assert.deepEqual(short.probe.issuesWithLabel(REPO, 'review-followup'), issues(1, 99));
+    assert.deepEqual(short.calls.map((c) => c.args), [PAGE_ARGS(1)]);
+
+    const pulls = issues(1, 40).map((i) => ({ ...i, pull_request: { url: 'u' } }));
+    const mixed = recording({ [`${PAGE}1`]: { stdout: JSON.stringify([...pulls, ...issues(41, 60)]) }, [`${PAGE}2`]: { stdout: JSON.stringify([...issues(101, 1), ...pulls.slice(0, 1)]) } });
+    assert.deepEqual(mixed.probe.issuesWithLabel(REPO, 'review-followup'), issues(41, 61));
+    assert.deepEqual(mixed.calls.map((c) => c.args), [PAGE_ARGS(1), PAGE_ARGS(2)]);
+
+    const encoded = recording({ 'gh api': { stdout: '[]' } });
+    assert.deepEqual(encoded.probe.issuesWithLabel(REPO, 'a b&c'), []);
+    assert.deepEqual(encoded.calls.map((c) => c.args), [['api', 'repos/Asun28/repo/issues?labels=a%20b%26c&state=all&per_page=100&page=1']]);
+  });
+
+  it('T1-REVIEW-FOLLOWUP-CORE acceptance 2: a second page that fails or is malformed throws GhProbeError naming the call, and no partial list is returned', () => {
+    const bad: Array<{ exitCode?: number; timedOut?: boolean; stdout: string }> = [
+      { exitCode: 1, stdout: '[]' },
+      { exitCode: 0, timedOut: true, stdout: '[]' },
+      { stdout: '' },
+      { stdout: 'not json' },
+      { stdout: JSON.stringify({ number: 101, body: 'x' }) },
+      { stdout: JSON.stringify([{ number: 101 }]) },
+      { stdout: JSON.stringify([{ number: 101, body: 7 }]) },
+      ...[0, -1, 1.5].map((number) => ({ stdout: JSON.stringify([{ number, body: 'x' }]) })),
+      { stdout: '[{"number":9007199254740992,"body":"x"}]' },
+      { stdout: JSON.stringify([{ number: 0, body: 'x', pull_request: { url: 'u' } }]) },
+    ];
+    for (const second of bad) {
+      const { probe, calls } = recording({ [`${PAGE}1`]: { stdout: JSON.stringify(issues(1, 100)) }, [`${PAGE}2`]: second });
+      assert.throws(() => probe.issuesWithLabel(REPO, 'review-followup'), (e: unknown) => e instanceof GhProbeError && e.message.includes(`${PAGE}2`), JSON.stringify(second));
+      assert.deepEqual(calls.map((c) => c.args), [PAGE_ARGS(1), PAGE_ARGS(2)]);
+    }
+  });
+
+  it('T1-REVIEW-FOLLOWUP-CORE acceptance 2: 1,000 full pages in a row throw after call 1,000, naming the repository and the label', () => {
+    const { probe, calls } = recording({ [PAGE]: { stdout: JSON.stringify(issues(1, 100)) } });
+    assert.throws(() => probe.issuesWithLabel(REPO, 'review-followup'), (e: unknown) => e instanceof Error && e.message.includes(REPO) && e.message.includes('review-followup'));
+    assert.equal(calls.length, 1000);
+    assert.deepEqual(calls.at(-1)!.args, PAGE_ARGS(1000));
+    const last = recording({ [PAGE]: (args) => ({ stdout: JSON.stringify(args[1]!.endsWith('&page=1000') ? [] : issues(1, 100)) }) });
+    assert.equal(last.probe.issuesWithLabel(REPO, 'review-followup').length, 99_900, 'a short page 1,000 ends the list');
+  });
+
+  it('T1-REVIEW-FOLLOWUP-CORE acceptance 3: ensureLabel makes the label call only and submitIssue the issue call only, each with the errors of createIssue', () => {
+    const label = recording({ 'gh label create': { stdout: '' } });
+    label.probe.ensureLabel(REPO, 'review-followup');
+    assert.deepEqual(label.calls, [{ args: LABEL_ARGS, input: undefined }]);
+
+    const submit = recording({ 'gh issue create': { stdout: `Creating issue in ${REPO}\n\nhttps://github.com/${REPO}/issues/41\n` } });
+    assert.equal(submit.probe.submitIssue(REPO, 'Review follow-ups', 'line one\n--title not a flag', 'review-followup'), 41);
+    assert.deepEqual(submit.calls, [{ args: ISSUE_ARGS, input: 'line one\n--title not a flag' }]);
+
+    for (const failed of [{ exitCode: 1, stderr: 'HTTP 403' }, { exitCode: 0, timedOut: true }]) {
+      const { probe } = recording({ 'gh label create': failed });
+      assert.throws(() => probe.ensureLabel(REPO, 'review-followup'), (e: unknown) => e instanceof GhProbeError && /label create/.test(e.message));
+    }
+    const url = `https://github.com/${REPO}/issues/41\n`;
+    for (const failed of [{ exitCode: 1, stdout: url }, { timedOut: true, stdout: url }, { stdout: '' }, { stdout: 'created\n' }, { stdout: `${url}not a url\n` }, { stdout: 'https://github.com/other/repo/issues/41\n' }]) {
+      const { probe } = recording({ 'gh issue create': failed });
+      assert.throws(() => probe.submitIssue(REPO, 'Review follow-ups', 'b', 'review-followup'), (e: unknown) => e instanceof GhProbeError && /issue create/.test(e.message), JSON.stringify(failed));
+    }
   });
 });

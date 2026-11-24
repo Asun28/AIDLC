@@ -64,3 +64,47 @@ npm run typecheck && node --test tests/infra/gh.test.ts tests/core/followup-find
 ```
 - Expected exit code: 0
 - Assertion: the probe reads every page or throws, the findings and the body are as R5 to R8, and the review-policy tests pass unchanged.
+
+## PR summary
+### What
+`GhProbe.issuesWithLabel` reads every page of the issues of a label through the REST list. `ensureLabel` and `submitIssue` are the two calls of `createIssue` as methods of their own. `followupFindings` and `followupIssueBody` say which findings of a card run a follow-up issue holds and how it reads.
+
+### Why / Intent
+A closure step that files one issue per card has to know whether the issue exists. Main read at most 100 results of GitHub search, which lags behind a new issue, so a retry could file a second one. This is the first of the two cards that replace T1-REVIEW-FOLLOWUP-ISSUE.
+
+### How / Behaviour
+The list reads pages of 100 until a page has fewer than 100 entries, pull requests counted and left out of the result. A failed, timed-out or malformed page and 1,000 full pages in a row throw, so no partial list is returned. Findings with the same trimmed text become one entry at the first position with the first finding id.
+
+### System impact
+Nothing in `src/loop` or `src/cli` calls the new functions. `createIssue` makes the same two calls as before.
+
+### Security
+Reviewer text is untrusted: the body keeps each finding on one line and puts a zero-width space after an `@` that would mention a name. No new credential and no GitHub write in a test.
+
+### Tests and review
+`tests/infra/gh.test.ts` and `tests/core/followup-findings.test.ts`, with scripted runners and fixed fixtures. R3 reviews the candidate.
+
+### Risk
+Low. An issue that is deleted or loses the label while the pages are read can move another entry to an earlier page, which the list then misses; the card names this as a non-goal.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/ARCHITECTURE.md` and `changelog.d/T1-REVIEW-FOLLOWUP-CORE.md` state the change.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/gh.test.ts`, the four lines of "T1-GH-ISSUES acceptance 1" and "T1-GH-ISSUES acceptance 3" listed below. RED at 16e23c59: acceptance 1 failed. The two list cases of acceptance 3 passed at 16e23c59 too, because the scripted runner refuses the call of main and the refusal is a `GhProbeError` | pass after the change |
+| 2 | Same file, the three "T1-REVIEW-FOLLOWUP-CORE acceptance 2" tests, RED at 16e23c59 | pass after the change |
+| 3 | Same file, "T1-REVIEW-FOLLOWUP-CORE acceptance 3", RED at 16e23c59 (TypeError, no such method); "T1-GH-ISSUES acceptance 2" and the other cases of "T1-GH-ISSUES acceptance 3" have no line changed | pass after the change |
+| 4 | `tests/core/followup-findings.test.ts`, the two `acceptance 4` tests, RED at 16e23c59 (no export `followupFindings`) | pass after the change |
+| 5 | Same file, the two `acceptance 5` tests, RED at 16e23c59 (no export) | pass after the change |
+| 6 | `docs/ARCHITECTURE.md`, the comment of `issuesWithLabel`, the fragment; `changelog-fragments`, `prose` | reviewer-verified; pass |
+
+Changed lines of `tests/infra/gh.test.ts` (line numbers of main), each because R1 replaces the call it pins: 208, the script key `gh issue list` is now `gh api repos/Asun28/repo/issues?` and the second body is `null` in place of `''`; 213, the expected argv; 242 and 245, the script key of the two list cases. Every other changed line is an addition.
+
+Guards: 40 loosened forms of the new conditions were run one at a time against the two test files. 39 were caught. The other, a page of 99 entries read as full, led to the 99-entry row of the first acceptance 2 test, which catches it.
+
+`npm run check`: exit 0; 4193 tests, 4161 pass, 0 fail, 32 skipped.
