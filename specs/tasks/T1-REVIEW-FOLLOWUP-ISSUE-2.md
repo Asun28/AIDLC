@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-FOLLOWUP-ISSUE-2
 title: "(replaces T1-REVIEW-FOLLOWUP-ISSUE) card close --followups records the GitHub issue of the advisory and deferred findings of a merged card, with at most one issue submission per run"
-status: todo
+status: merged
 branch: T1-REVIEW-FOLLOWUP-ISSUE-2
 worktree: D:\wt\AIDLC\T1-REVIEW-FOLLOWUP-ISSUE-2
 plan_ref: plans/review-recall.md#order-of-work
