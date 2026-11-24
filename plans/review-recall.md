@@ -91,8 +91,11 @@ the report card carries their reports.
    (`--stage pre --pre-command`) on all 124 replay cases and the clean cases, in batches, with
    the DeepSeek balance read before and after each batch and the run stopped before a batch
    that would pass 10 USD. Reports go to `_local/arms/`.
-6. T1-REVIEW-FOLLOWUP-ISSUE: the `followups` closure step. Depends on 3 (shared files) and 4b.
-   Runs while 5 runs.
+6. T1-REVIEW-FOLLOWUP-CORE, then T1-REVIEW-FOLLOWUP-ISSUE-2. They replace T1-REVIEW-FOLLOWUP-ISSUE,
+   which stopped at R3 decision 4 and stays stopped. CORE makes the label list of the gh probe
+   complete and adds the pure functions; ISSUE-2 adds the `followups` closure step with at most one
+   issue submission per run. Both branch from main, ISSUE-2 after CORE and T0-ADVISORY-WITHDRAW
+   have merged. Code of 2a87bf7c may be reused where it meets the new requirements.
 7. T1-ARMS-REPORT: arms.json, arms.md, the goal's CHANGELOG entry. Depends on 2, 4a, 6 and the
    reports of 5.
 
@@ -108,7 +111,8 @@ at a budget of 250 (`MAX_CODE_CARD_BUDGET`) and no size exception is recorded.
 | T1-BENCH-ROUNDS | MUST | rounds inside one decision in the bench | T1-REVIEW-SEVERITY, T1-FINDING-IDENTITY | - | - |
 | T1-BENCH-ORDER-PRE | MUST | field order and an R2 argv for one bench run | T1-BENCH-ROUNDS | - | yes |
 | T1-GH-ISSUES | MUST | list issues by label, create a labelled issue | - | W1 or W2 | - |
-| T1-REVIEW-FOLLOWUP-ISSUE | MUST | one follow-up issue per shipped card | T1-FINDING-IDENTITY, T1-GH-ISSUES | W2 (with the arms run) | - |
+| T1-REVIEW-FOLLOWUP-CORE | MUST | complete label list, follow-up findings and issue body (replaces T1-REVIEW-FOLLOWUP-ISSUE with the next card) | - | - | - |
+| T1-REVIEW-FOLLOWUP-ISSUE-2 | MUST | the followups closure step, at most one submission per run | T1-REVIEW-FOLLOWUP-CORE, T0-ADVISORY-WITHDRAW | - | - |
 | T1-ARMS-REPORT | MUST | the measured report and the goal's CHANGELOG entry | T1-REPLAY-CLEAN, T1-BENCH-ORDER-PRE (T1-REVIEW-FOLLOWUP-ISSUE dropped: it stopped at R3 decision 4 for the owner) | - | - |
 
 W1 cards have disjoint allow_paths. Only T1-ARMS-REPORT edits CHANGELOG.md.
@@ -122,8 +126,9 @@ W1 cards have disjoint allow_paths. Only T1-ARMS-REPORT edits CHANGELOG.md.
   share is measured on a biased sample; arms.md says so.
 - The `deepseek` CLI prints no usage; the billed cost is the balance difference over each batch,
   so a per-review median is not available and the mean stands for it (stated in arms.md).
-- Filing an issue is outward-facing. It is idempotent by a marker in the issue body, runs only on
-  the github ship path, and only at CLOSE after the merge is verified.
+- Filing an issue is outward-facing. It runs only on the github ship path, only at CLOSE after the
+  merge is verified, and submits at most once per run; a submission whose outcome is unknown is
+  found by the marker on the last line of the issue, or skipped by the operator with a reason.
 - The follow-up step adds a store write to `card close`; the fault-point test covers it.
 - A card that stops at R3 runs unattended: open P2 or advisory findings are deferred by the
   owner's standing instruction of 2026-11-16 to a follow-up card; an open P0 or P1 keeps the stop.
