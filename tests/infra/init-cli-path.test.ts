@@ -99,20 +99,22 @@ describe('T0-INIT-CLI-PATH: initCli', () => {
   });
 });
 
-/** A copy of `source` whose only PATH, in any letter case, is `pathDir`; every other own variable, enumerable or not and `__proto__` included, is an own data property of the copy. */
+/** A copy of `source` whose only PATH, in any letter case, is `pathDir` and whose only PATHEXT is `.CMD`; every other own variable, enumerable or not and `__proto__` included, is an own data property of the copy. */
 function envWithPath(source: NodeJS.ProcessEnv, pathDir: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   const define = (name: string, value: unknown) => Object.defineProperty(env, name, { value, enumerable: true, configurable: true, writable: true });
-  for (const name of Object.getOwnPropertyNames(source)) if (name.toUpperCase() !== 'PATH') define(name, Reflect.get(source, name));
+  for (const name of Object.getOwnPropertyNames(source)) if (!['PATH', 'PATHEXT'].includes(name.toUpperCase())) define(name, Reflect.get(source, name));
   define('PATH', pathDir);
+  define('PATHEXT', '.CMD');
   return env;
 }
 
 describe('T0-INIT-CLI-PATH: the init report', () => {
-  test('acceptance 3: the child environment drops every spelling of PATH and keeps a non-enumerable variable and one named __proto__ [R4]', () => {
-    const source: NodeJS.ProcessEnv = { Path: 'a', PATH: 'b', path: 'c', Kept: 'k', PATHEXT: '.CMD' };
+  test('acceptance 3: the child environment replaces every spelling of PATH and PATHEXT and keeps a non-enumerable variable and one named __proto__ [R4]', () => {
+    const source: NodeJS.ProcessEnv = { Path: 'a', PATH: 'b', path: 'c', Kept: 'k', PATHEXT: '.EXE;.PS1', PathExt: '.PS1' };
     Object.defineProperty(source, 'Hidden', { value: 'h', enumerable: false });
     Object.defineProperty(source, 'pAtH', { value: 'd', enumerable: false });
+    Object.defineProperty(source, 'pathext', { value: '.COM', enumerable: false });
     Object.defineProperty(source, '__proto__', { value: 'p', enumerable: true });
     const env = envWithPath(source, 'dir');
     assert.deepEqual(Object.getOwnPropertyNames(env).sort(), ['Hidden', 'Kept', 'PATH', 'PATHEXT', '__proto__'].sort());
