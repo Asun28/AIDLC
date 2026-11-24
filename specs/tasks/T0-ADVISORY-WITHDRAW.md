@@ -61,3 +61,44 @@ npm run typecheck && node --test tests/scenarios/advisory-withdraw.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: the new tests pass and the existing withdrawal, pin, amend-continue, fault-point and review-rule-ship tests pass unchanged.
+
+## PR summary
+### What
+`aidlc card withdraw` now accepts a candidate whose latest R3 decision is an advisory block. After such a block, `aidlc card next` at SHIP does not ship a moved HEAD.
+
+### Why / Intent
+Issue 449. After an advisory R3 finding, no command could bind the fix commit. The ship then failed on a stale verdict and stopped with a wrong reason.
+
+### How / Behaviour
+`withdrawalRefusal` reads the latest R3 decision on the candidate and admits an advisory block. After an advisory block, `CardRunner.ship` reads the checkout HEAD after the R3 gate. When HEAD is not the candidate, it returns a `candidate-moved` wait and writes nothing. A pass or a ruled pass ships as before, by the owner's ruling. A ruled pass also refuses a withdrawal, whatever follows it.
+
+### System impact
+Only the card runner and the CLI help text change. A pass and a merge-blocking block still refuse a withdrawal.
+
+### Security
+No new input, network call or credential.
+
+### Tests and review
+`tests/scenarios/advisory-withdraw.test.ts` uses real git and a scripted reviewer. The existing withdrawal, pin, amend-continue, fault-point and review-rule-ship tests pass unchanged. R3 reviews the candidate.
+
+### Risk
+Low. A HEAD read that fails ships as before. The guard runs only in a git repository, with a recorded candidate sha whose latest R3 decision is an advisory block.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and `changelog.d/T0-ADVISORY-WITHDRAW.md` state the change.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/advisory-withdraw.test.ts`, the three `acceptance 1` tests. RED at b9e23dd911: `card next` returned `close` (the moved HEAD merged). HEAD at the candidate and a HEAD that cannot be read ship as on main | pass after the fix |
+| 2 | Same file, test `acceptance 2`. RED at b9e23dd911: the withdrawal was refused with `R3 decided candidate` | pass after the fix |
+| 3 | Same file, the four `acceptance 3` tests: spec block (after a dispute settles the repair) and pass refuse with nothing written; after a pass, HEAD at the candidate and HEAD moved past it both ship with no `candidate-moved` wait (these four also pass on main) | pass |
+| 4 | DoD: `candidate-withdraw`, `candidate-pins`, `card-amend-continue`, `fault-points`, `review-rule-ship` (acceptance 7 still ends in the stale-verdict stop) unchanged | pass |
+| 5 | `src/cli/main.ts` withdraw description, the docs and the fragment; `changelog-fragments`, `prose` | reviewer-verified; pass |
+| 6 | Same file, test `acceptance 6`. RED at 5b86f598: the withdrawal was admitted (no exception) | pass after the fix |
+| 7 | Same file, test `acceptance 7` (base-sync R3, F3). RED at e4d1f890: `card next` returned the `candidate-moved` wait | pass after the fix |
+
+Guards: each of nine loosened in turn; a test of this file caught seven. `equivalent:` `invocationBlocking` in `movedHead`, since a merge-blocking block gets REVIEW_FIX, a review directive or a stop before this point of `ship`. `equivalent:` `isGit` in `movedHead`, since outside a git repository the HEAD read throws, with the same result.
