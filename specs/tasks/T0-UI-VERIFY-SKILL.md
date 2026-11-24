@@ -70,7 +70,7 @@ No source file changes. The loop has no new gate, state or configuration key.
 ### Security
 The skill permits made-up data only. It keeps captures outside the worktree and out of git.
 ### Tests and review
-Two test files failed before the skill and pass with it. One trial followed the skill on a scratch page. The first two formal reviews found three defects, and this version corrects them.
+Two test files failed before the skill and pass with it. One trial followed the skill on a scratch page. The first three formal reviews found four defects, and this version corrects them.
 ### Risk
 The audit does not report an old capture as stale. The documents state this limit.
 ### Ownership
@@ -84,7 +84,7 @@ RED `7fff6de2dc0fa8a0759ca58400c855d39ca14261`: `.claude/skills/ui-verify/SKILL.
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/infra/init.test.ts`: the list of an empty directory and the Setup sentence | pass (failed at RED) |
-| 2 | `tests/surface/templates.test.ts`, the new test; the file is 2828 of 3000 bytes | pass (failed at RED) |
+| 2 | `tests/surface/templates.test.ts`, the new test; the file is 2943 of 3000 bytes | pass (failed at RED) |
 | 3 | `tests/surface/mirror.test.ts` and `tests/surface/readme.test.ts`, no change | pass |
 | 4 | the skill text and the OPERATIONS paragraph after the Companion skills table | for the reviewer |
 | 5 | the trial below | met, with the steps not run listed |
@@ -99,4 +99,4 @@ Trial, outside the worktree in `C:\Users\Admin\AppData\Local\Temp\claude\ba63031
 | save, through `verify-page` | `node ../drive.mjs page.html ../captures/item1-skill-run.png "Saved: Sample note"` | `Saved: Sample note` | `Saved: Sample note`, exit 0 | `item1-skill-run.png`, sha256 as in row 2 | Met |
 | video, numbered captures, device bridge, retain | the skill | not run | the item has no motion, timing or second step, and no device; retain follows the recorded success | none | Unverified |
 
-R3 decision 1 blocked on one id for several captures (F2, F3, F5, F6: each file has its own id in both copies) and on trial commands without their arguments (F1, F4: the list above). The repair hunks are text that a person or agent follows; they read no input and add no I/O, so no test row and no `review repro` applies (acceptance 4 is reviewer-verified). The two copies of the skill hold the only retain command with an id in the diff. R3 decision 2 blocked on an assertion that the skill did not record beside its capture: both copies now ask for a row per capture and a retain note, the trial is recorded in that form, and the description names both conditions of R2.
+R3 decision 1 blocked on one id for several captures (F2, F3, F5, F6: each file has its own id in both copies) and on trial commands without their arguments (F1, F4: the list above). The repair hunks are text that a person or agent follows; they read no input and add no I/O, so no test row and no `review repro` applies (acceptance 4 is reviewer-verified). The two copies of the skill hold the only retain command with an id in the diff. R3 decision 2 blocked on an assertion that the skill did not record beside its capture: both copies now ask for a row per capture and a retain note, the trial is recorded in that form. R3 decision 3 blocked on a third trigger in the description (F9, F10): both copies now name the two conditions of R2 only, and the set-up section opens with the first of them.

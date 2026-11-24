@@ -3,9 +3,8 @@ name: ui-verify
 description: >-
   Runtime check of a user-visible interface change: run the app, drive the
   changed flow, keep screenshots, and video when motion or timing matters.
-  Use when a card's acceptance asks for it, when the card changes a file
-  the project's interface verify skill covers, or to write that skill.
-  Not for a change a user cannot see.
+  Use when an acceptance item asks for it or the card changes a file that
+  the project's interface verify skill covers. Never otherwise.
 ---
 # ui-verify: run it, drive it, keep the proof
 
@@ -14,8 +13,9 @@ changes a file that the project's interface verify skill covers. Otherwise
 do nothing. It adds no gate: the DoD and the reviews decide as before.
 
 ## Set up once per interface
-Write `.claude/skills/verify-<surface>/SKILL.md` from what the repository
-holds, with no placeholder left:
+When an acceptance item asks for the check and the project has no verify
+skill for that interface, write `.claude/skills/verify-<surface>/SKILL.md`
+from what the repository holds, with no placeholder left:
 - Coverage: the interface paths, and the sync commit, the commit on the
   base branch at which the check was last confirmed.
 - Launch: the start command, the sign that the app is usable (not only
@@ -31,7 +31,7 @@ Run it end to end once before it is committed.
 1. Capture before (on the base) and after (on the candidate), at the same
    viewport and with the same data. A new screen has no before: say so.
 2. Assert the end state as text, role or stored data, and record the
-   assertion beside its capture: one row per capture in the table of
+   assertion beside its capture: one row per capture, in the columns of
    `.claude/agents/verifier.md`, with the expected state, the observed
    state, the capture and the verdict. A picture alone is not a pass.
 3. Record video only when the item concerns motion, timing or a flow of
@@ -47,7 +47,8 @@ Write captures outside the worktree and never commit them. After
 
     aidlc evidence retain --goal <goal> --card <card> --candidate <digest> --kind <screenshot|video> --id <card>-<sha7>-<item>-<capture>.<ext> --file <path> --note "<expected>; <observed>; <verdict>"
 
-`<sha7>` is the candidate commit and `<capture>` is `before`, `after`,
-`step-<n>` or `video`. Give every file its own id: an id used again
-replaces the earlier file. After a candidate that changes a covered file,
-take new captures: the audit does not report an old one as stale.
+`<sha7>` is the start of the candidate commit, `<item>` the number of
+the acceptance item and `<capture>` is `before`, `after`, `step-<n>` or
+`video`. Give every file its own id: an id used again replaces the
+earlier file. After a candidate that changes a covered file, take new
+captures: the audit does not report an old one as stale.
