@@ -1,0 +1,1 @@
+- T0-INCIDENT-CI-RECIPE: `docs/OPERATIONS.md`, Incident -> intent, gives an opt-in recipe for running `aidlc monitor check --file-intent` on a schedule in a project's own CI: what the job supplies, what a fresh runner loses and one way to keep each, that two runs must not overlap, and that no model credential is needed. No command changes.
