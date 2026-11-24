@@ -95,3 +95,52 @@ npm run typecheck && node --test tests/infra/bounds.test.ts tests/surface/bounds
 ```
 - Expected exit code: 0
 - Assertion: the fixture gives the acts, the actors, the stopped runs and the three lines of this card, the three whole-text assertions hold the new lines, and the README, command-line, changelog and prose checks pass.
+
+## PR summary
+
+### What
+`aidlc bounds` now reports the recorded owner acts by month and who recorded them. It also reports the card runs left in STOP by month.
+
+### Why / Intent
+The owner records acts that keep a run going, and no command counted them by month. The study of Anthropic's articles asks for this measure before a gate changes.
+
+### How / Behaviour
+The JSON form gets `acts`, `actors` and `stopped`. The line form gets three lines after `Extensions:`. An extension is late when it comes after the deadline in force before it.
+
+### System impact
+Only `src/state/bounds.ts` changes under `src/`. No command changes what it does, and no record changes.
+
+### Security
+The command adds no input, network call or write. Each `by` text goes through `asciiJson` before it reaches a line.
+
+### Tests and review
+`tests/infra/bounds.test.ts` holds the fixture of the card and the edge cases. `tests/surface/bounds.test.ts` reads the command. R3 reviews the candidate.
+
+### Risk
+Low. A script that reads exactly two lines of the line form now gets five lines.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/OPERATIONS.md`, `README.md` and `changelog.d/T0-BOUNDS-OWNER-ACTS.md` state the change.
+
+## Attempt evidence
+RED at a95ce1ad: 23 of the 41 tests of the two files failed. The new tests failed because `BoundStats` held no `acts`, `actors` or `stopped`, and the whole-text assertions because the line form had two lines.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/bounds.test.ts`, the describe block `acceptance 1`: the fixture, the five named cases and the rounding, array-order, month-opening and code-unit cases | pass after the change |
+| 2 | Same file, the describe block `acceptance 2`: the four runs, the unknown goal, a run not in STOP or with no stop, the StopReason order | pass after the change |
+| 3 | Same file, the describe block `acceptance 3`: the fixture lines, the Stopped line, the none lines, the brackets, the escaped `by` text | pass after the change |
+| 4 | The three whole-text assertions gain the new lines; the surface test reads the empty lists and its `Payload` type names the three keys; no other assertion of either file changed | pass after the change |
+| 5 | `docs/OPERATIONS.md` (R1 to R7, the four limits, "five lines"), `README.md`, the fragment; `readme`, `command-lines`, `changelog-fragments` and `prose` tests | reviewer-verified; pass |
+| 6 | DoD arm 1, `npm run typecheck` | pass |
+
+Fixture values: `summarizeBounds` and `formatBounds` give the values of the Fixture section, and the three lines of the real records equal the prototype's on the same records (2026-11-24).
+
+Guards: 33 loosened forms of the new conditions were run one at a time against `tests/infra/bounds.test.ts`, and a test failed for each.
+
+Mutants: `aidlc card mutants` at 5b1b5ffe ran 18 mutants under the DoD, 17 killed and 1 survived. `equivalent:` the survivor, `a < b` to `a <= b` in the sort of `grouped`, since the keys of a Map are distinct and no comparison sees two equal ones.
+
+DoD: exit 0; tests 83, pass 83, fail 0.

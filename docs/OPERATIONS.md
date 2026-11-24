@@ -537,18 +537,34 @@ Before a pass or a block is written, on either path, the runner creates `refs/ai
 `summarizeBounds` (`src/state/bounds.ts`, card T1-BOUND-STATS) counts how often each loop bound fired, in the README Limits order: Card admission, Arc admission, Reconciliation grace, Substantive review decisions, No-verdict retry, Transient CI rerun, Implementation attempts, Planning invocations, Integration repair cycles. Lifecycle repair cycles (not enforced in code) and Card workers (a cap, not a firing) are not counted.
 
 ```bash
-aidlc bounds [--goal <id>]   # JSON when stdout is not a TTY, two lines otherwise
+aidlc bounds [--goal <id>]   # JSON when stdout is not a TTY, five lines otherwise
 ```
 
-The line form is `Bounds: <bound> <fired> (DONE n, STOP/<reason> n, open n); ...` with only the bounds that fired, `DONE` and `open` always printed and one `STOP/<reason>` per goal stop reason with a nonzero count, in StopReason order; `Bounds: none fired` when nothing fired. The second line is `Extensions: <goalId> <n>; ...` for the goals with at least one deadline extension, else `Extensions: none`. The JSON form carries all nine bounds with their counts and every goal's extension count. Goal ids are printed as JSON strings with every code point outside U+0020..U+007E escaped; a `--goal` value that is not a plain identifier is refused without being echoed.
+The line form is `Bounds: <bound> <fired> (DONE n, STOP/<reason> n, open n); ...` with only the bounds that fired, `DONE` and `open` always printed and one `STOP/<reason>` per goal stop reason with a nonzero count, in StopReason order; `Bounds: none fired` when nothing fired. The second line is `Extensions: <goalId> <n>; ...` for the goals with at least one deadline extension, else `Extensions: none`. The other three lines are in the next paragraphs. The JSON form carries all nine bounds with their counts, every goal's extension count, and `acts`, `actors` and `stopped`. Goal ids and `by` texts are printed as JSON strings with every code point outside U+0020..U+007E escaped; a `--goal` value that is not a plain identifier is refused without being echoed.
 
 A firing is counted from persisted fields only, never from `detail` text: card bounds once per card run (the run of a card a revision removed or superseded included), goal bounds once per goal. A bound counts when it was reached (for example `review.substantiveDecisions` at 2, `counters.planningInvocations` at 2, an escalated attempt) or when its STOP is on the record. A card time STOP counts as Card admission only when the run deadline is before the goal's effective deadline, and a goal time STOP counts as Arc admission only when it is at or after that deadline, so a card time STOP the controller copied to the goal counts once. A time STOP with unresolved operations is Reconciliation grace. A ci STOP with no rerun for the candidate, an R2 exhaustion, an ownership STOP and a checkpoint STOP with a `planRef` count under no bound.
 
-Three limits of the count:
+Owner acts (card T0-BOUNDS-OWNER-ACTS). `summarizeBounds` counts four kinds of act from the records it is given: an entry of `deadlines.extensions` of a goal, an entry of `continuations` of a card run, an entry of `amendments` of a card run, and a finding of a card run that holds a `ruling` (one act per ruled finding, at `ruling.at`). Each counts under the UTC calendar month `YYYY-MM` that is the first seven characters of its `at`.
+
+- `acts` holds one entry per month with at least one act, earliest month first, with `month`, `extensions`, `extensionsAfterDeadline`, `hoursLateMedian`, `continuations`, `hoursFromStopMedian`, `amendments` and `rulings`. An extension counts in `extensionsAfterDeadline` when its `at` is later than the deadline in force before it: `goalDeadline` for the first entry of a goal's `extensions`, and the `newDeadline` of the entry before it for every other entry, in the order of the array. `hoursLateMedian` is the median of `at` minus that deadline over the month's extensions after the deadline, and `hoursFromStopMedian` the median of `at` minus `stop.at` over the month's continuations. Each is in hours, the lower of the two middle values for an even count, rounded to one decimal place, and `null` when the month has no such entry.
+- `actors` holds one entry per distinct `by` text of the acts, the empty text included, ordered by that text in code unit order, with `by` and the four counts `extensions`, `continuations`, `amendments` and `rulings`.
+- `stopped` holds one entry per month of `stop.at` with at least one card run that is in `STOP`, has a `stop`, and whose goal, when the records given hold it, is neither `DONE` nor stopped with the reason `cancelled`; earliest month first, with `month` and `reasons`, the count of those runs per stop reason in StopReason order with no zero entry.
+
+After the `Extensions:` line, the line form prints:
+
+- `Acts: <month> extensions <n>[ (<m> after the deadline[, median <h> h late])], continuations <n>[ (median <h> h after the stop)], amendments <n>, rulings <n>; ...`, the first bracket when the extensions are above 0, the median inside it when `<m>` is above 0, the continuation bracket when the continuations are above 0, and `<h>` always with one decimal; `Acts: none` when no act is recorded.
+- `By: <by as a JSON string> extensions <n>, continuations <n>, amendments <n>, rulings <n>; ...`; `By: none` when no act is recorded.
+- `Stopped: <month> <reason> <n>[, <reason> <n>]; ...`; `Stopped: none` when no run is counted.
+
+Seven limits of the count:
 
 - A time STOP lifted by `aidlc goal extend` is not counted: the extension clears the goal stop and re-admits the time-stopped runs, so the STOP is no longer in either record. The extension count is reported instead.
 - The outcome of a firing is its goal's current state (DONE, STOP/<goal stop reason>, or open), not the first terminal event after the firing; a card-run firing takes the goal named by `run.goalId`.
 - Records are read one at a time with no snapshot across files: a goal or card run the loop writes during the command can be read before or after that write. A record that cannot be read or fails its schema stops the command with exit 1, naming the file and its error code (`READ_FAILED`, `MALFORMED_JSON`, `SCHEMA_VIOLATION`). The command writes no file and appends no journal line.
+- An act is counted as recorded: an extension recorded by a coordinator under a delegation and one recorded by the owner differ only in their `by` text.
+- An extension granted before a deadline passed and one granted to lift a time stop are both extensions; only `extensionsAfterDeadline` tells them apart.
+- `stopped` counts runs left in `STOP`, a run whose card a later card replaced included; it does not say that anyone is awaited.
+- A ruling is counted per finding, so one occasion on which the owner ruled several findings counts several times.
 
 ### Review statistics
 
