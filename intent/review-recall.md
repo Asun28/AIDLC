@@ -143,5 +143,20 @@ not evidence.
   reason in the commit or card amendment that applies it. This does not
   widen the ruling rule above.
 
+## Decisions (owner, 2026-11-25, in the session)
+- T1-ARMS-REPORT stays stopped at R3 decision 4, and a successor card,
+  T1-ARMS-REPORT-2, publishes the report of the arms run. The candidate of
+  the stopped card, 3c570324, fails its own tests on main: it read every
+  file of evals/review/clean/ as a clean case of the run, and
+  T1-BENCH-CLEAN-40-2 took that directory from 15 to 41 files.
+- The report publishes the spend of each batch and no balance of the
+  DeepSeek account. The owner's words: "have the new card publish the spend
+  per batch without the balances". The arms.json and arms.md of the stopped
+  candidate state the balances, so its branch is not pushed and no commit
+  of it is merged.
+- The coordinator and Codex gpt-6-astra (read-only) checked the successor
+  card in three rounds, Codex answering CONFIRM in the third. The owner
+  then approved its registration and its run: "register and run".
+
 ## Open questions
 - (none)

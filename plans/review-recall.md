@@ -74,7 +74,7 @@ the report card carries their reports.
 - tests/surface/outcome-arms.test.ts (new)
 - docs/OPERATIONS.md
 - docs/ARCHITECTURE.md
-- CHANGELOG.md
+- changelog.d/T1-ARMS-REPORT-2.md (new)
 
 ## Order of work
 1. T1-REVIEW-SEVERITY: the severity tag in REVIEW.md, the contract and the finding record; stats
@@ -96,8 +96,14 @@ the report card carries their reports.
    complete and adds the pure functions; ISSUE-2 adds the `followups` closure step with at most one
    issue submission per run. Both branch from main, ISSUE-2 after CORE and T0-ADVISORY-WITHDRAW
    have merged. Code of 2a87bf7c may be reused where it meets the new requirements.
-7. T1-ARMS-REPORT: arms.json, arms.md, the goal's CHANGELOG entry. Depends on 2, 4a, 6 and the
-   reports of 5.
+7. T1-ARMS-REPORT-2: arms.json, arms.md, the goal's changelog fragment. It replaces
+   T1-ARMS-REPORT, which stopped at R3 decision 4 and stays stopped. The candidate of that card,
+   3c570324, read every file of evals/review/clean/ as a clean case of the run, so its own tests
+   fail on main since T1-BENCH-CLEAN-40-2, and its arms.json and arms.md state account balances.
+   The successor keeps the cases of the run in arms.json and publishes the spend of each batch
+   with no balance (owner, 2026-11-25). Depends on 2, 4a, the reports of 5 and
+   T0-REVIEW-REPORT-SCRIPTS. Code of 3c570324 may be reused where it meets the new requirements,
+   copied by content: the branch of the stopped card is not merged and not pushed.
 
 The bench options and the follow-up issue are split in two cards each: a `src/` card is capped
 at a budget of 250 (`MAX_CODE_CARD_BUDGET`) and no size exception is recorded.
@@ -113,9 +119,9 @@ at a budget of 250 (`MAX_CODE_CARD_BUDGET`) and no size exception is recorded.
 | T1-GH-ISSUES | MUST | list issues by label, create a labelled issue | - | W1 or W2 | - |
 | T1-REVIEW-FOLLOWUP-CORE | MUST | complete label list, follow-up findings and issue body (replaces T1-REVIEW-FOLLOWUP-ISSUE with the next card) | - | - | - |
 | T1-REVIEW-FOLLOWUP-ISSUE-2 | MUST | the followups closure step, at most one submission per run | T1-REVIEW-FOLLOWUP-CORE, T0-ADVISORY-WITHDRAW | - | - |
-| T1-ARMS-REPORT | MUST | the measured report and the goal's CHANGELOG entry | T1-REPLAY-CLEAN, T1-BENCH-ORDER-PRE (T1-REVIEW-FOLLOWUP-ISSUE dropped: it stopped at R3 decision 4 for the owner) | - | - |
+| T1-ARMS-REPORT-2 | MUST | the measured report, with the spend of each batch and no account balance, and the goal's changelog fragment (replaces T1-ARMS-REPORT) | T1-REPLAY-CLEAN, T1-BENCH-ORDER-PRE, T1-CHANGELOG-FRAGMENTS, T0-REVIEW-REPORT-SCRIPTS | - | - |
 
-W1 cards have disjoint allow_paths. Only T1-ARMS-REPORT edits CHANGELOG.md.
+W1 cards have disjoint allow_paths. No card of this plan edits CHANGELOG.md: T1-ARMS-REPORT-2 writes the goal's entry as its fragment under changelog.d/.
 
 ## Risks
 - The severity instruction changes R3's prompt, so it can change recall. The arms compare paired
