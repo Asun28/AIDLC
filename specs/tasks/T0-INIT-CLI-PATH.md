@@ -1,7 +1,7 @@
 ---
 id: T0-INIT-CLI-PATH
 title: "aidlc init prints the node command to run when aidlc is not on PATH, and the aidlc-loop skill and the CLAUDE.md section say what to run in place of aidlc"
-status: todo
+status: merged
 branch: T0-INIT-CLI-PATH
 worktree: D:\wt\AIDLC\T0-INIT-CLI-PATH
 allow_paths:
