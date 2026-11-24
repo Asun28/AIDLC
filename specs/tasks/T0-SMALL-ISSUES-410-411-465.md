@@ -1,7 +1,7 @@
 ---
 id: T0-SMALL-ISSUES-410-411-465
 title: "Three small fixes in one card: a lift earlier than the goal's current stop re-admits nothing (issue 410), a ci rerun of card continue refuses --decisions (issue 411), and parseIntent reads a wrapped open question as one (issue 465)"
-status: todo
+status: merged
 branch: T0-SMALL-ISSUES-410-411-465
 worktree: D:\wt\AIDLC\T0-SMALL-ISSUES-410-411-465
 allow_paths:
