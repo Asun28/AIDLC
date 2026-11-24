@@ -1,7 +1,7 @@
 ---
 id: T0-BOUNDS-OWNER-ACTS
 title: "`aidlc bounds` reports the recorded owner acts by month (deadline extensions and how many came after the deadline, continuations, amendments, rulings), who recorded them, and the card runs left in STOP by month"
-status: todo
+status: merged
 branch: T0-BOUNDS-OWNER-ACTS
 worktree: D:\wt\AIDLC\T0-BOUNDS-OWNER-ACTS
 allow_paths:
