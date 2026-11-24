@@ -1,7 +1,7 @@
 ---
 id: T0-LAYER-ORDER-TEST
 title: "CLAUDE.md states the layer order the tree obeys, and a test reads every import under src/ from the syntax tree and fails on an import against that order, on a dependency of src/core/ on another directory or on a Node built-in other than crypto, on a cycle between top-level units, and on a unit that is in no list"
-status: todo
+status: merged
 branch: T0-LAYER-ORDER-TEST
 worktree: D:\wt\AIDLC\T0-LAYER-ORDER-TEST
 allow_paths:
