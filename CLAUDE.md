@@ -43,8 +43,8 @@ cards follow the same shape through `aidlc card next <id>` /
 `aidlc card attempt <id>`.
 
 **Layers, inner to outer** (`src/`): `core/` (pure decision engines, no I/O),
-`state/`, `coordination/`, `probes/`, `delivery/`, `review/`, `loop/`, `hooks/`,
-`cli/` and `scaffold/`. `docs/ARCHITECTURE.md`, Module map, describes each.
+`scaffold/`, `probes/`, `state/`, `coordination/`, `delivery/`, `review/`,
+`loop/`, `hooks/` and `cli/`. `docs/ARCHITECTURE.md`, Module map, describes each.
 Runtime details: state lives under `<main checkout>/.aidlc/`, shared
 by all worktrees; every `ShipPath` adapter (`scaffold`, `github`, `dry-run`)
 prints the same scaffold-style sentinels so `classifyShipOutput` maps outcomes

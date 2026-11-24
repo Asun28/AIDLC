@@ -63,9 +63,15 @@ export type Mergeable = (typeof MERGEABLE)[number];
 export const MERGE_STATE_STATUS = ['BEHIND', 'BLOCKED', 'CLEAN', 'DIRTY', 'DRAFT', 'HAS_HOOKS', 'UNKNOWN', 'UNSTABLE'] as const;
 export type MergeStateStatus = (typeof MERGE_STATE_STATUS)[number];
 
-/** One issue as `gh issue list --json number,body` prints it (T1-GH-ISSUES). */
-const IssueListSchema = z.array(z.object({ number: z.number().int(), body: z.string() }));
-export type IssueEntry = z.infer<typeof IssueListSchema>[number];
+/** One page of `GET /repos/<repo>/issues` (card T1-REVIEW-FOLLOWUP-CORE): a pull request carries `pull_request`; an issue without a body has null. */
+const IssuePageSchema = z.array(z.object({ number: z.number().positive().refine(Number.isSafeInteger, 'not a safe integer'), body: z.string().nullable(), pull_request: z.unknown().optional() }));
+const ISSUES_PER_PAGE = 100;
+/** The pages `issuesWithLabel` reads before it throws rather than return a partial list. */
+const ISSUE_PAGES_MAX = 1000;
+export interface IssueEntry {
+  number: number;
+  body: string;
+}
 
 export class GhProbe {
   readonly runner: SyncRunner;
@@ -184,30 +190,49 @@ export class GhProbe {
     return r.exitCode === 0 && !r.timedOut ? r.stdout : undefined;
   }
 
-  /** Every issue that carries `label`, open or closed (listed by label, not by search, so a new issue is seen at once). Throws on a failed call or output that does not parse. */
+  /**
+   * Every issue that carries `label`, open or closed, in the order read; pull requests are left out. Read through the REST
+   * list page by page until a page with fewer than 100 entries, because `gh issue list --label` is a search query of GitHub.
+   * Throws on a failed call, on output that does not parse and after 1,000 full pages; it never returns a partial list.
+   */
   issuesWithLabel(repo: string, label: string, cwd?: string): IssueEntry[] {
-    const args = ['issue', 'list', '--repo', repo, '--label', label, '--state', 'all', '--limit', '100', '--json', 'number,body'];
-    const r = this.gh(args, cwd);
-    if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(args, r);
-    let raw: unknown;
-    try {
-      raw = JSON.parse(r.stdout);
-    } catch (err) {
-      throw new GhProbeError(args, r, `malformed JSON: ${(err as Error).message}`);
+    const out: IssueEntry[] = [];
+    for (let page = 1; page <= ISSUE_PAGES_MAX; page += 1) {
+      const args = ['api', `repos/${repo}/issues?labels=${encodeURIComponent(label)}&state=all&per_page=${ISSUES_PER_PAGE}&page=${page}`];
+      const r = this.gh(args, cwd);
+      if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(args, r);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(r.stdout);
+      } catch (err) {
+        throw new GhProbeError(args, r, `malformed JSON: ${(err as Error).message}`);
+      }
+      const parsed = IssuePageSchema.safeParse(raw);
+      if (!parsed.success) throw new GhProbeError(args, r, `unexpected issue list: ${parsed.error.message}`);
+      for (const i of parsed.data) if (i.pull_request === undefined) out.push({ number: i.number, body: i.body ?? '' });
+      if (parsed.data.length < ISSUES_PER_PAGE) return out;
     }
-    const parsed = IssueListSchema.safeParse(raw);
-    if (!parsed.success) throw new GhProbeError(args, r, `unexpected issue list: ${parsed.error.message}`);
-    return parsed.data;
+    throw new Error(`issues of ${repo} with the label ${label}: ${ISSUE_PAGES_MAX} pages in a row hold ${ISSUES_PER_PAGE} entries, so the list may be partial`);
   }
 
-  /**
-   * Creates (or updates) `label`, then an issue with that label and `body` on stdin; returns the issue number from the
-   * URL gh prints last. Throws, naming the call, on a failed call or stdout whose last line is not an issue URL of `repo`.
-   */
+  /** `ensureLabel`, then, when it succeeds, `submitIssue`; returns the issue number. */
   createIssue(repo: string, title: string, body: string, label: string, cwd?: string): number {
+    this.ensureLabel(repo, label, cwd);
+    return this.submitIssue(repo, title, body, label, cwd);
+  }
+
+  /** Creates (or updates) `label` and makes no other call; throws, naming the call, when it fails. */
+  ensureLabel(repo: string, label: string, cwd?: string): void {
     const labelArgs = ['label', 'create', label, '--repo', repo, '--force', '--description', 'aidlc review follow-ups'];
     const l = this.gh(labelArgs, cwd);
     if (l.exitCode !== 0 || l.timedOut) throw new GhProbeError(labelArgs, l);
+  }
+
+  /**
+   * Creates an issue with `label` and `body` on stdin and makes no other call; returns the issue number from the URL gh
+   * prints last. Throws, naming the call, on a failed call or stdout whose last line is not an issue URL of `repo`.
+   */
+  submitIssue(repo: string, title: string, body: string, label: string, cwd?: string): number {
     const issueArgs = ['issue', 'create', '--repo', repo, '--title', title, '--label', label, '--body-file', '-'];
     const r = this.runner('gh', issueArgs, { cwd, timeoutMs: 120_000, input: body });
     if (r.exitCode !== 0 || r.timedOut) throw new GhProbeError(issueArgs, r);
