@@ -27,8 +27,8 @@ The commands driven are `card attempt` (a success at BUILD), `review pre`
 (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3
 pass (ship to CLOSE), `card next` at SHIP past the card deadline
 (STOP/time) and `card close --followups` at CLOSE: a card-run write of
-`followupPending`, the issue submission, an EVIDENCE_RETAINED append and
-a card-run write of the issue. Its recovery runs the same close again and
+`followupPending`, the issue submission, a NOTE append and a card-run
+write of the issue. Its recovery runs the same close again and
 submits nothing once the pending record is stored; a submission that
 never reached GitHub ends without an issue, by
 `card close --skip-followups`. Invariants I1 to I6 and the liveness comparison are in the

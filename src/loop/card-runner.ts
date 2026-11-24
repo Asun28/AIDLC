@@ -3915,7 +3915,7 @@ export class CardRunner {
           if (pending && target !== undefined && !(target && pending.repository === target.repository && pending.marker === target.marker)) throw new Error(`a submission for ${pending.marker} in ${pending.repository} was stored meanwhile by session ${pending.by}`);
           return { ...rest, closure: { ...stored.closure, followups: true }, followupIssue: issue, ...(note === undefined ? {} : { followupNote: note }) };
         },
-        (next) => void this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: next.closure, followupIssue: issue, ...(note === undefined ? {} : { followupNote: note }) } }),
+        (next) => void this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'followups-recorded', closure: next.closure, followupIssue: issue, ...(note === undefined ? {} : { followupNote: note }) } }),
       );
     if (skip !== undefined) return dispose(null, skip, undefined);
     const pending = run.followupPending;

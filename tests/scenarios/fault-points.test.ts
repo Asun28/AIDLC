@@ -170,7 +170,7 @@ const COVERED: Covered[] = [
   },
   {
     stage: 'F', name: 'F markClosure followups (card close --followups)', run: (c) => closeFollowups(c), again: (c) => closeFollowups(c),
-    writes: ['renameSync', 'appendFileSync EVIDENCE_RETAINED', 'renameSync'],
+    writes: ['renameSync', 'appendFileSync NOTE', 'renameSync'],
     ends: (_v, run) => differ(['state', run?.state, 'CLOSE'], ['closure.followups', run?.closure.followups, true], ['followupIssue', run?.followupIssue, 200], ['followupPending', run?.followupPending, undefined], ['followupNote', run?.followupNote, undefined]),
   },
 ];

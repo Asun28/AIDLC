@@ -195,7 +195,8 @@ test('T1-REVIEW-FOLLOWUP-ISSUE-2 acceptance 1: one list, one label and one submi
       assert.deepEqual(submit, ['issue', 'create', '--repo', REPO, '--title', `Review follow-ups: ${CARD}`, '--label', 'review-followup', '--body-file', '-']);
       assert.deepEqual(pendingAtSubmit, PENDING, 'the pending record is stored before the submit');
       recorded(fx, goalId, 101);
-      const event = fx.events(goalId).filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)!;
+      const event = fx.events(goalId).at(-1)!;
+      assert.deepEqual([event.type, event.data['kind']], ['NOTE', 'followups-recorded']);
       assert.equal(event.data['followupIssue'], 101, 'the journal names the issue');
       assert.equal((event.data['closure'] as Record<string, unknown>)['followups'], true);
     });
