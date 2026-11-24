@@ -1625,11 +1625,12 @@ export class CardRunner {
 
   /**
    * The directive for a review checkout whose HEAD is not the bound candidate, when the candidate's latest R3 decision is an
-   * advisory block; undefined otherwise, or when HEAD cannot be read. A pass or a ruled pass ships as before (owner's ruling).
+   * advisory block; undefined otherwise, or when HEAD cannot be read. A pass ships as before, and so does a ruled pass, the
+   * standing decision whatever invocation follows it (owner's ruling).
    */
   private movedHead(card: Card, run: CardRun): CardDirective | undefined {
     const sha = run.candidate?.sha;
-    if (!this.repo.isGit || sha === undefined) return undefined;
+    if (!this.repo.isGit || sha === undefined || this.ruledPass(run)) return undefined;
     const decided = [...run.review.invocations].reverse().find((i) => i.candidateDigest === run.candidate?.digest && (i.outcome === 'pass' || i.outcome === 'block'));
     if (decided?.outcome !== 'block' || this.invocationBlocking(run, card, decided)) return undefined;
     let head: string;

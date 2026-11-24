@@ -93,6 +93,6 @@ The aidlc loop maintainers.
 |---|---|---|
 | 1 | `tests/scenarios/advisory-withdraw.test.ts`, test `acceptance 1`. RED at b9e23dd911: `card next` returned `close` (the moved HEAD merged) | pass after the fix |
 | 2 | Same file, test `acceptance 2`. RED at b9e23dd911: the withdrawal was refused with `R3 decided candidate` | pass after the fix |
-| 3 | Same file, the four `acceptance 3` tests: spec block (after a dispute settles the repair) and pass refuse with nothing written; after a pass, HEAD at the candidate and HEAD moved past it both ship with no `candidate-moved` wait | pass (also on main) |
+| 3 | Same file, the five `acceptance 3` tests: spec block (after a dispute settles the repair) and pass refuse with nothing written; after a pass, HEAD at the candidate and HEAD moved past it both ship with no `candidate-moved` wait (these four also pass on main). Fifth (base-sync R3, F3): a ruled pass, then an advisory block and a moved HEAD, reaches the ship path; RED without the `ruledPass` condition in `movedHead`, where `card next` returned the `candidate-moved` wait | pass |
 | 4 | DoD: `candidate-withdraw`, `candidate-pins`, `card-amend-continue`, `fault-points`, `review-rule-ship` (acceptance 7 still ends in the stale-verdict stop) unchanged | pass |
 | 5 | `src/cli/main.ts` withdraw description, the docs and the fragment; `changelog-fragments`, `prose` | reviewer-verified; pass |
