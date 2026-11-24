@@ -87,16 +87,20 @@ a. The cost sums are named observed priced subtotals. `summary.json` records, pe
    earliest and the latest request the run read, as the coverage the run observed and not as
    a statement that the period is complete.
 b. Each run keeps its usage extract under a dated name and never changes it, with the price
-   card it used and, on every row, a request identity that names its source. A later run
-   joins the kept extracts and the live logs by that identity. For a Codex session the latest
-   cumulative observation replaces an earlier one and is never added to it. The spec states
-   the rule for a duplicate and for two records of one identity that differ, and a comparison
-   of two runs uses one price card.
+   card it used and, on every row, a request identity that names its source. The rows and
+   the price card go to a private archive that has a backup, and this repository holds one
+   manifest per extract; an extract counts as kept only when the archive copy matches the
+   hash in its manifest. A later run joins the kept extracts and the live logs by the
+   identity, under the rule of Decisions: a request that a later extract no longer holds
+   stays, the later observation of one identity replaces the earlier one and is never added
+   to it, and a conflict that cannot be ordered is reported and left out of the subtotals. A
+   comparison of two runs uses one price card.
 c. A `human_inputs` table holds counts only: session id, time, kind (typed or queued) and a
    deduplication identity, and no text.
 d. Before the rule of outcome 3 is adopted, it is compared with attribution rule 4
-   (`bench/outcome/README.md:90`) on a hand-labelled sample of requests. The comparison
-   reports the precision of each rule and the share of requests each leaves unattributed.
+   (`bench/outcome/README.md:90`) on a sample of requests that the owner labels by hand,
+   drawn and judged as Decisions states. The comparison reports the precision of each rule
+   and the share of requests each leaves unattributed.
 
 Part B, after card T1-DOD-GATE of `plans/execution-gate.md`:
 
@@ -128,13 +132,59 @@ Part B, after card T1-DOD-GATE of `plans/execution-gate.md`:
   changes.
 - A kept extract and the `human_inputs` table hold no message text.
 
+## Decisions (owner, 2026-11-24, in the session)
+The owner replied "apply codex advice" to the advice Codex gpt-6-astra gave on 2026-11-24 on
+five points the coordinator session had put to it. The coordinator read every line Codex
+cited and found each as described.
+
+- Kept extracts (outcome b). The rows and the price card are stored in a private archive
+  that has a backup, and not in this repository, which is public: a row holds a session id,
+  a working directory and agent ids, and `bench/outcome/summary.json` holds none of them.
+  The repository holds one manifest per extract: a name that names no session and no
+  directory, the SHA-256, the schema version, the row count, the observed coverage per
+  source and the hash of the price card. A manifest alone recovers no row. The suggestion of
+  2026-11-23, rows in a directory git ignores, is withdrawn: it keeps them on one machine,
+  which is the loss outcome b answers.
+- Identity and conflicts (outcome b). Identical observations count once. A Claude Code
+  request is (source, `message.id`, `requestId`), and the later observation by the order or
+  the timestamp of its source wins; a line without a `requestId` keeps an identity made of
+  its log and its place in it. A Codex session is (source, session id), and the latest valid
+  cumulative observation replaces the earlier one. A review log is (source, repository,
+  goal, relative log path), and a later total replaces an earlier one only when the later
+  file extends the same invocation. A request that a later extract no longer holds stays.
+  Counts in conflict are never added, and the larger is never chosen because it is larger. A
+  conflict that cannot be ordered (an identity is missing, the order cannot be told, a
+  cumulative total falls) is reported, and its identity is left out of the published
+  subtotals. The suggestion of 2026-11-23, the record read later wins, is withdrawn: the
+  totals would depend on the order of reading.
+- The sample (outcome d). 240 main-session requests drawn at random, 80 from each of three
+  strata: turns that name no card in the journal, turns that name exactly one, and turns
+  that name several. Requests before the first input of a session are audited and reported
+  apart. The selection probabilities are kept, the results are weighted back to requests and
+  to tokens, and the intervals account for requests that share a session. The rule under
+  test is frozen before the labelling starts. The owner labels each request without seeing
+  the answer of either rule, as one card, a set of cards, no card or not enough evidence. A
+  rule that names one card for a request labelled as a set is wrong there, and the requests
+  labelled not enough evidence are reported apart. The coordinator estimates 2 to 4 hours of
+  labelling with a view that shows the context of each request; that figure is not measured.
+- The figures that decide (outcome d). The rule of outcome 3 is adopted when its precision
+  is at least 95% by requests and by tokens, the lower end of each 95% interval is at least
+  90%, its precision is at most 2 points below that of rule 4, and it leaves at most 20% of
+  requests unattributed and at least 10 points fewer than rule 4. It is dropped when the
+  upper end of its precision interval is below 90%, or when it is worse than rule 4 on both
+  precision and unattributed share. In every other case it is kept beside rule 4, and rule 4
+  stays the default.
+- Sessions. `docs/OPERATIONS.md`, Coordinator sessions, stays as written: one coordinator
+  session per card until the sample supports a replacement. Goal g-20261123055908-a12102 is
+  a recorded exception: on 2026-11-23 one session coordinated both of its cards,
+  T1-CARD-WRITER-LESSONS and T1-PACK-KEEP-NEWEST, on the owner's word. The next outcome
+  report names that goal, gives its coordinator spend per card as an estimate and leaves the
+  shared work unallocated.
+- `aidlc intent validate` reads a wrapped question of the list below as one item per line
+  (issue 465).
+
 ## Open questions
 - Which goal runs under `aidlc run` for outcome 4, and with what spend ceiling?
 - For outcome 7, does the alternating assignment apply to interactive sessions (the
   implementer subagent's model) or only to workers the driver starts?
-- For outcome b, where are the kept extracts stored: committed beside `summary.json`, or in a
-  directory git ignores? Each row holds a session id and a working directory.
-- For outcome b, which record is kept when two extracts hold one identity with different
-  values? Suggestion of the coordinator session of 2026-11-23: the one read later, as
-  `claudeUsage` does within one run, with the count of replaced records reported.
-- For outcome d, how many requests are labelled by hand, and by whom?
+- Where is the private archive of outcome b: a private repository or a folder with a backup?
