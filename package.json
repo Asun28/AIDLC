@@ -32,6 +32,7 @@
     "test": "node --test --test-reporter=spec \"tests/**/*.test.ts\"",
     "test:watch": "node --test --watch \"tests/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
+    "check:tree": "node --test tests/core/parse-guard.test.ts tests/infra/update-json.test.ts tests/surface/layers.test.ts tests/surface/mirror.test.ts tests/surface/module-map.test.ts tests/surface/prose.test.ts tests/surface/test-audit.test.ts tests/surface/test-temp.test.ts",
     "dev": "node src/cli/main.ts",
     "evals": "node src/cli/main.ts evals run",
     "bench": "node bench/run.ts",
