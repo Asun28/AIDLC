@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-FOLLOWUP-CORE
 title: "The gh probe reads every page of the issues of a label through the REST list, and the follow-up findings of a card run and the body of their issue are pure functions"
-status: todo
+status: merged
 branch: T1-REVIEW-FOLLOWUP-CORE
 worktree: D:\wt\AIDLC\T1-REVIEW-FOLLOWUP-CORE
 plan_ref: plans/review-recall.md#order-of-work
