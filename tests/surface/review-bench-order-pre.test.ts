@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as bench from '../../src/review/bench.ts';
 import { renderCard } from '../../src/artifacts/card.ts';
@@ -37,7 +37,7 @@ interface Fixture {
 
 /** One base commit and one candidate changing line 13 of src/calc.ts, with one confirmed bug case at that line. */
 function fixture(preReview: Record<string, unknown> = PRE_OFF): Fixture {
-  const tmp = realpathSync.native(tmpDir('aidlc-order-pre-'));
+  const tmp = tmpDir('aidlc-order-pre-');
   const root = path.join(tmp, 'repo');
   const tmpRoot = path.join(tmp, 'tmp');
   mkdirSync(path.join(root, 'src'), { recursive: true });

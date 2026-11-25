@@ -1,4 +1,4 @@
-import fs, { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +16,7 @@ let exitHandlerRegistered = false;
  * A process that is killed before its exit handler runs leaves its directories.
  */
 export function tmpDir(prefix = 'aidlc-', parent = os.tmpdir()): string {
-  const dir = mkdtempSync(path.join(parent, prefix));
+  const dir = mkdtempSync(path.join(realpathSync.native(parent), prefix));
   tempDirs.add(dir);
   if (!exitHandlerRegistered) {
     exitHandlerRegistered = true;

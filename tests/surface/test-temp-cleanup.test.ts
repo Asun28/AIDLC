@@ -12,7 +12,7 @@ const helpersUrl = pathToFileURL(path.join(root, 'tests', 'infra', 'helpers.ts')
 
 /** Runs `fn` with a new empty scratch directory (canonical path) and removes it afterwards. */
 function inScratch<T>(fn: (scratch: string) => T): T {
-  const scratch = realpathSync.native(tmpDir('aidlc-ttscratch-'));
+  const scratch = tmpDir('aidlc-ttscratch-');
   try {
     return fn(scratch);
   } finally {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ReviewBenchCase } from '../../src/core/types.ts';
 import { formatBenchReport, loadBenchCases, runReviewBench, type ReviewBenchOptions } from '../../src/review/bench.ts';
@@ -43,7 +43,7 @@ interface Fixture {
 
 /** One base commit and four candidates, each changing one line of src/calc.ts and adding the card file. */
 function fixture(): Fixture {
-  const dir = realpathSync.native(tmpDir('aidlc-rbench-'));
+  const dir = tmpDir('aidlc-rbench-');
   const root = path.join(dir, 'repo');
   const tmpRoot = path.join(dir, 'tmp');
   mkdirSync(path.join(root, 'src'), { recursive: true });
