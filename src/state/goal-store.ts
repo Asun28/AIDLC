@@ -8,7 +8,7 @@ import { StoreError, atomicWriteJson, findInterruptedWrites, listJsonFiles, read
 import type { StatePaths } from './paths.ts';
 
 export interface GoalStoreOptions {
-  /** How long `updateCardRun` waits for the card-run lock before it refuses (default 2 s). */
+  /** How long `updateCardRun` and `updateGoal` wait for the lock of their record before they refuse (default 2 s). */
   lockTimeoutMs?: number;
 }
 
@@ -33,10 +33,48 @@ export class GoalStore {
     return path.join(this.paths.releases, `${attemptId}.json`);
   }
 
-  saveGoal(goal: Goal): Goal {
-    const next = Goal.parse({ ...goal, updatedAt: nowIso() });
-    atomicWriteJson(this.goalFile(goal.id), next);
-    return next;
+  /**
+   * A plain write of a goal, as a compare-and-set on `Goal.writes`: a snapshot read before another write landed is refused
+   * with `GOAL_STALE` before `within` runs, so the caller runs its command again on the current record. `within` is
+   * `updateGoal`'s. Returns the record as stored, which a further write of the caller must carry.
+   */
+  saveGoal(goal: Goal, within?: (write: () => void) => void): Goal {
+    return this.updateGoal(goal.id, (persisted) => {
+      this.refuseStale(persisted, goal);
+      return goal;
+    }, within);
+  }
+
+  /**
+   * Runs `section` under the goal lock on the record `goal` was read from, returns its result and writes no goal: a record another write changed
+   * since is refused with `GOAL_STALE`, and a lock that is held with `LOCKED`, before `section` runs.
+   */
+  withGoal<T>(goal: Goal, section: () => T): T {
+    let out: T | undefined;
+    this.updateGoal(goal.id, (persisted) => {
+      this.refuseStale(persisted, goal);
+      out = section();
+      return persisted!;
+    });
+    return out as T;
+  }
+
+  /** Refuses, with `GOAL_STALE`, a record `persisted` that another write changed since `goal` was read. */
+  refuseStale(persisted: Goal | undefined, goal: Goal): void {
+    if (persisted && persisted.writes !== goal.writes) throw new StoreError('GOAL_STALE', this.goalFile(goal.id), `goal ${goal.id} changed since it was read (write ${persisted.writes} persisted, ${goal.writes} read); run the command again`);
+  }
+
+  /**
+   * The one read-modify-write of a goal record, under the lock of the goal file (`updateJson`, card T1-GOAL-UPDATE): `change`
+   * receives the record as stored and returns the one to write, which takes the next count of `writes`. A change that returns
+   * the record it received writes nothing. Not reentrant: no change calls another write of the same goal. It nests inside the
+   * goal lease lock and outside the card-run, card-lease and journal locks.
+   */
+  updateGoal(goalId: string, change: (current: Goal | undefined) => Goal, within?: (write: () => void) => void): Goal {
+    return updateJson(this.goalFile(goalId), Goal, (persisted) => {
+      const next = change(persisted);
+      return next === persisted ? next : Goal.parse({ ...next, writes: persisted ? persisted.writes + 1 : 0, updatedAt: nowIso() });
+    }, { ...this.lock, within })!;
   }
 
   getGoal(goalId: string): Goal | undefined {

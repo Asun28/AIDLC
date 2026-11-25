@@ -74,3 +74,58 @@ npm run typecheck && npm run check:tree && node --test tests/infra/goal-update.t
 ```
 - Expected exit code: 0
 - Assertion: the rows of acceptance 1 to 7 hold, and the typecheck, the tree checks and the other files pass.
+
+## PR summary
+### What
+Every write of a goal record is one update under the lock of the goal file. The record counts its writes in `writes`.
+
+### Why / Intent
+A goal command read the record and later saved its snapshot with no lock. A deadline extension could remove a cancellation. This is the first of two cards for issue 300.
+
+### How / Behaviour
+An owner's act decides on the record that it reads inside the lock, and appends its events there. `aidlc next` refuses a derived write over a newer record with `GOAL_STALE`. A command that waits more than 2 seconds is refused with `LOCKED`.
+
+### System impact
+`GoalStore`, `GoalController` and the goal record change. An older record reads as `writes` 0.
+
+### Security
+No new input, command or credential. The lock file names a process, as the card-run lock does.
+
+### Tests and review
+Two new test files cover the store, overlapping acts, stale derived writes, held locks and lock order. Three tests of `review-rule-goal.test.ts`, as amended, and the pinned sentences of `prose.test.ts` change. R3 reviews the candidate.
+
+### Risk
+Medium. A command can now be refused and must run again. A lock of a dead process must be removed by hand.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (Goal writes, Sessions), `README.md` and `changelog.d/T1-GOAL-UPDATE.md` state the change.
+
+## Attempt evidence
+RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14 fail.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/goal-update.test.ts`, the four "acceptance 1" tests | RED, then pass |
+| 2 | `tests/scenarios/goal-update.test.ts`, "acceptance 2": 11 rows, reruns over a goal stopped again, acts on a goal that is not stopped, and a command or a held lock between a report and its directive. RED on its first row, where the extension removes the cancellation | pass |
+| 3 | Same file, the two "acceptance 3" tests: 12 derived writes, one a close under an expired lease of another session, each with and without a cancellation that lands | RED, then pass |
+| 4 | Same file, "acceptance 4": 13 report results, the extension, a real ruling and a real continuation, and the 12 derived writes under a held lock; a command inside either runner, and the window of a close; goal record, journal, goal lease and card run are compared | RED, then pass |
+| 5 | Same file, the three "acceptance 5" tests: lock order, registry loads, a command inside `createGoal`. The registry test passes on main, where no goal lock is held | pass |
+| 6 | `tests/infra/goal-update.test.ts`, "acceptance 6" | RED, then pass |
+| 7 | `tests/scenarios/review-rule-goal.test.ts`, three tests changed; every other file of the DoD apart from that of item 9 has no line changed | RED, then pass |
+| 8 | the documents and the fragment | reviewer-verified |
+| 9 | `tests/surface/prose.test.ts`, suite T1-STORE-CAS-2, "acceptance 8" of that suite, RED before the two sentences changed | pass |
+
+Guards: 16 loosened forms of the new conditions were run one at a time against four test files. 14 were caught. "A result that changes no field is a write" led to the last assertion of acceptance 4, which catches it. The other, a derived stop whose event is appended after the write, is not pinned: the card keeps the order of main, T1-GOAL-OWED reverses it, and that card may change no test of main.
+
+R4, found by a row at BUILD: a goal that was resumed and stopped again for review in a later generation made the ruling exit 0 and stay stopped. The re-admission now refuses it and asks for the command again.
+
+R3 decision 1, RED at 00babc03abbbc90db28274a663ffce7600085d84: F1, a close refused by the goal lock had changed the goal lease and the journal, and a row of acceptance 4 exempted it; both sections of the close now take the goal lock before their first append and lease write, and the exemption is gone. F2, the ruling of the tests was a stub that journaled nothing; the rows now run the real runner, and a ruling or a continuation on a stopped goal checked the goal under the lock before the runner writes.
+
+R3 decision 2, RED at 66009cd371ae155d43eed2b7f38cdebddadb4c0c: F2, the check let go of the lock before the runner wrote; the runner's writes and the re-admission are now one section (amendment 2), and another command inside either runner is refused. F1, the close keeps its two lease sections, and the window between them is stated in R6 and tested (amendment 2).
+
+R3 decision 3, RED at f7b8922ca0e7fcf73889edda5d0df65e61780b07: a ruling or a continuation on a goal that is not stopped took no goal lock, and a rerun judged its lift against an earlier stop. Both acts now hold the lock on every path, and an act or a rerun over a goal written since its read is refused. Found by the check for the same class: a report whose own directive met another command's write would have exited non-zero after its record was written; it derives the directive again.
+
+R3 decision 4: an extension between a resume's write and the directive of that resume gives neither order of the two whole commands. R4 and acceptance 2 now order that directive as an `aidlc next` of its own (amendment 3), and a test compares the overlap with the three run one after the other; it passes at RED, since the amendment states what the code does. RED at 94d68159fb85e0c636d50e4682642b8662f1f042: a report whose directive met a held lock did not say that its result is recorded; it does now.

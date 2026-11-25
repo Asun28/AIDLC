@@ -1096,6 +1096,8 @@ export const Goal = z.object({
   stop: StopRecord.optional(),
   terminal: z.boolean().default(false),
   linkedFrom: z.string().optional(),
+  /** The writes of this record after its first, counted by the store; `GoalStore.saveGoal` refuses a snapshot with another count. */
+  writes: z.number().int().nonnegative().default(0),
   createdAt: IsoTimestamp,
   updatedAt: IsoTimestamp,
 });
