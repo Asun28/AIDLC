@@ -427,24 +427,79 @@ test('T1-GOAL-UPDATE acceptance 5: a command that lands between the record write
   }
 });
 
-test('T1-GOAL-UPDATE acceptance 2: a re-admission left to a rerun does not write a goal resumed and stopped again since the rerun read it, and the next rerun re-admits it once [R4]', async () => {
-  const fx = makeFixture(REVIEWED);
+test('T1-GOAL-UPDATE acceptance 2: a ruling or a continuation rerun over a goal that was re-admitted and stopped again since its read, in the same or a later generation, is refused with nothing written [R4]', async () => {
+  for (const act of [rule, proceed]) for (const later of ['the same generation', 'a later generation']) {
+    const name = `${act === rule ? 'ruling' : 'continuation'}, ${later}`;
+    const fx = makeFixture(REVIEWED);
+    try {
+      const goal = await stoppedForReview(fx);
+      // The state a failed re-admission leaves: the card's stop is lifted, the goal is in STOP.
+      const runner = runners.get(fx.store)!;
+      if (act === rule) runner.ruleFinding(goal, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
+      else runner.continueStop(goal, fx.card(CARD), { by: 'the owner', reason: 'one more decision' });
+      let after: string[] = [];
+      Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 1, run: () => {
+        if (later === 'a later generation') resume(fx, goal.id);
+        else act(fx, goal.id);
+        // The stop another card of the goal gives it, after the lift.
+        fx.store.saveGoal({ ...fx.goal(goal.id), state: 'STOP', terminal: true, stop: { ...goal.stop!, at: LATER } });
+        after = bytes(fx, goal.id);
+      } });
+      assert.throws(() => act(fx, goal.id), /changed since it was read.*run the command again/, name);
+      assert.notDeepEqual(after, [], `${name}: the other commands ran`);
+      assert.deepEqual(bytes(fx, goal.id), after, name);
+    } finally {
+      overlap.at = undefined;
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-GOAL-UPDATE acceptance 2: a ruling or a continuation on a goal that is not stopped is refused, with nothing written, when a cancellation lands since its read or holds the lock [R4] [R6]', async () => {
+  for (const act of [rule, proceed]) {
+    const name = act === rule ? 'ruling' : 'continuation';
+    for (const how of ['lands', 'holds the lock'] as const) {
+      const fx = makeFixture(REVIEWED);
+      try {
+        const stopped = await stoppedForReview(fx);
+        // The card is stopped for review and the goal runs its other work.
+        const { stop: _stop, ...open } = fx.goal(stopped.id);
+        const goal = fx.store.saveGoal({ ...open, state: 'RUN', terminal: false });
+        let after = bytes(fx, goal.id);
+        if (how === 'lands') {
+          Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 1, run: () => { cancel(fx, goal.id); after = bytes(fx, goal.id); } });
+          assert.throws(() => act(fx, goal.id), isCode('GOAL_STALE'), name);
+        } else {
+          const held = `${fx.store.goalFile(goal.id)}.lock`;
+          writeFileSync(held, `pid=${process.pid} at=${fx.now()} nonce=00000000`);
+          const impatient: Fixture = { ...fx, controller: new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 30 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry }) };
+          assert.throws(() => act(impatient, goal.id), isCode('LOCKED'), name);
+          rmSync(held);
+        }
+        assert.deepEqual(bytes(fx, goal.id), after, `${name}, a cancellation ${how}`);
+        if (how === 'holds the lock') {
+          const record = bytes(fx, goal.id)[0];
+          act(fx, goal.id);
+          assert.deepEqual([bytes(fx, goal.id)[0], fx.store.getCardRun(goal.id, CARD)?.state], [record, act === rule ? 'SHIP' : 'BUILD'], `${name}: with the lock free it lifts the stop and writes no goal`);
+        }
+      } finally {
+        overlap.at = undefined;
+        fx.cleanup();
+      }
+    }
+  }
+});
+
+test('T1-GOAL-UPDATE acceptance 3: a report whose own directive meets a cancellation that landed after its write keeps its write and returns the directive of the stopped goal [R4] [R5]', () => {
+  const fx = makeFixture();
   try {
-    const goal = await stoppedForReview(fx);
-    // The state a failed re-admission leaves: the card's stop is lifted, the goal is in STOP.
-    runners.get(fx.store)!.ruleFinding(goal, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
-    let after: string[] = [];
-    Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 1, run: () => {
-      resume(fx, goal.id);
-      // The stop another card of the goal would give it.
-      fx.store.saveGoal({ ...fx.goal(goal.id), state: 'STOP', terminal: true, stop: goal.stop });
-      after = bytes(fx, goal.id);
-    } });
-    assert.throws(() => rule(fx, goal.id), /resumed and stopped again for review since it was read \(generation 1, 0 read\).*run the command again/);
-    assert.deepEqual(bytes(fx, goal.id), after);
-    rule(fx, goal.id);
-    const readmitted = fx.events(goal.id).filter((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP');
-    assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).generation, readmitted.length], ['CARDS', 1, 1]);
+    const goal = fx.store.saveGoal({ ...running(fx), state: 'CARDS' });
+    // Reads of an approval: before the lock, in its section, then the read of its directive.
+    Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 3, run: () => cancel(fx, goal.id) });
+    const r = fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'development', by: 'a lead' } });
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.deepEqual([fx.goal(goal.id).stop?.reason, fx.goal(goal.id).authorizations.filter((x) => x.grantedBy === 'a lead').length], ['cancelled', 1]);
+    assert.deepEqual(fx.events(goal.id).slice(-2).map((e) => e.type), ['AUTHORIZATION_GRANTED', 'GOAL_STOPPED']);
   } finally {
     overlap.at = undefined;
     fx.cleanup();
