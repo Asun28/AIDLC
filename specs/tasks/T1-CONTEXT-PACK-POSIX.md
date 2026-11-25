@@ -82,3 +82,50 @@ It goes directly before `This prevents a concurrent directory-link swap from red
 changelog.d/T1-CONTEXT-PACK-POSIX.md (new), this one line and one line feed:
 
 "- T1-CONTEXT-PACK-POSIX: the context pack of a `run-card` directive loads on macOS and every other platform that is neither Windows nor Linux. Before, `readOpenedSource` threw `Opened context source verification requires Windows or Linux` there. On those platforms the reader opens the validated file without following a final link, refuses with `Opened context source path changed` when the validated path no longer resolves to itself or when the device and inode of the opened descriptor differ from those of the path, and reads the descriptor. The Windows and Linux readers are unchanged."
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/scenarios/context-pack.test.ts, acceptance 1 | RED at c621811f, passes |
+| 2 | Same file, acceptance 2 (plan file and lessons file) | RED at c621811f, passes |
+| 3 | Same file, acceptance 3 (inode row, device row) | RED at c621811f, passes |
+| 4 | Same file, acceptance 4 | RED at c621811f, passes |
+| 5 | Same file, acceptance 5, on WSL Ubuntu with Node 22.23.1; skipped on Windows | passes |
+| 6 | The tests of the file on main and tests/core/context-pack.test.ts, no line changed | pass on Windows and WSL |
+| 7 | git diff origin/main of docs/OPERATIONS.md and the fragment; tests/surface/changelog-fragments.test.ts | read; passes |
+
+Acceptance 5 was run on Linux with the change and not on main there.
+
+Revert table: second resolution dropped (2 red); inode comparison dropped (3 red); device comparison dropped (3 red); close moved out of the `finally` (3 and 4 red); the old throw kept (1 to 4 red). The read by path has no test, as the card says.
+
+Full suite on Windows: 4257 tests, 4224 pass, 0 fail, 33 skipped.
+
+## PR summary
+
+### What
+The context pack loads on macOS and other platforms that are neither Windows nor Linux.
+
+### Why / Intent
+The reader refused those platforms, so `aidlc next` could not build a `run-card` directive there.
+
+### How / Behaviour
+The reader opens the file without following a final link. It refuses when the path, device or inode changes. It then reads the open descriptor.
+
+### System impact
+The Windows and Linux readers do not change.
+
+### Security
+A swapped parent directory or final link is refused before a read. A hard link inside the repository is read, as on Linux.
+
+### Tests and review
+Five new tests cover the branch. Four run on Windows, and one needs a POSIX host and passed on Linux.
+
+### Risk
+Low. No macOS host ran these tests, since the tests set the platform name.
+
+### Ownership
+The owner approved one change of the card text on 2026-11-25, before the run started.
+
+### Docs
+One OPERATIONS sentence is new, and one sentence no longer says that other systems refuse loading.
