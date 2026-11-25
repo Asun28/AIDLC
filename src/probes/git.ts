@@ -25,6 +25,11 @@ export interface WorktreeEntry {
 /** One line of process output, for a message. */
 export const oneLine = (text: string) => text.trim().replace(/\s+/g, ' ');
 
+/** The doctor value for the first line of `git --version`. */
+export function gitVersionLine(firstLine: string | undefined): string {
+  return firstLine ?? 'MISSING';
+}
+
 /**
  * The `-c` options that turn every hook off for one command and change no config file. `core.hooksPath` covers a hooks
  * directory; a hook defined by `hook.<name>.event` (git 2.54 and later) still runs under it, so each one is disabled by name.
