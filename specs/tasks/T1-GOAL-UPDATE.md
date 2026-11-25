@@ -114,4 +114,6 @@ RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14
 | 7 | `tests/scenarios/review-rule-goal.test.ts`, three tests changed; every other file of the DoD has no line changed | RED, then pass |
 | 8 | the two documents and the fragment | reviewer-verified |
 
+Guards: 16 loosened forms of the new conditions were run one at a time against four test files. 14 were caught. "A result that changes no field is a write" led to the last assertion of acceptance 4, which catches it. The other, a derived stop whose event is appended after the write, is not pinned: the card keeps the order of main, T1-GOAL-OWED reverses it, and that card may change no test of main.
+
 R4, found by the row "a ruling, a resume lands": a goal that was resumed and stopped again for review in a later generation made the ruling exit 0 and stay stopped. The re-admission now refuses it and asks for the command again.

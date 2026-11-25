@@ -294,6 +294,9 @@ test('T1-GOAL-UPDATE acceptance 4: a writer that does not get the goal lock is r
       if (name === 'next, CLOSE to DONE') assert.ok(!now[1]!.slice(before[1]!.length).includes('"GOAL_DONE"'), name);
       else assert.equal(now[1], before[1], `${name}: the goal journal`);
       rmSync(held);
+      const written = fx.goal(goal.id).writes;
+      act(fx, goal.id);
+      assert.ok(fx.goal(goal.id).writes > written, `${name}: with the lock free it writes the goal`);
     } finally {
       fx.cleanup();
     }
