@@ -178,7 +178,7 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
 
 /** How a spawned child ended, for the message of a failed assertion. */
 function childOutcome(r: Pick<SpawnSyncReturns<string | null>, 'status' | 'signal' | 'error' | 'stdout' | 'stderr'>): string {
-  return r.stderr ?? '';
+  return JSON.stringify({ status: r.status, signal: r.signal, error: (r.error as NodeJS.ErrnoException | undefined)?.code ?? null, stdout: r.stdout, stderr: r.stderr });
 }
 
 describe('the message of a doctor child that did not exit 0 (T0-EXEC-TEST-PID-REUSE acceptance 3)', () => {
