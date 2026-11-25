@@ -506,6 +506,74 @@ test('T1-GOAL-UPDATE acceptance 3: a report whose own directive meets a cancella
   }
 });
 
+test('T1-GOAL-UPDATE acceptance 2: an extension that lands between the write of a resume of a time stop and the directive of that resume leaves what the write, the extension and aidlc next leave one after the other [R4]', () => {
+  const stopped = (fx: Fixture): Goal => {
+    const goal = running(fx);
+    fx.store.saveCardRun({ ...fx.controller.ensureCardRun(goal, CARD), state: 'SHIP' });
+    fx.advance(13 * HOUR_MS);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).stop?.reason, 'time');
+    return fx.goal(goal.id);
+  };
+  const fx = makeFixture();
+  const serial = makeFixture();
+  try {
+    const goal = stopped(fx);
+    const other = stopped(serial);
+    // The report's write alone: its directive is run after the extension, as a command of its own.
+    const directive = serial.controller.next;
+    Object.assign(serial.controller, { next: () => undefined });
+    resume(serial, other.id);
+    Object.assign(serial.controller, { next: directive });
+    extend(serial, other.id);
+    serial.controller.next(other.id);
+    // Reads of a resume: before the lock, in its section, then the read of its directive.
+    let landed = false;
+    Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 3, run: () => {
+      extend(fx, goal.id);
+      landed = true;
+    } });
+    resume(fx, goal.id);
+    assert.ok(landed);
+    assert.deepEqual(view(fx, goal.id), view(serial, other.id));
+    assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).stop, fx.goal(goal.id).generation, fx.goal(goal.id).deadlines.extensions.map((e) => e.newDeadline)], ['WAIT', undefined, 1, [LATER]]);
+  } finally {
+    overlap.at = undefined;
+    fx.cleanup();
+    serial.cleanup();
+  }
+});
+
+test('T1-GOAL-UPDATE acceptance 2: a report whose directive does not get the goal lock, or is refused twice with GOAL_STALE, says that its result is recorded, and its event and its record stand [R4] [R6]', () => {
+  for (const code of ['LOCKED', 'GOAL_STALE']) {
+    const fx = makeFixture();
+    try {
+      const goal = fx.store.saveGoal({ ...running(fx), state: 'CARDS' });
+      const impatient = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 30 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry });
+      let met: string[] = [];
+      const hold = () => {
+        writeFileSync(`${fx.store.goalFile(goal.id)}.lock`, `pid=${process.pid} at=${fx.now()} nonce=00000000`);
+        met = bytes(fx, goal.id);
+      };
+      const write = () => {
+        fx.store.saveGoal(fx.goal(goal.id));
+        met = bytes(fx, goal.id);
+      };
+      // Reads of an approval: before the lock, in its section, then the read of its directive and, derived again, its second read.
+      Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 3, run: code === 'LOCKED' ? hold : () => {
+        write();
+        Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 2, run: write });
+      } });
+      assert.throws(() => impatient.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'development', by: 'a lead' } }), (err: unknown) => isCode(code)(err) && /approved is recorded and is not to be given again; run aidlc next --goal /.test((err as Error).message), code);
+      assert.deepEqual(bytes(fx, goal.id), met, code);
+      assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).authorizations.filter((x) => x.grantedBy === 'a lead').length, fx.events(goal.id).at(-1)?.type], ['CARDS', 1, 'AUTHORIZATION_GRANTED'], code);
+    } finally {
+      overlap.at = undefined;
+      fx.cleanup();
+    }
+  }
+});
+
 test('T1-GOAL-UPDATE acceptance 4: a command run inside the runner of a ruling or a continuation is refused with LOCKED, and the act completes [R3] [R6]', async () => {
   for (const [name, act, state] of [['ruling', 'ruleFinding', 'SHIP'], ['continuation', 'continueStop', 'BUILD']] as const) {
     const fx = makeFixture(REVIEWED);
