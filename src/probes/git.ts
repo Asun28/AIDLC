@@ -25,9 +25,16 @@ export interface WorktreeEntry {
 /** One line of process output, for a message. */
 export const oneLine = (text: string) => text.trim().replace(/\s+/g, ' ');
 
-/** The doctor value for the first line of `git --version`. */
+/**
+ * The doctor value for the first line of `git --version` (card T1-GIT-MIN-VERSION): the line as given for 2.45 or newer, the
+ * line marked UNSUPPORTED for an older version, UNREADABLE for a line that names none, MISSING for no line. Nothing decides from it.
+ */
 export function gitVersionLine(firstLine: string | undefined): string {
-  return firstLine ?? 'MISSING';
+  if (firstLine === undefined) return 'MISSING';
+  const version = /^git version (\d+)\.(\d+)/.exec(firstLine);
+  if (!version) return `UNREADABLE: ${JSON.stringify(firstLine)} names no git version; aidlc needs git 2.45 or newer`;
+  const [major, minor] = [Number(version[1]), Number(version[2])];
+  return major > 2 || (major === 2 && minor >= 45) ? firstLine : `${firstLine} (UNSUPPORTED: aidlc needs git 2.45 or newer)`;
 }
 
 /**
