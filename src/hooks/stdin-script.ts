@@ -24,7 +24,7 @@ function interpreterReadsStdin(words: string[], fed: boolean): boolean {
   for (; at < words.length; at += 1) {
     const word = words[at]!;
     if (word === 'timeout' && /^[\d.]+[smhd]?$/.test(words[at + 1] ?? '')) at += 1;
-    else if (!KEYWORDS.has(word) && !WRAPPERS.has(word) && !/^[A-Za-z_]\w*=/.test(word)) break;
+    else if (!KEYWORDS.has(word) && !WRAPPERS.has(word) && !/^[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=/.test(word)) break;
   }
   const [first = '', ...args] = words.slice(at);
   const name = first.toLowerCase().replace(/.*[\\/]/, '').replace(/\.exe$/, '');
@@ -51,6 +51,13 @@ function plain(text: string): string {
   return /^[\w.:\\/-]+$/.test(text) ? text : 'Q';
 }
 
+/** A heredoc whose body follows the next line break; a `quoted` delimiter keeps each backslash of the body. */
+interface Heredoc {
+  delimiter: string;
+  tabs: boolean;
+  quoted: boolean;
+}
+
 function readsScriptFromStdin(text: string, powershell: boolean): boolean {
   const escape = powershell ? '`' : '\\';
   let i = 0;
@@ -58,14 +65,29 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
   /** Inside a double-quoted `$(`: after its next double quote nothing is read. */
   let quotes = 0;
   let muted = false;
-  const heredocs: Array<{ delimiter: string; tabs: boolean }> = [];
   const at = (s: string): boolean => text.startsWith(s, i);
   const skipTo = (end: string): void => {
     const start = text.indexOf(end, i);
     i = start < 0 ? text.length : start + end.length;
   };
 
-  /** Moves past Bash arithmetic that opens with `open` (`((` or `$((`); a text that does not close with `))` is a subshell or a substitution. */
+  /** A backtick span, whose command is read when `read` is true. */
+  const backticks = (read: boolean): void => {
+    const span = /`((?:\\[\s\S]|[^`\\])*)`?/.exec(text.slice(i))!;
+    if (read && readsScriptFromStdin(span[1]!.replace(/\\([`\\$])/g, '$1'), false)) found = true;
+    i += span[0].length;
+  };
+
+  /** Moves past a substitution, whose heredocs are its own. */
+  const substitution = (): void => {
+    i += 2;
+    list(')');
+  };
+
+  /**
+   * Moves past Bash arithmetic that opens with `open` (`((` or `$((`) and reads the substitutions in it; a text that does
+   * not close with `))` is a subshell or a substitution.
+   */
   const arithmetic = (open: string): boolean => {
     if (powershell || !at(open)) return false;
     let depth = 0;
@@ -74,6 +96,12 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
       else if (text[j] === ')' && depth) depth -= 1;
       else if (text[j] === ')') {
         if (text[j + 1] !== ')') return false;
+        for (i += open.length; i < j; ) {
+          if (arithmetic('$((')) continue;
+          if (at('$(')) substitution();
+          else if (text[i] === '`') backticks(!quotes);
+          else i += 1;
+        }
         i = j + 2;
         return true;
       }
@@ -89,10 +117,10 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
       const size = text[i] === escape ? 2 : 1;
       if (arithmetic('$((')) {
         // skipped
-      } else if (at('$(')) {
-        i += 2;
-        list(')');
-      } else {
+      } else if (at('$(')) substitution();
+      else if (!powershell && at('${')) braces();
+      else if (!powershell && text[i] === '`') backticks(false);
+      else {
         raw += text.slice(i, i + size);
         i += size;
         continue;
@@ -113,33 +141,66 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
     return raw;
   };
 
-  /** `${...}`: one word, whose `$(` is a command of its own. */
+  /** `${...}`: one word. In Bash a substitution in it is a command of its own; in PowerShell the text is a name. */
   const braces = (): void => {
+    if (powershell) return skipTo('}');
     for (i += 2; i < text.length && text[i] !== '}'; ) {
-      if (at('$(')) {
-        i += 2;
-        list(')');
-      } else if (at('${')) braces();
+      if (arithmetic('$((')) continue;
+      if (at('$(')) substitution();
+      else if (at('${')) braces();
+      else if (text[i] === '`') backticks(!quotes);
       else if (text[i] === '"') doubleQuoted();
-      else i += text[i] === escape ? 2 : 1;
+      else if (text[i] === "'" && !quotes) {
+        i += 1;
+        singleQuoted(false);
+      } else i += text[i] === escape ? 2 : 1;
     }
     i += 1;
   };
 
-  const readHeredocs = (): void => {
-    for (const { delimiter, tabs } of heredocs.splice(0)) {
+  /** The delimiter word of a heredoc: quotes are removed and nothing in it is expanded. */
+  const heredoc = (tabs: boolean): Heredoc => {
+    while (text[i] === ' ' || text[i] === '\t') i += 1;
+    let delimiter = '';
+    let quoted = false;
+    let depth = 0;
+    while (i < text.length && (depth ? text[i] !== '\n' : !/[\s;&|<>()]/.test(text[i]!))) {
+      const span = /'([^']*)'|"((?:\\[\s\S]|[^"\\])*)"|\\([\s\S])/y;
+      span.lastIndex = i;
+      const part = span.exec(text);
+      if (part) {
+        quoted = true;
+        delimiter += part[1] ?? part[2]?.replace(/\\([$`"\\])/g, '$1') ?? part[3];
+        i += part[0].length;
+      } else {
+        const size = at('$(') ? 2 : 1;
+        if (size === 2 || text[i] === '(') depth += 1;
+        else if (text[i] === ')') depth -= 1;
+        delimiter += text.slice(i, i + size);
+        i += size;
+      }
+    }
+    return { delimiter, tabs, quoted };
+  };
+
+  const readHeredocs = (heredocs: Heredoc[]): void => {
+    for (const { delimiter, tabs, quoted } of heredocs.splice(0)) {
       for (let line: string | undefined; line !== delimiter && i < text.length; ) {
         const start = i;
-        skipTo('\n');
-        line = text.slice(start, i).replace(/\r?\n/, '');
+        // Without a quoted delimiter Bash joins a line that ends in an unescaped backslash to the next one first.
+        do skipTo('\n');
+        while (!quoted && i < text.length && /(?<!\\)(?:\\\\)*\\\n$/.test(text.slice(start, i)));
+        line = text.slice(start, i).replace(/\r?\n$/, '');
+        if (!quoted) line = line.replace(/\\\n/g, '');
         if (tabs) line = line.replace(/^\t+/, '');
       }
     }
   };
 
   /** Reads commands up to `close` or the end of the text; with `commands` false the words are data (an array, a glob). */
-  const list = (close: string, piped = false, commands = true): void => {
+  const list = (close: string, piped = false, commands = true, shared: Heredoc[] = []): void => {
     let words: string[] = [];
+    const heredocs = shared;
     let word: { text: string; raw: string } | undefined;
     let input = false;
     let redirect = '';
@@ -153,11 +214,11 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
       const ended = word;
       word = undefined;
       if (redirect) {
-        if (redirect === '<<' || redirect === '<<-') heredocs.push({ delimiter: ended.raw, tabs: redirect === '<<-' });
         redirect = '';
         return;
       }
       words.push(ended.text);
+      if (ended.text === '{' && words.length === 3 && words[0] === 'function') words = [];
       if (ended.text === 'in' && words.at(-3) === 'case' && words.slice(0, -3).every((w) => KEYWORDS.has(w))) {
         cases = true;
         pattern = true;
@@ -170,26 +231,26 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
         piped ||= pipe;
         return;
       }
-      if (powershell && words[0]!.startsWith('$') && words[1] === '=') words = words.slice(2);
       if (commands && !pattern && !muted && interpreterReadsStdin(words, piped || input)) found = true;
       words = [];
       input = false;
       piped = pipe;
     };
-    const nested = (size: number, end: string, inherit = false, asCommands = true): void => {
-      i += size;
-      list(end, inherit && piped, asCommands);
+    /** A bracketed list of the same command text: its heredocs are read with those of this one. */
+    const group = (end: string, inherit = false, asCommands = true): void => {
+      i += 1;
+      list(end, inherit && piped, asCommands, heredocs);
     };
     const test = (): boolean => !powershell && words.includes('[[') && !words.includes(']]') && word?.raw !== ']]' && words.slice(0, words.indexOf('[[')).every((w) => KEYWORDS.has(w));
 
     while (i < text.length) {
       const c = text[i]!;
       const start = !word && words.every((w) => KEYWORDS.has(w));
-      if (c === '\n' || c === '\r') {
+      if (c === '\n' || (c === '\r' && powershell)) {
         endCommand();
         i += 1;
-        if (c === '\n') readHeredocs();
-      } else if (c === ' ' || c === '\t') {
+        if (c === '\n') readHeredocs(heredocs);
+      } else if (c === ' ' || c === '\t' || at('\r\n')) {
         endWord();
         i += 1;
       } else if (powershell && at('<#')) skipTo('#>');
@@ -213,21 +274,19 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
       } else if (arithmetic('$((') || (!word && arithmetic('(('))) {
         add('Q');
       } else if (at('$(')) {
-        nested(2, ')');
+        substitution();
         add('Q');
       } else if (at('${')) {
         braces();
-        add('Q');
+        add('$Q');
       } else if (!powershell && c === '`') {
-        const span = /^`((?:\\[\s\S]|[^`\\])*)`?/.exec(text.slice(i))!;
-        if (!muted && readsScriptFromStdin(span[1]!.replace(/\\([`\\$])/g, '$1'), false)) found = true;
-        i += span[0].length;
+        backticks(!muted);
         add('Q');
       } else if (/[|&<>()]/.test(c) && test()) {
         endWord();
         i += 1;
       } else if (!powershell && (at('<(') || at('>('))) {
-        nested(2, ')');
+        substitution();
         add('Q');
       } else if (c === '>' || at('&>') || (c === '<' && !powershell)) {
         const op = /<<<|<<-?|<&|<>|<|&>>?|>>|>\||>&|>/.exec(text.slice(i, i + 3))![0];
@@ -235,8 +294,9 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
         if (fd !== undefined) word = undefined;
         endWord();
         if (!/[&>]/.test(op) && (fd === undefined || fd === '0')) input = true;
-        redirect = op;
         i += op.length;
+        if (op === '<<' || op === '<<-') heredocs.push(heredoc(op === '<<-'));
+        else redirect = op;
       } else if (c === '|') {
         const size = at('||') || at('|&') ? 2 : 1;
         // A pipe with no white space on either side is as often an alternation, so it feeds nothing.
@@ -250,15 +310,20 @@ function readsScriptFromStdin(text: string, powershell: boolean): boolean {
         const size = /;;?&?/.exec(text.slice(i, i + 3))![0].length;
         if (cases && size > 1) pattern = true;
         i += size;
+      } else if (powershell && c === '=' && /^(?:\[[^\]]*\] ?)*\$\S*(?: [-+*/%?]+)?$/.test([...words, ...(word ? [word.raw] : [])].join(' '))) {
+        // An assignment, with or without spaces: the command on its right side follows.
+        word = undefined;
+        words = [];
+        i += 1;
       } else if (powershell && (c === '(' || c === '{')) {
-        nested(1, c === '(' ? ')' : '}', start);
+        group(c === '(' ? ')' : '}', start);
         add('Q');
       } else if (c === '(' && pattern) i += 1;
       else if (c === '(' && word && /[=@!?*+]$/.test(word.raw)) {
-        nested(1, ')', false, false);
+        group(')', false, false);
         add('Q');
       } else if (c === '(') {
-        nested(1, ')', start);
+        group(')', start);
         // A subshell is a command; `name()` starts a function body, whose first command follows.
         word = undefined;
         words = start ? ['()'] : [];

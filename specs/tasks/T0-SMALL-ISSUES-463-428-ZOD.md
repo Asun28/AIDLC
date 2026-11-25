@@ -116,7 +116,7 @@ The zod update removes advisory GHSA-mrhx-c7xc-m3w5. The guard is a reminder and
 The new tests fail on the old code and pass on the new code. A comparison with bash and with the PowerShell parser shows no unlisted difference. The formal review gate reviews the final commit.
 
 ### Risk
-The guard can stop a correct command in a spelling that no test names. In 21,737 recorded commands it stopped 219, and each one broke the rule. It does not see every spelling.
+The guard can stop a correct command in a spelling that no test names. In 21,825 recorded commands it stopped 219, and each one broke the rule. It does not see every spelling.
 
 ### Ownership
 The repository owner owns this change.
@@ -137,13 +137,12 @@ The README and the operations and architecture documents describe the guard. The
 | 7 | the DoD command | exit 0 |
 | 8 | the diff; `readme.test.ts`, `hook-name.test.ts`, `module-map.test.ts` | reviewer-verified, passes |
 
-Repair 1 (R3 decision 1, five findings on text masking with regular expressions): the guard now scans the command once from left to right, so quotes, comments, heredocs, redirections, substitutions, arithmetic, `case` patterns and `[[ ]]` are read where they stand. Every command the findings name is a row of test 1 or test 2.
+Repairs 1 and 2 (R3 decisions 1 and 2, five and eight findings): the guard scans the command once from left to right, so quotes, comments, heredocs with their delimiter words, redirections, substitutions, arithmetic, assignments, function bodies, `case` patterns and `[[ ]]` are read where they stand. Every command the thirteen findings name is a row of test 1 or test 2, which hold 206 refused and 171 passing Bash commands and 46 and 31 PowerShell commands. The owner's amendment of 2026-11-25 makes those rows the contract of R1 and R2.
 
-| Check of the repair | Result |
+| Check of the repairs | Result |
 |---|---|
-| Generic sweep of `stdin-script.ts` (each `&&`, `||`, `===`, negation, string literal, statement and regex part changed alone) | 432 of 447 fail a test or never end; 15 are equivalent: ten change the placeholder `Q` or `()`, one drops the last `return false` (undefined is as false), one drops a placeholder after an extended glob, two widen a regex on a slice that begins with the match, and one reads `)` outside any list |
-| Random Bash commands, each run by bash with functions that log every interpreter call (about 1,850 valid) | no difference beyond the listed ones: text after a nested double quote of a double-quoted `$(`, and an unquoted substitution that expands to nothing |
-| Random PowerShell commands against PowerShell's own parser (5,413 valid) | 0 differences |
-| The 21,737 Bash and PowerShell commands of the project's session transcripts | 219 refused, each with the operand `-` |
-
-The scanner is 292 lines, so the diff is over the declared budget of 340, which is advisory on the github ship path.
+| Generic sweep of `stdin-script.ts` (each `&&`, `||`, `===`, negation, string literal, statement and regex part changed alone) | 520 of 534 fail a test or never end; 14 are equivalent: eight change the placeholder `Q` or `()`, one drops the last `return false` (undefined is as false), one drops a placeholder after an extended glob, two widen a regex on a slice that begins with the match, and two read a `)` that closes no list |
+| Random Bash commands, each run by bash with functions that log every interpreter call (about 2,600 valid over the two repairs) | no difference beyond text after a nested double quote of a double-quoted `$(`, an unquoted substitution that expands to nothing, and commands bash did not reach |
+| Random PowerShell commands against PowerShell's own parser (about 4,500 valid on repair 2) | 0 differences |
+| The 21,825 Bash and PowerShell commands of the project's session transcripts | 219 refused, each with the operand `-` |
+| The whole suite on f80942f5 (repair 1) | exit 0: 4,257 tests, 4,225 pass, 0 fail, 32 skipped |
