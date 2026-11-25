@@ -82,9 +82,18 @@ function stoppedForReview(fx: Fixture): Goal {
   return fx.goal(goal.id);
 }
 
-/** The goal record and the events, without what differs between two fixtures: ids and real times. */
+/** The same goal in STOP for time. */
+function stoppedForTime(fx: Fixture): Goal {
+  const goal = running(fx);
+  fx.advance(4 * HOUR_MS);
+  fx.controller.next(goal.id);
+  assert.equal(fx.goal(goal.id).stop?.reason, 'time');
+  return fx.goal(goal.id);
+}
+
+/** The goal record and the events, without what differs between two fixtures: ids, the repository path and real times. */
 function view(fx: Fixture, id: string): unknown {
-  const { updatedAt: _u, ...record } = fx.goal(id);
+  const { updatedAt: _u, repository: _r, ...record } = fx.goal(id);
   const plain = (v: unknown) => JSON.parse(JSON.stringify(v).replaceAll(id, 'G').replace(/-r(\d+)-[0-9a-f]{4}"/g, '-r$1"').replace(/"eventKey":"[^"]+"/g, '"eventKey":"K"'));
   return plain({ record, events: fx.events(id).map((e) => [e.type, e.generation, e.data]) });
 }
@@ -105,11 +114,14 @@ test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two
     ['an extension, a cancellation lands', running, extend, cancel],
     ['a cancellation, an extension lands', running, cancel, extend],
     ['a resume, a ruling lands', stoppedForReview, resume, rule, /resume applies only to a terminal goal/],
-    ['a ruling, a resume lands', stoppedForReview, rule, resume],
+    // The resumed goal stops again for the card, so the ruling's generation is over; run again, it re-admits the goal.
+    ['a ruling, a resume lands', stoppedForReview, rule, resume, /resumed and stopped again for review since it was read \(generation 1, 0 read\).*run the command again/],
     ['a revision, a cancellation lands', running, revise, cancel, /is terminal \(STOP\)/],
     ['a revision, an approval lands', running, revise, approve],
     ['a cancellation, a cancellation and a resume land', running, cancel, (fx, id) => { cancel(fx, id); resume(fx, id); }, /stale report: observed generation 0, current 1/],
-    ['an extension, a cancellation lands on a goal stopped for time', (fx) => { const g = running(fx); fx.advance(4 * HOUR_MS); fx.controller.next(g.id); return fx.goal(g.id); }, extend, (fx, id) => { resume(fx, id); report(fx, id, 'cancel', {}, { generation: 1 }); }],
+    // The resume of a goal past its deadline stops it again for time, in generation 1, and the extension re-admits that stop.
+    ['an extension, a resume lands', stoppedForTime, extend, resume],
+    ['a resume, an extension lands', stoppedForTime, resume, extend, /resume applies only to a terminal goal/],
   ];
   for (const [name, setup, first, landed, refused] of rows) {
     const fx = makeFixture();
@@ -130,7 +142,7 @@ test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two
       landed(twin, serial.id);
       first(twin, serial.id);
       assert.deepEqual(view(fx, goal.id), view(twin, serial.id), name);
-      if (first === extend) assert.deepEqual([fx.goal(goal.id).stop?.reason, fx.goal(goal.id).deadlines.extensions.length], ['cancelled', 1], `${name}: the cancellation stands and the extension is recorded`);
+      if (first === extend && landed === cancel) assert.deepEqual([fx.goal(goal.id).stop?.reason, fx.goal(goal.id).deadlines.extensions.length], ['cancelled', 1], `${name}: the cancellation stands and the extension is recorded`);
     } finally {
       overlap.at = undefined;
       fx.cleanup();
@@ -178,7 +190,7 @@ const derived: Array<[name: string, setup: (fx: Fixture) => Goal]> = [
   }],
   ['the reconciliation stop', (fx) => {
     const g = running(fx);
-    const op = fx.ops.recordIntent({ goalId: g.id, kind: 'merge', target: 'main', ownerGeneration: 0, effects: ['merge'] } as Parameters<typeof fx.ops.recordIntent>[0], fx.now());
+    const op = fx.ops.recordIntent({ goalId: g.id, kind: 'merge', target: 'main', ownerGeneration: 0, timeoutMs: HOUR_MS }, fx.now());
     fx.ops.markIssued(op.id, undefined, fx.now());
     fx.advance(4 * HOUR_MS);
     return g;
@@ -376,7 +388,7 @@ test('T1-GOAL-UPDATE acceptance 5: a command that lands between the record write
     const goal = fx.controller.createGoal({ text: `implement ${CARD}`, source: 'card', ref: CARD, affectedSurfaces: [], explicitSize: 'T0' }, { cards: [CARD] });
     assert.match(landed ?? 'not refused', /locked by another writer/);
     assert.deepEqual(fx.events(goal.id).map((e) => e.type), ['GOAL_CREATED', 'GOAL_ROUTED']);
-    assert.deepEqual([goal, goal.deadlines.extensions], [{ ...fx.goal(goal.id) }, []], 'the record createGoal returns is the one stored');
+    assert.deepEqual([JSON.stringify(goal), goal.deadlines.extensions], [JSON.stringify(fx.goal(goal.id)), []], 'the record createGoal returns is the one stored');
   } finally {
     onAppend = undefined;
     fx.cleanup();

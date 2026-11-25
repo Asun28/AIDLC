@@ -71,3 +71,47 @@ npm run typecheck && npm run check:tree && node --test tests/infra/goal-update.t
 ```
 - Expected exit code: 0
 - Assertion: the rows of acceptance 1 to 7 hold, and the typecheck, the tree checks and the other files pass.
+
+## PR summary
+### What
+Every write of a goal record is one update under the lock of the goal file. The record counts its writes in `writes`.
+
+### Why / Intent
+A goal command read the record and later saved its snapshot with no lock. A deadline extension could remove a cancellation. This is the first of two cards for issue 300.
+
+### How / Behaviour
+An owner's act decides on the record that it reads inside the lock, and appends its events there. `aidlc next` refuses a derived write over a newer record with `GOAL_STALE`. A command that waits more than 2 seconds is refused with `LOCKED`.
+
+### System impact
+`GoalStore`, `GoalController` and the goal record change. An older record reads as `writes` 0.
+
+### Security
+No new input, command or credential. The lock file names a process, as the card-run lock does.
+
+### Tests and review
+Two new test files cover the store, overlapping acts, stale derived writes, held locks and lock order. Three tests of `review-rule-goal.test.ts` change, as the card states. R3 reviews the candidate.
+
+### Risk
+Medium. A command can now be refused and must run again. A lock of a dead process must be removed by hand.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (Sessions, Goal writes) and `changelog.d/T1-GOAL-UPDATE.md` state the change.
+
+## Attempt evidence
+RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14 fail.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/goal-update.test.ts`, the four "acceptance 1" tests | RED, then pass |
+| 2 | `tests/scenarios/goal-update.test.ts`, "acceptance 2": 9 rows. RED on its first row, where the extension removes the cancellation | pass |
+| 3 | Same file, the two "acceptance 3" tests: 11 derived writes, each with and without a cancellation that lands | RED, then pass |
+| 4 | Same file, "acceptance 4": 13 report results, the extension, the re-admission and the 11 derived writes under a held lock | RED, then pass |
+| 5 | Same file, the three "acceptance 5" tests: lock order, registry loads, a command inside `createGoal`. The registry test passes on main, where no goal lock is held | pass |
+| 6 | `tests/infra/goal-update.test.ts`, "acceptance 6" | RED, then pass |
+| 7 | `tests/scenarios/review-rule-goal.test.ts`, three tests changed; every other file of the DoD has no line changed | RED, then pass |
+| 8 | the two documents and the fragment | reviewer-verified |
+
+R4, found by the row "a ruling, a resume lands": a goal that was resumed and stopped again for review in a later generation made the ruling exit 0 and stay stopped. The re-admission now refuses it and asks for the command again.
