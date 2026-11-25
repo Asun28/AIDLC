@@ -14,7 +14,7 @@ Version 0.2.0.
 ## Requirements
 
 - Node.js >= 22.18 (the CLI runs TypeScript sources directly through type stripping; `npm run build` emits `dist/`).
-- git (state lives in the main checkout's `.aidlc/` so all worktrees share it); 2.38 or newer for the `github` ship path, whose base sync tests the merge with `git merge-tree --write-tree`.
+- git 2.45 or newer (state lives in the main checkout's `.aidlc/` so all worktrees share it). The `baseSync` line of `aidlc doctor` and the identity of an R3 finding read git with `--no-lazy-fetch`, which an older git refuses, so there `baseSync` is `UNREADABLE` and a finding gets no identity; the `github` ship path tests the merge with `git merge-tree --write-tree`. The `git` line of `aidlc doctor` prints the installed version and marks one older than 2.45 `UNSUPPORTED`.
 - Optional: `gh` (remote ship, PR and CI probes), `pwsh` 7 (scaffold ship path), `claude` CLI or an Anthropic API credential (model providers).
 
 ## Quick start
