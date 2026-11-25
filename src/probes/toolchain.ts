@@ -17,18 +17,23 @@ export interface ToolchainReport {
   pwsh: string;
 }
 
-/** One probe's line: unknown at the bound, the first output line through `read` on exit 0, else the tool's MISSING text. */
-function line(command: string, args: string[], receipt: ExecReceipt, missing: string, timeoutMs: number, read: (first: string) => string): string {
+/** One probe's line: unknown at the bound, the first output line on exit 0, else the tool's MISSING text. */
+function line(command: string, args: string[], receipt: ExecReceipt, missing: string, timeoutMs: number): string {
   if (receipt.timedOut) return `unknown: ${[command, ...args].join(' ')} did not exit within ${timeoutMs} ms`;
-  if (receipt.exitCode === 0) return read(`${receipt.stdout}${receipt.stderr}`.trim().split(/\r?\n/)[0] ?? '');
+  if (receipt.exitCode === 0) return `${receipt.stdout}${receipt.stderr}`.trim().split(/\r?\n/)[0] ?? '';
   return missing;
 }
 
-/** Runs the three version probes concurrently, each with `timeoutMs`; the first line of a git that exited 0 is read by `gitVersionLine`. */
+/** Runs the three version probes concurrently, each with `timeoutMs`; the line of a git that exits 0 within it is read by `gitVersionLine`. */
 export async function toolchainReport(runner: Runner = run, timeoutMs: number = TOOLCHAIN_PROBE_TIMEOUT_MS): Promise<ToolchainReport> {
-  const probe = async (command: string, args: string[], missing: string, read = (first: string): string => first): Promise<string> => line(command, args, await runner(command, args, { timeoutMs }), missing, timeoutMs, read);
+  const probe = async (command: string, args: string[], missing: string): Promise<string> => line(command, args, await runner(command, args, { timeoutMs }), missing, timeoutMs);
+  const gitValue = async (): Promise<string> => {
+    const receipt = await runner('git', ['--version'], { timeoutMs });
+    const value = line('git', ['--version'], receipt, 'MISSING', timeoutMs);
+    return receipt.exitCode === 0 && !receipt.timedOut ? gitVersionLine(value) : value;
+  };
   const [git, gh, pwsh] = await Promise.all([
-    probe('git', ['--version'], 'MISSING', gitVersionLine),
+    gitValue(),
     probe('gh', ['--version'], 'MISSING (needed for remote ship)'),
     probe('pwsh', ['-v'], 'MISSING (needed for scaffold ship path)'),
   ]);
