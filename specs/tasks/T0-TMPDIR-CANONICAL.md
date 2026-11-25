@@ -1,7 +1,7 @@
 ---
 id: T0-TMPDIR-CANONICAL
 title: "tmpDir of tests/infra/helpers.ts returns the canonical path, and the 32 calls that canonicalized its result by hand stop doing so"
-status: todo
+status: merged
 branch: T0-TMPDIR-CANONICAL
 worktree: D:\wt\AIDLC\T0-TMPDIR-CANONICAL
 allow_paths:
