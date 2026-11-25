@@ -98,4 +98,13 @@ describe('toolchainReport (card T0-DOCTOR-PROBE-TIMEOUT)', () => {
       pwsh: 'unknown: pwsh -v did not exit within 700 ms',
     });
   });
+
+  test('T1-GIT-MIN-VERSION acceptance 6: the git line is marked on exit 0 only', async () => {
+    const gitLine = async (over: Partial<ExecReceipt>): Promise<string> =>
+      (await toolchainReport(async (command, args) => receipt(command, args, command === 'git' ? over : {}), 700)).git;
+    assert.equal(await gitLine({ stdout: 'git version 2.44.2\n' }), 'git version 2.44.2 (UNSUPPORTED: aidlc needs git 2.45 or newer)');
+    assert.equal(await gitLine({ stdout: '' }), 'UNREADABLE: "" names no git version; aidlc needs git 2.45 or newer');
+    assert.equal(await gitLine({ exitCode: 1, stdout: 'git version 2.44.2' }), 'MISSING');
+    assert.equal(await gitLine({ timedOut: true, stdout: 'git version 2.44.2' }), 'unknown: git --version did not exit within 700 ms');
+  });
 });
