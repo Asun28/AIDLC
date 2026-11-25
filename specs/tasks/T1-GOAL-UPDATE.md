@@ -98,7 +98,7 @@ Medium. A command can now be refused and must run again. A lock of a dead proces
 The aidlc loop maintainers.
 
 ### Docs
-`docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (Sessions, Goal writes) and `changelog.d/T1-GOAL-UPDATE.md` state the change.
+`docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (Goal writes) and `changelog.d/T1-GOAL-UPDATE.md` state the change.
 
 ## Attempt evidence
 RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14 fail.
