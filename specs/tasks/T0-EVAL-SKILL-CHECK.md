@@ -1,7 +1,7 @@
 ---
 id: T0-EVAL-SKILL-CHECK
 title: An eval check `used-skill` passes on a `Skill` tool call naming the skill or a `Read` of its SKILL.md, so a skill invoked through the Skill tool is not scored as unused
-status: todo
+status: merged
 branch: T0-EVAL-SKILL-CHECK
 worktree: D:\wt\AIDLC\T0-EVAL-SKILL-CHECK
 allow_paths:
