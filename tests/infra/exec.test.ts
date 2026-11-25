@@ -1,6 +1,6 @@
 import { after, describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type SpawnSyncOptions } from 'node:child_process';
+import { spawn, type ChildProcess, type SpawnSyncOptions } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -169,6 +169,7 @@ const FIXTURE = fileURLToPath(new URL('./exec-tree.child.ts', import.meta.url));
 const TIMEOUT_MS = 1500;
 
 type KillZero = (pid: number, signal: 0) => unknown;
+type Kill = (pid: number, signal: 'SIGKILL') => unknown;
 
 /** What `process.kill(pid, 0)` reports: `alive` when it succeeds, else the code of the error it throws. */
 function probe(pid: number, kill: KillZero = process.kill): string {
@@ -180,10 +181,10 @@ function probe(pid: number, kill: KillZero = process.kill): string {
   }
 }
 
-function end(pid: number | undefined): void {
+function end(pid: number | undefined, kill: Kill = process.kill): void {
   if (pid === undefined) return;
   try {
-    process.kill(pid, 'SIGKILL');
+    kill(pid, 'SIGKILL');
   } catch {
     /* already gone */
   }
@@ -252,7 +253,8 @@ function fixtureEnv(dir: string, from: NodeJS.ProcessEnv = process.env): NodeJS.
  * Times the fixture's exit mode from the spawn to the root's exit, with no kill. Undefined when the spawn
  * fails, the root does not exit 0 within CALIBRATION_LIMIT_MS or the sleeper never wrote its pid file.
  * The sleeper is ended and verified gone in every case; its pid goes to `ended`.
- * `command` and `limitMs` replace the spawned command (given the pid file) and the time limit in tests of this function.
+ * `command` and `limitMs` replace the spawned command (given the pid file) and the time limit in tests of this function;
+ * `roots` receives the child it started.
  */
 async function calibrate(
   t: TestContext,
@@ -260,6 +262,7 @@ async function calibrate(
   ended: number[] = [],
   command: (pidFile: string) => [string, string[]] = (pidFile) => [process.execPath, [fixture, 'exit', pidFile]],
   limitMs = CALIBRATION_LIMIT_MS,
+  roots: ChildProcess[] = [],
 ): Promise<number | undefined> {
   const dir = tmpDir('aidlc-exec-calibrate-');
   t.after(() => cleanup(dir));
@@ -267,6 +270,7 @@ async function calibrate(
   const startedAt = Date.now();
   const [file, args] = command(pidFile);
   const child = spawn(file, args, { stdio: 'ignore', windowsHide: true, env: fixtureEnv(dir) });
+  roots.push(child);
   let limit: NodeJS.Timeout | undefined;
   let lateDeadline: number | undefined;
   const measured = await new Promise<number | undefined>((resolve) => {
@@ -431,12 +435,13 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
       assert.equal(await calibrate(t, FIXTURE, ended, inline("process.kill(process.pid, 'SIGKILL')")), undefined);
       assert.equal(ended.length, 1);
     });
-    it('a child that writes its own pid to <pidFile>.root and no pid file, with a limit of 5 s: undefined, the root gone, nothing ended', async (t) => {
+    // Calibrates a root that writes `pid` (a JavaScript expression) to <pidFile>.root and no pid file, with a limit of 5 s.
+    const rootEndedAtLimit = async (t: TestContext, pid: string): Promise<void> => {
       const ended: number[] = [];
       let pidFile = '';
       const command = (file: string): [string, string[]] => {
         pidFile = file;
-        return [process.execPath, ['-e', "require('fs').writeFileSync(process.argv[1] + '.root', String(process.pid)); setTimeout(() => {}, 30_000)", file]];
+        return [process.execPath, ['-e', `require('fs').writeFileSync(process.argv[1] + '.root', String(${pid})); setTimeout(() => {}, 30_000)`, file]];
       };
       try {
         assert.equal(await calibrate(t, FIXTURE, ended, command, 5000), undefined);
@@ -454,6 +459,18 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
         }
         end(rootPid);
         if (rootPid !== undefined) await assertGoneWithin(rootPid, 3000);
+      }
+    };
+    it('a child that writes its own pid to <pidFile>.root and no pid file, with a limit of 5 s: undefined, the root gone, nothing ended', (t) => rootEndedAtLimit(t, 'process.pid'));
+    it('T0-EXEC-TEST-PID-REUSE acceptance 1 - a root whose <pidFile>.root names another live process is ended at the limit, and that process is not [R1]', async (t) => {
+      const bystander = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)'], { stdio: 'ignore', windowsHide: true });
+      try {
+        assert.ok(bystander.pid !== undefined, 'the bystander started');
+        const failure: unknown = await rootEndedAtLimit(t, String(bystander.pid)).then(() => undefined, (err: unknown) => err);
+        assert.equal(probe(bystander.pid), 'alive', 'the cleanup ended a process it did not start');
+        assert.equal(failure, undefined);
+      } finally {
+        bystander.kill('SIGKILL');
       }
     });
     it('a root whose detached sleeper writes the pid file 1000 ms after it saw the root gone: undefined, the late sleeper ended', async (t) => {
@@ -577,6 +594,26 @@ function delegatingTreeKill(): { calls: number[]; aliveAtCall: boolean[]; treeKi
   const aliveAtCall: boolean[] = [];
   return { calls, aliveAtCall, treeKill: (pid) => (calls.push(pid), aliveAtCall.push(probe(pid) === 'alive'), killProcessTree(pid, process.platform, runSync, (p, signal) => process.kill(p, signal))) };
 }
+
+describe('T0-EXEC-TEST-PID-REUSE acceptance 2 - end and the pids seen gone [R2]', () => {
+  const gone: KillZero = () => { throw Object.assign(new Error('gone'), { code: 'ESRCH' }); };
+  const ended = (pid: number): [number, string][] => {
+    const { killer, kills } = recordingKiller();
+    end(pid, killer);
+    return kills;
+  };
+  it('a pid that probe reported as ESRCH gets no signal, one it reported alive or EPERM gets one SIGKILL', () => {
+    assert.equal(probe(4242, gone), 'ESRCH');
+    assert.deepEqual(ended(4242), []);
+    assert.equal(probe(4243, () => true), 'alive');
+    assert.deepEqual(ended(4243), [[4243, 'SIGKILL']]);
+    assert.equal(probe(4244, () => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); }), 'EPERM');
+    assert.deepEqual(ended(4244), [[4244, 'SIGKILL']]);
+  });
+  it('the next test starts with no pid recorded as gone', () => {
+    assert.deepEqual(ended(4242), [[4242, 'SIGKILL']]);
+  });
+});
 
 describe('T0-EXEC-TREE-KILL the death check of acceptance 3', () => {
   const throwing = (code: string | undefined): KillZero => () => {
