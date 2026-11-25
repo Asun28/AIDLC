@@ -1,0 +1,65 @@
+---
+slug: codebase-first-study
+title: Take from the talk "All Code Is Slop (Except Mine)" what this repository's records support
+author: asun28 (owner); drafted by the coordinator session
+status: accepted
+created: 2026-11-24T18:55:00Z
+source: human
+---
+
+# Intent: Take from the talk "All Code Is Slop (Except Mine)" what this repository's records support
+Author: asun28 (owner); drafted by the coordinator session. Status: accepted.
+
+## Problem
+The owner pasted on 2026-11-25 a Chinese summary of a talk (fix the codebase before a software factory; turn each correction into a deterministic check; remove misuse by architecture; add runtime, formal and property verification) and asked: "research and learn from below [the pasted summary] with aidlc".
+
+The source is Lauren Tan's talk on the Grok Bot team (https://www.youtube.com/watch?v=O_zcc6Xl12g). The video was not watched. Six pages about it were read through a fetch agent, two of them in part; one (moderncreator.app) holds a transcript whose last caption starts at 17:11, and the sixth (ai.engineer) was read after the first draft. Tan is also the author of pstack, which `intent/pstack-study.md` studied. Every outside figure is a lead, not evidence. Codex gpt-6.2-astra, read-only at reasoning effort max, reviewed the first draft on 2026-11-25 and answered ACCEPT WITH CHANGES; its answer, the scripts and the corrections are in `_local/codebase-first-consensus/`, which is not tracked. The figures it corrected are corrected below. The repository figures come from read-only scripts on main at 646cc2db on 2026-11-25 (462 card-run records, 1,094 findings, 312 goal journals, the failed CI logs GitHub still holds).
+
+What the pages say and the summary leaves out:
+- The 0.5% counts reversions, per pull request in the pages read here, and not a defect repaired in a later one. Codex reads 0.47% of commits on a slide, which was not confirmed. The 11,000 are 10,926 merged pull requests in October, with about 227 contributors. All figures are the team's own.
+- "Performance rose" has exceptions on the talk's slide, as xiaohu.ai reports it: script and style bytes at startup up 285%, window resizing 130% slower, idle CPU doubled.
+- The comment ban went from 65,824 to 1,227 comments on a slide, about 98%. No exception is named.
+- The stated order is a lint rule against new occurrences first, then the removal of the old examples an agent copies. No page gives a schedule for that, or says who decides that a correction becomes a check, or how a rule is removed.
+
+## The talk checked against this repository
+| What the talk asks for | What the records show | Result |
+| --- | --- | --- |
+| Each correction becomes a check, not a line of prose | `docs/LESSONS.md` holds 231 lessons. By the coordinator's labels 20 of them, dated 2026-10-23 to 2026-11-23, and by Codex's 24 (19 in common) state one class: a test outside the card's DoD or `allow_paths` fails on what the card changes. `test-temp` failed CI on three cards (T1-TEST-AUDIT-LIST-2 on 11-20, T0-PREFETCH-TIMEOUT and T0-DOD-VENV on 11-23). The lesson that names it was committed at 12:04Z on 11-23, 35 minutes after the card T0-DOD-VENV was committed, and that card failed 8 hours later | Done on 2026-11-24 by T0-CHECK-TREE (PR 476), whose backtest has 7 of 12. Counted here: 10 red runs failed outside the card's DoD (as the card file reads today) on a whole-tree test (7), a pinned document or prompt (2) or the `bench` job (1), and 7 of the 10 cards were replaced. The first draft set these against 21 runs and left out a pin of a CLI message (T0-R3-POOL-WAIT) and a mixed failure (T1-REVIEW-FOLLOWUP-ISSUE-2). Codex counts 13 of 27 failed pull-request heads outside the DoD, 9 replaced; the backtest of T0-CHECK-TREE has 13 of 25 cards. Its keep rule (at most 1 in 200 cards) decides; no second card |
+| The rest of that class: a test that pins one message or document | A rule that names each test holding the name of a changed document flags a median of 64 further test files on the 163 of 191 November merges that change one. T0-CHECK-TREE tried a rule on `allow_paths` (394 of 429 cards warned). A trace of the suite's own file reads names no further short test that scans all of `src/` | No card |
+| Make the mistake impossible by design | 70 recorded blocking findings match a concurrency pattern, on 35 cards. After reading each, the coordinator keeps 27 cards with a check-then-act or lost-update finding. At 646cc2db 18 of them carry `superseded_by` (67%), against 64 of the other 203 cards with findings (32%); Codex's labels differ on four cards and give 19 of 27 against 63 of 203. Size is a confounder: the median budget is 400 against 270 and the median number of findings 7 against 3, so a larger card had more chances to match. The mean number of R3 decisions is the same (2.43 against 2.37, before the reading). By store: no race in the review queue after its single lock (2026-11-05) and no lost write of the journal head or the evidence manifest after their locks (2026-11-11); a check followed by an append can still repeat a journal event (T1-REVIEW-RULE-GOAL-2 F2), and by Codex's count the queue file changed in only two later commits. The goal record is the one of these where most writers take no lock: `GoalStore.saveGoal` has 11 call sites in `src/loop/controller.ts`, while `readmitAfterLift` already uses `updateJson` on the goal file. 16 findings on 5 cards concern the record (T1-BOUND-TELEMETRY-2, T0-CARD-TERMINAL-GOAL, T1-REVIEW-RULE-GOAL-2, T0-TAKEOVER-DONE-GOAL, T0-TAKEOVER-DONE-RACE), and 4 of them report overwritten goal state (T1-BOUND-TELEMETRY-2 F2 and F3, T1-REVIEW-RULE-GOAL-2 F1 and F8). Issue 300 reports an extension that erases a cancellation, reproduced in memory and present on main; it is open and no card covers all writers | Proposal 1 (P1) |
+| Formal verification (TLA+) of multi-party protocols | `tests/scenarios/fault-points.test.ts` already fails each covered write in turn and checks six invariants and liveness. It does not run a second session between a read and a write. Card-run check-then-act findings continue after the compare-and-set of 2026-09-27 (T0-ADOPT-EXTERNAL-MERGE, T1-CONTINUE-GOAL, T0-CONTRACT-GATE), and hand-written cases are interleaved in `takeover-done-race.preload.ts` and by the nth-read hook of `review-rule-goal.test.ts` | Proposal 2 (P2, measure first). No TLA+ or Lean: a second model to keep in step with the code, and a new tool |
+| Directory boundaries enforced by a dependency check | T0-LAYER-ORDER-TEST (PR 471) | Already here |
+| Types instead of prose | `src/` holds 0 `@ts-` suppressions, 0 casts to `any`, 42 catch clauses that hold only a comment and none that is blank. `noImplicitReturns` and `allowUnreachableCode: false` give 0 errors; `exactOptionalPropertyTypes` gives 258 in `src/`. 9 findings match a truthiness pattern, and that option does not refuse a truthiness test | No card |
+| Ban 99% of comments | 19.1% of the lines of `src/` are comment lines. 1 of 1,094 findings matches a narrow pattern for a false comment, and by Codex's reading it concerns YAML; Codex names one finding of a false comment that the pattern misses (BASE-SYNC-REVIEW F7). Comments that justify a workaround were not counted | No card. These records do not show the harm the talk names, and the search for it was narrow |
+| Ban `useEffect`; Chrome DevTools; Bombadil | No interface in this repository. The skill `ui-verify` (PR 478) covers downstream ones | No card |
+| Review shrinks to verification artifacts; agents merge | 134 of 272 first formal decisions block (`intent/anthropic-practices-study.md`) | No change. Review still finds defects here |
+| A low revert rate shows quality | 316 merged pull requests since September and one revert commit by subject, of card text. Repairs here go forward in new cards, so the rate says little here, as it does there | Not used as a measure |
+
+## Proposed outcome
+1. P1, about 2 cards (issue 300): every goal write goes through one locked read-modify-write in `src/state/goal-store.ts`, as `updateCardRun` is for card runs, with the journal append inside the section, and a test refuses a call of the unlocked write from any other file. The earlier attempt (T1-REVIEW-RULE-GOAL-2) locked only the save and was reverted, because a command that journals and then fails to get the lock leaves an event with no update. It keeps the lock order with the goal lease, since CLOSE saves DONE under that lease, and recovers an append that succeeded before a save that failed. Keep rule (Codex): tests that force a cancel against an extension, and a resume against a ruling, leave an allowed state and journal through failure and retry; adjudicated findings in the next 100 runs are counted apart.
+2. P2, a measurement and no card: a script under `_local/` runs a second session's act (cancel, extend, takeover, withdraw) after each goal and card-run read of the commands the fault-point check covers, on the reviewed candidates of the 27 cards (by Codex's count all 39 matched commits exist, 16 of them older than the harness). It reuses the nth-read hook, the `two-windows` scenarios and `aidlc review repro`. It reports the distinct reachable races against their repaired candidates and the existing tests, the added coverage, the false failures and the runtime; a threshold is set from that report. The first draft's threshold of a third had no baseline.
+3. P2, one small card: `tmpDir` of `tests/infra/helpers.ts` returns the canonical path. 32 sites canonicalize by hand, and three lessons (11-08 to 11-10) each name a missed site. The first draft deferred this because no failure is recorded after 11-10. Codex disagreed and the coordinator now agrees: the change is one function and removes examples that tests copy. A test that needs the path as given keeps it explicitly.
+4. Not carded, each with what would reopen it:
+   - One child-environment helper for tests, against 93 spreads of `process.env` in 63 files: 14 findings match a pattern on 8 cards. Reopened by an adjudicated count.
+   - A table pairing each lesson with its check (deferred in `intent/pstack-study.md`): a class can be counted by hand, as the 20 above show. Reopened by the owner.
+
+## Affected users and systems
+Through proposal 1: `src/state/goal-store.ts`, `src/loop/controller.ts`, their tests, `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md`, and every downstream repository on its next install of aidlc. Through proposal 2: nothing tracked. Through proposal 3: `tests/infra/helpers.ts` and the tests that use it.
+
+## Constraints
+- Outside figures are leads, never evidence.
+- No new dependency, no new gate on a card run, no change to `REVIEW.md`, the verdict schema, an allowance constant or a deadline.
+- T0-CHECK-TREE and its keep rule stand, and so do Plan A, Plan B and the agreements of 2026-11-23 and 2026-11-24.
+- No goal is opened and no card is registered by this intent.
+
+## Limits of the measurements
+Findings are not adjudicated defects, and the 27 cards hold families (one of five BOUND-TELEMETRY cards), so the rates are not independent. A replaced card can have been replaced for another reason. Lost STOPs were not measured: the first draft's check read `GOAL_STATE` events only and missed all 162 `GOAL_STOPPED` events. Counted with them, 36 stops are followed by a transition from a state other than STOP. By Codex's reading each follows an authorized resume; the coordinator read 3 in full, and each has a `GOAL_TAKEOVER` between. A journal cannot show a snapshot that was overwritten. 20 pairs of adjacent goal events come from different processes within 2 seconds, and no incident is recorded. The trace sees only `readFileSync` and `readdirSync` in a test's own process and missed `parse-guard`; one test (`ci-shard`) failed under the tracer and passes without it. Codex's counts of failed heads and of candidate commits, and its 24 lessons, were not recounted. Its statement that T0-REVIEW-RESOLVE-LOST F5 and F6 bear on the queue claim was not taken: they are contract mismatches, not races.
+
+## Decisions (owner, 2026-11-25, in the session)
+- The owner answered "1 yes" (Codex reviews the draft) and "2 no" (proposal 1 does not come before T0-BENCH-INPUTS). The coordinator had recommended no to the second with the reason that no incident is recorded. The STOP check in the first draft was wrong (Limits).
+- Codex, which was not told of that answer, advises proposal 1 before T0-BENCH-INPUTS, because issue 300 reproduces on main. The coordinator reported this and the corrected evidence, and kept its recommendation of no.
+- The owner then answered "accept", which the coordinator had described as: the intent is accepted and committed, with T0-BENCH-INPUTS first. The alternative offered, "accept, 300 first", was not chosen.
+- The owner asked which Codex model to use. The coordinator chose gpt-6.2-astra, which the installed Codex describes as its most capable model. No configuration file changes: R3 keeps gpt-6-astra.
+
+## Open questions
+- (none)
