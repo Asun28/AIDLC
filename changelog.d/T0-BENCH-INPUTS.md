@@ -1,0 +1,1 @@
+- T0-BENCH-INPUTS: a report of `aidlc review bench run` records, under `inputs`, the commit and state of the checkout, the hash of each case file and, per dispatched review, the command, the effort, the lesson hash and the prompt hashes. No review, no score and no command line changes.

@@ -64,3 +64,46 @@ npm run typecheck && node --test tests/surface/review-bench.test.ts tests/surfac
 ```
 - Expected exit code: 0
 - Assertion: the report holds the checkout commit and state, the case hashes and one entry per dispatched review with its command, effort, lesson hash and prompt hashes; the key list of line 769 holds `inputs`; the other bench tests and the temp-directory, changelog and prose checks pass.
+
+## PR summary
+### What
+A report of `aidlc review bench run` gains the key `inputs` after `policyHash`. It holds `checkoutCommit`, `checkoutClean`, `cases` and `reviews`.
+
+### Why / Intent
+Two reports with one policy hash can differ in commit, lessons, command, effort and case bytes. The report did not say so. This is P1 of `intent/anthropic-practices-study.md`.
+
+### How / Behaviour
+The run reads the commit and the state of the checkout before the first review. It hashes the case bytes when it loads them. It records a review entry when it calls the reviewer, and it hashes each prompt when it renders it.
+
+### System impact
+Only `src/review/bench.ts` changes. No prompt, score, command line or `bench compare` verdict changes.
+
+### Security
+The report holds hashes and the configured command, not the prompt or the lesson text. The run makes two more read-only git calls.
+
+### Tests and review
+Nine new tests in `tests/surface/review-bench.test.ts` failed before the change. Three existing tests of that file failed too: the key list, the two pinned documents and `bench compare`. R3 reviews the candidate.
+
+### Risk
+Low. A reader that lists the exact keys of a report sees one more key.
+
+### Ownership
+The aidlc loop maintainers.
+
+### Docs
+`docs/OPERATIONS.md` (Reviewer bench), `evals/review/README.md` and `changelog.d/T0-BENCH-INPUTS.md` state the change.
+
+## Attempt evidence
+All in `tests/surface/review-bench.test.ts` unless named. RED commit 1938448fb70d8436c7ffc7d6a119bb7883f6783a: 37 tests, 12 fail, each on its assertion.
+
+| Item | Clause | Assertion that fails without it |
+|---|---|---|
+| 1 | R1 to R3 | "T0-BENCH-INPUTS acceptance 1": 18 scripted rows for the two reads, the order of reads and first review, the key order of `inputs`, and one run on real git |
+| 2 | R4 | "T0-BENCH-INPUTS acceptance 2": bytes that are not UTF-8, a case that cannot be scored, an unconfirmed case, a file rewritten during the run, a run with no case |
+| 3 | R5, R6 | the five "T0-BENCH-INPUTS acceptance 3" tests: trials and dispatch order, effort, command, lesson hash, prompt hashes |
+| 4 | R5, R7 | the two "T0-BENCH-INPUTS acceptance 4" tests: every cause of R7 for no entry, and no verdict, a runner that rejects, a quota hold and a result that cannot be retained for an entry |
+| 5 | R1 | "T1-BENCH-TRIALS-2 acceptance 3" (the key list), "T1-BENCH-TRIALS-2 acceptance 8" (`bench compare` with and without `inputs`), the two constants of "T1-REVIEW-BENCH acceptance 9" |
+| 6 | R8, R9 | reviewer-verified; "T1-REVIEW-BENCH acceptance 9" compares the two documents whole; `changelog-fragments`, `prose` |
+| 7 | | typecheck and `test-temp` in the DoD |
+
+Guards: 24 loosened forms of the new conditions were run one at a time against the new tests, and each was caught.
