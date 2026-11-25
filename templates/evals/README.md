@@ -11,8 +11,10 @@ checks that exit 0/1. No model-graded opinions.
   (file text), `output-matches` (regex on the model output), `json-field`.
 - Tool-call checks read the tool calls the model made, not its text:
   `read-file` (`path`: a `Read` tool call whose `file_path` resolves to
-  that repository-relative path), `ran-command` (`pattern`: a `Bash` or
-  `PowerShell` tool call whose `command` matches the regex),
+  that repository-relative path), `used-skill` (`name`: a `Skill` tool
+  call whose `skill` equals it, or a `Read` tool call of
+  `.claude/skills/<name>/SKILL.md`), `ran-command` (`pattern`: a `Bash`
+  or `PowerShell` tool call whose `command` matches the regex),
   `not-ran-command` (`pattern`: none matches) and `not-wrote-path`
   (`pattern`: no `Edit`, `Write` or `NotebookEdit` tool call whose path
   matches). Paths compare without letter case on Windows. A case with one
@@ -22,7 +24,8 @@ checks that exit 0/1. No model-graded opinions.
   After a provider whose result has no `toolCalls`, each fails with `no
   tool calls recorded`. A recorded empty list of tool calls
   (`toolCalls: []`) passes `not-ran-command` and `not-wrote-path`, since
-  no call matches, and fails `read-file` and `ran-command`.
+  no call matches, and fails `read-file`, `used-skill` and
+  `ran-command`.
 - A model-backed case runs in a detached temporary checkout of HEAD under
   the OS temp directory, with the main checkout's `node_modules` linked
   in and `AIDLC_STATE_DIR` set to a new empty temporary directory; the
