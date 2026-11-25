@@ -92,7 +92,7 @@ An owner's act decides on the record that it reads inside the lock, and appends 
 No new input, command or credential. The lock file names a process, as the card-run lock does.
 
 ### Tests and review
-Two new test files cover the store, overlapping acts, stale derived writes, held locks and lock order. Three tests of `review-rule-goal.test.ts` change, as the card states. R3 reviews the candidate.
+Two new test files cover the store, overlapping acts, stale derived writes, held locks and lock order. Three tests of `review-rule-goal.test.ts` and the pinned sentences of `prose.test.ts` change, as the card states. R3 reviews the candidate.
 
 ### Risk
 Medium. A command can now be refused and must run again. A lock of a dead process must be removed by hand.
@@ -101,7 +101,7 @@ Medium. A command can now be refused and must run again. A lock of a dead proces
 The aidlc loop maintainers.
 
 ### Docs
-`docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (Goal writes) and `changelog.d/T1-GOAL-UPDATE.md` state the change.
+`docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` (Goal writes, Sessions), `README.md` and `changelog.d/T1-GOAL-UPDATE.md` state the change.
 
 ## Attempt evidence
 RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14 fail.
@@ -114,8 +114,9 @@ RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14
 | 4 | Same file, "acceptance 4": 13 report results, the extension, the re-admission and the 11 derived writes under a held lock | RED, then pass |
 | 5 | Same file, the three "acceptance 5" tests: lock order, registry loads, a command inside `createGoal`. The registry test passes on main, where no goal lock is held | pass |
 | 6 | `tests/infra/goal-update.test.ts`, "acceptance 6" | RED, then pass |
-| 7 | `tests/scenarios/review-rule-goal.test.ts`, three tests changed; every other file of the DoD has no line changed | RED, then pass |
-| 8 | the two documents and the fragment | reviewer-verified |
+| 7 | `tests/scenarios/review-rule-goal.test.ts`, three tests changed; every other file of the DoD apart from that of item 9 has no line changed | RED, then pass |
+| 8 | the documents and the fragment | reviewer-verified |
+| 9 | `tests/surface/prose.test.ts`, suite T1-STORE-CAS-2, "acceptance 8" of that suite, RED before the two sentences changed | pass |
 
 Guards: 16 loosened forms of the new conditions were run one at a time against four test files. 14 were caught. "A result that changes no field is a write" led to the last assertion of acceptance 4, which catches it. The other, a derived stop whose event is appended after the write, is not pinned: the card keeps the order of main, T1-GOAL-OWED reverses it, and that card may change no test of main.
 
