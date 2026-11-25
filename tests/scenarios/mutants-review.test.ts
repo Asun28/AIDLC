@@ -2,7 +2,7 @@
 // Card T0-MUTANT-EVIDENCE-STATE: the section opens with the state of the report.
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, linkSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -182,7 +182,7 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
   });
 
   test('acceptance 3: a report reached through a linked .review puts the unusable entry there [R1]', withSetup(async (s) => {
-    const dir = realpathSync.native(tmpDir('aidlc-mutants-outside-'));
+    const dir = tmpDir('aidlc-mutants-outside-');
     try {
       writeFileSync(path.join(dir, `${CARD}.mutants.json`), reportText(SHA));
       symlinkSync(dir, path.dirname(s.report), 'junction');
@@ -195,7 +195,7 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
   }));
 
   test('acceptance 3: a report with a second hard link puts the unusable entry there [R1]', withSetup(async (s) => {
-    const dir = realpathSync.native(tmpDir('aidlc-mutants-outside-'));
+    const dir = tmpDir('aidlc-mutants-outside-');
     try {
       const outside = path.join(dir, 'report.json');
       writeFileSync(outside, reportText(SHA));
@@ -330,7 +330,7 @@ describe('card attempt refuses while a marker exists (card T1-VERIFY-MUTANTS-PRO
   }));
 
   test('acceptance 5: the marker is read under the run\'s worktree when it has one, not under the main checkout [R6]', withSetup((s) => {
-    const worktree = realpathSync.native(tmpDir('aidlc-mutants-wt-'));
+    const worktree = tmpDir('aidlc-mutants-wt-');
     try {
       const { fx, runner, goalId } = s;
       const card = fx.card(CARD);
@@ -346,7 +346,7 @@ describe('card attempt refuses while a marker exists (card T1-VERIFY-MUTANTS-PRO
   }));
 
   test('acceptance 5: a dangling link at the marker path refuses too, since only whether something is there is read [R6]', withSetup((s) => {
-    const dir = realpathSync.native(tmpDir('aidlc-mutants-gone-'));
+    const dir = tmpDir('aidlc-mutants-gone-');
     mkdirSync(path.dirname(s.marker), { recursive: true });
     symlinkSync(dir, s.marker, 'junction');
     renameSync(dir, `${dir}-moved`);

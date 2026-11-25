@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import fs, { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -58,7 +58,7 @@ interface Repo {
 }
 
 function repo(): Repo {
-  const dir = realpathSync.native(tmpDir('aidlc-bench-export-'));
+  const dir = tmpDir('aidlc-bench-export-');
   const root = path.join(dir, 'repo');
   mkdirSync(path.join(root, 'src'), { recursive: true });
   git(root, ['init', '-q', '-b', 'main']);

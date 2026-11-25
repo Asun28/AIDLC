@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { lessonTerms, matchedLessons, reviewLessons, type ReviewLessons } from '../../src/artifacts/lessons.ts';
@@ -93,7 +93,7 @@ test('T1-LESSON-MATCH acceptance 3: a term matches the diff case-sensitively [R3
 });
 
 function repo(body: (root: string, git: (...args: string[]) => string) => void): void {
-  const root = realpathSync.native(tmpDir('aidlc-match-git-'));
+  const root = tmpDir('aidlc-match-git-');
   const git = (...args: string[]): string => {
     const r = runSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root });
     assert.equal(r.exitCode, 0, `git ${args.join(' ')}: ${r.stderr}`);

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as lazy from '../../src/hooks/lazy.ts';
@@ -32,7 +32,7 @@ function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 function withTemp<T>(fn: (dir: string) => T): T {
-  const dir = realpathSync.native(tmpDir('aidlc-hook-lazy-'));
+  const dir = tmpDir('aidlc-hook-lazy-');
   try {
     return fn(dir);
   } finally {

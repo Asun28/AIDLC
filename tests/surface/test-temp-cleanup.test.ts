@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cleanup, tmpDir } from '../infra/helpers.ts';
@@ -12,7 +12,7 @@ const helpersUrl = pathToFileURL(path.join(root, 'tests', 'infra', 'helpers.ts')
 
 /** Runs `fn` with a new empty scratch directory (canonical path) and removes it afterwards. */
 function inScratch<T>(fn: (scratch: string) => T): T {
-  const scratch = realpathSync.native(tmpDir('aidlc-ttscratch-'));
+  const scratch = tmpDir('aidlc-ttscratch-');
   try {
     return fn(scratch);
   } finally {
@@ -52,6 +52,38 @@ test('a directory from tmpDir is removed when its process exits', () => {
     assert.equal(existsSync(dir), false, `left: ${dir}`);
     assert.ok(path.basename(dir).startsWith('aidlc-tt-'), `printed: ${r.stdout}`);
     assert.equal(path.dirname(dir), path.join(scratch, 'parent'));
+  });
+});
+
+test('T0-TMPDIR-CANONICAL acceptance 1: tmpDir creates its directory under the canonical path of its parent', () => {
+  inScratch((scratch) => {
+    const target = path.join(scratch, 'target');
+    const link = path.join(scratch, 'link');
+    mkdirSync(target);
+    symlinkSync(target, link, 'junction');
+    const r = runModule(link, `
+      import { existsSync } from 'node:fs';
+      import path from 'node:path';
+      import { tmpDir } from ${JSON.stringify(helpersUrl)};
+      const link = ${JSON.stringify(link)};
+      const dirs = [tmpDir('aidlc-tt-'), tmpDir('aidlc-tt-', link)];
+      let code = 'none';
+      try {
+        tmpDir('aidlc-tt-', path.join(link, 'missing'));
+      } catch (error) {
+        code = error.code;
+      }
+      console.log(JSON.stringify({ dirs, existed: dirs.map((dir) => existsSync(dir)), code }));
+    `);
+    assert.equal(r.exit, 0, r.stderr);
+    const out = JSON.parse(r.stdout.trim()) as { dirs: string[]; existed: boolean[]; code: string };
+    const canonical = realpathSync.native(target);
+    assert.deepEqual(out.dirs.map((dir) => path.dirname(dir)), [canonical, canonical]);
+    assert.deepEqual(out.existed, [true, true]);
+    assert.equal(out.code, 'ENOENT');
+    assert.deepEqual(out.dirs.map((dir) => existsSync(dir)), [false, false]);
+    assert.deepEqual(readdirSync(target), []);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
   });
 });
 

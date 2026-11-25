@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as bench from '../../src/review/bench.ts';
 import { renderCard } from '../../src/artifacts/card.ts';
@@ -34,7 +34,7 @@ interface Fixture {
 
 /** One base commit and two candidates, each changing one line of src/calc.ts and adding the card file. */
 function fixture(): Fixture {
-  const dir = realpathSync.native(tmpDir('aidlc-rounds-'));
+  const dir = tmpDir('aidlc-rounds-');
   const root = path.join(dir, 'repo');
   const tmpRoot = path.join(dir, 'tmp');
   mkdirSync(path.join(root, 'src'), { recursive: true });
@@ -165,7 +165,7 @@ test('T1-BENCH-ROUNDS acceptance 2: no further round after a pass, after a block
     assert.equal(held.report.cases[1]!.detail, 'not reviewed: a quota hold stopped the run');
 
     // The working-tree reader gives no lines, and never throws, for a path it must not read.
-    const tree = realpathSync.native(tmpDir('aidlc-rounds-tree-'));
+    const tree = tmpDir('aidlc-rounds-tree-');
     const checkout = path.join(tree, 'checkout');
     mkdirSync(path.join(checkout, 'src'), { recursive: true });
     writeFileSync(path.join(checkout, 'src', 'a.ts'), 'one\ntwo\nthree\n');

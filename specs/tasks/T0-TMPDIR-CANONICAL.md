@@ -1,7 +1,7 @@
 ---
 id: T0-TMPDIR-CANONICAL
 title: "tmpDir of tests/infra/helpers.ts returns the canonical path, and the 32 calls that canonicalized its result by hand stop doing so"
-status: todo
+status: merged
 branch: T0-TMPDIR-CANONICAL
 worktree: D:\wt\AIDLC\T0-TMPDIR-CANONICAL
 allow_paths:
@@ -70,3 +70,44 @@ npm run typecheck && npm run check:tree && node --test tests/infra/base-sync.tes
 ```
 - Expected exit code: 0
 - Assertion: `tmpDir` returns a canonical path under an aliased parent, and the 13 files of the DoD pass without their wrappers.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/test-temp-cleanup.test.ts, T0-TMPDIR-CANONICAL acceptance 1 | RED at 89073d7a (`...\link` against `...\target`), passes at 61d8ba43 |
+| 2 | `git grep -F 'realpathSync.native(tmpDir('` in tests; git diff origin/main of the 24 files; the 13 files of the DoD; the other 11 files at 61d8ba43 | no match; read; 109 tests, 105 pass, 0 fail, 4 skipped, the same under a short 8.3 temporary directory; 253 tests, 245 pass, 0 fail, 8 skipped |
+| 3 | `npm run typecheck`, `npm run check:tree` | exit 0; exit 0 |
+
+The merge of origin/main (PR 490) conflicted in the imports of tests/infra/base-sync.test.ts; both sides are kept.
+
+Linux (WSL Ubuntu, Node 22.23.1, `/tmp` canonical): the test of item 1 fails without the change and passes with it. The 24 files, two runs of each commit with nothing beside them: 330 pass and 3 fail at cc27553c, 331 pass and the same 3 fail at 61d8ba43; the 3 are tests that need `pwsh`, which that host lacks. Two earlier runs at 61d8ba43, beside Windows test runs, also failed in other tests: T0-HOOK-GIT-PREFETCH F3 in one, four board --watch tests in the other. Alone, hook-git-prefetch.test.ts passed 8 of 8 runs and board-watch.test.ts 5 of 5 on each commit. macOS was not tested before CI.
+
+## PR summary
+
+### What
+The test helper `tmpDir` returns the canonical path. Test files no longer convert its result by hand.
+
+### Why / Intent
+The Windows CI runner spells its temporary directory as a short path. Three lessons record a test that failed there only.
+
+### How / Behaviour
+`tmpDir` makes the parent path canonical before it creates the directory. A failure leaves no directory that is not recorded.
+
+### System impact
+Only test files change. No file of the package changes.
+
+### Security
+No effect. The change reads no new input.
+
+### Tests and review
+One new test uses a directory link as the temporary directory. It fails without the change.
+
+### Risk
+Low. The change is not tested on macOS before CI.
+
+### Ownership
+The owner approved the card and the run on 2026-11-25.
+
+### Docs
+No document changes.

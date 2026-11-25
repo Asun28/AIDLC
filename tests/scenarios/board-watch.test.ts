@@ -1,6 +1,6 @@
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +40,7 @@ function fixture(): { tmp: string; repo: string; state: string; env: NodeJS.Proc
   // Canonical from the start, so the CLI's cwd and the lease key below name one path: the fixture is not a git
   // repository, and there the CLI keys leases by its cwd as given, which on a Windows runner is an 8.3 short path
   // (RUNNER~1) unless it is resolved here (lesson 2026-11-08 T0-WORKTREE-RECLAIM-2).
-  const tmp = realpathSync.native(tmpDir('aidlc-watch-'));
+  const tmp = tmpDir('aidlc-watch-');
   const repo = path.join(tmp, 'repo');
   const state = path.join(tmp, 'state');
   mkdirSync(path.join(repo, 'specs', 'tasks'), { recursive: true });

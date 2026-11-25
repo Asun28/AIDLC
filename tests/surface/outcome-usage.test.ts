@@ -18,7 +18,7 @@ const temps: string[] = [];
 after(() => temps.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
 
 function tempDir(): string {
-  const dir = realpathSync.native(tmpDir('aidlc-usage-'));
+  const dir = tmpDir('aidlc-usage-');
   temps.push(dir);
   return dir;
 }

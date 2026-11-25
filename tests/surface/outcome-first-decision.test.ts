@@ -3,7 +3,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeTables, type Row, type Tables } from '../../bench/outcome/ingest.ts';
@@ -72,7 +72,7 @@ const entries: Record<string, Row[]> = {
 
 /** The rows of summary_review_convergence over `review_decisions` alone, the other tables empty. */
 function convergence(rows: Row[]): Row[] {
-  const out = realpathSync.native(tmpDir('aidlc-first-decision-'));
+  const out = tmpDir('aidlc-first-decision-');
   temps.push(out);
   const tables: Tables = { cards: [], card_runs: [], review_decisions: rows, findings: [], state_spans: [], attempts: [], ingest_errors: [] };
   writeTables(tables, out);
