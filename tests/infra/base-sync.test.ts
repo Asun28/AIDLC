@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { baseSyncReport } from '../../src/probes/base-sync.ts';
@@ -176,10 +176,27 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
   }
 });
 
+/** How a spawned child ended, for the message of a failed assertion. */
+function childOutcome(r: Pick<SpawnSyncReturns<string | null>, 'status' | 'signal' | 'error' | 'stdout' | 'stderr'>): string {
+  return JSON.stringify({ status: r.status, signal: r.signal, error: (r.error as NodeJS.ErrnoException | undefined)?.code ?? null, stdout: r.stdout, stderr: r.stderr });
+}
+
+describe('the message of a doctor child that did not exit 0 (T0-EXEC-TEST-PID-REUSE acceptance 3)', () => {
+  const failed = (code: string): Error => Object.assign(new Error(`spawnSync node ${code}`), { code });
+  const cases: Array<[string, Parameters<typeof childOutcome>[0], string]> = [
+    ['ended by another process on Windows', { status: 1, signal: null, stdout: '', stderr: '' }, '{"status":1,"signal":null,"error":null,"stdout":"","stderr":""}'],
+    ['ended by the spawn timeout', { status: null, signal: 'SIGTERM', error: failed('ETIMEDOUT'), stdout: 'partial', stderr: 'late' }, '{"status":null,"signal":"SIGTERM","error":"ETIMEDOUT","stdout":"partial","stderr":"late"}'],
+    ['one that cannot start', { status: null, signal: null, error: failed('ENOENT'), stdout: null, stderr: null }, '{"status":null,"signal":null,"error":"ENOENT","stdout":null,"stderr":null}'],
+  ];
+  for (const [name, r, expected] of cases) {
+    test(`${name}: the message holds status, signal, error code, stdout and stderr [R3]`, () => assert.equal(childOutcome(r), expected));
+  }
+});
+
 describe('aidlc doctor prints baseSync (T0-DOCTOR-BASE-SYNC acceptance 3)', { skip: !NO_LAZY_OK && NO_LAZY_SKIP }, () => {
   const doctor = (fx: { dir: string; clone: string }): Record<string, unknown> => {
     const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd: fx.clone, env: { ...process.env, AIDLC_STATE_DIR: path.join(fx.dir, 'state') }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
-    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.status, 0, childOutcome(r));
     return JSON.parse(r.stdout) as Record<string, unknown>;
   };
 
