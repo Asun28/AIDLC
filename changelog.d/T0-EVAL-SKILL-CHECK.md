@@ -1,0 +1,1 @@
+- T0-EVAL-SKILL-CHECK: an eval check `used-skill` (`name`) passes on a `Skill` tool call whose `skill` equals the name or on a `Read` tool call of `.claude/skills/<name>/SKILL.md`, where `read-file` sees the `Read` only; the case `agent-add-test-reads-tdd-skill` uses it and allows the `Skill` tool.

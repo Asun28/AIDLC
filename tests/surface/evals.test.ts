@@ -664,7 +664,9 @@ test('T0-EVAL-SKILL-CHECK acceptance 2: used-skill passes on a Skill tool call n
     ['a Skill call naming it', [{ name: 'Skill', input: { skill: 'tdd' } }], true, 'used'],
     ['a Read of its SKILL.md', [{ name: 'Read', input: { file_path: '.claude/skills/tdd/SKILL.md' } }], true, 'used'],
     ['a Skill call naming another skill', [{ name: 'Skill', input: { skill: 'diagnose' } }], false, missed],
+    ['another tool with a skill input', [{ name: 'Task', input: { skill: 'tdd' } }], false, missed],
     ['a Read of another skill', [{ name: 'Read', input: { file_path: '.claude/skills/diagnose/SKILL.md' } }], false, missed],
+    ['an Edit of the file', [{ name: 'Edit', input: { file_path: '.claude/skills/tdd/SKILL.md' } }], false, missed],
     ['a Grep of the file', [{ name: 'Grep', input: { pattern: 'x', path: '.claude/skills/tdd/SKILL.md' } }], false, missed],
     ['an empty list', [], false, missed],
   ];

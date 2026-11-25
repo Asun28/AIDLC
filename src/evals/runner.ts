@@ -22,6 +22,8 @@ export const EvalCheck = z.discriminatedUnion('type', [
   z.object({ type: z.literal('json-field'), path: z.string(), equals: z.unknown() }),
   /** A `Read` tool call whose `file_path` resolves to this repository-relative path. */
   z.object({ type: z.literal('read-file'), path: z.string().min(1) }),
+  /** A `Skill` tool call whose `skill` equals this name, or a `Read` tool call of its `.claude/skills/<name>/SKILL.md`. */
+  z.object({ type: z.literal('used-skill'), name: z.string().min(1) }),
   /** A `Bash` or `PowerShell` tool call whose `command` matches the regex. */
   z.object({ type: z.literal('ran-command'), pattern: z.string() }),
   /** No `Bash` or `PowerShell` tool call whose `command` matches the regex. */
@@ -72,7 +74,7 @@ const MEASUREMENT_WORD = new RegExp(`\\b(${MEASUREMENT_WORDS.join('|')})\\b`, 'i
 /** The system prompt of a model-backed case; it names no measurement word. */
 export const EVAL_SYSTEM_PROMPT = 'Complete the task exactly as instructed.';
 
-const TOOL_CALL_CHECKS: ReadonlySet<EvalCheck['type']> = new Set(['read-file', 'ran-command', 'not-ran-command', 'not-wrote-path']);
+const TOOL_CALL_CHECKS: ReadonlySet<EvalCheck['type']> = new Set(['read-file', 'used-skill', 'ran-command', 'not-ran-command', 'not-wrote-path']);
 
 /** Whether `target`, links followed, is `dir` or lies under it; false when either does not exist. */
 export function resolvesInside(dir: string, target: string): boolean {
@@ -255,18 +257,26 @@ function runChecks(evalCase: EvalCase, runner: SyncRunner, workdir: string, r?: 
         break;
       }
       default: {
-        const name = `${check.type} ${'path' in check ? check.path : `/${check.pattern}/`}`;
+        const name = `${check.type} ${'path' in check ? check.path : 'name' in check ? check.name : `/${check.pattern}/`}`;
         // No model run fails every tool-call check with `no model run`, and a result with no `toolCalls` fails every one with
         // `no tool calls recorded`. A recorded empty list (`toolCalls: []`) passes not-ran-command and not-wrote-path, since no
-        // call matches, and fails read-file and ran-command.
+        // call matches, and fails read-file, used-skill and ran-command.
         if (!r || !r.toolCalls) {
           checks.push({ check: name, ok: false, detail: r ? 'no tool calls recorded' : 'no model run' });
           break;
         }
+        const { toolCalls } = r;
+        const readFile = (file: string): boolean => {
+          const want = path.resolve(workdir, file);
+          return toolCalls.some((c) => c.name === 'Read' && stringField(c, 'file_path') !== undefined && samePath(path.resolve(workdir, stringField(c, 'file_path')!), want));
+        };
         if (check.type === 'read-file') {
-          const want = path.resolve(workdir, check.path);
-          const hit = r.toolCalls.some((c) => c.name === 'Read' && stringField(c, 'file_path') !== undefined && samePath(path.resolve(workdir, stringField(c, 'file_path')!), want));
+          const hit = readFile(check.path);
           checks.push({ check: name, ok: hit, detail: hit ? 'read' : 'no Read tool call of the file' });
+        } else if (check.type === 'used-skill') {
+          const file = `.claude/skills/${check.name}/SKILL.md`;
+          const hit = toolCalls.some((c) => c.name === 'Skill' && stringField(c, 'skill') === check.name) || readFile(file);
+          checks.push({ check: name, ok: hit, detail: hit ? 'used' : `neither a Skill tool call naming ${check.name} nor a Read tool call of ${file}` });
         } else if (check.type === 'not-wrote-path') {
           const re = new RegExp(check.pattern, process.platform === 'win32' ? 'i' : '');
           const written = r.toolCalls.filter((c) => c.name === 'Edit' || c.name === 'Write' || c.name === 'NotebookEdit').map((c) => stringField(c, c.name === 'NotebookEdit' ? 'notebook_path' : 'file_path')).filter((p): p is string => p !== undefined);

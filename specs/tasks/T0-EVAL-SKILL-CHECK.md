@@ -53,3 +53,41 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/prose
 ```
 - Expected exit code: 0
 - Assertion: the new `used-skill` test and the existing eval tests pass; the changelog fragment is well formed.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/evals.test.ts, T0-EVAL-SKILL-CHECK acceptance 2 | RED at 0ca9e318, passes |
+| 2 | Same test: a Skill call, a Read, another skill in each form, another tool, an Edit, a Grep, an empty list and no list; T1-EVAL-TRANSCRIPT-2 acceptance 5 accepts the type | passes |
+| 3 | git diff origin/main of evals/agent/add-test-reads-tdd-skill.json; T1-EVAL-TRANSCRIPT-2 acceptance 5 parses the case | read; passes |
+| 4 | git diff origin/main of both READMEs, docs/OPERATIONS.md and the fragment; changelog-fragments and command-lines tests | read; pass |
+
+## PR summary
+
+### What
+Eval cases gain the check `used-skill`. It passes when the model uses the named skill in either way.
+
+### Why / Intent
+A session uses a registered skill through the `Skill` tool. The old check saw only a `Read` of the file.
+
+### How / Behaviour
+The check passes on a `Skill` call that names the skill. It also passes on a `Read` of its SKILL.md.
+
+### System impact
+One case, add-test-reads-tdd-skill, moves to the new check and allows the `Skill` tool.
+
+### Security
+The check reads recorded tool calls and opens no file.
+
+### Tests and review
+One new test covers each kind of recorded call, an empty list and no list.
+
+### Risk
+Low. The four existing tool-call checks keep their scoring.
+
+### Ownership
+The owner asked for this card on 2026-11-25.
+
+### Docs
+Both eval READMEs, the OPERATIONS Evals section and a changelog fragment describe the check.
