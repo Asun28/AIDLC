@@ -1,4 +1,4 @@
-import { closeSync, constants, openSync, readFileSync, realpathSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import type { Card } from '../core/types.ts';
@@ -55,7 +55,17 @@ function readOpenedSource(resolved: string): string {
       throw new Error(`Opened context source helper failed (${detail})`);
     }
   }
-  if (process.platform !== 'linux') throw new Error('Opened context source verification requires Windows or Linux');
+  if (process.platform !== 'linux') {
+    const fd = openSync(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      // The second resolution refuses a swapped parent directory, which lstat follows; the device and inode refuse another file at the path.
+      if (realpathSync.native(resolved) !== resolved) throw new Error('Opened context source path changed');
+      const opened = fstatSync(fd, { bigint: true });
+      const named = lstatSync(resolved, { bigint: true });
+      if (opened.dev !== named.dev || opened.ino !== named.ino) throw new Error('Opened context source path changed');
+      return readFileSync(fd, 'utf8');
+    } finally { closeSync(fd); }
+  }
   const fd = openSync(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     if (realpathSync(`/proc/self/fd/${fd}`) !== resolved) throw new Error('Opened context source path changed');
