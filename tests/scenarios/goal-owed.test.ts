@@ -10,8 +10,11 @@ import { verifyAudit } from '../../src/audit/verifier.ts';
 import { DEFAULT_LEASE_TTL_MS } from '../../src/coordination/lease.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { HOUR_MS, MAX_INTEGRATION_REPAIR_CYCLES, MAX_PLANNING_INVOCATIONS, ReleaseAttempt, type Goal } from '../../src/core/types.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
 import { GoalController } from '../../src/loop/controller.ts';
 import type { ReportInput } from '../../src/loop/directive.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 
@@ -106,6 +109,12 @@ function withRun(fx: Fixture): Goal {
   fx.controller.ensureCardRun(g, CARD);
   return g;
 }
+/** In WAIT, with a card in BUILD whose deadline an extension moves. */
+function waiting(fx: Fixture): Goal {
+  const g = withRun(fx);
+  fx.store.updateCardRun(g.id, CARD, (r) => ({ ...r!, state: 'BUILD' }));
+  return fx.store.saveGoal({ ...fx.goal(g.id), state: 'WAIT' });
+}
 /** In DELIVER, with a release attempt. */
 function delivering(fx: Fixture): Goal {
   const g = running(fx, { target: 'staging' });
@@ -190,6 +199,7 @@ test('T1-GOAL-OWED acceptance 1 and 2: an owner act survives a failure of its ev
   checkRows([
     ['a cancellation', running, cancel, STOPPED],
     ['an extension of a running goal', running, extend, { 'record 1': 'again', 'append NOTE 1': 'next' }],
+    ['an extension that moves a card deadline', waiting, extend, { 'record 1': 'again', 'append NOTE 1': 'next', 'append NOTE 2': 'next' }],
     ['an extension of a time stop', stoppedForTime, extend, { 'append NOTE 1': 'again', 'append GOAL_STATE 1': 'again', 'record 1': 'again' }],
     ['a resume', cancelled, resume, { 'append GOAL_TAKEOVER 1': 'again', 'record 1': 'again', 'record 2': 'next' }],
     ['a resume that carries a revision', cancelled, (fx, id) => report(fx, id, 'resume', { reason: 'again', text: 'print hello twice', cards: [CARD] }), { 'append GOAL_TAKEOVER 1': 'again', 'append GOAL_REVISED 1': 'again', 'record 1': 'again', 'record 2': 'next', 'append GOAL_STATE 1': 'next' }],
@@ -302,6 +312,55 @@ test('T1-GOAL-OWED acceptance 1: the next goal command that writes the goal appe
       const added = fx.events(id).slice(held);
       assert.deepEqual(added.map((e) => [e.type, e.data['completed']]), [[owed, true], ...own.map((type) => [type, undefined])], name);
       assertSound(fx, id, name);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-GOAL-OWED acceptance 1: a ruling and a continuation append an owed GOAL_STOPPED before their own events [R2] [R3]', async () => {
+  for (const act of ['ruling', 'continuation'] as const) {
+    const fx = makeFixture({ config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+    try {
+      const { id } = running(fx);
+      const card = fx.card(CARD);
+      const reasons = ['[spec] 6 tests @ src/a.ts:1: no RED -> add one'];
+      // Decision 2 re-raises the disputed F1, so R3 stops the card.
+      const verdicts = [reasons, ['[spec] 6 tests @ src/a.ts:1: still no RED (re:F1) -> add one']].map((r) => JSON.stringify({ verdict: 'block', reasons: r, axes: { spec: { verdict: 'block', reasons: r }, standards: { verdict: 'pass', reasons: [] } } }) + '\n');
+      const script = scriptedRunner({ 'git diff --name-only': () => ({ stdout: 'src/a.ts\u0000' }), 'git diff': () => ({ stdout: 'diff --git a/src/a.ts b/src/a.ts\n+export const x = 1;\n' }), 'fake-r3': () => ({ stdout: verdicts.shift()! }) });
+      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+      const run = () => fx.store.getCardRun(id, CARD)!;
+      let r = runner.next(fx.goal(id), card, fx.controller.ensureCardRun(fx.goal(id), CARD));
+      for (const n of [1, 2]) {
+        r = runner.next(fx.goal(id), card, runner.recordAttempt(fx.goal(id), card, r.run, { outcome: 'success', dodReceipt: `dod:${n}`, redReceipt: 'red:1', candidateSha: `sha-${n}` }));
+        if (n === 2) runner.disputeFinding(fx.goal(id), card, run(), 'F1', 'the row exists');
+        r = runner.next(fx.goal(id), card, (await runner.formalReview(fx.goal(id), card, run())).run);
+      }
+      assert.deepEqual([run().state, run().stop?.reason], ['STOP', 'review']);
+      assert.ok(watched(fx, id, () => next(fx, id), 'append GOAL_STOPPED 1').error, act);
+      assert.deepEqual([fx.goal(id).state, fx.events(id).some((e) => e.type === 'GOAL_STOPPED')], ['STOP', false], act);
+      const held = fx.events(id).length;
+      if (act === 'ruling') fx.controller.ruleFinding(runner, id, card, 'F1', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
+      else fx.controller.continueCard(runner, id, card, { by: 'the owner', reason: 'one more decision' });
+      const added = fx.events(id).slice(held);
+      assert.deepEqual([added[0]!.type, added[0]!.data['completed'], added.filter((e) => e.type === 'GOAL_STOPPED').length], ['GOAL_STOPPED', true, 1], act);
+      assert.deepEqual([fx.goal(id).state, added.filter((e) => e.type === 'GOAL_STATE').map((e) => e.data['to'])], ['CARDS', ['CARDS']], act);
+      assertSound(fx, id, act);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-GOAL-OWED acceptance 1: a failed extension keeps the event of the card run it moved, and the recovery journals no second one [R4]', () => {
+  for (const [fail, recover] of [['record 1', extend], ['append NOTE 1', next]] as const) {
+    const fx = makeFixture();
+    try {
+      const { id } = waiting(fx);
+      assert.ok(watched(fx, id, () => extend(fx, id), fail).error, fail);
+      recover(fx, id);
+      assert.deepEqual([fx.events(id).filter((e) => e.data['cardDeadline']).length, fx.events(id).filter((e) => e.data['extension']).length, fx.goal(id).deadlines.extensions.length], [1, 1, 1], fail);
+      assert.equal(fx.store.getCardRun(id, CARD)!.deadline, LATER, fail);
     } finally {
       fx.cleanup();
     }
