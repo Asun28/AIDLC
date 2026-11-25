@@ -4,13 +4,16 @@ import { after, before, test } from 'node:test';
 import fs, { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
-import { makeFixture, writeCard, goalForCards, driveCardToDone, type Fixture } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, driveCardToDone, actorB, type Fixture } from './_harness.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
 import { GoalController } from '../../src/loop/controller.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
+import { setActorForTests } from '../../src/state/journal.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { StoreError } from '../../src/state/store.ts';
-import { resourceKeys } from '../../src/coordination/lease.ts';
-import { HOUR_MS, MAX_PLANNING_INVOCATIONS, ReleaseAttempt, type CardRun, type Goal } from '../../src/core/types.ts';
-import { makeStop } from '../../src/core/stop.ts';
+import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
+import { HOUR_MS, MAX_PLANNING_INVOCATIONS, ReleaseAttempt, type Goal } from '../../src/core/types.ts';
 import type { ReportInput } from '../../src/loop/directive.ts';
 
 const CARD = 'T1-A';
@@ -49,39 +52,57 @@ before(() => {
 after(() => {
   Object.assign(fs, { readFileSync: real.read, openSync: real.open, appendFileSync: real.append });
   syncBuiltinESMExports();
+  setActorForTests(undefined);
 });
 
 const journalFile = (fx: Fixture, id: string) => path.join(fx.paths.journal, `${id}.jsonl`);
-const bytes = (fx: Fixture, id: string) => [fx.store.goalFile(id), journalFile(fx, id)].map((f) => readFileSync(f, 'utf8'));
+/** The goal record, the goal journal, the goal lease and the card run, as stored. */
+const bytes = (fx: Fixture, id: string) => [fx.store.goalFile(id), journalFile(fx, id), fx.leases.file(resourceKeys.goal(fx.repo.key, id)), fx.store.cardFile(id, CARD)].map((f) => (existsSync(f) ? readFileSync(f, 'utf8') : ''));
 const report = (fx: Fixture, goalId: string, result: ReportInput['result'], data: Record<string, unknown> = {}, extra: Partial<ReportInput> = {}) => void fx.controller.report({ goalId, generation: 0, result, data, ...extra });
 const cancel = (fx: Fixture, id: string) => report(fx, id, 'cancel', { detail: 'stopped by the user' });
 const resume = (fx: Fixture, id: string) => report(fx, id, 'resume', { reason: 'the owner continues' });
 const extend = (fx: Fixture, id: string) => void fx.controller.extendDeadline(id, 'the owner', LATER, 'more time');
 const revise = (fx: Fixture, id: string) => report(fx, id, 'revision', { text: 'print hello twice' });
 const approve = (fx: Fixture, id: string) => report(fx, id, 'approved', { kind: 'development', by: 'a lead' });
-/** `aidlc review rule` with a runner that lifts the stop of the card run and records nothing else. */
-const rule = (fx: Fixture, id: string) => {
-  const runner = { ruleFinding: (): CardRun => fx.store.updateCardRun(id, CARD, (r) => ({ ...r!, state: 'SHIP', stop: undefined })) };
-  fx.controller.ruleFinding(runner, id, fx.card(CARD), 'F1', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
-};
+/** The runner of a fixture whose card R3 stopped, by the store every copy of the fixture shares. */
+const runners = new WeakMap<GoalStore, CardRunner>();
+/** `aidlc review rule` on the last unruled finding, through the real runner: it journals the ruling and lifts the stop. */
+const rule = (fx: Fixture, id: string) => void fx.controller.ruleFinding(runners.get(fx.store)!, id, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
+/** `aidlc card continue` through the real runner. */
+const proceed = (fx: Fixture, id: string) => void fx.controller.continueCard(runners.get(fx.store)!, id, fx.card(CARD), { by: 'the owner', reason: 'one more decision' });
 
 /** A one-card goal in RUN. */
 function running(fx: Fixture): Goal {
   writeCard(fx, { id: CARD, title: 'a', allowPaths: ['src/a.ts'] });
   return goalForCards(fx, [CARD]);
 }
-/** The same goal and its card run in STOP for review. */
-function stoppedForReview(fx: Fixture): Goal {
+const REVIEWED = { config: { gateRequired: true, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } };
+const block = (texts: string[]): string => {
+  const reasons = texts.map((text, i) => `[spec] 6 tests @ src/a.ts:${i + 1}: ${text}`);
+  return JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
+};
+/** The same goal in STOP for review: R3 stopped its card at decision 2, and F1 of its two findings is ruled, so a ruling on F2 lifts the stop. */
+async function stoppedForReview(fx: Fixture): Promise<Goal> {
   const goal = running(fx);
-  const stop = makeStop('review', 'blocked twice', 'rule', { at: fx.now(), global: false });
-  fx.controller.ensureCardRun(goal, CARD);
-  fx.store.updateCardRun(goal.id, CARD, (r) => ({ ...r!, state: 'STOP', stop }));
-  const d = fx.controller.next(goal.id);
-  assert.equal(d.kind, 'stop', d.narration);
-  assert.equal(fx.goal(goal.id).stop?.reason, 'review');
+  const verdicts = [block(['no RED -> add one']), block(['still no RED (re:F1) -> add one', 'no doc row -> add one'])];
+  const script = scriptedRunner({ 'git diff --name-only': () => ({ stdout: 'src/a.ts\u0000' }), 'git diff': () => ({ stdout: 'diff --git a/src/a.ts b/src/a.ts\n+export const x = 1;\n' }), 'fake-r3': () => ({ stdout: verdicts.shift()! }) });
+  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+  runners.set(fx.store, runner);
+  const card = fx.card(CARD);
+  const run = () => fx.store.getCardRun(goal.id, CARD)!;
+  let r = runner.next(goal, card, fx.controller.ensureCardRun(goal, CARD));
+  for (const n of [1, 2]) {
+    r = runner.next(goal, card, runner.recordAttempt(goal, card, r.run, { outcome: 'success', dodReceipt: `dod:${n}`, redReceipt: 'red:1', candidateSha: `sha-${n}` }));
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    if (n === 2) runner.disputeFinding(goal, card, run(), 'F1', 'the row exists');
+    r = runner.next(goal, card, (await runner.formalReview(goal, card, run())).run);
+  }
+  assert.deepEqual([run().state, run().stop?.reason], ['STOP', 'review']);
+  assert.equal(fx.controller.next(goal.id).kind, 'stop');
+  fx.controller.ruleFinding(runner, goal.id, card, 'F1', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
+  assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).stop?.reason, run().state], ['STOP', 'review', 'STOP']);
   return fx.goal(goal.id);
 }
-
 /** The same goal in STOP for time. */
 function stoppedForTime(fx: Fixture): Goal {
   const goal = running(fx);
@@ -108,14 +129,15 @@ function attempt(act: () => void): string | undefined {
   }
 }
 
-test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two leave one after the other, or one is refused with nothing written [R3] [R4]', () => {
+test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two leave one after the other, or one is refused with nothing written [R3] [R4]', async () => {
   // `landed` runs whole after the first read of the goal by `first`. `refused`: the cause `first` is refused with.
-  const rows: Array<[name: string, setup: (fx: Fixture) => Goal, first: Act, landed: Act, refused?: RegExp]> = [
+  const rows: Array<[name: string, setup: (fx: Fixture) => Goal | Promise<Goal>, first: Act, landed: Act, refused?: RegExp]> = [
     ['an extension, a cancellation lands', running, extend, cancel],
     ['a cancellation, an extension lands', running, cancel, extend],
     ['a resume, a ruling lands', stoppedForReview, resume, rule, /resume applies only to a terminal goal/],
-    // The resumed goal stops again for the card, so the ruling's generation is over; run again, it re-admits the goal.
-    ['a ruling, a resume lands', stoppedForReview, rule, resume, /resumed and stopped again for review since it was read \(generation 1, 0 read\).*run the command again/],
+    ['a ruling, a resume lands', stoppedForReview, rule, resume, /changed since it was read.*run the command again/],
+    ['a ruling, an extension lands', stoppedForReview, rule, extend, /changed since it was read.*run the command again/],
+    ['a continuation, a resume lands', stoppedForReview, proceed, resume, /changed since it was read.*run the command again/],
     ['a revision, a cancellation lands', running, revise, cancel, /is terminal \(STOP\)/],
     ['a revision, an approval lands', running, revise, approve],
     ['a cancellation, a cancellation and a resume land', running, cancel, (fx, id) => { cancel(fx, id); resume(fx, id); }, /stale report: observed generation 0, current 1/],
@@ -124,10 +146,10 @@ test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two
     ['a resume, an extension lands', stoppedForTime, resume, extend, /resume applies only to a terminal goal/],
   ];
   for (const [name, setup, first, landed, refused] of rows) {
-    const fx = makeFixture();
-    const twin = makeFixture();
+    const fx = makeFixture(setup === stoppedForReview ? REVIEWED : {});
+    const twin = makeFixture(setup === stoppedForReview ? REVIEWED : {});
     try {
-      const goal = setup(fx);
+      const goal = await setup(fx);
       let after: string[] = [];
       Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 1, run: () => { landed(fx, goal.id); after = bytes(fx, goal.id); } });
       const error = attempt(() => first(fx, goal.id));
@@ -138,7 +160,7 @@ test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two
         continue;
       }
       assert.equal(error, undefined, name);
-      const serial = setup(twin);
+      const serial = await setup(twin);
       landed(twin, serial.id);
       first(twin, serial.id);
       assert.deepEqual(view(fx, goal.id), view(twin, serial.id), name);
@@ -183,6 +205,14 @@ const derived: Array<[name: string, setup: (fx: Fixture) => Goal]> = [
     driveCardToDone(fx, g.id, CARD);
     return fx.store.saveGoal({ ...fx.goal(g.id), state: 'CLOSE', stages: { ...g.stages, development: 'pass' } });
   }],
+  ['CLOSE to DONE under an expired lease of another session', (fx) => {
+    const g = running(fx);
+    driveCardToDone(fx, g.id, CARD);
+    const closing = fx.store.saveGoal({ ...fx.goal(g.id), state: 'CLOSE', stages: { ...g.stages, development: 'pass' } });
+    fx.advance(DEFAULT_LEASE_TTL_MS + 1000);
+    setActorForTests(actorB);
+    return closing;
+  }],
   ['the time stop', (fx) => {
     const g = running(fx);
     fx.advance(4 * HOUR_MS);
@@ -221,7 +251,8 @@ test('T1-GOAL-UPDATE acceptance 3: a derived write of aidlc next over a cancella
       assert.equal(bytes(fx, goal.id)[0], after[0], `${name}: the goal record is the one the cancellation wrote`);
       const events = fx.events(goal.id);
       const late = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).map((e) => e.type);
-      assert.deepEqual(late.filter((t) => t.startsWith('GOAL_') && !(name === 'CLOSE to DONE' && t === 'GOAL_TAKEOVER')), [], `${name}: no goal event after the stop`);
+      assert.deepEqual(late, [], `${name}: no event after the stop`);
+      assert.equal(bytes(fx, goal.id)[2], after[2], `${name}: the goal lease is as it was`);
     } finally {
       overlap.at = undefined;
       fx.cleanup();
@@ -243,9 +274,9 @@ test('T1-GOAL-UPDATE acceptance 3: each state of those rows makes its derived wr
   }
 });
 
-test('T1-GOAL-UPDATE acceptance 4: a writer that does not get the goal lock is refused with LOCKED, with the goal record and journal as they were [R6]', () => {
-  type Row = [name: string, setup: (fx: Fixture) => Goal, act: Act];
-  const reported = (result: ReportInput['result'], data: Record<string, unknown>, setup: (fx: Fixture) => Goal = running, extra: Partial<ReportInput> = {}): Row => [`report ${result}`, setup, (fx, id) => report(fx, id, result, data, extra)];
+test('T1-GOAL-UPDATE acceptance 4: a writer that does not get the goal lock is refused with LOCKED, with the goal record, the goal journal, the goal lease and the card run as they were [R6]', async () => {
+  type Row = [name: string, setup: (fx: Fixture) => Goal | Promise<Goal>, act: Act];
+  const reported = (result: ReportInput['result'], data: Record<string, unknown>, setup: Row[1] = running, extra: Partial<ReportInput> = {}): Row => [`report ${result}`, setup, (fx, id) => report(fx, id, result, data, extra)];
   const at = (state: Goal['state']) => (fx: Fixture) => fx.store.saveGoal({ ...running(fx), state });
   const withRun = (fx: Fixture) => {
     const g = running(fx);
@@ -277,22 +308,20 @@ test('T1-GOAL-UPDATE acceptance 4: a writer that does not get the goal lock is r
     reported('cancel', {}),
     reported('resume', { reason: 'again' }, stoppedForReview),
     ['extendDeadline', running, extend],
-    ['the re-admission after a ruling', stoppedForReview, rule],
+    ['a ruling that lifts the stop', stoppedForReview, rule],
+    ['a continuation', stoppedForReview, proceed],
     ...derived.map(([name, setup]): Row => [`next, ${name}`, setup, (fx, id) => void fx.controller.next(id)]),
   ];
   for (const [name, setup, act] of rows) {
-    const fx = makeFixture();
+    const fx = makeFixture(setup === stoppedForReview ? REVIEWED : {});
     try {
-      const goal = setup(fx);
+      const goal = await setup(fx);
       const held = `${fx.store.goalFile(goal.id)}.lock`;
       writeFileSync(held, `pid=${process.pid} at=${fx.now()} nonce=00000000`);
       const before = bytes(fx, goal.id);
       const impatient: Fixture = { ...fx, controller: new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 30 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry }) };
       assert.throws(() => act(impatient, goal.id), isCode('LOCKED'), name);
-      const now = bytes(fx, goal.id);
-      assert.equal(now[0], before[0], `${name}: the goal record`);
-      if (name === 'next, CLOSE to DONE') assert.ok(!now[1]!.slice(before[1]!.length).includes('"GOAL_DONE"'), name);
-      else assert.equal(now[1], before[1], `${name}: the goal journal`);
+      assert.deepEqual(bytes(fx, goal.id), before, name);
       rmSync(held);
       const written = fx.goal(goal.id).writes;
       act(fx, goal.id);
@@ -351,13 +380,13 @@ test('T1-GOAL-UPDATE acceptance 5: the goal lock nests after the goal lease lock
   }
 });
 
-test('T1-GOAL-UPDATE acceptance 5: no registry loader runs while the goal lock is held [R7]', () => {
+test('T1-GOAL-UPDATE acceptance 5: no registry loader runs while the goal lock is held [R7]', async () => {
   const verified = (fx: Fixture) => {
     const g = running(fx);
     driveCardToDone(fx, g.id, CARD);
     return fx.store.saveGoal({ ...fx.goal(g.id), state: 'VERIFY_ARC' });
   };
-  const rows: Array<[result: ReportInput['result'], data: Record<string, unknown>, setup: (fx: Fixture) => Goal]> = [
+  const rows: Array<[result: ReportInput['result'], data: Record<string, unknown>, setup: (fx: Fixture) => Goal | Promise<Goal>]> = [
     ['cards-projected', { cards: [CARD] }, running],
     ['revision', { text: 'print hello twice' }, running],
     ['arc-verified', {}, verified],
@@ -366,9 +395,9 @@ test('T1-GOAL-UPDATE acceptance 5: no registry loader runs while the goal lock i
     ['rejected', { detail: 'no' }, (fx) => fx.store.saveGoal({ ...running(fx), state: 'CARDS' })],
   ];
   for (const [result, data, setup] of rows) {
-    const fx = makeFixture();
+    const fx = makeFixture(setup === stoppedForReview ? REVIEWED : {});
     try {
-      const goal = setup(fx);
+      const goal = await setup(fx);
       const held: boolean[] = [];
       const cards = () => (held.push(existsSync(`${fx.store.goalFile(goal.id)}.lock`)), fx.registry());
       const controller = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards });
