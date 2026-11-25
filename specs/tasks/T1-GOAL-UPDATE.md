@@ -1,7 +1,7 @@
 ---
 id: T1-GOAL-UPDATE
 title: "Every write of a goal record is one locked update decided on the record read inside it: the owner's acts recompute there, and a write computed from an older read is refused with GOAL_STALE (issue 300, first of two cards)"
-status: todo
+status: merged
 branch: T1-GOAL-UPDATE
 worktree: D:\wt\AIDLC\T1-GOAL-UPDATE
 allow_paths:
