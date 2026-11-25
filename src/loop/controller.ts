@@ -1054,8 +1054,8 @@ export class GoalController {
    * The goal read, its checks (STOP for review, terminal, the generation), the journal scan, the append and the goal write
    * are one section of the goal lock (`GoalStore.updateGoal`), which every goal write takes (card T1-GOAL-UPDATE): a record
    * another command wrote before the section is decided on as it is (`readmitted: false` when it no longer waits for this
-   * lift), and one that comes during it waits. Before the runner writes the ruling, the goal is checked once under that lock:
-   * a goal written since it was read is refused with `GOAL_STALE` and a held lock with `LOCKED`, with nothing written.
+   * lift), and one that comes during it waits. The runner's writes of the ruling are inside that section: a goal written since
+   * it was read is refused with `GOAL_STALE` and a held lock with `LOCKED`, with nothing written.
    */
   ruleFinding(runner: { ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun }, goalId: string, card: Card, findingId: string, ruling: Omit<FindingRuling, 'at'>): { run: CardRun; goal: Goal; ruled: boolean; readmitted: boolean } {
     const goal = this.mustGoal(goalId);
@@ -1065,11 +1065,10 @@ export class GoalController {
     const before = forReview ? this.store.getCardRun(goal.id, card.id) : undefined;
     const lifted = before && before.state !== 'STOP' && !before.stop ? before.review.invocations.filter((i) => i.stopLifted).at(-1) : undefined;
     const rerun = Boolean(before && lifted?.candidateSha && actsOnStop(goal, lifted.stopLifted!.at) && findingsOfCandidate(before.findings, 'formal', lifted.candidateSha).some((f) => f.id === findingId.toUpperCase() && f.ruling));
-    if (forReview && !rerun) this.store.withGoal(goal);
-    const run = rerun ? before! : runner.ruleFinding(goal, card, findingId, ruling);
-    if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
+    if (!forReview) return { run: runner.ruleFinding(goal, card, findingId, ruling), goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
-    return { run, ...this.readmitAfterLift(goal, card.id, 'review', 'ruling', `ruling on ${card.id} by ${by}`, by), ruled: !rerun };
+    const { run, ...admitted } = this.actAndReadmit(goal, card.id, 'ruling', rerun ? before : undefined, () => runner.ruleFinding(goal, card, findingId, ruling), (r) => (r.state === 'STOP' ? undefined : { reason: 'review', text: `ruling on ${card.id} by ${by}`, by }));
+    return { run, ...admitted, ruled: !rerun };
   }
 
   /**
@@ -1095,25 +1094,33 @@ export class GoalController {
     const last = reason && before && before.state !== 'STOP' ? before.continuations.at(-1) : undefined;
     const rerun = Boolean(last && last.stop.reason === reason && actsOnStop(goal, last.at));
     if (rerun && reason === 'ci') refuseCiDecisions(act);
-    if (reason && !rerun) this.store.withGoal(goal);
-    const run = rerun ? before! : runner.continueStop(goal, card, act);
-    if (!reason) return { run, goal, continued: true, readmitted: false };
-    // The section re-admits only a goal in STOP for the reason of the lifted stop.
-    const lifted = run.continuations.at(-1)!;
-    return { run, ...this.readmitAfterLift(goal, card.id, lifted.stop.reason, 'continuation', `continuation of ${card.id} by ${lifted.by}`, lifted.by), continued: !rerun };
+    if (!reason) return { run: runner.continueStop(goal, card, act), goal, continued: true, readmitted: false };
+    const { run, ...admitted } = this.actAndReadmit(goal, card.id, 'continuation', rerun ? before : undefined, () => runner.continueStop(goal, card, act), (r) => {
+      // The section re-admits only a goal in STOP for the reason of the lifted stop.
+      const lifted = r.continuations.at(-1)!;
+      return { reason: lifted.stop.reason, text: `continuation of ${card.id} by ${lifted.by}`, by: lifted.by };
+    });
+    return { run, ...admitted, continued: !rerun };
   }
 
   /**
-   * The re-admission of a goal whose card's stop was lifted by `ruleFinding` or `continueCard`: the goal read, its checks (STOP for
+   * The act of `ruleFinding` or `continueCard` on a stopped goal (`act`, the runner's writes; none when a rerun hands in the run it
+   * `done` already) and the re-admission of the goal whose card's stop it lifted: the goal read, the act, its checks (STOP for
    * `reason`, terminal, the generation of `goal`, the card run out of STOP), the journal scan for a `GOAL_STATE` from STOP to CARDS
    * with `key` after the goal's last `GOAL_STOPPED`, the append and the goal write, in one section of the goal lock.
    */
-  private readmitAfterLift(goal: Goal, cardId: string, reason: StopReason, key: 'ruling' | 'continuation', text: string, by: string): { goal: Goal; readmitted: boolean } {
-    // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: a resume, a
-    // cancellation or any other goal write that landed since is kept, and an overlapping re-admission waits here.
+  private actAndReadmit(goal: Goal, cardId: string, key: 'ruling' | 'continuation', done: CardRun | undefined, act: () => CardRun, liftOf: (run: CardRun) => { reason: StopReason; text: string; by: string } | undefined): { run: CardRun; goal: Goal; readmitted: boolean } {
+    // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: an act on a goal written
+    // since is refused before the runner writes, and any other command waits until the section ends.
     let readmitted = false;
+    let run = done;
     const saved = this.store.updateGoal(goal.id, (current) => {
       if (!current) throw new Error(`unknown goal ${goal.id}`);
+      if (!done) this.store.refuseStale(current, goal);
+      run ??= act();
+      const lift = liftOf(run);
+      if (!lift) return current;
+      const { reason, text, by } = lift;
       if (current.state !== 'STOP' || !current.terminal || current.stop?.reason !== reason) return current;
       // Resumed and stopped again for the same reason since the read: the act run again decides on that stop.
       if (current.generation !== goal.generation) throw new Error(`goal ${goal.id} was resumed and stopped again for ${reason} since it was read (generation ${current.generation}, ${goal.generation} read): the goal is left as it is; run the command again to re-admit it`);
@@ -1126,7 +1133,7 @@ export class GoalController {
       return { ...current, terminal: false, stop: undefined, state: 'CARDS' };
     });
     if (readmitted) this.writeBoard(saved);
-    return { goal: saved, readmitted };
+    return { run: run!, goal: saved, readmitted };
   }
 
   /** `owners` is the dispatch's decision from `liveOwners`; a caller without it gets that decision at the board's clock. */
