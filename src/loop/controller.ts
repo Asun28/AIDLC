@@ -60,6 +60,7 @@ import { ReleaseRunner } from './release-runner.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { StoreError } from '../state/store.ts';
 import { renderBoard, outcomeOf } from '../state/board.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import { loadCardRegistry, validateRegistry, type CardRegistry } from '../artifacts/card.ts';
@@ -609,7 +610,22 @@ export class GoalController {
     });
     if (stopped) this.writeStopBoard(goal);
     this.writeBoard(goal);
-    return { goal, directive: this.next(goal.id) };
+    return { goal, directive: this.nextAfter(goal.id, input.result) };
+  }
+
+  /** The directive after a recorded report: derived again when another command's write met it, and a second refusal says that the report stands. */
+  private nextAfter(goalId: string, result: string): Directive {
+    try {
+      return this.next(goalId);
+    } catch (err) {
+      if (!(err instanceof StoreError) || err.code !== 'GOAL_STALE') throw err;
+    }
+    try {
+      return this.next(goalId);
+    } catch (err) {
+      if (err instanceof StoreError && (err.code === 'GOAL_STALE' || err.code === 'LOCKED')) throw new StoreError(err.code, this.store.goalFile(goalId), `${result} is recorded and is not to be given again; run aidlc next --goal ${goalId} for its directive (${err.message})`);
+      throw err;
+    }
   }
 
   /**
@@ -1065,7 +1081,7 @@ export class GoalController {
     const before = forReview ? this.store.getCardRun(goal.id, card.id) : undefined;
     const lifted = before && before.state !== 'STOP' && !before.stop ? before.review.invocations.filter((i) => i.stopLifted).at(-1) : undefined;
     const rerun = Boolean(before && lifted?.candidateSha && actsOnStop(goal, lifted.stopLifted!.at) && findingsOfCandidate(before.findings, 'formal', lifted.candidateSha).some((f) => f.id === findingId.toUpperCase() && f.ruling));
-    if (!forReview) return { run: runner.ruleFinding(goal, card, findingId, ruling), goal, ruled: true, readmitted: false };
+    if (!forReview) return { run: this.store.withGoal(goal, () => runner.ruleFinding(goal, card, findingId, ruling)), goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
     const { run, ...admitted } = this.actAndReadmit(goal, card.id, 'ruling', rerun ? before : undefined, () => runner.ruleFinding(goal, card, findingId, ruling), (r) => (r.state === 'STOP' ? undefined : { reason: 'review', text: `ruling on ${card.id} by ${by}`, by }));
     return { run, ...admitted, ruled: !rerun };
@@ -1094,7 +1110,7 @@ export class GoalController {
     const last = reason && before && before.state !== 'STOP' ? before.continuations.at(-1) : undefined;
     const rerun = Boolean(last && last.stop.reason === reason && actsOnStop(goal, last.at));
     if (rerun && reason === 'ci') refuseCiDecisions(act);
-    if (!reason) return { run: runner.continueStop(goal, card, act), goal, continued: true, readmitted: false };
+    if (!reason) return { run: this.store.withGoal(goal, () => runner.continueStop(goal, card, act)), goal, continued: true, readmitted: false };
     const { run, ...admitted } = this.actAndReadmit(goal, card.id, 'continuation', rerun ? before : undefined, () => runner.continueStop(goal, card, act), (r) => {
       // The section re-admits only a goal in STOP for the reason of the lifted stop.
       const lifted = r.continuations.at(-1)!;
@@ -1110,20 +1126,18 @@ export class GoalController {
    * with `key` after the goal's last `GOAL_STOPPED`, the append and the goal write, in one section of the goal lock.
    */
   private actAndReadmit(goal: Goal, cardId: string, key: 'ruling' | 'continuation', done: CardRun | undefined, act: () => CardRun, liftOf: (run: CardRun) => { reason: StopReason; text: string; by: string } | undefined): { run: CardRun; goal: Goal; readmitted: boolean } {
-    // One section of the goal lock, decided on the goal read inside it and never on the snapshot above: an act on a goal written
-    // since is refused before the runner writes, and any other command waits until the section ends.
+    // One section of the goal lock on the record `goal` was read from: an act or a rerun over a goal written since is refused before
+    // the runner writes, so the lift is judged against the stop it was read with, and any other command waits until the section ends.
     let readmitted = false;
     let run = done;
     const saved = this.store.updateGoal(goal.id, (current) => {
       if (!current) throw new Error(`unknown goal ${goal.id}`);
-      if (!done) this.store.refuseStale(current, goal);
+      this.store.refuseStale(current, goal);
       run ??= act();
       const lift = liftOf(run);
       if (!lift) return current;
       const { reason, text, by } = lift;
       if (current.state !== 'STOP' || !current.terminal || current.stop?.reason !== reason) return current;
-      // Resumed and stopped again for the same reason since the read: the act run again decides on that stop.
-      if (current.generation !== goal.generation) throw new Error(`goal ${goal.id} was resumed and stopped again for ${reason} since it was read (generation ${current.generation}, ${goal.generation} read): the goal is left as it is; run the command again to re-admit it`);
       if (this.store.getCardRun(goal.id, cardId)?.state === 'STOP') return current;
       const events = this.journal(goal.id).readAll();
       const journaled = events.slice(events.findLastIndex((e) => e.type === 'GOAL_STOPPED') + 1).some((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && Boolean(e.data[key]));

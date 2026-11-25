@@ -46,15 +46,17 @@ export class GoalStore {
   }
 
   /**
-   * Runs `section` under the goal lock on the record `goal` was read from, and writes no goal: a record another write changed
+   * Runs `section` under the goal lock on the record `goal` was read from, returns its result and writes no goal: a record another write changed
    * since is refused with `GOAL_STALE`, and a lock that is held with `LOCKED`, before `section` runs.
    */
-  withGoal(goal: Goal, section: () => void): void {
+  withGoal<T>(goal: Goal, section: () => T): T {
+    let out: T | undefined;
     this.updateGoal(goal.id, (persisted) => {
       this.refuseStale(persisted, goal);
-      section();
+      out = section();
       return persisted!;
     });
+    return out as T;
   }
 
   /** Refuses, with `GOAL_STALE`, a record `persisted` that another write changed since `goal` was read. */
