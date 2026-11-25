@@ -1,7 +1,7 @@
 ---
 id: T1-CONTEXT-PACK-POSIX
 title: readOpenedSource reads a context source on a platform other than Windows and Linux by opening it without following a final link, requiring that the validated path still resolves to itself and that the opened descriptor and the path name one device and inode
-status: todo
+status: merged
 branch: T1-CONTEXT-PACK-POSIX
 worktree: D:\wt\AIDLC\T1-CONTEXT-PACK-POSIX
 plan_ref: plans/install-portability.md#7-task-split-dependencies-and-parallel-windows

@@ -1,7 +1,7 @@
 ---
 id: T1-GIT-MIN-VERSION
 title: The README states git 2.45 or newer as the one supported minimum in place of the 2.38 sentence, and the git line of aidlc doctor keeps the installed version and marks a version older than 2.45 UNSUPPORTED
-status: todo
+status: merged
 branch: T1-GIT-MIN-VERSION
 worktree: D:\wt\AIDLC\T1-GIT-MIN-VERSION
 plan_ref: plans/install-portability.md#7-task-split-dependencies-and-parallel-windows
