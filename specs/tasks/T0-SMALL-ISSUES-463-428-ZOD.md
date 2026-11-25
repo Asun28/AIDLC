@@ -29,8 +29,8 @@ dod_command: npm run typecheck && npm run check:tree && node --test tests/surfac
 dod_exit: 0
 review_gate: codex {verdict:pass}
 requirements:
-  - R1. The guard `stdin-script` shall refuse, with exit 2 and `RULE` of the Text section on stderr, a Bash or PowerShell command in one of the forms the Guard text of that section lists.
-  - R2. The guard shall pass, with exit 0 and no output, every command the Guard text does not list, an event whose `command` is absent or not a string, and an edit.
+  - R1. The guard `stdin-script` shall refuse, with exit 2 and `RULE` of the Text section on stderr, each Bash and PowerShell command of the refused rows of `tests/surface/stdin-script.test.ts`, which hold a row for each form the Guard text of that section lists.
+  - R2. The guard shall pass, with exit 0 and no output, each command of the passing rows of that file, an event whose `command` is absent or not a string, and an edit.
   - R3. `dispatchHook` shall run the guard on a Bash or PowerShell `PreToolUse` event only when no other guard blocked in either pass, and `aidlc hook stdin-script` shall give the guard's own answer.
   - R4. `package.json` shall ask for zod `^4.6.7` and `package-lock.json` shall hold zod 4.6.7 alone.
   - R5. Both copies of the `tdd` and of the `diagnose` skill shall carry the description of the Text section and no other change.
@@ -45,13 +45,14 @@ acceptance:
   - 7. The typecheck and the tree checks pass, and every benchmark count is within its ceiling with no change to `bench/baseline.json`. [dod arm 1] [dod arm 2] [dod arm 5]
   - 8. The documents and the fragment hold R6 (reviewer-verified against the diff; the README row and the known-names line also by `readme.test.ts` and `hook-name.test.ts`). [R6] [dod arm 3]
 depends_on: []
-budget: 340
-size_exception: "The owner (asun28) selected issue 463, the issue 428 descriptions and the zod update for one card and one pull request in the session of 2026-11-25, told that the guard is about 80 source lines plus tests; the prototype is 251 added and 33 removed lines over 18 files before the attempt evidence, 98 of them in src/"
+budget: 800
+size_exception: "The owner raised the budget to 800 in the session of 2026-11-25, when R3 decisions 1 and 2 had turned the guard into a scanner of two shell grammars. Before that: The owner (asun28) selected issue 463, the issue 428 descriptions and the zod update for one card and one pull request in the session of 2026-11-25, told that the guard is about 80 source lines plus tests; the prototype is 251 added and 33 removed lines over 18 files before the attempt evidence, 98 of them in src/"
 tdd: true
 sweep: "Prototype on main at 646cc2db, in a scratch clone with zod 4.6.7 installed. zod alone: `npm run check` exits 0 (4,252 tests, 4,220 pass, 0 fail, 32 skipped) and `npm run bench -- --check` is within every ceiling (dependency bytes 854k against 853k). The whole prototype: 4,257 tests, 2 failures, both fixed by this card file and the docs/ARCHITECTURE.md line, and the bench check within every ceiling. The guard over the 21,421 Bash and PowerShell commands of this project's own session transcripts refuses 219, every one with the program operand `-` (`python -`, `node -`), and no other. `git grep -n \"'secrets-guard'\\]\\|HOOK_NAMES\\|hookNamesFor\" -- tests src` finds the pinned lists of acceptance 6; `git grep -n 'implements the six' -- docs` finds docs/ARCHITECTURE.md:44. `npm install zod@^4.6.7` also adds the `aidlc-hook` bin entry the lock's root lacked."
 forbid: ["a change to a decision or a text of another guard", "a hand edit of package-lock.json", "a change to bench/baseline.json"]
 non_goals:
   - "a security boundary: a spelling the Guard text does not list passes"
+  - "a Bash or PowerShell spelling that no row of `tests/surface/stdin-script.test.ts` holds, whether the guard refuses or passes it: the rows are the contract of R1 and R2, the Guard text describes them, and another spelling is a follow-up (owner amendment of 2026-11-25)"
   - "another launcher (`docker exec`, `uv run`, `npx`, `xargs`, `ssh`), another interpreter (`bash`, `ruby`, `perl`, `deno`), an option of a wrapper (`sudo -u x`) and an interpreter named by a variable: each passes"
   - "a double-quoted text holding `$(` beyond its next double quote, and a command text inside quotes (`bash -c \"python -\"`): not read, so they pass"
   - "`pwsh` with no `-Command` or `-File`, whatever is fed to it: issue 463 asks for `pwsh -Command -`"
