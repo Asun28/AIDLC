@@ -109,7 +109,7 @@ RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/infra/goal-update.test.ts`, the four "acceptance 1" tests | RED, then pass |
-| 2 | `tests/scenarios/goal-update.test.ts`, "acceptance 2": 11 rows, reruns over a goal stopped again, and acts on a goal that is not stopped. RED on its first row, where the extension removes the cancellation | pass |
+| 2 | `tests/scenarios/goal-update.test.ts`, "acceptance 2": 11 rows, reruns over a goal stopped again, acts on a goal that is not stopped, and a command or a held lock between a report and its directive. RED on its first row, where the extension removes the cancellation | pass |
 | 3 | Same file, the two "acceptance 3" tests: 12 derived writes, one a close under an expired lease of another session, each with and without a cancellation that lands | RED, then pass |
 | 4 | Same file, "acceptance 4": 13 report results, the extension, a real ruling and a real continuation, and the 12 derived writes under a held lock; a command inside either runner, and the window of a close; goal record, journal, goal lease and card run are compared | RED, then pass |
 | 5 | Same file, the three "acceptance 5" tests: lock order, registry loads, a command inside `createGoal`. The registry test passes on main, where no goal lock is held | pass |
@@ -127,3 +127,5 @@ R3 decision 1, RED at 00babc03abbbc90db28274a663ffce7600085d84: F1, a close refu
 R3 decision 2, RED at 66009cd371ae155d43eed2b7f38cdebddadb4c0c: F2, the check let go of the lock before the runner wrote; the runner's writes and the re-admission are now one section (amendment 2), and another command inside either runner is refused. F1, the close keeps its two lease sections, and the window between them is stated in R6 and tested (amendment 2).
 
 R3 decision 3, RED at f7b8922ca0e7fcf73889edda5d0df65e61780b07: a ruling or a continuation on a goal that is not stopped took no goal lock, and a rerun judged its lift against an earlier stop. Both acts now hold the lock on every path, and an act or a rerun over a goal written since its read is refused. Found by the check for the same class: a report whose own directive met another command's write would have exited non-zero after its record was written; it derives the directive again.
+
+R3 decision 4: an extension between a resume's write and the directive of that resume gives neither order of the two whole commands. R4 and acceptance 2 now order that directive as an `aidlc next` of its own (amendment 3), and a test compares the overlap with the three run one after the other; it passes at RED, since the amendment states what the code does. RED at 94d68159fb85e0c636d50e4682642b8662f1f042: a report whose directive met a held lock did not say that its result is recorded; it does now.

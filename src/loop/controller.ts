@@ -613,18 +613,18 @@ export class GoalController {
     return { goal, directive: this.nextAfter(goal.id, input.result) };
   }
 
-  /** The directive after a recorded report: derived again when another command's write met it, and a second refusal says that the report stands. */
+  /**
+   * The directive after a recorded report, an `aidlc next` of its own: derived again once when another command's write met it
+   * (`GOAL_STALE`); a second such refusal, or a held lock, says that the report stands.
+   */
   private nextAfter(goalId: string, result: string): Directive {
-    try {
-      return this.next(goalId);
-    } catch (err) {
-      if (!(err instanceof StoreError) || err.code !== 'GOAL_STALE') throw err;
-    }
-    try {
-      return this.next(goalId);
-    } catch (err) {
-      if (err instanceof StoreError && (err.code === 'GOAL_STALE' || err.code === 'LOCKED')) throw new StoreError(err.code, this.store.goalFile(goalId), `${result} is recorded and is not to be given again; run aidlc next --goal ${goalId} for its directive (${err.message})`);
-      throw err;
+    for (let again = true; ; again = false) {
+      try {
+        return this.next(goalId);
+      } catch (err) {
+        if (!(err instanceof StoreError) || (err.code !== 'GOAL_STALE' && err.code !== 'LOCKED')) throw err;
+        if (err.code === 'LOCKED' || !again) throw new StoreError(err.code, this.store.goalFile(goalId), `${result} is recorded and is not to be given again; run aidlc next --goal ${goalId} for its directive (${err.message})`);
+      }
     }
   }
 
