@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-TEST-PID-REUSE
 title: The process tests of tests/infra/exec.test.ts never signal a pid they have seen gone, and the doctor assertion of tests/infra/base-sync.test.ts names how its child ended (issue 488)
-status: todo
+status: merged
 branch: T0-EXEC-TEST-PID-REUSE
 worktree: D:\wt\AIDLC\T0-EXEC-TEST-PID-REUSE
 allow_paths:
@@ -51,3 +51,44 @@ npm run typecheck && node --test tests/infra/exec.test.ts tests/infra/base-sync.
 ## Attempt evidence
 | Item | Check | Result |
 |---|---|---|
+| 1 | exec.test.ts, "T0-EXEC-TEST-PID-REUSE acceptance 1" | RED at 842bb7f4: "the cleanup ended a process it did not start", after 13.1 s; passes on the candidate |
+| 2 | exec.test.ts, "T0-EXEC-TEST-PID-REUSE acceptance 2", two tests | the first fails at 842bb7f4; both pass on the candidate |
+| 3 | base-sync.test.ts, "the message of a doctor child that did not exit 0", three rows | all three fail at 842bb7f4 and pass on the candidate; the doctor helper passes the same text to its assertion (read) |
+| 4 | `git diff origin/main -- tests`, read line by line | the wait and the cleanup of the root change in the two tests of R1, and calibrate ends its root through the ChildProcess; no other assertion, timeout or bound changes |
+
+Both files before the two last corrections, Windows 11: 98 pass, 0 fail, 1 skipped. Candidate, WSL Ubuntu, Node 24.3.0: 89 pass, 0 fail, 1 skipped.
+
+Guards: 11 mutants run one at a time with the card's tests, all red. They cover the skip in `end`, what `probe` records (two), the clear between tests, the wait (three), the cleanup, the end of the root at the limit, and the signal and error code of the message.
+
+Diagnosis probes on Windows 11: a child ended by another process gave status 1, signal null and empty output; a process started in the next 8 s received the pid of an ended process in 2 of 8 trials with four parallel starters, and in 0 of 8 trials of 60 sequential starts.
+
+The test files change by 99 lines added and 37 deleted, 136 against the declared budget of 130, which is advisory on this ship path.
+
+## PR summary
+
+### What
+The process tests no longer signal a pid that they saw gone. The doctor test reports how its child ended.
+
+### Why / Intent
+Issue 488 reports a doctor exit of 1 with an empty stderr. A test cleanup could end another process through a reused pid.
+
+### How / Behaviour
+The calibrate tests wait for and end their root through its ChildProcess. The `end` helper skips each pid that the same test saw gone.
+
+### System impact
+Only two test files change. The product code does not change.
+
+### Security
+The change has no security effect. Tests send fewer signals to processes that they did not start.
+
+### Tests and review
+A new test gives the cleanup the pid of a live process. It fails on main and passes here.
+
+### Risk
+Low. A pid can still change owner between the last check and the signal.
+
+### Ownership
+The owner asked for issue 488 on 2026-11-25. The cause of the one CI failure is inferred and not proven.
+
+### Docs
+No document changes.
