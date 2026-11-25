@@ -14,7 +14,7 @@ Version 0.2.0.
 ## Requirements
 
 - Node.js >= 22.18 (the CLI runs TypeScript sources directly through type stripping; `npm run build` emits `dist/`).
-- git (state lives in the main checkout's `.aidlc/` so all worktrees share it); 2.38 or newer for the `github` ship path, whose base sync tests the merge with `git merge-tree --write-tree`.
+- git 2.45 or newer (state lives in the main checkout's `.aidlc/` so all worktrees share it). The `baseSync` line of `aidlc doctor` and the identity of an R3 finding read git with `--no-lazy-fetch`, which an older git refuses, so there `baseSync` is `UNREADABLE` and a finding gets no identity; the `github` ship path tests the merge with `git merge-tree --write-tree`. The `git` line of `aidlc doctor` prints the installed version and marks one older than 2.45 `UNSUPPORTED`.
 - Optional: `gh` (remote ship, PR and CI probes), `pwsh` 7 (scaffold ship path), `claude` CLI or an Anthropic API credential (model providers).
 
 ## Quick start
@@ -105,6 +105,7 @@ The hook entries start one process per event, which runs the guards below and re
 | `protect-paths` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, the command, `hooks.frozenPaths` | a file path matches a frozen path, or a command that names one writes files |
 | `protect-tests` | `PreToolUse`: Edit, Write, MultiEdit | the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns` | a fix task is active and the file path matches a test pattern |
 | `secrets-guard` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, `content`, `new_string`, `command` | the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern |
+| `stdin-script` | `PreToolUse`: Bash, PowerShell | the command | the command starts `python`, `py`, `node` or `pwsh` on a program read from standard input, in one of the forms `docs/OPERATIONS.md` lists |
 | `verify-before-done` | `Stop` | goals, card runs, leases, the git status of planning files | never: it adds a reminder of a missing DoD receipt or of uncommitted planning files |
 | `route-new-work` | `UserPromptSubmit` | the prompt, the `aidlc.config.json` error | never: it prints the routing line |
 

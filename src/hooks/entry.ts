@@ -19,6 +19,8 @@
  * own config denial), and both deny; only when none blocked do `production-gate` and `protect-paths`
  * decide again with the card's forms, which can add a block and never replace another guard's.
  *
+ * `stdin-script` (issue 463) decides last, in the second pass only, so it never replaces another guard's block either.
+ *
  * Every guard runs as the session of the event (`hookSession` in `./index.ts`): the Stop guard asks
  * only about the cards this session owns.
  */
@@ -30,15 +32,15 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
 /** Bash and PowerShell commands run the same guards; in the second pass production-gate and protect-paths also read a PowerShell command's own segments and write forms (card T1-PS-GUARD-READ). */
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
-/** The guards whose Bash command classification card T0-HOOK-CLASSIFIER-3 changed: they decide again in the second pass. */
-const CLASSIFIED = new Set<HookName>(['production-gate', 'protect-paths']);
+/** The guards whose Bash command classification card T0-HOOK-CLASSIFIER-3 changed decide again in the second pass; `stdin-script` decides in it alone. */
+const SECOND_PASS = new Set<HookName>(['production-gate', 'protect-paths', 'stdin-script']);
 
 /** Guards that apply to an event, in the order the per-guard wiring used to run them. */
 export function hookNamesFor(event: HookEvent): HookName[] {
   switch (event.hook_event_name) {
     case 'PreToolUse': {
       const tool = String(event.tool_name ?? '');
-      if (SHELL_TOOLS.has(tool)) return ['production-gate', 'protect-paths', 'secrets-guard'];
+      if (SHELL_TOOLS.has(tool)) return ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script'];
       if (EDIT_TOOLS.has(tool)) return ['protect-paths', 'secrets-guard', 'protect-tests'];
       return [];
     }
@@ -65,12 +67,13 @@ export function dispatchHook(event: HookEvent, options: { cwd?: string; env?: No
   const config = loadHookConfig(cwd);
   let advisory: HookResult | undefined;
   for (const name of names) {
+    if (name === 'stdin-script') continue;
     const r = runHook(name, event, { cwd, env, config, classic: true });
     if (isBlock(r)) return r;
     if (!advisory && (r.stdout || r.stderr)) advisory = r;
   }
   for (const name of names) {
-    if (!CLASSIFIED.has(name)) continue;
+    if (!SECOND_PASS.has(name)) continue;
     const r = runHook(name, event, { cwd, env, config });
     if (isBlock(r)) return r;
   }

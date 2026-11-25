@@ -3,6 +3,7 @@
  * each asked through a runner that ends the tool's process tree at a bound.
  */
 import { run, type ExecReceipt, type Runner } from './exec.ts';
+import { gitVersionLine } from './git.ts';
 
 /**
  * How long each version probe may run. The first doctor of a Windows CI job takes 17-32 s, once past 60 s (issue 365),
@@ -23,11 +24,16 @@ function line(command: string, args: string[], receipt: ExecReceipt, missing: st
   return missing;
 }
 
-/** Runs the three version probes concurrently, each with `timeoutMs`. */
+/** Runs the three version probes concurrently, each with `timeoutMs`; the line of a git that exits 0 within it is read by `gitVersionLine`. */
 export async function toolchainReport(runner: Runner = run, timeoutMs: number = TOOLCHAIN_PROBE_TIMEOUT_MS): Promise<ToolchainReport> {
   const probe = async (command: string, args: string[], missing: string): Promise<string> => line(command, args, await runner(command, args, { timeoutMs }), missing, timeoutMs);
+  const gitValue = async (): Promise<string> => {
+    const receipt = await runner('git', ['--version'], { timeoutMs });
+    const value = line('git', ['--version'], receipt, 'MISSING', timeoutMs);
+    return receipt.exitCode === 0 && !receipt.timedOut ? gitVersionLine(value) : value;
+  };
   const [git, gh, pwsh] = await Promise.all([
-    probe('git', ['--version'], 'MISSING'),
+    gitValue(),
     probe('gh', ['--version'], 'MISSING (needed for remote ship)'),
     probe('pwsh', ['-v'], 'MISSING (needed for scaffold ship path)'),
   ]);

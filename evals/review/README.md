@@ -4,6 +4,8 @@
 
 `--trials <n>` reviews every selected case n times and adds the median and range of recall and of the false-block rate; `aidlc review bench compare <before.json> <after.json>` says whether a change to the review made the scores `better`, `worse`, `no-measurable-difference` or `inconclusive` (docs/OPERATIONS.md, Reviewer bench).
 
+A report records, under `inputs`, the commit and state of the checkout, the hash of each case file and, per dispatched review, the command, the effort, the lesson hash and the prompt hashes (docs/OPERATIONS.md, Reviewer bench).
+
 Fields (`ReviewBenchCase` in `src/core/types.ts`; an unknown key is refused):
 - `kind`: `bug` (the candidate has a defect at the expected sites) or `clean` (the candidate is correct and a review should pass it).
 - `id`: the file name without `.json`; letters, digits, dot, underscore and dash.

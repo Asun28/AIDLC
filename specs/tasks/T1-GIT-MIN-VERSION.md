@@ -1,7 +1,7 @@
 ---
 id: T1-GIT-MIN-VERSION
 title: The README states git 2.45 or newer as the one supported minimum in place of the 2.38 sentence, and the git line of aidlc doctor keeps the installed version and marks a version older than 2.45 UNSUPPORTED
-status: todo
+status: merged
 branch: T1-GIT-MIN-VERSION
 worktree: D:\wt\AIDLC\T1-GIT-MIN-VERSION
 plan_ref: plans/install-portability.md#7-task-split-dependencies-and-parallel-windows
@@ -103,3 +103,51 @@ changelog.d/T1-GIT-MIN-VERSION.md (new), this one line and one line feed:
 PR 454 (T0-DOCTOR-PROBE-TIMEOUT) moved the doctor `git` line from src/cli/main.ts to `toolchainReport` (src/probes/toolchain.ts), which also gives `unknown: git --version did not exit within <n> ms`. The owner chose in the session of 2026-11-25 to apply `gitVersionLine` there, on exit 0 only, with `MISSING` and the `unknown: ` text as on main. Changed: allow_paths, the DoD command, R2, acceptance 5, acceptance 6 (new), one forbid entry and one row of the revert table. The sweep describes main at 2ef2bbf4.
 
 Second amendment, same day and session: the OPERATIONS paragraph that PR 454 added says each value is the first output line on exit 0, which this card changes for `git`. The owner allowed one added sentence (R5, acceptance detail 4). Changed: allow_paths, R5 (new), acceptance 5 and one forbid entry.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/infra/git-min-version.test.ts, acceptance 1 (12 rows) | RED at ca392875, passes |
+| 2 | Same file, acceptance 2, on WSL Ubuntu with Node 22.23.1; skipped on Windows | passes before the repair of F1 and again after it |
+| 3 | tests/infra/github-ship.test.ts, T0-SHIP-BASE-SYNC-2 acceptance 8 | RED at ca392875, passes |
+| 4 | base-sync, stray-processes, git, prose and templates test files, no line changed | pass |
+| 5 | git diff origin/main: README.md one line, toolchain.ts imports, the git value and its comment, OPERATIONS.md one sentence, the fragment; src/cli/main.ts unchanged | read |
+| 6 | tests/infra/toolchain-probe.test.ts, T1-GIT-MIN-VERSION acceptance 6 | RED at ca392875, passes |
+
+The WSL git is 2.43.0, the version the substitute git prints, so acceptance 2 there does not show that the substitute answered.
+
+Revert table: versions compared as text (1 red); minor without major (1 red); `>=` made `>` (1 red); unreadable branch dropped (1 and 6 red); wiring dropped (6 red); README line put back (3 red).
+
+Repair of F1 (R3 decision 1): `line` and `probe` are as on main, and the git value alone calls `gitVersionLine`. Receipts the repair handles: exit 0 (acceptance 6, rows 1 and 2); another exit code (row 3); a timeout with exit 0 (row 4). A runner that throws rejects the report, as on main. Dropping the exit check or the timeout check turns acceptance 6 red.
+
+Full suite on Windows before the OPERATIONS sentence and the repair: 4255 tests, 4222 pass, 0 fail, 33 skipped.
+
+## PR summary
+
+### What
+The README states git 2.45 as the one supported minimum. The git line of `aidlc doctor` marks an older version.
+
+### Why / Intent
+The README named 2.38, but two reads use an option that git first accepts in 2.45. The owner chose one minimum on 2026-11-17.
+
+### How / Behaviour
+`gitVersionLine` keeps a supported line and adds `UNSUPPORTED` to an older one. A line that names no version reads `UNREADABLE`. The `MISSING` and `unknown` values stay as they were.
+
+### System impact
+Only the text of one doctor line changes. No code that runs git changes.
+
+### Security
+The change reads one line of text and starts no new process.
+
+### Tests and review
+One new test file and one new test cover each row of the rule. R3 blocked decision 1 on scope, and the repair restores the shared helpers.
+
+### Risk
+Low. A version line in an unusual form reads `UNREADABLE` and changes no exit code.
+
+### Ownership
+The owner approved two amendments of this card on 2026-11-25.
+
+### Docs
+The README, one OPERATIONS sentence and a changelog fragment state the change.
