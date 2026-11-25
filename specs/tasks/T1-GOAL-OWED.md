@@ -30,7 +30,7 @@ acceptance:
   - 5. `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` and the fragment state R6 (reviewer-verified against the diff). [R6] [dod arm 2]
 depends_on: [T1-GOAL-UPDATE]
 budget: 400
-size_exception: "approved by the owner (asun28) in the session of 2026-11-25 ("approve and start"), told the budget and the estimate of each part. About 110 lines in src/ and about 270 of fault rows"
+size_exception: "approved by the owner (asun28) in the session of 2026-11-25 (the words approve and start), told the budget and the estimate of each part. About 110 lines in src/ and about 270 of fault rows"
 tdd: true
 sweep: "Main at 935a8ee8. The pattern is `journalOwed` of a card run (src/core/types.ts:874 and 989; src/loop/card-runner.ts:897 to 932 and `journalHolds` at 211). Why two orders: the audit counts work after the latest journaled stop (src/audit/verifier.ts, terminal accounting), so a stop saved before its event admits no work meanwhile, and a re-admission journaled before its record admits none either; tests/scenarios/review-rule-goal.test.ts:235 pins the second order for a ruling. The suite run of the first card's sweep did not cover this card: run its sweep at PREPARE on the merged first card."
 forbid: [a change to src/audit/verifier.ts, a change to a test that exists on main, a second journal or a second lock]
