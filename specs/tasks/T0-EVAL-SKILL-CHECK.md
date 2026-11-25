@@ -63,6 +63,10 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/prose
 | 3 | git diff origin/main of evals/agent/add-test-reads-tdd-skill.json; T1-EVAL-TRANSCRIPT-2 acceptance 5 parses the case | read; passes |
 | 4 | git diff origin/main of both READMEs, docs/OPERATIONS.md and the fragment; changelog-fragments and command-lines tests | read; pass |
 
+R3 decision 1 advisory: docs/OPERATIONS.md counted four tool-call checks and now counts five.
+
+CI run 45558139815 on candidate c8596d93 failed two tests of windows shard 4. One is in tests/infra/base-sync.test.ts: aidlc doctor exited 1 with an empty stderr. The other is in tests/infra/exec.test.ts: a child process was alive after 3000 ms; run 44988608692 holds the same failure. This card changes no file either test runs, and each file passed 3 of 3 local runs on that candidate. The cause of the first is not known.
+
 ## PR summary
 
 ### What
