@@ -109,9 +109,9 @@ RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/infra/goal-update.test.ts`, the four "acceptance 1" tests | RED, then pass |
-| 2 | `tests/scenarios/goal-update.test.ts`, "acceptance 2": 9 rows. RED on its first row, where the extension removes the cancellation | pass |
-| 3 | Same file, the two "acceptance 3" tests: 11 derived writes, each with and without a cancellation that lands | RED, then pass |
-| 4 | Same file, "acceptance 4": 13 report results, the extension, the re-admission and the 11 derived writes under a held lock | RED, then pass |
+| 2 | `tests/scenarios/goal-update.test.ts`, "acceptance 2": 11 rows, and a goal stopped again after the ruling was written. RED on its first row, where the extension removes the cancellation | pass |
+| 3 | Same file, the two "acceptance 3" tests: 12 derived writes, one a close under an expired lease of another session, each with and without a cancellation that lands | RED, then pass |
+| 4 | Same file, "acceptance 4": 13 report results, the extension, a real ruling and a real continuation, and the 12 derived writes under a held lock; goal record, journal, goal lease and card run are compared | RED, then pass |
 | 5 | Same file, the three "acceptance 5" tests: lock order, registry loads, a command inside `createGoal`. The registry test passes on main, where no goal lock is held | pass |
 | 6 | `tests/infra/goal-update.test.ts`, "acceptance 6" | RED, then pass |
 | 7 | `tests/scenarios/review-rule-goal.test.ts`, three tests changed; every other file of the DoD apart from that of item 9 has no line changed | RED, then pass |
@@ -120,4 +120,6 @@ RED commit 44fc63c96e03d46558950800113b55d7be0b1ebf: 22 tests of three files, 14
 
 Guards: 16 loosened forms of the new conditions were run one at a time against four test files. 14 were caught. "A result that changes no field is a write" led to the last assertion of acceptance 4, which catches it. The other, a derived stop whose event is appended after the write, is not pinned: the card keeps the order of main, T1-GOAL-OWED reverses it, and that card may change no test of main.
 
-R4, found by the row "a ruling, a resume lands": a goal that was resumed and stopped again for review in a later generation made the ruling exit 0 and stay stopped. The re-admission now refuses it and asks for the command again.
+R4, found by a row at BUILD: a goal that was resumed and stopped again for review in a later generation made the ruling exit 0 and stay stopped. The re-admission now refuses it and asks for the command again.
+
+R3 decision 1, RED at 00babc03abbbc90db28274a663ffce7600085d84: F1, a close refused by the goal lock had changed the goal lease and the journal, and a row of acceptance 4 exempted it; both sections of the close now take the goal lock before their first append and lease write, and the exemption is gone. F2, the ruling of the tests was a stub that journaled nothing; the rows now run the real runner, and a ruling or a continuation on a stopped goal checks the goal under the lock before the runner writes.

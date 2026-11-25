@@ -173,6 +173,33 @@ test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two
   }
 });
 
+test('T1-GOAL-UPDATE acceptance 2: a goal resumed and stopped again for review after the ruling was written is left as it is, and the ruling run again re-admits it once [R4]', async () => {
+  const fx = makeFixture(REVIEWED);
+  try {
+    const goal = await stoppedForReview(fx);
+    const runner = runners.get(fx.store)!;
+    let after = '';
+    const racing = {
+      ruleFinding: (...args: Parameters<CardRunner['ruleFinding']>) => {
+        const run = runner.ruleFinding(...args);
+        resume(fx, goal.id);
+        // The stop another card of the goal would give it.
+        fx.store.saveGoal({ ...fx.goal(goal.id), state: 'STOP', terminal: true, stop: goal.stop });
+        after = bytes(fx, goal.id)[0]!;
+        return run;
+      },
+    };
+    const ruling = { decision: 'rejected', by: 'the owner', reason: 'the row exists' } as const;
+    assert.throws(() => fx.controller.ruleFinding(racing, goal.id, fx.card(CARD), 'F2', ruling), /resumed and stopped again for review since it was read \(generation 1, 0 read\).*run the command again/);
+    const readmitted = () => fx.events(goal.id).filter((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP');
+    assert.deepEqual([bytes(fx, goal.id)[0], readmitted()], [after, []]);
+    rule(fx, goal.id);
+    assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).generation, readmitted().length], ['CARDS', 1, 1]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 /** States from which `aidlc next` makes each of its derived writes. */
 const derived: Array<[name: string, setup: (fx: Fixture) => Goal]> = [
   ['CARDS to RUN', (fx) => fx.store.saveGoal({ ...running(fx), state: 'CARDS' })],

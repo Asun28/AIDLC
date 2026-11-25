@@ -516,7 +516,7 @@ export class GoalController {
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
     // The lease is settled and DONE saved under the goal lease lock (issue 387): a refused takeover throws with the goal still
     // in CLOSE, and a takeover that re-reads the goal inside its lease section sees DONE once that section can run.
-    this.releaseGoalLease(goal, now, () => this.saveWithEvent(next, 'GOAL_DONE', { cards: goal.cards, stages: goal.stages }));
+    this.releaseGoalLease(goal, now, (release) => this.saveWithEvent(next, 'GOAL_DONE', { cards: goal.cards, stages: goal.stages }, release));
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
   }
@@ -530,9 +530,11 @@ export class GoalController {
    * A lease taken over is completed the same way first, so a takeover whose taker never called again keeps its event.
    * `saveDone` runs under the goal lease lock (card T0-TAKEOVER-DONE-RACE, issue 387): in the section that leaves an absent
    * or released lease as it is, and in the release section right after the release write lands, so a failed release write
-   * leaves the goal in CLOSE; a takeover whose section runs after it reads DONE there.
+   * leaves the goal in CLOSE; a takeover whose section runs after it reads DONE there. Both sections take the goal lock before
+   * their first journal append and lease write (card T1-GOAL-UPDATE), so a close refused with `LOCKED` or `GOAL_STALE` in a
+   * section changes neither in it; `saveDone` runs what it is given under that lock before the goal write.
    */
-  private releaseGoalLease(goal: Goal, now: string, saveDone: () => void): void {
+  private releaseGoalLease(goal: Goal, now: string, saveDone: (release?: () => void) => void): void {
     const key = resourceKeys.goal(this.repo.key, goal.id);
     const me = currentActor();
     const j = this.journal(goal.id);
@@ -549,6 +551,7 @@ export class GoalController {
       const previousOwner = (intent.data['previousOwner'] as { session?: unknown } | undefined)?.session;
       j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, previousOwner, previousGeneration: intent.data['previousGeneration'], acquirer: lease.owner.session } });
     };
+    let takeOver: () => void = () => {};
     const held = this.leases.update(key, (existing) => {
       if (!existing || existing.released) {
         saveDone();
@@ -558,20 +561,28 @@ export class GoalController {
       const next = this.leases.successor(key, existing, { operation: 'close', now });
       const unresolved = this.ops.unresolved(goal.id).map((o) => o.id);
       if (unresolved.length) throw new Error(`takeover refused: old owner effects not reconciled (${unresolved.join(',')}); reconcile with \`aidlc ops reconcile\` first`);
-      completeTakeover(existing);
-      j.append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { kind: 'goal-close-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: next.acquiredAt } });
+      takeOver = () => {
+        completeTakeover(existing);
+        j.append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { kind: 'goal-close-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: next.acquiredAt } });
+      };
       return next;
-    });
+    }, (write) => this.store.withGoal(goal, () => {
+      takeOver();
+      write();
+    }));
     if (!held || held.released) return;
     // The section above saved DONE or left the lease to this session; a lease of another session here would close without DONE.
     if (!mine(held)) throw new FencedError(key, held.generation, 'the goal lease is held by another session after the close section');
+    let owned = held;
     this.leases.update(key, (existing) => {
       if (!existing || existing.released || existing.generation !== held.generation || !mine(existing)) throw new FencedError(key, held.generation, 'the goal lease changed hands before the close released it');
-      completeTakeover(existing);
+      owned = existing;
       return { ...existing, released: true };
     }, (write) => {
-      write();
-      saveDone();
+      saveDone(() => {
+        completeTakeover(owned);
+        write();
+      });
     });
   }
 
@@ -888,9 +899,10 @@ export class GoalController {
     return { goalId: goal.id, generation: goal.generation, revision: goal.revision, goalState: goal.state, deadline: effectiveGoalDeadline(goal.deadlines), skills: goal.routing.skills ?? [] };
   }
 
-  /** A derived write of `next` and its event in one section of the goal lock; a record another command wrote since is refused (`saveGoal`). */
-  private saveWithEvent(next: Goal, type: 'GOAL_STATE' | 'GOAL_DONE', data: Record<string, unknown>): Goal {
+  /** A derived write of `next` and its event in one section of the goal lock, after `before`; a record another command wrote since is refused (`saveGoal`). */
+  private saveWithEvent(next: Goal, type: 'GOAL_STATE' | 'GOAL_DONE', data: Record<string, unknown>, before: () => void = () => {}): Goal {
     return this.store.saveGoal(next, (write) => {
+      before();
       write();
       this.journal(next.id).append({ type, goalId: next.id, generation: next.generation, data });
     });
@@ -1042,7 +1054,8 @@ export class GoalController {
    * The goal read, its checks (STOP for review, terminal, the generation), the journal scan, the append and the goal write
    * are one section of the goal lock (`GoalStore.updateGoal`), which every goal write takes (card T1-GOAL-UPDATE): a record
    * another command wrote before the section is decided on as it is (`readmitted: false` when it no longer waits for this
-   * lift), and one that comes during it waits.
+   * lift), and one that comes during it waits. Before the runner writes the ruling, the goal is checked once under that lock:
+   * a goal written since it was read is refused with `GOAL_STALE` and a held lock with `LOCKED`, with nothing written.
    */
   ruleFinding(runner: { ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun }, goalId: string, card: Card, findingId: string, ruling: Omit<FindingRuling, 'at'>): { run: CardRun; goal: Goal; ruled: boolean; readmitted: boolean } {
     const goal = this.mustGoal(goalId);
@@ -1052,6 +1065,7 @@ export class GoalController {
     const before = forReview ? this.store.getCardRun(goal.id, card.id) : undefined;
     const lifted = before && before.state !== 'STOP' && !before.stop ? before.review.invocations.filter((i) => i.stopLifted).at(-1) : undefined;
     const rerun = Boolean(before && lifted?.candidateSha && actsOnStop(goal, lifted.stopLifted!.at) && findingsOfCandidate(before.findings, 'formal', lifted.candidateSha).some((f) => f.id === findingId.toUpperCase() && f.ruling));
+    if (forReview && !rerun) this.store.withGoal(goal);
     const run = rerun ? before! : runner.ruleFinding(goal, card, findingId, ruling);
     if (!forReview || run.state === 'STOP') return { run, goal, ruled: true, readmitted: false };
     const by = rerun ? lifted!.stopLifted!.by : ruling.by;
@@ -1081,6 +1095,7 @@ export class GoalController {
     const last = reason && before && before.state !== 'STOP' ? before.continuations.at(-1) : undefined;
     const rerun = Boolean(last && last.stop.reason === reason && actsOnStop(goal, last.at));
     if (rerun && reason === 'ci') refuseCiDecisions(act);
+    if (reason && !rerun) this.store.withGoal(goal);
     const run = rerun ? before! : runner.continueStop(goal, card, act);
     if (!reason) return { run, goal, continued: true, readmitted: false };
     // The section re-admits only a goal in STOP for the reason of the lifted stop.
