@@ -1,7 +1,6 @@
 // Card T0-OUTCOME-DUCKDB-EPIPE (issue 435): what queryDuckdb (bench/outcome/duckdb.ts) makes of each way its process can end.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { NoDuckdb, queryDuckdb, type DuckdbResult, type DuckdbSpawn } from '../../bench/outcome/duckdb.ts';
 import { tmpDir } from '../infra/helpers.ts';
@@ -10,7 +9,7 @@ import { tmpDir } from '../infra/helpers.ts';
 const NODE = process.execPath;
 const LABEL = 'SELECT 1;';
 const failedOnNode = `${NODE} failed on "${LABEL}" (exit 9): `;
-const dir = realpathSync.native(tmpDir('aidlc-outcome-duckdb-'));
+const dir = tmpDir('aidlc-outcome-duckdb-');
 
 /** The error `call` throws; the test fails when `call` returns. */
 function thrown(call: () => unknown): Error {

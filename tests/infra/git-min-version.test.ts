@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { gitVersionLine } from '../../src/probes/git.ts';
 import { tmpDir } from './helpers.ts';
@@ -29,7 +29,7 @@ test('T1-GIT-MIN-VERSION acceptance 1: gitVersionLine keeps a version of 2.45 or
 
 // A `git.cmd` first on PATH is not run by a spawn of `git` without a shell on Windows, so this case needs a POSIX host.
 test('T1-GIT-MIN-VERSION acceptance 2: aidlc doctor --json prints the marked git line second, after node, and exits 0 when git reports 2.43.0 [R2]', { skip: process.platform === 'win32' ? 'needs a POSIX host' : false }, () => {
-  const dir = realpathSync.native(tmpDir('aidlc-git-min-'));
+  const dir = tmpDir('aidlc-git-min-');
   const shim = path.join(dir, 'shim');
   const target = path.join(dir, 'target');
   for (const d of [shim, target, path.join(dir, 'state')]) mkdirSync(d);

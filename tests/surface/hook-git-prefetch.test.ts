@@ -25,7 +25,7 @@ function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 }
 
 function withTemp<T>(fn: (dir: string) => T, prefix = 'aidlc-git-prefetch-'): T {
-  const dir = realpathSync.native(tmpDir(prefix));
+  const dir = tmpDir(prefix);
   try {
     return fn(dir);
   } finally {

@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import fs, { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -202,7 +202,7 @@ test('each persistence step of the owed result can fail and the next step recove
 
 /** A worktree and main checkout for a GitHubShipPath with a scripted runner, under a directory the `after` hook removes. */
 function scriptedShip(script: Record<string, Partial<ExecReceipt>>) {
-  const root = realpathSync.native(tmpDir());
+  const root = tmpDir();
   dirs.push(root);
   const wtRoot = path.join(root, 'wt');
   mkdirSync(path.join(wtRoot, CARD, '.review'), { recursive: true });
@@ -235,7 +235,7 @@ function scriptedShip(script: Record<string, Partial<ExecReceipt>>) {
 
 /** A real git main checkout on branch `trunk` and the card's worktree with one commit, under a directory the `after` hook removes. */
 function gitRepo() {
-  const root = realpathSync.native(tmpDir());
+  const root = tmpDir();
   dirs.push(root);
   const main = path.join(root, 'main');
   const wtRoot = path.join(root, 'wt');

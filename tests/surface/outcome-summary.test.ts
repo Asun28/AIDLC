@@ -3,7 +3,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { COLUMNS, GITHUB_COLUMNS, USAGE_COLUMNS } from '../../bench/outcome/ingest.ts';
@@ -18,7 +18,7 @@ const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], 
 
 /** A temporary directory by its canonical path (the Windows runner's temp directory is an 8.3 short path), removed after the tests. */
 function tempDir(): string {
-  const dir = realpathSync.native(tmpDir('aidlc-summary-'));
+  const dir = tmpDir('aidlc-summary-');
   temps.push(dir);
   return dir;
 }

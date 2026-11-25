@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { tmpDir } from '../infra/helpers.ts';
@@ -1311,7 +1311,7 @@ const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: 
  * main checkout's working copy of the config is what each test writes; the other two files are never read.
  */
 function repoWithWorktree(): { root: string; sub: string; wt: string; wtSub: string; env: NodeJS.ProcessEnv; file: string } {
-  const base = realpathSync.native(tmpDir('aidlc-discovery-'));
+  const base = tmpDir('aidlc-discovery-');
   const root = path.join(base, 'repo');
   mkdirSync(path.join(root, 'src'), { recursive: true });
   const git = (args: string[]) => {

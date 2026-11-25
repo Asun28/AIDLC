@@ -4,7 +4,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -28,7 +28,7 @@ const platform = (dod: string, cwd: string, timeoutMs: number) => [dod, [], { cw
 const receipt = (command: string, args: string[], options?: ExecOptions): ExecReceipt => ({ command, args, cwd: options?.cwd ?? '', exitCode: 0, signal: null, timedOut: false, stdout: 'ok\n', stderr: '', startedAt: '2026-11-17T01:00:00.000Z', finishedAt: '2026-11-17T01:00:01.000Z', durationMs: 5, outputSha256: '' });
 
 async function inTemp(body: (dir: string) => unknown): Promise<void> {
-  const dir = realpathSync.native(tmpDir('aidlc-dod-shell-'));
+  const dir = tmpDir('aidlc-dod-shell-');
   try {
     await body(dir);
   } finally {

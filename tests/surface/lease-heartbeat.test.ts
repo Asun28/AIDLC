@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import fs, { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,7 @@ const marker = (session: string): string => createHash('sha256').update(session)
 const windowOf = (at: string): number => Math.floor(Date.parse(at) / 60_000);
 
 function withState<T>(fn: (s: { cwd: string; env: NodeJS.ProcessEnv; stateDir: string; leases: LeaseStore }) => T): T {
-  const cwd = realpathSync.native(tmpDir('aidlc-heartbeat-'));
+  const cwd = tmpDir('aidlc-heartbeat-');
   const stateDir = path.join(cwd, 'state');
   mkdirSync(path.join(stateDir, 'leases'), { recursive: true });
   try {
