@@ -252,3 +252,148 @@ test('a case-insensitive filesystem accepts the same LESSONS file under its cano
     assert.deepEqual(JSON.parse(loadContextPack(fx.card('T1-PACK'), fx.tmp, [])).lessons, ['- loop: keep this']);
   } finally { fx.cleanup(); }
 });
+
+/** Runs `body` with `process.platform` set to darwin and the replaced fs functions exported, then restores both. */
+function onDarwin(body: () => void, ...mocks: Array<() => { mock: { restore(): void } }>): void {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  const spies: Array<{ mock: { restore(): void } }> = [];
+  try {
+    for (const make of mocks) spies.push(make());
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+    syncBuiltinESMExports();
+    body();
+  } finally {
+    for (const spy of spies.reverse()) spy.mock.restore();
+    Object.defineProperty(process, 'platform', platform);
+    syncBuiltinESMExports();
+  }
+}
+
+/** A fixture whose card names plans/plan.md, with the canonical path of that file. */
+function planFixture() {
+  const fx = makeFixture();
+  mkdirSync(path.join(fx.tmp, 'plans'));
+  const target = path.join(fs.realpathSync.native(fx.tmp), 'plans', 'plan.md');
+  writeFileSync(target, 'inside');
+  writeCard(fx, { id: 'T1-PACK', title: 'project context', planRef: 'plans/plan.md' });
+  return { fx, target, card: fx.card('T1-PACK') };
+}
+
+/** Spies on fs.openSync and fs.closeSync; `closed` says whether every descriptor opened for `target` was closed, and that there was one. */
+function descriptorSpy(target: string) {
+  const opened: number[] = [];
+  const closes: number[] = [];
+  const { openSync, closeSync } = fs;
+  return {
+    open: () => mock.method(fs, 'openSync', (...args: Parameters<typeof openSync>) => {
+      const fd = openSync(...args);
+      if (String(args[0]) === target) opened.push(fd);
+      return fd;
+    }),
+    close: () => mock.method(fs, 'closeSync', (fd: number) => { closes.push(fd); closeSync(fd); }),
+    closed: () => opened.length === 1 && closes.filter((fd) => fd === opened[0]).length === 1,
+  };
+}
+
+test('T1-CONTEXT-PACK-POSIX acceptance 1: on a platform other than win32 and linux the plan file and docs/LESSONS.md are read', () => {
+  const fx = makeFixture();
+  try {
+    mkdirSync(path.join(fx.tmp, 'plans'));
+    mkdirSync(path.join(fx.tmp, 'docs'));
+    writeFileSync(path.join(fx.tmp, 'plans/plan.md'), 'inside');
+    writeFileSync(path.join(fx.tmp, 'docs/LESSONS.md'), '- src/loop: keep receipts\n- unrelated: exclude this\n');
+    writeCard(fx, { id: 'T1-PACK', title: 'project context', planRef: 'plans/plan.md', allowPaths: ['src/loop/example.ts'] });
+    const card = fx.card('T1-PACK');
+    onDarwin(() => {
+      let pack: { planSection: string; lessons: string[] } | undefined;
+      assert.doesNotThrow(() => { pack = JSON.parse(loadContextPack(card, fx.tmp, [])); });
+      assert.equal(pack!.planSection, 'inside');
+      assert.deepEqual(pack!.lessons, ['- src/loop: keep receipts']);
+    });
+  } finally { fx.cleanup(); }
+});
+
+test('T1-CONTEXT-PACK-POSIX acceptance 2: on that platform a parent-directory swap after resolution is refused before outside content is read', () => {
+  for (const source of ['plans/plan.md', 'docs/LESSONS.md']) {
+    const fx = makeFixture();
+    const outside = tmpDir('aidlc-pack-darwin-swap-');
+    try {
+      writeCard(fx, { id: 'T1-PACK', title: 'project context' });
+      const parent = path.join(fx.tmp, path.dirname(source));
+      mkdirSync(parent);
+      const target = path.join(fs.realpathSync.native(fx.tmp), source);
+      writeFileSync(target, 'inside');
+      writeFileSync(path.join(outside, path.basename(source)), 'outside secret');
+      const card = { ...fx.card('T1-PACK'), plan_ref: source.startsWith('plans/') ? source : undefined };
+      const resolve = fs.realpathSync.native;
+      let swapped = false;
+      onDarwin(() => {
+        assert.throws(() => loadContextPack(card, fx.tmp, []), /^Error: Opened context source path changed$/);
+        assert.equal(swapped, true);
+      }, () => mock.method(fs.realpathSync, 'native', (file: fs.PathLike) => {
+        const resolved = resolve(file);
+        if (!swapped && String(file) === target) {
+          swapped = true;
+          fs.renameSync(parent, `${parent}-saved`);
+          symlinkSync(outside, parent, path.sep === '\\' ? 'junction' : 'dir');
+        }
+        return resolved;
+      }));
+    } finally { fx.cleanup(); rmSync(outside, { recursive: true, force: true }); }
+  }
+});
+
+test('T1-CONTEXT-PACK-POSIX acceptance 3: a path whose device or inode differs from the opened descriptor is refused and the descriptor is closed', () => {
+  for (const field of ['ino', 'dev'] as const) {
+    const { fx, target, card } = planFixture();
+    try {
+      const { lstatSync } = fs;
+      const spy = descriptorSpy(target);
+      onDarwin(() => {
+        assert.throws(() => loadContextPack(card, fx.tmp, []), /^Error: Opened context source path changed$/, field);
+        assert.equal(spy.closed(), true, field);
+      }, spy.open, spy.close, () => mock.method(fs, 'lstatSync', (file: fs.PathLike, options?: fs.StatSyncOptions) => {
+        const stat = lstatSync(file, options) as fs.BigIntStats;
+        return String(file) === target ? Object.assign(Object.create(stat) as fs.BigIntStats, { [field]: stat[field] + 1n }) : stat;
+      }));
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('T1-CONTEXT-PACK-POSIX acceptance 4: an error of the path check propagates unchanged and the descriptor is closed', () => {
+  const { fx, target, card } = planFixture();
+  try {
+    const { lstatSync } = fs;
+    const failure = Object.assign(new Error('path check failed'), { code: 'EIO' });
+    const spy = descriptorSpy(target);
+    onDarwin(() => {
+      assert.throws(() => loadContextPack(card, fx.tmp, []), (error) => error === failure);
+      assert.equal(spy.closed(), true);
+    }, spy.open, spy.close, () => mock.method(fs, 'lstatSync', (file: fs.PathLike, options?: fs.StatSyncOptions) => {
+      if (String(file) === target) throw failure;
+      return lstatSync(file, options);
+    }));
+  } finally { fx.cleanup(); }
+});
+
+test('T1-CONTEXT-PACK-POSIX acceptance 5: a final component replaced by a link after resolution is not read', { skip: process.platform === 'win32' ? 'needs a POSIX host' : false }, () => {
+  const { fx, target, card } = planFixture();
+  const outside = tmpDir('aidlc-pack-final-link-');
+  try {
+    writeFileSync(path.join(outside, 'plan.md'), 'outside secret');
+    const resolve = fs.realpathSync.native;
+    let swapped = false;
+    onDarwin(() => {
+      assert.throws(() => loadContextPack(card, fx.tmp, []), (error) => (error as NodeJS.ErrnoException).code === 'ELOOP');
+      assert.equal(swapped, true);
+    }, () => mock.method(fs.realpathSync, 'native', (file: fs.PathLike) => {
+      const resolved = resolve(file);
+      if (!swapped && String(file) === target) {
+        swapped = true;
+        rmSync(target);
+        symlinkSync(path.join(outside, 'plan.md'), target);
+      }
+      return resolved;
+    }));
+  } finally { fx.cleanup(); rmSync(outside, { recursive: true, force: true }); }
+});
