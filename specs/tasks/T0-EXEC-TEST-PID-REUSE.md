@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-TEST-PID-REUSE
 title: The process tests of tests/infra/exec.test.ts never signal a pid they have seen gone, and the doctor assertion of tests/infra/base-sync.test.ts names how its child ended (issue 488)
-status: todo
+status: merged
 branch: T0-EXEC-TEST-PID-REUSE
 worktree: D:\wt\AIDLC\T0-EXEC-TEST-PID-REUSE
 allow_paths:
