@@ -309,7 +309,7 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 5: every case under evals/agent parses, ha
   const agent = loadEvals(path.join(root, 'evals', 'agent'));
   assert.ok(agent.length >= 3, `${agent.length} agent cases`);
   for (const c of agent) {
-    assert.ok(c.checks.some((x) => ['read-file', 'ran-command', 'not-ran-command', 'not-wrote-path'].includes(x.type)), `${c.id} has a tool-call check`);
+    assert.ok(c.checks.some((x) => ['read-file', 'used-skill', 'ran-command', 'not-ran-command', 'not-wrote-path'].includes(x.type)), `${c.id} has a tool-call check`);
     assert.match(c.origin ?? '', /CLAUDE\.md/, `${c.id} origin names a CLAUDE.md rule`);
   }
   const top = loadEvals(path.join(root, 'evals')).map((c) => c.id);
@@ -652,4 +652,30 @@ test('T0-EVAL-WORDING acceptance 3: a recorded empty tool-call list passes not-r
   assert.deepEqual(empty.checks.map((x) => [x.check.split(' ')[0], x.ok]), [['read-file', false], ['ran-command', false], ['not-ran-command', true], ['not-wrote-path', true]]);
   const none = await runEval(c, new MockProvider({ implementer: ['done'] }), { cwd, runner });
   assert.deepEqual(none.checks.map((x) => [x.ok, x.detail]), checks.map(() => [false, 'no tool calls recorded']));
+});
+
+test('T0-EVAL-SKILL-CHECK acceptance 2: used-skill passes on a Skill tool call naming the skill or a Read of its SKILL.md and fails otherwise', async () => {
+  const { cwd } = setup();
+  const parsed = EvalCase.safeParse({ id: 'skill', prompt: 'do it', checks: [{ type: 'used-skill', name: 'tdd' }] });
+  assert.equal(parsed.success, true, 'the check type parses');
+  const c = parsed.data!;
+  const missed = 'neither a Skill tool call naming tdd nor a Read tool call of .claude/skills/tdd/SKILL.md';
+  const rows: Array<[string, ToolCall[], boolean, string]> = [
+    ['a Skill call naming it', [{ name: 'Skill', input: { skill: 'tdd' } }], true, 'used'],
+    ['a Read of its SKILL.md', [{ name: 'Read', input: { file_path: '.claude/skills/tdd/SKILL.md' } }], true, 'used'],
+    ['a Skill call naming another skill', [{ name: 'Skill', input: { skill: 'diagnose' } }], false, missed],
+    ['a Read of another skill', [{ name: 'Read', input: { file_path: '.claude/skills/diagnose/SKILL.md' } }], false, missed],
+    ['a Grep of the file', [{ name: 'Grep', input: { pattern: 'x', path: '.claude/skills/tdd/SKILL.md' } }], false, missed],
+    ['an empty list', [], false, missed],
+  ];
+  for (const [name, calls, ok, detail] of rows) {
+    const provider = withCalls(calls);
+    const r = await runEval(c, provider, { cwd, runner });
+    assert.deepEqual(r.checks, [{ check: 'used-skill tdd', ok, detail }], name);
+    assert.equal(provider.calls[0]?.recordToolCalls, true, name);
+  }
+  const none = await runEval(c, new MockProvider({ implementer: ['done'] }), { cwd, runner });
+  assert.deepEqual(none.checks, [{ check: 'used-skill tdd', ok: false, detail: 'no tool calls recorded' }]);
+  const skipped = await runEval(c, new MockProvider(), { cwd, runner, skipModel: true });
+  assert.deepEqual(skipped.checks, [{ check: 'used-skill tdd', ok: false, detail: 'no model run' }]);
 });
