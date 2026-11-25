@@ -126,7 +126,7 @@ function view(fx: Fixture, id: string): unknown {
   const { updatedAt: _u, repository: _r, ...record } = fx.goal(id);
   const events = fx.events(id).filter((e) => /^(GOAL_|PLAN_)/.test(e.type) || ['CARDS_PROJECTED', 'AUTHORIZATION_GRANTED'].includes(e.type) || (e.type === 'NOTE' && e.data['extension']));
   const ops = fx.ops.list({ goalId: id }).map((o) => o.id);
-  let text = JSON.stringify({ record, events: events.map(({ type, generation, data: { eventKey: _k, completed: _c, ...data } }) => [type, generation, data]) }).replaceAll(id, 'G').replace(/-r(\d+)-[0-9a-f]{4}"/g, '-r$1"');
+  let text = JSON.stringify({ record, events: events.map(({ type, generation, data: { eventKey: _k, completed: _c, ...data } }) => [type, generation, data]) }).replaceAll(id, 'G').replaceAll(fx.repo.key, 'R').replace(/-r(\d+)-[0-9a-f]{4}"/g, '-r$1"');
   for (const op of ops) text = text.replaceAll(op, 'OP');
   return JSON.parse(text);
 }
