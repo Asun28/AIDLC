@@ -1,10 +1,11 @@
 ---
 name: diagnose
 description: >-
-  Diagnosis loop for a routed T0-bugfix card, a card `diagnosis:` field,
-  or a DoD/CI failure with no known cause: a red-capable feedback loop
-  first, then ranked hypotheses. Use after `aidlc goal new` or `aidlc ci
-  classify` has routed the failure; intake stays with aidlc-loop.
+  Diagnosis loop for a failure with no known cause: a red-capable feedback
+  loop first, then ranked hypotheses. Use when asked why a test fails or is
+  flaky, or where an error comes from, and on a routed T0-bugfix card, a
+  card `diagnosis:` field or a DoD/CI failure, after `aidlc goal new` or
+  `aidlc ci classify` has routed it; intake stays with aidlc-loop.
 ---
 # diagnose: from failure to named root cause
 

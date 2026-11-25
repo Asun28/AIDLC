@@ -95,3 +95,55 @@ npm run typecheck && npm run check:tree && node --test tests/surface/stdin-scrip
 ```
 - Expected exit code: 0
 - Assertion: the rows of acceptance 1 to 5, every existing test of those files, the tree checks, the build and every benchmark ceiling pass.
+
+## PR summary
+
+### What
+This change adds the hook guard `stdin-script`, rewords two skill descriptions and updates zod to 4.6.7. It closes issue 463 and Dependabot alert 1, and refers to issue 428.
+
+### Why / Intent
+Sessions ran `python -` and `node -` against a written rule, and some of these processes hung. The two descriptions used words that a user does not type. Zod before 4.6.6 can use all the memory on a large array.
+
+### How / Behaviour
+The guard stops a Bash or PowerShell command that feeds a program to Python, node or pwsh on standard input. It gives exit code 2 and the rule. A script file, an inline program and quoted text pass.
+
+### System impact
+Each repository that uses `aidlc init` gets the guard with the next version. The guard runs last and changes no other decision. No stored record changes its form.
+
+### Security
+The zod update removes advisory GHSA-mrhx-c7xc-m3w5. The guard is a reminder and not a security boundary. The change adds no permission and no network call.
+
+### Tests and review
+The new tests fail on the old code and pass on the new code. A comparison with bash and with the PowerShell parser shows no unlisted difference. The formal review gate reviews the final commit.
+
+### Risk
+The guard can stop a correct command in a spelling that no test names. In 21,825 recorded commands it stopped 219, and each one broke the rule. It does not see every spelling.
+
+### Ownership
+The repository owner owns this change.
+
+### Docs
+The README and the operations and architecture documents describe the guard. The change adds one changelog entry.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `stdin-script.test.ts`, test 1 | RED at 726366de (unknown hook name), passes |
+| 2 | same file, test 2 | RED at 726366de, passes |
+| 3 | same file, test 3 | RED at 726366de, passes |
+| 4 | `small-issues-463-428-zod.test.ts`, test 1; `npm ci` in the worktree, then `npm install zod@^4.6.7`, installed version 4.6.7 | RED at 726366de, passes |
+| 5 | same file, test 2 | RED at 726366de, passes |
+| 6 | the diff of the four files; the readme entry is in the GREEN commit, since the RED commit has no such `HookName` | list entries only |
+| 7 | the DoD command | exit 0 |
+| 8 | the diff; `readme.test.ts`, `hook-name.test.ts`, `module-map.test.ts` | reviewer-verified, passes |
+
+Repairs 1 and 2 (R3 decisions 1 and 2, five and eight findings): the guard scans the command once from left to right, so quotes, comments, heredocs with their delimiter words, redirections, substitutions, arithmetic, assignments, function bodies, `case` patterns and `[[ ]]` are read where they stand. Every command the thirteen findings name is a row of test 1 or test 2, which hold 206 refused and 171 passing Bash commands and 46 and 31 PowerShell commands. The owner's amendment of 2026-11-25 makes those rows the contract of R1 and R2.
+
+| Check of the repairs | Result |
+|---|---|
+| Generic sweep of `stdin-script.ts` (each `&&`, `||`, `===`, negation, string literal, statement and regex part changed alone) | 520 of 534 fail a test or never end; 14 are equivalent: eight change the placeholder `Q` or `()`, one drops the last `return false` (undefined is as false), one drops a placeholder after an extended glob, two widen a regex on a slice that begins with the match, and two read a `)` that closes no list |
+| Random Bash commands, each run by bash with functions that log every interpreter call (about 2,600 valid over the two repairs) | no difference beyond text after a nested double quote of a double-quoted `$(`, an unquoted substitution that expands to nothing, and commands bash did not reach |
+| Random PowerShell commands against PowerShell's own parser (about 4,500 valid on repair 2) | 0 differences |
+| The 21,825 Bash and PowerShell commands of the project's session transcripts | 219 refused, each with the operand `-` |
+| The whole suite on f80942f5 (repair 1) | exit 0: 4,257 tests, 4,225 pass, 0 fail, 32 skipped |
