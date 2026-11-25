@@ -1,7 +1,7 @@
 ---
 id: T0-BENCH-INPUTS
 title: "A reviewer bench report records what each review received (the commit and state of the checkout, the hash of each case file, and per dispatched review the command, the effort, the lesson hash and the prompt hashes)"
-status: todo
+status: merged
 branch: T0-BENCH-INPUTS
 worktree: D:\wt\AIDLC\T0-BENCH-INPUTS
 allow_paths:
