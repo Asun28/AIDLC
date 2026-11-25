@@ -988,6 +988,7 @@ test('T0-BENCH-INPUTS acceptance 1: inputs give the commit and state of the chec
     const rows: Array<[string, Parameters<typeof rootGit>[1], string | null, boolean | null]> = [
       ['a 40-character name and a clean tree', { head, status }, SHA('a'), true],
       ['a 64-character name', { head: { stdout: `${'b1'.repeat(32)}\n` }, status }, 'b1'.repeat(32), true],
+      ['a name in capitals', { head: { stdout: `${SHA('A')}\n` }, status }, SHA('A'), true],
       ['one status line', { head, status: { stdout: '?? a.txt\n' } }, SHA('a'), false],
       ['a rev-parse that exits 1 and prints a name', { head: { ...head, exitCode: 1 }, status }, null, true],
       ['a status that exits 1 and prints nothing', { head, status: { stdout: '', exitCode: 1 } }, SHA('a'), null],
@@ -1077,7 +1078,7 @@ test('T0-BENCH-INPUTS acceptance 3: effort is the level selected for the diff of
     git(fx.root, ['checkout', '-q', 'main']);
     writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
     writeCase(fx, 'evals/review', cleanCase(fx, 'r-risky', risky));
-    const passing: Runner = scriptedRunner({ reviewer: { stdout: verdict('pass') } });
+    const passing: Runner = async (...a) => scriptedRunner({ reviewer: { stdout: verdict('pass') } })(...a);
     const effort = { default: 'medium', high: { minChangedLines: 1000, paths: ['src/risky.ts'] } };
     const efforts = async (stage: 'pre' | 'formal') => inputsOf(await bench(fx, passing, { stage })).reviews.map((r) => ('effort' in r ? r.effort : 'no key'));
     writeConfig(fx, formalConfig({ effort }));
@@ -1100,7 +1101,7 @@ test('T0-BENCH-INPUTS acceptance 3: command is the one of the run, a --pre-comma
     writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
     const command = ['other', '{head}', '{cwd}'];
     writeFileSync(path.join(fx.root, 'other.json'), JSON.stringify({ command, reviewer: 'other-r' }));
-    const passing: Runner = scriptedRunner({ other: { stdout: verdict('pass') } });
+    const passing: Runner = async (...a) => scriptedRunner({ other: { stdout: verdict('pass') } })(...a);
     for (const extra of [{ stage: 'pre', preCommand: 'other.json' }, { stage: 'formal', formalCommand: 'other.json' }] as const) {
       const report = await bench(fx, passing, extra);
       assert.deepEqual(report.cases.map((c) => c.outcome), ['pass'], extra.stage);
@@ -1212,7 +1213,7 @@ test('T0-BENCH-INPUTS acceptance 4: a dispatched review has its entry whatever i
     const rejects: Runner = async () => {
       throw new Error('spawn failed');
     };
-    const held: Runner = scriptedRunner({ reviewer: { exitCode: 1, stderr: 'usage limit reached\n' } });
+    const held: Runner = async (...a) => scriptedRunner({ reviewer: { exitCode: 1, stderr: 'usage limit reached\n' } })(...a);
     const rows: Array<[string, Runner, string[], string[][]]> = [
       ['no verdict', reviewer(fx, []), ['no-verdict', 'pass'], [['a-first'], ['b-second']]],
       ['a runner that rejects', rejects, ['no-verdict', 'no-verdict'], [['a-first'], ['b-second']]],

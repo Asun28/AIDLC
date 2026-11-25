@@ -25,7 +25,7 @@ import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingIdentity, findingLocation, findingSeverity } from '../core/review-policy.ts';
 import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
-import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, ReviewEffortPolicy, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
+import { FindingSeverity, MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, ReviewEffortPolicy, RunStatus, type CardRun, type ReviewEffortLevel, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, VERDICT_ORDERS, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult, type VerdictOrder } from './pre-review.ts';
@@ -70,6 +70,33 @@ export interface BenchTotals {
 
 export type BenchRules = 'newest' | 'matched';
 
+/** What one dispatched review received (card T0-BENCH-INPUTS): hashes identify equal text without keeping it. */
+export interface BenchReviewInputs {
+  /** From 1. */
+  trial: number;
+  /** The ids of the group's cases the bench can score. */
+  cases: string[];
+  /** The stage command as configured for the run, before any placeholder is replaced. */
+  command: string[];
+  /** Only at the formal stage, when the command holds `{effort}`. */
+  effort?: ReviewEffortLevel;
+  /** Over the lines of the lesson selection the prompts carry, joined by line feeds. */
+  lessonsSha256: string;
+  /** Per prompt rendered, by round and inside a round in the order of the configured perspectives. */
+  promptsSha256: string[];
+}
+
+export interface BenchInputs {
+  /** The commit of the checkout at `root`; null when git does not tell it. */
+  checkoutCommit: string | null;
+  /** Whether `git status --porcelain` printed nothing; null when git does not tell it. */
+  checkoutClean: boolean | null;
+  /** Every selected case with the hash of its file's bytes as loaded. */
+  cases: Array<{ id: string; sha256: string }>;
+  /** Every dispatched review, in dispatch order. */
+  reviews: BenchReviewInputs[];
+}
+
 export interface ReviewBenchReport {
   stage: 'pre' | 'formal';
   reviewer: string;
@@ -78,6 +105,7 @@ export interface ReviewBenchReport {
   /** The options the run used (cards T1-BENCH-ROUNDS and T1-BENCH-ORDER-PRE): `preCommand` is the `--pre-command` file's `command`, else null; `formalCommand` (card T1-BENCH-FORMAL-COMMAND), present only with `--formal-command`, is the file path as given and the sha256 of its bytes. */
   options: { rounds: number; order: VerdictOrder; preCommand: string[] | null; formalCommand?: { path: string; sha256: string } };
   policyHash: string;
+  inputs: BenchInputs;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
   /** Present only when the run selected no case, so an empty report never reads as a scored run. */
@@ -122,6 +150,11 @@ export interface ReviewBenchOptions {
 
 /** The `*.json` files directly inside `dir`, in file-name order, each a `ReviewBenchCase` whose `id` is its file name. */
 export function loadBenchCases(dir: string): ReviewBenchCase[] {
+  return loadCaseFiles(dir).map((f) => f.case);
+}
+
+/** The cases of `loadBenchCases`, each with the SHA-256 of the bytes it was parsed from. */
+function loadCaseFiles(dir: string): Array<{ case: ReviewBenchCase; sha256: string }> {
   const names = readdirSync(dir, { withFileTypes: true })
     .filter((e) => e.isFile() && e.name.endsWith('.json'))
     .map((e) => e.name)
@@ -129,17 +162,22 @@ export function loadBenchCases(dir: string): ReviewBenchCase[] {
   return names.map((name) => {
     const file = path.join(dir, name);
     let raw: unknown;
+    let sha256: string;
     try {
-      raw = JSON.parse(readFileSync(file, 'utf8'));
+      const bytes = readFileSync(file);
+      sha256 = sha256Of(bytes);
+      raw = JSON.parse(bytes.toString('utf8'));
     } catch (err) {
       throw new Error(`${file}: not JSON (${(err as Error).message})`);
     }
     const parsed = ReviewBenchCase.safeParse(raw);
     if (!parsed.success) throw new Error(`${file}: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'case'}: ${i.message}`).join('; ')}`);
     if (`${parsed.data.id}.json` !== name) throw new Error(`${file}: id ${parsed.data.id} differs from the file name`);
-    return parsed.data;
+    return { case: parsed.data, sha256 };
   });
 }
+
+const sha256Of = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
 /** What every review of one bench run shares. */
 interface BenchContext {
@@ -157,6 +195,8 @@ interface BenchContext {
   tmpRoot: string;
   reviewDir: string;
   leftCheckouts: string[];
+  /** One entry per dispatched review, in dispatch order. */
+  reviews: BenchReviewInputs[];
   /** Set when a review ended on a quota hold: no later review runs. */
   held: boolean;
 }
@@ -185,14 +225,16 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   if (!reviewer.command.length) throw new Error(`${o.stage === 'pre' ? 'preReview' : 'formalReview'}.command is not configured (aidlc.config.json): there is no reviewer to score`);
   const dir = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
   if (!existsSync(dir)) throw new Error(`no case directory ${dir}`);
-  const all = loadBenchCases(dir);
+  const files = loadCaseFiles(dir);
+  const all = files.map((f) => f.case);
   if (o.caseId !== undefined && !all.some((c) => c.id === o.caseId)) throw new Error(`no case ${o.caseId} in ${dir}`);
   const pool = o.caseId !== undefined ? all.filter((c) => c.id === o.caseId) : all;
   // A case named on purpose never scores nothing in silence: an unconfirmed one needs the flag that admits it.
   if (o.caseId !== undefined && !o.includeUnconfirmed && !pool[0]!.confirmed) throw new Error(`case ${o.caseId} is not confirmed: confirm it (evals/review/README.md) or pass --include-unconfirmed`);
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
-  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', rounds, order, runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], held: false };
+  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', rounds, order, runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], reviews: [], held: false };
+  const inputs: BenchInputs = { ...checkoutState(ctx), cases: files.filter((f) => selected.includes(f.case)).map((f) => ({ id: f.case.id, sha256: f.sha256 })), reviews: ctx.reviews };
   // One review per distinct candidate, base and card path and trial, one after another, scoring every case of it.
   const groups = new Map<string, ReviewBenchCase[]>();
   for (const c of selected) {
@@ -202,11 +244,11 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const results = Array.from({ length: trials }, () => new Map<string, BenchCaseResult>());
   let n = 0;
   for (const cases of groups.values()) {
-    for (const trial of results) {
+    for (const [i, trial] of results.entries()) {
       n += 1;
       const stopped = (c: ReviewBenchCase): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'no-verdict', cited: [], detail: 'not reviewed: a quota hold stopped the run', durationMs: 0 });
       // With rounds, a case no round reviewed (a checkout or card error, a quota stop) carries an empty list.
-      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n)) trial.set(r.id, rounds > 1 && !r.rounds ? { ...r, rounds: [] } : r);
+      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n, i + 1)) trial.set(r.id, rounds > 1 && !r.rounds ? { ...r, rounds: [] } : r);
     }
   }
   const skipped = pool.length - selected.length;
@@ -219,7 +261,7 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const after = (r: number) => trialResults[0]!.cases.map((c) => (c.rounds?.length ? { ...c, outcome: c.rounds[Math.min(r, c.rounds.length) - 1]!.outcome } : c));
   const roundTotals = rounds > 1 ? Array.from({ length: rounds }, (_, i) => totalsOf(after(i + 1), skipped)) : undefined;
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds, order, preCommand: preCommand?.command ?? null, ...(formalCommand ? { formalCommand: { path: o.formalCommand!, sha256: formalCommand.sha256 } } : {}) }, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, options: { rounds, order, preCommand: preCommand?.command ?? null, ...(formalCommand ? { formalCommand: { path: o.formalCommand!, sha256: formalCommand.sha256 } } : {}) }, policyHash: ctx.hash, inputs, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary, ...(roundTotals ? { roundTotals } : {}) };
 }
 
 /** The `--pre-command` file (card T1-BENCH-ORDER-PRE): an unknown key is refused, so a key meant for `preReview` never goes unused in silence. */
@@ -275,7 +317,7 @@ function readFormalCommand(file: string): { settings: z.infer<typeof FormalComma
   }
   const parsed = FormalCommandFile.safeParse(raw);
   if (!parsed.success) throw new Error(`--formal-command ${file}: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'file'}: ${i.message}`).join('; ')}`);
-  return { settings: parsed.data, sha256: createHash('sha256').update(bytes).digest('hex') };
+  return { settings: parsed.data, sha256: sha256Of(bytes) };
 }
 
 /** The summary over the totals of every trial; `aidlc review bench compare` checks a saved report against it. */
@@ -287,7 +329,7 @@ function summaryOf(totals: Array<Pick<BenchTotals, 'recall' | 'falseBlockRate' |
 const errorOf = (c: ReviewBenchCase, detail: string): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'error', cited: [], detail, durationMs: 0 });
 
 /** Review one candidate in a detached temporary checkout, removed whatever the review did. */
-async function reviewGroup(ctx: BenchContext, cases: ReviewBenchCase[], n: number): Promise<BenchCaseResult[]> {
+async function reviewGroup(ctx: BenchContext, cases: ReviewBenchCase[], n: number, trial: number): Promise<BenchCaseResult[]> {
   const { candidate } = cases[0]!;
   let holder: string | undefined;
   try {
@@ -297,7 +339,7 @@ async function reviewGroup(ctx: BenchContext, cases: ReviewBenchCase[], n: numbe
     const checkout = path.join(holder, 'checkout');
     const add = ctx.git('git', ['worktree', 'add', '--detach', checkout, candidate], { cwd: ctx.root });
     if (add.exitCode !== 0) return cases.map((c) => errorOf(c, `no checkout of ${candidate}: ${add.stderr.trim() || `git worktree add exit ${add.exitCode}`}`));
-    return await reviewIn(ctx, cases, checkout, n);
+    return await reviewIn(ctx, cases, checkout, n, trial);
   } catch (err) {
     return cases.map((c) => errorOf(c, (err as Error).message));
   } finally {
@@ -326,6 +368,14 @@ function gitStep(ctx: Pick<BenchContext, 'git' | 'root'>, args: string[]): Retur
   }
 }
 
+/** The commit and state of the checkout at the root (card T0-BENCH-INPUTS); null for what git does not tell. */
+function checkoutState(ctx: Pick<BenchContext, 'git' | 'root'>): Pick<BenchInputs, 'checkoutCommit' | 'checkoutClean'> {
+  const head = gitStep(ctx, ['rev-parse', 'HEAD']);
+  const status = gitStep(ctx, ['status', '--porcelain']);
+  const name = head?.exitCode === 0 ? head.stdout.trim() : '';
+  return { checkoutCommit: /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(name) ? name : null, checkoutClean: status?.exitCode === 0 ? status.stdout === '' : null };
+}
+
 /**
  * `git worktree remove --force`, else delete the directory and `git worktree prune`. The checkout is reported in
  * `leftCheckouts` unless every step is confirmed: the directory is gone, a prune the failed remove needed exited 0, and
@@ -345,7 +395,7 @@ function removeCheckout(ctx: BenchContext, holder: string): void {
   if (existsSync(holder) || !pruned || named) ctx.leftCheckouts.push(checkout);
 }
 
-async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: string, n: number): Promise<BenchCaseResult[]> {
+async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: string, n: number, trial: number): Promise<BenchCaseResult[]> {
   const { candidate, base, card: ref } = cases[0]!;
   const cardFile = path.join(checkout, ...ref.path.split('/'));
   if (!existsSync(cardFile)) return cases.map((c) => errorOf(c, `card file ${ref.path} is absent at ${candidate}`));
@@ -366,21 +416,31 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   if (cases.every((c) => unscorable(c) !== undefined)) return cases.map((c) => errorOf(c, unscorable(c)!));
   const includeDiff = !cfg.command.some((a) => a.includes('{instructions}'));
   const lessons = ctx.rules === 'matched' ? matchedLessons(lessonsPath(ctx.root), { changedPaths, diff, history: new GitProbe(ctx.git).commitFiles(checkout, base) }) : ctx.lessons;
+  const effort = !pre && cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(ctx.config.formalReview.effort, diff, changedPaths, pathAllowed) : undefined;
+  const entry: BenchReviewInputs = { trial, cases: cases.filter((c) => unscorable(c) === undefined).map((c) => c.id), command: [...cfg.command], ...(effort ? { effort } : {}), lessonsSha256: sha256Of(lessons.lines.join('\n')), promptsSha256: [] };
+  const render = (input: Parameters<typeof buildReviewPrompt>[0]): string => {
+    const prompt = buildReviewPrompt(input);
+    entry.promptsSha256.push(sha256Of(prompt));
+    return prompt;
+  };
+  // The entry is recorded as the reviewer is called, so a review that fails after that keeps it and one never sent has none.
+  const runner: Runner = (...args) => {
+    if (!ctx.reviews.includes(entry)) ctx.reviews.push(entry);
+    return ctx.runner(...args);
+  };
   const common = { reviewPolicy: ctx.reviewPolicy, lessons, card, base, head: candidate, changedPaths, diff, priorFindings: [], includeDiff, round: 1 };
   const fileStem = `${card.id}.bench-${ctx.stage}.${n}.${candidate.slice(0, 12)}`;
-  const retention = { runner: ctx.runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem, head: candidate, reviewer: cfg.reviewer, changedPaths, changedLines: changedLineRanges(diff, changedPaths), policyHash: ctx.hash };
+  const retention = { runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem, head: candidate, reviewer: cfg.reviewer, changedPaths, changedLines: changedLineRanges(diff, changedPaths), policyHash: ctx.hash };
   const vars = { cwd: checkout, base, head: candidate, card: card.id };
   const review = async (round: number, found: string[]): Promise<PanelResult> => {
     if (pre) {
       const r2 = ctx.config.preReview;
       const coverage = r2.coverage === 'shadow' && r2.perspectives.includes(COVERAGE_ANGLE);
-      const promptFor = (perspective?: string) => buildReviewPrompt({ ...common, stage: 'pre', perspective, coverage, order: ctx.order, maxRounds: Math.max(r2.rounds, 1) });
+      const promptFor = (perspective?: string) => render({ ...common, stage: 'pre', perspective, coverage, order: ctx.order, maxRounds: Math.max(r2.rounds, 1) });
       return runReviewPanel({ ...retention, perspectives: r2.perspectives, promptFor, vars, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: r2.answerMarker });
     }
-    const r3 = ctx.config.formalReview;
-    const effort = r3.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(r3.effort, diff, changedPaths, pathAllowed) : undefined;
     const schema = materialiseVerdictSchema(ctx.reviewDir, ctx.order);
-    const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', order: ctx.order, advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1), foundInDecision: found });
+    const promptFor = () => render({ ...common, stage: 'formal', order: ctx.order, advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1), foundInDecision: found });
     return runReviewPanel({ ...retention, fileStem: round > 1 ? `${fileStem}.round-${round}` : fileStem, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
   };
   // Rounds inside one decision (card T1-BENCH-ROUNDS): round r+1 runs while round r blocks with a new P0 or P1 cited reason.
