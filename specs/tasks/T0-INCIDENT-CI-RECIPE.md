@@ -1,7 +1,7 @@
 ---
 id: T0-INCIDENT-CI-RECIPE
 title: docs/OPERATIONS.md, Incident -> intent, gives an opt-in recipe for running `aidlc monitor check --file-intent` on a schedule in a project's own CI, with what a fresh runner loses and how to keep it
-status: todo
+status: merged
 branch: T0-INCIDENT-CI-RECIPE
 worktree: D:\wt\AIDLC\T0-INCIDENT-CI-RECIPE
 allow_paths:

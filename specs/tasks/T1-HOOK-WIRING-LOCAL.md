@@ -1,7 +1,7 @@
 ---
 id: T1-HOOK-WIRING-LOCAL
 title: The hookCommand line of aidlc doctor reads the dispatcher of .claude/settings.local.json as well as that of .claude/settings.json and reports ok when the file of either exists
-status: todo
+status: merged
 branch: T1-HOOK-WIRING-LOCAL
 worktree: D:\wt\AIDLC\T1-HOOK-WIRING-LOCAL
 plan_ref: plans/install-portability.md#7-task-split-dependencies-and-parallel-windows
