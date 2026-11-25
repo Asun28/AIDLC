@@ -1,7 +1,7 @@
 ---
 id: T0-SMALL-ISSUES-463-428-ZOD
 title: "Three small fixes in one card: a hook guard refuses an interpreter that reads its program from standard input (issue 463), the tdd and diagnose skill descriptions name the requests a person types (part of issue 428), and zod is 4.6.7 or later (Dependabot alert 1, GHSA-mrhx-c7xc-m3w5)"
-status: todo
+status: merged
 branch: T0-SMALL-ISSUES-463-428-ZOD
 worktree: D:\wt\AIDLC\T0-SMALL-ISSUES-463-428-ZOD
 allow_paths:
