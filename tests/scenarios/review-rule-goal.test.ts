@@ -303,39 +303,41 @@ test('R8, the goal\'s last GOAL_STOPPED: a goal aidlc next stopped again on a se
   }
 });
 
-test('R3 decision 1, F1: a goal write that lands between the lifting ruling and the re-admission stands: after a resume or a cancellation the goal record is the one that write left and no GOAL_STATE out of STOP is appended; after a deadline extension the goal is re-admitted with the extended deadline [R2]', async () => {
-  // Each row is what another command does after the ruling's card-run write and before the re-admission reads the goal.
-  const rows: Array<[name: string, land: (fx: ReturnType<typeof makeFixture>, goalId: string) => void, after: [generation: number, state: string, stop: string | undefined]]> = [
-    ['a resume', (fx, goalId) => void fx.controller.report({ goalId, generation: 0, result: 'resume', data: { reason: 'the owner continues' } }), [1, 'WAIT', undefined]],
-    ['a resume and a cancellation', (fx, goalId) => { fx.controller.report({ goalId, generation: 0, result: 'resume', data: { reason: 'the owner continues' } }); fx.controller.report({ goalId, generation: 1, result: 'cancel', data: { detail: 'stopped by the user' } }); }, [1, 'STOP', 'cancelled']],
+test('R3 decision 1, F1: another command that runs between the ruling\'s card-run write and the re-admission waits on the goal lock and is refused, and the goal is re-admitted from the record before the ruling [R2]', async () => {
+  // Each row is what another command does after the ruling's card-run write and before the re-admission writes the goal.
+  const rows: Array<[name: string, land: (fx: ReturnType<typeof makeFixture>, goalId: string) => void]> = [
+    ['a resume', (fx, goalId) => void fx.controller.report({ goalId, generation: 0, result: 'resume', data: { reason: 'the owner continues' } })],
+    ['a resume and a cancellation', (fx, goalId) => { fx.controller.report({ goalId, generation: 0, result: 'resume', data: { reason: 'the owner continues' } }); fx.controller.report({ goalId, generation: 1, result: 'cancel', data: { detail: 'stopped by the user' } }); }],
     // Set by hand through the store: the record a `goal cancel` saves when it read the goal before `aidlc next` stopped it (no command reaches this in one process).
-    ['a cancellation that read the goal before its stop', (fx, goalId) => { const g = fx.goal(goalId); fx.store.saveGoal({ ...g, stop: { ...g.stop!, reason: 'cancelled', detail: 'cancelled by user' } }); }, [0, 'STOP', 'cancelled']],
-    ['a deadline extension', (fx, goalId) => void fx.controller.extendDeadline(goalId, 'the owner', '2026-12-31T00:00:00.000Z', 'more time'), [0, 'CARDS', undefined]],
+    ['a cancellation that read the goal before its stop', (fx, goalId) => { const g = fx.goal(goalId); fx.store.saveGoal({ ...g, stop: { ...g.stop!, reason: 'cancelled', detail: 'cancelled by user' } }); }],
+    ['a deadline extension', (fx, goalId) => void fx.controller.extendDeadline(goalId, 'the owner', '2026-12-31T00:00:00.000Z', 'more time')],
   ];
-  for (const [name, land, after] of rows) {
+  for (const [name, land] of rows) {
     const fx = makeFixture(CONFIG);
     try {
       const s = await setup(fx);
       await s.stopCard();
       s.stopGoal();
       s.rule('F1', 'a lead');
-      let landed: Stored = {};
+      const was = s.goalRec();
+      let landed = 'not run';
       const racing = {
         ruleFinding: (...args: Parameters<CardRunner['ruleFinding']>) => {
           const run = s.runner.ruleFinding(...args);
-          land(fx, s.goal.id);
-          landed = { bytes: s.bytes()[0], record: s.goalRec() };
+          try {
+            land(fx, s.goal.id);
+            landed = 'completed';
+          } catch (err) {
+            landed = (err as Error).message;
+          }
           return run;
         },
       };
       const r = fx.controller.ruleFinding(racing, s.goal.id, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: REASON });
-      assert.deepEqual([s.g().generation, s.g().state, s.g().stop?.reason, s.persisted().state], [...after, 'SHIP'], name);
-      if (after[1] === 'CARDS') {
-        // The extension left the goal in STOP for review: it is re-admitted from the record the section read, extended deadline included.
-        const { stop: _stop, ...rest } = landed['record'];
-        const expected: Stored = { ...rest, terminal: false, state: 'CARDS', writes: landed['record'].writes + 1, updatedAt: s.goalRec()['updatedAt'] };
-        assert.deepEqual([s.goalRec(), r.readmitted, s.readmissions()], [expected, true, [readmission(CARD, 'the owner')]], name);
-      } else assert.deepEqual([s.bytes()[0], r.readmitted, s.readmissions()], [landed['bytes'], false, []], `${name}: the goal record keeps the bytes the other command wrote`);
+      assert.match(landed, /locked/i, `${name}: the other command is refused`);
+      const { stop: _stop, ...rest } = was;
+      const expected: Stored = { ...rest, terminal: false, state: 'CARDS', writes: was['writes'] + 1, updatedAt: s.goalRec()['updatedAt'] };
+      assert.deepEqual([s.goalRec(), r.readmitted, s.readmissions(), s.persisted().state], [expected, true, [readmission(CARD, 'the owner')], 'SHIP'], name);
     } finally {
       fx.cleanup();
     }

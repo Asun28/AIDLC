@@ -173,33 +173,6 @@ test('T1-GOAL-UPDATE acceptance 2: two owner acts on one goal leave what the two
   }
 });
 
-test('T1-GOAL-UPDATE acceptance 2: a goal resumed and stopped again for review after the ruling was written is left as it is, and the ruling run again re-admits it once [R4]', async () => {
-  const fx = makeFixture(REVIEWED);
-  try {
-    const goal = await stoppedForReview(fx);
-    const runner = runners.get(fx.store)!;
-    let after = '';
-    const racing = {
-      ruleFinding: (...args: Parameters<CardRunner['ruleFinding']>) => {
-        const run = runner.ruleFinding(...args);
-        resume(fx, goal.id);
-        // The stop another card of the goal would give it.
-        fx.store.saveGoal({ ...fx.goal(goal.id), state: 'STOP', terminal: true, stop: goal.stop });
-        after = bytes(fx, goal.id)[0]!;
-        return run;
-      },
-    };
-    const ruling = { decision: 'rejected', by: 'the owner', reason: 'the row exists' } as const;
-    assert.throws(() => fx.controller.ruleFinding(racing, goal.id, fx.card(CARD), 'F2', ruling), /resumed and stopped again for review since it was read \(generation 1, 0 read\).*run the command again/);
-    const readmitted = () => fx.events(goal.id).filter((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP');
-    assert.deepEqual([bytes(fx, goal.id)[0], readmitted()], [after, []]);
-    rule(fx, goal.id);
-    assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).generation, readmitted().length], ['CARDS', 1, 1]);
-  } finally {
-    fx.cleanup();
-  }
-});
-
 /** States from which `aidlc next` makes each of its derived writes. */
 const derived: Array<[name: string, setup: (fx: Fixture) => Goal]> = [
   ['CARDS to RUN', (fx) => fx.store.saveGoal({ ...running(fx), state: 'CARDS' })],
@@ -450,6 +423,86 @@ test('T1-GOAL-UPDATE acceptance 5: a command that lands between the record write
     assert.deepEqual([JSON.stringify(goal), goal.deadlines.extensions], [JSON.stringify(fx.goal(goal.id)), []], 'the record createGoal returns is the one stored');
   } finally {
     onAppend = undefined;
+    fx.cleanup();
+  }
+});
+
+test('T1-GOAL-UPDATE acceptance 2: a re-admission left to a rerun does not write a goal resumed and stopped again since the rerun read it, and the next rerun re-admits it once [R4]', async () => {
+  const fx = makeFixture(REVIEWED);
+  try {
+    const goal = await stoppedForReview(fx);
+    // The state a failed re-admission leaves: the card's stop is lifted, the goal is in STOP.
+    runners.get(fx.store)!.ruleFinding(goal, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
+    let after: string[] = [];
+    Object.assign(overlap, { at: fx.store.goalFile(goal.id), nth: 1, run: () => {
+      resume(fx, goal.id);
+      // The stop another card of the goal would give it.
+      fx.store.saveGoal({ ...fx.goal(goal.id), state: 'STOP', terminal: true, stop: goal.stop });
+      after = bytes(fx, goal.id);
+    } });
+    assert.throws(() => rule(fx, goal.id), /resumed and stopped again for review since it was read \(generation 1, 0 read\).*run the command again/);
+    assert.deepEqual(bytes(fx, goal.id), after);
+    rule(fx, goal.id);
+    const readmitted = fx.events(goal.id).filter((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP');
+    assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).generation, readmitted.length], ['CARDS', 1, 1]);
+  } finally {
+    overlap.at = undefined;
+    fx.cleanup();
+  }
+});
+
+test('T1-GOAL-UPDATE acceptance 4: a command run inside the runner of a ruling or a continuation is refused with LOCKED, and the act completes [R3] [R6]', async () => {
+  for (const [name, act, state] of [['ruling', 'ruleFinding', 'SHIP'], ['continuation', 'continueStop', 'BUILD']] as const) {
+    const fx = makeFixture(REVIEWED);
+    try {
+      const goal = await stoppedForReview(fx);
+      const runner = runners.get(fx.store)!;
+      const impatient = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 30 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry });
+      const landed: string[] = [];
+      // The other command runs before the runner writes and again after it.
+      const land = () => landed.push(attempt(() => void impatient.extendDeadline(goal.id, 'the owner', LATER, 'more time')) ?? 'completed');
+      const around = <A extends unknown[], R>(fn: (...args: A) => R) => (...args: A): R => {
+        land();
+        const out = fn(...args);
+        land();
+        return out;
+      };
+      if (act === 'ruleFinding') fx.controller.ruleFinding({ ruleFinding: around(runner.ruleFinding.bind(runner)) }, goal.id, fx.card(CARD), 'F2', { decision: 'rejected', by: 'the owner', reason: 'the row exists' });
+      else fx.controller.continueCard({ continueStop: around(runner.continueStop.bind(runner)) }, goal.id, fx.card(CARD), { by: 'the owner', reason: 'one more decision' });
+      assert.equal(landed.length, 2, name);
+      for (const l of landed) assert.match(l, /locked by another writer/, name);
+      assert.deepEqual([fx.goal(goal.id).state, fx.goal(goal.id).deadlines.extensions, fx.store.getCardRun(goal.id, CARD)?.state], ['CARDS', [], state], name);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-GOAL-UPDATE acceptance 4: a close refused between its two lease sections leaves the goal record and the takeover intent alone, and the next call completes it with one GOAL_TAKEOVER [R6]', () => {
+  const fx = makeFixture();
+  const update = fx.leases.update.bind(fx.leases);
+  try {
+    const goal = derived.find(([name]) => name.startsWith('CLOSE to DONE under'))![1](fx);
+    const held = `${fx.store.goalFile(goal.id)}.lock`;
+    const [record, journal] = bytes(fx, goal.id) as [string, string];
+    let sections = 0;
+    fx.leases.update = (...args: Parameters<typeof update>) => {
+      const out = update(...args);
+      if (++sections === 1) writeFileSync(held, `pid=${process.pid} at=${fx.now()} nonce=00000000`);
+      return out;
+    };
+    const impatient = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 30 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry });
+    assert.throws(() => impatient.next(goal.id), isCode('LOCKED'));
+    fx.leases.update = update;
+    const after = bytes(fx, goal.id) as [string, string];
+    assert.equal(after[0], record, 'the goal record');
+    const gained = after[1].slice(journal.length).trim().split('\n').map((l) => JSON.parse(l) as { type: string; data: { kind?: string } });
+    assert.deepEqual(gained.map((e) => [e.type, e.data.kind]), [['NOTE', 'goal-close-takeover-intent']]);
+    rmSync(held);
+    assert.equal(fx.controller.next(goal.id).kind, 'done');
+    assert.deepEqual([fx.goal(goal.id).state, fx.events(goal.id).filter((e) => e.type === 'GOAL_TAKEOVER').length], ['DONE', 1]);
+  } finally {
+    fx.leases.update = update;
     fx.cleanup();
   }
 });
