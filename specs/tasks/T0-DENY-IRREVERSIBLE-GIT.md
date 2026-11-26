@@ -1,7 +1,7 @@
 ---
 id: T0-DENY-IRREVERSIBLE-GIT
 title: "Both settings files deny the irreversible git commands that CLAUDE.md forbids, and Read(~/.ssh/**)"
-status: todo
+status: merged
 branch: T0-DENY-IRREVERSIBLE-GIT
 allow_paths:
   - .claude/settings.json
