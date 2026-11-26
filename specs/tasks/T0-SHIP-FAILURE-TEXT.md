@@ -63,6 +63,13 @@ npm run typecheck && node --test tests/scenarios/ship-failure-text.test.ts tests
 
 | Item | Proof | Result |
 |---|---|---|
+| 1 | tests/scenarios/ship-failure-text.test.ts, the three failureText unit tests | RED at 5a612f34 (failureText undefined); pass on the candidate |
+| 2 | tests/scenarios/ship-failure-text.test.ts, "the other fields of a result are those of main"; tests/infra/ship.test.ts unchanged | the pins pass at 5a612f34 and on the candidate; ship.test.ts passes unchanged |
+| 3 | tests/scenarios/ship-failure-text.test.ts, "a refused merge stops STOP/tool with the failure text" | RED at 5a612f34 (detail without failure text); pass on the candidate |
+| 4 | tests/scenarios/ship-failure-text.test.ts, the refused-merge test's operation and OPERATION_RESULT rows, and "an unclassified ship keeps main's stop text" | pass at 5a612f34 and on the candidate |
+| 5 | `git diff origin/main --stat -- tests/`; the other DoD files | the new file and two changed assertions in t0-flow.test.ts (T0-TOOL-STOP-TEXT test); the other files, fault-points.test.ts included, pass unchanged |
+| 6 | `git diff origin/main -- docs changelog.d`; tests/surface/changelog-fragments.test.ts | one sentence in each doc at the R4 places, one fragment line; pass |
+| 7 | `npm run typecheck` | exit 0 |
 
 ## PR summary
 

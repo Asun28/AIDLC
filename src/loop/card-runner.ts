@@ -3577,7 +3577,9 @@ export class CardRunner {
               : `resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt`;
           return buildWith((latest) => ({ dodReceipt: undefined, blockedReceipt: undefined, effort: reopenEpisode(latest.effort), pendingRepair: { kind: 'merge-conflict', detail, at: now } }), `Merge conflict on the base sync (${JSON.stringify(result.detail)}): ${step}. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.`, repairEffort, ['merge-conflicts', ...this.buildSkills(goal, card)]);
         }
-        return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${JSON.stringify(result.detail)}${result.resumeCommand ? `; the ship path's resume marker, a diagnostic that does not lift this stop: ${JSON.stringify(result.resumeCommand)}` : ''}`, 'inspect the ship output and the retained receipt', { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } }));
+        // The line the sentinel rule matched is quoted, since no ship receipt is retained (card T0-SHIP-FAILURE-TEXT).
+        const quoted = result.failureText !== undefined ? `; failure text: ${JSON.stringify(result.failureText)}` : '';
+        return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${JSON.stringify(result.detail)}${quoted}${result.resumeCommand ? `; the ship path's resume marker, a diagnostic that does not lift this stop: ${JSON.stringify(result.resumeCommand)}` : ''}`, result.failureText !== undefined ? "read the ship failure text in this stop's detail" : 'inspect the ship output and the retained receipt', { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } }));
       }
     }
   }
