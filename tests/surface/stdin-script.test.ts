@@ -69,7 +69,7 @@ test('acceptance 3: both shells run the guard after every other guard, an edit d
   const env = { AIDLC_STATE_DIR: path.join(cwd, 'state') };
   const dispatch = (event: HookEvent) => dispatchHook(event, { cwd, env });
   for (const tool of ['Bash', 'PowerShell']) {
-    assert.deepEqual(hookNamesFor(shell(tool, '')), ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script']);
+    assert.deepEqual(hookNamesFor(shell(tool, '')), ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script', 'protect-git']);
     assert.deepEqual(dispatch(shell(tool, 'python -')), REFUSED);
     assert.deepEqual(dispatch(shell(tool, 'python s.py')), PASSED);
   }

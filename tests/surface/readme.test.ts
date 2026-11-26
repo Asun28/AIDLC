@@ -44,6 +44,7 @@ const GUARD_CELLS: Record<HookName, [reads: string, blocks: string]> = {
   'protect-tests': ['the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns`', 'a fix task is active and the file path matches a test pattern'],
   'secrets-guard': ['the file path, `content`, `new_string`, `command`', 'the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern'],
   'stdin-script': ['the command', 'the command starts `python`, `py`, `node` or `pwsh` on a program read from standard input, in one of the forms `docs/OPERATIONS.md` lists'],
+  'protect-git': ['the command', 'a git command in it force-pushes, runs `reset --hard`, `clean -f`, `checkout -- <paths>` or `checkout .`, or skips the git hooks, in one of the forms `docs/OPERATIONS.md` lists'],
   'verify-before-done': ['goals, card runs, leases, the git status of planning files', 'never: it adds a reminder of a missing DoD receipt or of uncommitted planning files'],
   'route-new-work': ['the prompt, the `aidlc.config.json` error', 'never: it prints the routing line'],
 };

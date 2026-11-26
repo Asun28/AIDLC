@@ -65,3 +65,44 @@ npm run typecheck && node --test tests/surface/protect-git.test.ts tests/surface
 ```
 - Expected exit code: 0
 - Assertion: every denied row exits 2, every allowed row exits 0, the guard runs last in the second pass.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/protect-git.test.ts, acceptance 1: 23 Bash rows and 6 PowerShell rows, and after R3 decision 1 seven Bash and two PowerShell regression rows (attached commit message, parenthesis in a comment or heredoc, ANSI-C escape, five nested `cmd /c`, empty here-strings), and after R3 decision 2 four more Bash rows (a NUL in an ANSI-C quote, an ANSI-C heredoc delimiter, a heredoc inside a substitution, `bash -O <value> -c`); every tricky Bash row of both repairs was also run through bash with a stub `git` that prints its arguments, and bash agrees | RED at a3d2fb82 (`protect-git` is an unknown hook name, exit 2 with the unknown-name text), passes on the candidate |
+| 2 | tests/surface/protect-git.test.ts, acceptance 2: 21 Bash rows, 3 PowerShell rows, an Edit event and a Stop event, and after R3 decision 1 four Bash and two PowerShell rows (a quote inside a quoted substitution heredoc, a parenthesis in a heredoc body, a script operand before `-c`, `pwsh -File` and a positional script before `-Command`), and after R3 decision 2 one Bash row (`$'x'`, which threw) and three PowerShell commit messages with a doubled quote or a backtick escape | RED at a3d2fb82 (unknown name exits 2), passes on the candidate |
+| 3 | tests/surface/protect-git.test.ts, acceptance 3 | RED at a3d2fb82 (`hookNamesFor` has no `protect-git`), passes on the candidate |
+| 4 | tests/surface/hooks.test.ts, hook-name.test.ts, ps-guard-wire.test.ts, stdin-script.test.ts, readme.test.ts; `git diff origin/main -- tests/surface` | pass; one list line each (three in hooks.test.ts) and the `GUARD_CELLS` row |
+| 5 | tests/surface/settings-deny.test.ts; the other tests of stdin-script.test.ts | pass; settings-deny.test.ts unchanged |
+| 6 | `git diff origin/main -- docs changelog.d README.md`; tests/surface/changelog-fragments.test.ts | OPERATIONS table row, forms paragraph, deny-list note and known-name list; ARCHITECTURE guard count; one fragment line; pass |
+| 7 | `npm run typecheck`; after CI on PR 512 failed `tests/core/parse-guard.test.ts` (a NUL split outside `nulList`, from the ANSI-C NUL cut), `npm run check` on the repaired candidate | exit 0; 4340 tests, 4306 pass, 0 fail, 34 skipped |
+
+## PR summary
+
+### What
+A new hook guard, `protect-git`, refuses git commands that cannot be taken back. It reads Bash and PowerShell tool calls.
+
+### Why / Intent
+The deny rules of card T0-DENY-IRREVERSIBLE-GIT match the command text only. Forms such as `git -C dir push --force` and `bash -c '...'` passed (issue 498).
+
+### How / Behaviour
+The guard scans the command with quotes, heredocs and comments read. It finds each git command, skips the git options and reads the arguments in any order. It refuses force push, `reset --hard`, `clean -f`, `checkout -- <paths>`, `checkout .`, `commit -n` and `--no-verify`, with exit 2.
+
+### System impact
+The dispatcher runs the guard last, in the second pass only. It never replaces the block of another guard.
+
+### Security
+The guard is a reminder of a written rule, not a security boundary. A form it does not read passes.
+
+### Tests and review
+New rows in tests/surface/protect-git.test.ts pin each refused and each allowed spelling. The pinned guard lists of four tests gain the name.
+
+### Risk
+A safe command that the scanner misreads is blocked. Quoted text is data, so commit messages that name these commands pass.
+
+### Ownership
+Hooks, `src/hooks/protect-git.ts`.
+
+### Docs
+docs/OPERATIONS.md, README.md, docs/ARCHITECTURE.md and a changelog fragment describe the guard.
