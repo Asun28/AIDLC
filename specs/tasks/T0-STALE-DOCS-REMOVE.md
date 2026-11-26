@@ -1,7 +1,7 @@
 ---
 id: T0-STALE-DOCS-REMOVE
 title: "Remove the two out-of-date docs that Claude and Codex agreed are unnecessary: docs/PROJECT-STATE.md and docs/plans/PLAN-aidlc-loop-v3-archive.md"
-status: todo
+status: merged
 branch: T0-STALE-DOCS-REMOVE
 allow_paths:
   - docs/PROJECT-STATE.md
