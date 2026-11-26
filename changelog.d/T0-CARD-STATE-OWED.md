@@ -1,0 +1,1 @@
+- T0-CARD-STATE-OWED: The `CARD_STATE` of a `card next` or `card takeover` selection is owed with the card-run write that stores the state and journaled only after that write lands, so a write refused as stale leaves no `CARD_STATE` (issue 502).

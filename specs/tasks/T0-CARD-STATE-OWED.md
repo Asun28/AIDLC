@@ -62,12 +62,43 @@ npm run typecheck && node --test tests/scenarios/card-state-owed.test.ts tests/s
 
 ## Attempt evidence
 
+RED: `7fc0ddaa`, `tests/scenarios/card-state-owed.test.ts` on main code: acceptance 1 and 4 found one CARD_STATE of a refused write, acceptance 2 found two, acceptance 3 found the run still in SHIP.
+
 | Item | Proof | Result |
 |---|---|---|
-| 1 | | |
-| 2 | | |
-| 3 | | |
-| 4 | | |
-| 5 | | |
-| 6 | | |
-| 7 | | |
+| 1 | `card-state-owed.test.ts` acceptance 1 | pass |
+| 2 | `card-state-owed.test.ts` acceptance 2 | pass |
+| 3 | `card-state-owed.test.ts` acceptance 3 | pass |
+| 4 | `card-state-owed.test.ts` acceptance 4 | pass |
+| 5 | DoD test files unchanged and green; `git diff origin/main --stat -- tests/` lists only `tests/scenarios/card-state-owed.test.ts` | pass |
+| 6 | `docs/OPERATIONS.md` Audit paragraph and Deadline extensions bullet; `changelog.d/T0-CARD-STATE-OWED.md`; the verify-card-run-writes record is unchanged, since no method it names gains or loses a write (stage E only reorders its two fault points) and `fault-points.test.ts` passes; its sync commit moves at CLOSE | pass |
+| 7 | `npm run typecheck` | pass |
+
+## PR summary
+
+### What
+The `CARD_STATE` of a `card next` or `card takeover` selection is now an owed event. The journal gets it only after the card-run write that stores the state lands.
+
+### Why / Intent
+Issue 502. A save refused as stale left a `CARD_STATE` in the journal. The journal then showed a stop that the run record did not hold, or two stops for one.
+
+### How / Behaviour
+`assess` owes the event instead of appending it. The first card-run save of the dispatch carries it in `journalOwed`, and `saveOwing` appends it after that save. The ownership-stop reconciliation and `takeover` do the same.
+
+### System impact
+Without a fault, the journal holds the same `CARD_STATE` events. Each one now follows the write of its state. A lost append is completed once by the next card command.
+
+### Security
+No change to authentication, secrets or permissions. The append stays under the card lease lock while the dispatch holds no lease.
+
+### Tests and review
+A new test file covers both issue cases, a lost append and the reconciliation. All four tests failed on main. The DoD test files pass unchanged.
+
+### Risk
+Low. The event order changes in one way only: a `CARD_STATE` follows its save. No write is added or removed.
+
+### Ownership
+The card loop owns this change (`src/loop/card-runner.ts`).
+
+### Docs
+`docs/OPERATIONS.md` and `docs/ARCHITECTURE.md` name the owed `CARD_STATE`. A changelog fragment records the change.
