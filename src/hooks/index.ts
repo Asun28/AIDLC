@@ -733,7 +733,9 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
       for (const { goalId, runs } of stops) {
         try {
           if (acting === undefined) acting = lazy.journal().resolveSessionId(env, cwd).session;
-          lazy.journal().Journal.forGoal(paths.journal, goalId).append({ type: 'SESSION_STOPPED', goalId, data: { session: acting, waiting, reminded, runs } });
+          // The event is the acting session's, which the hook event names; the process default session may be another one.
+          const actor = { ...lazy.journal().currentActor(env), session: acting };
+          lazy.journal().Journal.forGoal(paths.journal, goalId).append({ type: 'SESSION_STOPPED', goalId, actor, data: { session: acting, waiting, reminded, runs } });
         } catch (err) {
           lazy.rethrowLoadError(err);
         }

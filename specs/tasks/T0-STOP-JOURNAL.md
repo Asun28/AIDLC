@@ -62,8 +62,8 @@ npm run typecheck && node --test tests/surface/stop-journal.test.ts tests/surfac
 
 | Item | Proof | Result |
 |---|---|---|
-| 1 | tests/surface/stop-journal.test.ts, acceptance 1 | RED at ad0dedc5 (no `SESSION_STOPPED` event), passes on the candidate |
-| 2 | tests/surface/stop-journal.test.ts, acceptance 2: a git repository in a temporary directory as the worktree | RED at ad0dedc5 (no event to read the receipt from; a receipt is never stale on main), passes on the candidate |
+| 1 | tests/surface/stop-journal.test.ts, acceptance 1, with the event actor's session (added at R3 decision 1) | RED at ad0dedc5 (no `SESSION_STOPPED` event), passes on the candidate |
+| 2 | tests/surface/stop-journal.test.ts, both acceptance 2 tests: a git repository in a temporary directory as the worktree; after R3 decision 1 the stale reminder is its own test | the stale-reminder test fails with the base `src/hooks/index.ts` and `src/core/types.ts` put back (empty context, no reminder); the receipt-value test RED at ad0dedc5 (no event); both pass on the candidate |
 | 3 | tests/surface/stop-journal.test.ts, acceptance 3 | RED at ad0dedc5 (no event for the waiting Stop), passes on the candidate |
 | 4 | tests/surface/hooks.test.ts, hook-lazy.test.ts, lease-heartbeat.test.ts, tests/core/journal-event-types.test.ts | pass, unchanged |
 | 5 | `git diff origin/main -- docs changelog.d`; tests/surface/changelog-fragments.test.ts | the `verify-before-done` row, one paragraph with the count, one fragment line; pass |

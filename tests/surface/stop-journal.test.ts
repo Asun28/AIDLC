@@ -86,8 +86,20 @@ test('T0-STOP-JOURNAL acceptance 1: a Stop journals the listed runs of each goal
   const [event, ...more] = events(journalDir, 'g1');
   assert.deepEqual(more, []);
   assert.equal(event?.goalId, 'g1');
+  assert.equal(event?.actor.session, 'win-A', 'the event is the acting session\'s, as its data says');
   assert.deepEqual(event?.data, { session: 'win-A', waiting: false, reminded: true, runs: [{ cardId: 'T1-FOO', state: 'BUILD', receipt: 'none' }] });
   assert.deepEqual(events(journalDir, 'g2'), [], 'a run of another session is not listed, and its goal gets no event');
+});
+
+test('T0-STOP-JOURNAL acceptance 2: a receipt of an earlier candidate is named in the reminder [R3] [R4]', () => {
+  const { cwd, env, store } = setup();
+  const worktree = repo();
+  const probe = new GitProbe().candidate(worktree);
+  store.saveCardRun(run('g1', 'T1-FOO', { dodReceipt: 'npm test: exit 0', worktree, candidate: { sha: probe.sha, dirty: probe.dirty, untracked: probe.untracked, digest: probe.digest } }));
+  writeFileSync(path.join(worktree, 'b.txt'), 'b\n');
+  const r = runHook('verify-before-done', stop(), { cwd, env });
+  assert.equal(r.exitCode, 0);
+  assert.ok(context(r).includes('T1-FOO (BUILD, DoD receipt of an earlier candidate)'), context(r));
 });
 
 test('T0-STOP-JOURNAL acceptance 2: a receipt reads fresh, stale or unknown against the worktree candidate [R3] [R4]', () => {
