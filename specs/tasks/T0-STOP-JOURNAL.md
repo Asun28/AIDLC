@@ -1,7 +1,7 @@
 ---
 id: T0-STOP-JOURNAL
 title: "The Stop guard journals how each session ends against its open card runs, and reminds about a stale DoD receipt"
-status: todo
+status: merged
 branch: T0-STOP-JOURNAL
 allow_paths:
   - src/core/types.ts
