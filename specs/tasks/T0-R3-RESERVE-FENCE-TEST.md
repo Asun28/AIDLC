@@ -47,3 +47,39 @@ npm run typecheck && node --test tests/scenarios/r3-reserve-fence.test.ts tests/
 ```
 - Expected exit code: 0
 - Assertion: a takeover after the first fence refuses A's reservation, no reviewer runs, and B's run stays in SHIP.
+
+## PR summary
+### What
+This change adds one scenario test, `tests/scenarios/r3-reserve-fence.test.ts`. It pins the lease fence at the R3 reservation.
+
+### Why / Intent
+No test failed when this fence was removed. The proposal 2 measurement and a Codex review found that a second session can reach it.
+
+### How / Behaviour
+The test injects a takeover from the queue's `enqueue` call, between the two fences of `formalReview`. It checks that the reservation is refused, no reviewer runs, and the new owner's run stays in SHIP.
+
+### System impact
+No source file changes. The behaviour of aidlc does not change.
+
+### Security
+No new input, secret or network call. The test runs in a temporary state directory.
+
+### Tests and review
+The DoD runs the typecheck, the new test and `tests/scenarios/two-windows.test.ts`. With the fence replaced by `void now;`, the typecheck is clean and the new test fails.
+
+### Risk
+Low. The test reads one call order of `formalReview`; a change to that order can make it fail, which is its purpose.
+
+### Ownership
+The aidlc loop maintainers own the test, beside the other two-window scenarios.
+
+### Docs
+No document changes, because no behaviour changes.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `r3-reserve-fence.test.ts`: lease and run at generation 1 owned by B, run in SHIP | pass |
+| 2 | `r3-reserve-fence.test.ts`: refusal matches `fenced` and names `win-B`; 0 reviewer runs; no invocation, no stop, no `REVIEW_DECIDED` | pass |
+| 3 | Fence line after `renewOwnLease` in the reservation replaced by `void now;` in the worktree, not committed: `tsc -p tsconfig.test.json` exit 0, the new test fails (AssertionError), file restored | fails as required |
+| 4 | DoD: `npm run typecheck`, the new test and `two-windows.test.ts`; `git diff --stat origin/main` lists the two allowed paths | see receipt |
