@@ -20,7 +20,9 @@ export const LAZY_MODULES = ['../core/router', '../state/goal-store', '../state/
 
 /**
  * A module of `LAZY_MODULES` that failed to load (R3 decision 1). Every catch in the guards rethrows it
- * (`rethrowLoadError`), so it reaches the hook entry, which names it on stderr and exits 0, as for any throw of a guard.
+ * (`rethrowLoadError`), as for any throw of a guard: on a PreToolUse event `runHook` blocks the tool call (exit 2) and
+ * names it on stderr (card T0-HOOK-FAIL-CLOSED); on any other event it reaches the hook entry, which names it on stderr
+ * and exits 0 (`aidlc hook` exits 1).
  */
 export class LazyLoadError extends Error {
   readonly module: string;

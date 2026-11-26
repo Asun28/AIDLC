@@ -566,6 +566,8 @@ function mainDecision(event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, con
   try {
     for (const name of hookNamesFor(event)) {
       const r = runHook(name, event, { cwd, env, config });
+      // A PreToolUse guard that throws now returns this block (card T0-HOOK-FAIL-CLOSED); main let the throw through as a pass.
+      if (r.exitCode === 2 && r.stderr?.startsWith(`[aidlc hook] ${name} could not decide; the tool call is blocked: `)) return { exitCode: 0 };
       if (isBlock(r)) return r;
       if (!advisory && (r.stdout || r.stderr)) advisory = r;
     }

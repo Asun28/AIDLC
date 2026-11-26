@@ -1,0 +1,1 @@
+- T0-HOOK-FAIL-CLOSED: a hook guard that throws on a PreToolUse event blocks the tool call (exit 2) and names the guard on stderr, through `bin/aidlc-hook.js` and `aidlc hook`, where the entry exited 0 and `aidlc hook` exited 1 before; on Stop and UserPromptSubmit a throw exits as before.

@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { dispatchHook } from '../../src/hooks/entry.ts';
 import { runHook, type HookEvent } from '../../src/hooks/index.ts';
 import { tmpDir } from '../infra/helpers.ts';
-import { rmSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 /** A `tool_input` whose `key` getter throws `message`, so the first guard that reads it throws. */
 function throwingInput(key: 'command' | 'file_path', message: string): Record<string, unknown> {
@@ -31,6 +32,8 @@ function withDir<T>(fn: (dir: string) => T): T {
 describe('T0-HOOK-FAIL-CLOSED acceptance 3: a guard that throws', () => {
   test('on a PreToolUse event blocks with exit 2 and one stderr line naming the guard, through runHook and dispatchHook [R1]', () => {
     withDir((cwd) => {
+      // protect-paths reads the edit's path only when hooks.frozenPaths lists one.
+      writeFileSync(path.join(cwd, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }));
       const env = {};
       const bash = (message: string): HookEvent => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: throwingInput('command', message), cwd });
       const edit: HookEvent = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: throwingInput('file_path', 'no path'), cwd };
