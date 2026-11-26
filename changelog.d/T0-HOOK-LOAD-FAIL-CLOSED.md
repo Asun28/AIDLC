@@ -1,0 +1,1 @@
+- T0-HOOK-LOAD-FAIL-CLOSED: a hook process whose modules fail to load blocks a PreToolUse call (exit 2, one stderr line naming the load error) through `bin/aidlc-hook.js` and `aidlc hook`, where both exited 1 and let the tool call run before; on other events, and for every other command, a load failure exits 1 as before.
