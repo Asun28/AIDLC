@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-DIFF-DELETE
 title: "The R2 and R3 review diff shows a deleted file by its header only (git diff --irreversible-delete)"
-status: todo
+status: merged
 branch: T0-REVIEW-DIFF-DELETE
 allow_paths:
   - src/review/pre-review.ts
