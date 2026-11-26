@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-STATE-OWED
 title: "The CARD_STATE of a card next selection is owed with the record and journaled only after that write lands"
-status: todo
+status: merged
 branch: T0-CARD-STATE-OWED
 allow_paths:
   - src/loop/card-runner.ts
