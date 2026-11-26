@@ -1,7 +1,7 @@
 ---
 id: T0-R3-RESERVE-FENCE-TEST
 title: "A scenario test pins the lease fence at the R3 reservation: a takeover that lands after the first fence of aidlc review r3 refuses the reservation, runs no reviewer and leaves the new owner's run as the takeover wrote it"
-status: todo
+status: merged
 branch: T0-R3-RESERVE-FENCE-TEST
 worktree: D:\wt\AIDLC\T0-R3-RESERVE-FENCE-TEST
 allow_paths:
