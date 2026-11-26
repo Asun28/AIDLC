@@ -96,6 +96,10 @@ test('acceptance 3: other events and other stdin exit 1 through each entry, and 
         assert.ok(!r.stderr.includes('blocked'), r.stderr);
       }
     }
+    // A command other than hook with a PreToolUse event on stdin: one that read stdin would block (exit 2).
+    const listed = run(pkg, repo, state, ['aidlc.js', 'goal', 'list'], event(bash, repo));
+    assert.equal(listed.status, 1, listed.stderr);
+    assert.ok(!listed.stderr.includes('blocked'), listed.stderr);
     // stdin stays an open pipe that is never written or closed: a command that read it would wait until it is killed.
     const child = spawn(process.execPath, [path.join(pkg, 'bin', 'aidlc.js'), 'goal', 'list'], { cwd: repo, env: childEnv({ AIDLC_STATE_DIR: state }), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let killed = false;
@@ -108,6 +112,31 @@ test('acceptance 3: other events and other stdin exit 1 through each entry, and 
     child.stdin.destroy();
     assert.equal(killed, false, 'aidlc goal list waited on stdin');
     assert.equal(status, 1);
+  });
+});
+
+test('a PreToolUse event that arrives in two parts 3 s apart still blocks through each entry (R3 decision 1) [R1]', async () => {
+  await withPackage(async ({ pkg, repo, state }) => {
+    breakModule(pkg, 'cli/main.ts', 'boom');
+    breakModule(pkg, 'hooks/entry.ts', 'boom');
+    const text = event(bash, repo);
+    for (const args of [['aidlc.js', 'hook', 'auto'], ['aidlc-hook.js']]) {
+      const child = spawn(process.execPath, [path.join(pkg, 'bin', args[0]!), ...args.slice(1)], { cwd: repo, env: childEnv({ AIDLC_STATE_DIR: state }), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
+      const exited = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
+      child.stdin.write(text.slice(0, 20));
+      const second = setTimeout(() => child.stdin.end(text.slice(20)), 3_000);
+      const kill = setTimeout(() => child.kill(), 30_000);
+      const status = await exited;
+      clearTimeout(second);
+      clearTimeout(kill);
+      assert.equal(status, 2, `${args.join(' ')}: ${stderr}`);
+      assert.equal(stdout, '');
+      assert.equal(stderr, blockLine('boom'));
+    }
   });
 });
 

@@ -22,7 +22,7 @@ try {
   if (!isHook) throw err;
   await (await import('./hook-load-failure.js')).failHookLoad(err);
 }
-if (typeof mod.main === 'function') {
+if (typeof mod?.main === 'function') {
   // A rejection is one `aidlc: <message>` line, its line breaks joined with ` | `, and exit 1, never a stack trace (card
   // T0-R3-POOL-WAIT); the direct entry `node src/cli/main.ts` prints the message as thrown.
   try {

@@ -28,4 +28,4 @@ try {
 } catch (err) {
   await (await import('./hook-load-failure.js')).failHookLoad(err);
 }
-await mod.main();
+if (mod) await mod.main();

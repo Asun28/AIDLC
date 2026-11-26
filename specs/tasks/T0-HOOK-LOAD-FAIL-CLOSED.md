@@ -62,8 +62,9 @@ npm run typecheck && node --test tests/surface/hook-load-fail-closed.test.ts tes
 | Item | Proof | Result |
 |---|---|---|
 | 1 | tests/surface/hook-load-fail-closed.test.ts, acceptance 1 | RED at e403800a (status 1, expected 2); passes on the candidate |
-| 2 | tests/surface/hook-load-fail-closed.test.ts, acceptance 2 | RED at e403800a (status 1, expected 2); passes on the candidate. A first candidate read stdin with `readFileSync(0)` and failed this row once in eight runs; the handler now reads stdin as `readStdin` of src/hooks/entry.ts does, and 12 runs of the file passed |
-| 3 | tests/surface/hook-load-fail-closed.test.ts, acceptance 3 | passes on main and on the candidate (a guard row) |
+| 2 | tests/surface/hook-load-fail-closed.test.ts, acceptance 2 | RED at e403800a (status 1, expected 2); passes on the candidate. Two flakes of this row were traced: `readFileSync(0)` on a Windows pipe (replaced by a stream read), then EBUSY on the temporary directory because `process.exit(2)` left the git lookup of `bin/aidlc-hook.js` running; the handler now sets `process.exitCode = 2`, so the process ends after git does. 15 runs of the row and 5 of the file passed after that |
+| 3 | tests/surface/hook-load-fail-closed.test.ts, acceptance 3 | passes on main and on the candidate (a guard row). R3 decision 1 F1: a `goal list` row with a PreToolUse event on stdin added; with `if (!isHook) throw err` removed the test fails |
+| R3 d1 F2 | tests/surface/hook-load-fail-closed.test.ts, delayed-event test: a PreToolUse event in two parts 3 s apart through both entries | passes; with the 2 s read timer put back it fails (exit 1). The handler reads stdin to its end with no timer |
 | 4 | tests/surface/hook-lazy.test.ts, hook-fail-closed.test.ts, hook-name.test.ts, tests/infra/bin-entry.test.ts; `git diff origin/main --stat -- tests/`; `npm run bench -- --check` | pass unchanged; only the new test file; bench exit 0, "every count within its ceiling (6 journeys)", module counts equal to main at 4f3eb5e3 (hook.pre-bash 112, cli.start 259) |
 | 5 | `git diff origin/main -- docs/OPERATIONS.md changelog.d`; tests/surface/changelog-fragments.test.ts | the R4 sentence replaced, one fragment line; pass |
 | 6 | `npm run typecheck` | exit 0 |
