@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-FAIL-CLOSED
 title: "A guard that throws on a PreToolUse event blocks the tool call, through both hook entries"
-status: todo
+status: merged
 branch: T0-HOOK-FAIL-CLOSED
 allow_paths:
   - src/hooks/index.ts
