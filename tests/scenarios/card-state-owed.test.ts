@@ -201,20 +201,20 @@ function builtCandidate(fx: Fixture, shipPath: DryRunShipPath): { goalId: string
 }
 
 for (const outcome of ['merged', 'auth-failed'] as const) {
-  test(`T0-CARD-STATE-OWED R3 decision 1 F1: a ship whose result is written outside the dispatch save (${outcome}) still journals BUILD to SHIP once, after the write that stores SHIP [R1] [R5]`, () => {
+  test(`T0-CARD-STATE-OWED R3 decision 1 F1: a ship whose result is written outside the dispatch save (${outcome}) journals BUILD to SHIP once, carried by the write of the ship result [R1] [R5]`, () => {
     const fx = makeFixture({ actor: actorA });
     try {
       const { goalId, runner } = builtCandidate(fx, new DryRunShipPath([outcome]));
-      const landed: { state: string; journal: number }[] = [];
-      wrapSaves(fx, { landed: (run) => landed.push({ state: run.state, journal: fx.events(goalId).length }) });
-      runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+      const before = fx.store.getCardRun(goalId, CARD)!;
+      assert.equal(before.state, 'BUILD');
+      runner.next(fx.goal(goalId), fx.card(CARD), before);
       const events = fx.events(goalId);
       const ships = transitions(events, 'BUILD', 'SHIP');
       assert.equal(ships.length, 1, 'one BUILD to SHIP');
-      const stored = landed.find((s) => s.state === 'SHIP');
-      assert.ok(stored, 'a save stored SHIP before the ship');
-      assert.ok(events.indexOf(ships[0]!) >= stored.journal, 'the event follows that write');
-      assert.ok(events.indexOf(ships[0]!) < events.findIndex((e) => e.type === 'OPERATION_INTENT'), 'and precedes the ship intent');
+      assert.equal(ships[0]!.data['completed'], undefined, 'journaled by the command whose write carried it');
+      const at = events.indexOf(ships[0]!);
+      assert.ok(at > events.findIndex((e) => e.type === 'OPERATION_INTENT'), 'after the ship: no write before it stored SHIP');
+      assert.ok(fx.store.getCardRun(goalId, CARD)!.journalOwed?.some((o) => o.key === ships[0]!.data['eventKey']), 'the ship result write carried it');
     } finally {
       setActorForTests(actorA);
       fx.cleanup();

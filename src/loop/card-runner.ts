@@ -904,6 +904,14 @@ export class CardRunner {
    * `persist` `run`; while a selection's CARD_STATE is owed for this card (`stateOwed`), the write carries it and, once it
    * lands, the CARD_STATE is appended as the command's own (R1), under the dispatch writer when there is one (R4).
    */
+  /** The selection's CARD_STATE still owed for this card (`stateOwed`), taken by a write made outside `saveOwing`. */
+  private takeStateOwed(goal: Goal, card: Card): { owed: OwedEvent; writer?: DispatchWriter } | undefined {
+    const pending = this.stateOwed;
+    if (!pending || pending.goal.id !== goal.id || pending.card.id !== card.id) return undefined;
+    this.stateOwed = undefined;
+    return { owed: pending.owed, writer: pending.writer };
+  }
+
   private saveOwing(run: CardRun, persist: (run: CardRun) => CardRun): CardRun {
     const pending = this.stateOwed;
     if (!pending || run.goalId !== pending.goal.id || run.cardId !== pending.card.id) return persist(run);
@@ -1732,10 +1740,6 @@ export class CardRunner {
     // stale verdict spends no retry; a HEAD read that throws ships as before.
     const moved = this.movedHead(card, run);
     if (moved) return { run, directive: moved };
-    // The selection's CARD_STATE still owed here (no gate saved the run) is stored with SHIP before any external effect, and
-    // appended after that write (card T0-CARD-STATE-OWED R1): the ship result is written through `updateCardRun`, which
-    // carries no owed selection.
-    if (this.allowShip && this.stateOwed?.card.id === card.id && this.stateOwed.goal.id === goal.id) run = this.save({ ...run, state: 'SHIP' });
     if (!this.allowShip) {
       const next = this.save({ ...run, state: 'SHIP', blocker: 'driver-ship-boundary' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'driver-ship-boundary', pollSeconds: 90, narration: 'Shipping requires a separate operator invocation outside aidlc run.' } };
@@ -3380,21 +3384,26 @@ export class CardRunner {
     // moment, a decision or a failed check recorded meanwhile included); the ledger written in the decision transaction
     // above is never replaced by the copy captured then.
     const history = { superseded: false, stopped: false, newer: 'none' };
+    // A selection CARD_STATE no gate saved (card T0-CARD-STATE-OWED R1) rides in this write and is appended after it lands,
+    // before the result's own events.
+    const selection = this.takeStateOwed(goal, card);
     const finish = (patchOf: (latest: CardRun) => Partial<CardRun>, then: (saved: CardRun) => { run: CardRun; directive: CardDirective }): { run: CardRun; directive: CardDirective } => {
       const saved = this.store.updateCardRun(goal.id, card.id, (current) => {
         const latest = current ?? run;
         const evidence = [...latest.evidence, evidenceEntry];
+        const owing = (next: CardRun): CardRun => (selection ? { ...next, journalOwed: this.owedWith(goal.id, next, selection.owed) } : next);
         if ((latest.candidate?.digest ?? 'unknown') !== candidateDigest) {
           history.superseded = true;
           history.newer = latest.candidate?.digest?.slice(0, 12) ?? 'none';
-          return { ...latest, evidence };
+          return owing({ ...latest, evidence });
         }
         if (latest.stop || latest.state === 'STOP') {
           history.stopped = true;
-          return { ...latest, evidence };
+          return owing({ ...latest, evidence });
         }
-        return { ...latest, ...patchOf(latest), evidence };
+        return owing({ ...latest, ...patchOf(latest), evidence });
       });
+      if (selection) this.deliverState(goal, card, saved, selection.owed, selection.writer);
       if (!history.superseded && !history.stopped) return then(saved);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
       const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' || result.outcome === 'effect-unknown' ? 'UNKNOWN' : 'failed';

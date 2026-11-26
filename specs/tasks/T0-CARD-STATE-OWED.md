@@ -66,7 +66,7 @@ RED: `7fc0ddaa`, `tests/scenarios/card-state-owed.test.ts` on main code: accepta
 
 Attempt 1 (`8e9052df`) was withdrawn before review: the full `npm test` failed `tests/scenarios/journal-owed.test.ts`, which pins the T0-JOURNAL-FAULT-EVENTS sentence at the end of ARCHITECTURE item 1. Attempt 2 restores that sentence and puts this card's sentence before it.
 
-R3 decision 1 repair (attempt 3): F1/F4 fixed, since `ship` now stores SHIP with the owed CARD_STATE before any external effect when no gate saved the run, and the tests `R3 decision 1 F1` (merged, auth-failed) prove it. F3/F6 fixed, since the dispatch's first owed-event delivery now runs after the foreign-lease check and through the dispatch writer, and the test `R3 decision 1 F3` proves it. The three tests fail on `bef615d2` and pass on the repair. F2/F5 disputed: R5 keeps the `from` and `to` of main, and the card sweep names the `prepare` STOP save as a save of the PREPARE selection.
+R3 decision 1 repair (attempt 3): F1/F4 fixed: when no gate saved the run, the ship result write (`finish` in `applyShipResult`) carries the owed CARD_STATE and appends it after it lands. Tests `R3 decision 1 F1` (auth-failed fails on `bef615d2`; merged is a guard, as `close` saved it already). F3/F6 fixed, since the dispatch's first owed-event delivery now runs after the foreign-lease check and through the dispatch writer, and the test `R3 decision 1 F3` proves it. Each new test passes on the repair. F2/F5 disputed: R5 keeps the `from` and `to` of main, and the card sweep names the `prepare` STOP save as a save of the PREPARE selection.
 
 | Item | Proof | Result |
 |---|---|---|
