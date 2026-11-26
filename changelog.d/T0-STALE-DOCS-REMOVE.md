@@ -1,0 +1,1 @@
+- T0-STALE-DOCS-REMOVE: removed `docs/PROJECT-STATE.md`, a 2026-09-18 snapshot that was not kept current, and `docs/plans/PLAN-aidlc-loop-v3-archive.md`, the v3 plan that the v4 archive and the v5 plan replace; the README and the v5 plan no longer name them.

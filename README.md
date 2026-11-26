@@ -188,7 +188,6 @@ docs/            architecture, traceability, operations, plans
 - `docs/REQUIREMENTS-TRACEABILITY.md` - v5 plan requirements (R, MS, MA, LC, Q) mapped to code and tests.
 - `docs/OPERATIONS.md` - running goals end to end, provider bindings, hooks, evals, audit, STOP reasons.
 - `docs/plans/PLAN-aidlc-loop.md` - the canonical v5 plan this implementation follows.
-- `docs/PROJECT-STATE.md` - a snapshot of 2026-09-18: what was verified, what was pending and the next steps at that date.
 
 ## Development
 
