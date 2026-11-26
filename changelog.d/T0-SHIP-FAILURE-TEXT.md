@@ -1,0 +1,1 @@
+- T0-SHIP-FAILURE-TEXT (issue 489): the STOP/tool of a merge-failed outcome without a conflict, or of a push-failed or pr-failed outcome, quotes the first line its sentinel matched, cut to 500 code points and encoded, as `failure text:` in its detail, and its next action points at that text; the operation record, the journal and every other ship outcome keep their text.

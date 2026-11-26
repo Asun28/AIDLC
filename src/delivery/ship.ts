@@ -42,6 +42,11 @@ export interface ShipResult {
   resumeCommand?: string;
   prNumber?: number;
   detail: string;
+  /**
+   * The line of the receipt the outcome's sentinel rule matched, as a stop quotes it: printed text, controls as spaces, cut
+   * to 500 code points and encoded (card T0-SHIP-FAILURE-TEXT). Set only for an outcome a sentinel rule decided.
+   */
+  failureText?: string;
 }
 
 export interface ShipRequest {
@@ -195,6 +200,12 @@ function firstCodePoints(text: string, width: number): string {
   return text.slice(0, end);
 }
 
+/** The lines of a receipt text as a terminal prints them (printedText), control characters as spaces, trimmed. */
+function printedLines(text: string): string[] {
+  return printedText(text)
+    .split(/\r?\n/)
+    .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim());
+}
 /**
  * The failing line of a ship failure as a cause string only, or undefined when the outcome counts no attempt or no line
  * qualifies: the text a terminal prints (printedText), then per line control characters as spaces,
@@ -204,11 +215,23 @@ function firstCodePoints(text: string, width: number): string {
 function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp): string | undefined {
   const at = FAILING_LINE_AT[outcome];
   if (!at) return undefined;
-  const line = printedText(text)
-    .split(/\r?\n/)
-    .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
-    .find((l) => (at === 'gate' ? sentinel.test(l) : isFailingLine(l)));
+  const line = printedLines(text).find((l) => (at === 'gate' ? sentinel.test(l) : isFailingLine(l)));
   return line === undefined ? undefined : encodeUntrusted(firstCodePoints(normaliseCause(line), FAILING_LINE_WIDTH));
+}
+
+const FAILURE_TEXT_WIDTH = 500;
+
+/**
+ * The line a sentinel rule matched, for a stop to quote (card T0-SHIP-FAILURE-TEXT): read as `failingLine` reads a line,
+ * never normalised, decoded for `%25`, `%5B` and `%5D` in one pass, cut to 500 code points and encoded again, so text
+ * the ship path already encoded is unchanged and no bracket remains.
+ */
+function failureText(text: string, sentinel: RegExp): string | undefined {
+  const line = printedLines(text).find((l) => sentinel.test(l));
+  if (line === undefined) return undefined;
+  // Decoded before the cut, so an escape at the 500th code point is never split into a stray `%` (R3 decision 1 F1).
+  const decoded = line.replace(/%(25|5B|5D)/g, (_, code: string) => (code === '25' ? '%' : code === '5B' ? '[' : ']'));
+  return encodeUntrusted(firstCodePoints(decoded, FAILURE_TEXT_WIDTH));
 }
 
 /** The leg names of the scaffold's saga (`$sagaLegs` of task.ps1), matched exactly. */
@@ -266,14 +289,16 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
     if (rule === undefined) return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: `saga leg ${report}` };
     const detail = `sentinel ${rule[0].source.split('|')[0]}`;
     const line = failingLine(text, cls, rule[0]);
-    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
+    const quoted = failureText(text, rule[0]);
+    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}`, ...(quoted !== undefined ? { failureText: quoted } : {}) };
   }
   for (const [re, cls] of SENTINEL_MAP) {
     if (report !== undefined && LEG_BOUND.has(cls)) continue;
     if (!re.test(text)) continue;
     const detail = `sentinel ${re.source.split('|')[0]}`;
     const line = failingLine(text, cls, re);
-    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
+    const quoted = failureText(text, re);
+    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}`, ...(quoted !== undefined ? { failureText: quoted } : {}) };
   }
   return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: `exit ${receipt.exitCode} with no known sentinel; STOP/tool with diagnostics` };
 }
