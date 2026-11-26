@@ -19,16 +19,28 @@ const BASH_SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
 /** The PowerShell host parameters (and their aliases) that take the next word as their value. */
 const PWSH_VALUES = new Set(['-executionpolicy', '-ep', '-ex', '-workingdirectory', '-wd', '-windowstyle', '-w', '-configurationname', '-config', '-outputformat', '-o', '-of', '-inputformat', '-in', '-if', '-encodedcommand', '-e', '-ec', '-encodedarguments', '-encodeda', '-ea', '-version', '-v', '-custompipename', '-settingsfile', '-settings']);
 
+interface Heredoc {
+  delimiter: string;
+  tabs: boolean;
+}
+
 const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
 
-/** The text of a Bash `$'...'` quote with its escapes decoded. */
+/** PowerShell's backtick escapes; any other backtick keeps the character after it. */
+const PS_ESCAPES: Record<string, string> = { '0': '\0', a: '\x07', b: '\b', e: '\x1b', f: '\f', n: '\n', r: '\r', t: '\t', v: '\v' };
+
+/** The text of a Bash `$'...'` quote with its escapes decoded, cut at a decoded NUL as Bash cuts it; an incomplete escape stays. */
 function ansiC(raw: string): string {
-  return raw.replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|.)/gs, (_, e: string) => {
-    if (/^[xuU]/.test(e)) return String.fromCodePoint(parseInt(e.slice(1), 16));
+  const decoded = raw.replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|.)/gs, (_, e: string) => {
+    if (/^[xuU]./.test(e)) {
+      const code = parseInt(e.slice(1), 16);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : `\\${e}`;
+    }
     if (/^[0-7]/.test(e)) return String.fromCharCode(parseInt(e, 8) & 0xff);
-    if (e.startsWith('c')) return String.fromCharCode(e.charCodeAt(1) & 0x1f);
+    if (/^c./s.test(e)) return String.fromCharCode(e.charCodeAt(1) & 0x1f);
     return ANSI_C[e] ?? `\\${e}`;
   });
+  return decoded.split('\0')[0]!;
 }
 
 /**
@@ -39,13 +51,13 @@ function ansiC(raw: string): string {
 function scan(text: string, powershell: boolean): string[][] {
   const commands: string[][] = [];
   const escape = powershell ? '`' : '\\';
-  const heredocs: Array<{ delimiter: string; tabs: boolean }> = [];
   let i = 0;
   /** Above zero inside double quotes: the commands read there are dropped. */
   let muted = 0;
   const at = (s: string): boolean => text.startsWith(s, i);
 
-  const readHeredocs = (): void => {
+  /** Moves past the bodies of the heredocs a command list opened on the line that just ended. */
+  const readHeredocs = (heredocs: Heredoc[]): void => {
     for (const { delimiter, tabs } of heredocs.splice(0)) {
       while (i < text.length) {
         const end = text.indexOf('\n', i);
@@ -61,13 +73,14 @@ function scan(text: string, powershell: boolean): string[][] {
   const doubleQuoted = (): string => {
     let raw = '';
     muted += 1;
-    while (i < text.length && text[i] !== '"') {
-      if (text[i] === escape) {
-        const next = text[i + 1] ?? '';
-        raw += powershell || /[$`"\\\n]/.test(next) ? (next === '\n' ? '' : next) : `\\${next}`;
-        i += 2;
-      } else if (powershell && at('""')) {
+    while (i < text.length) {
+      if (powershell && at('""')) {
         raw += '"';
+        i += 2;
+      } else if (text[i] === '"') break;
+      else if (text[i] === escape) {
+        const next = text[i + 1] ?? '';
+        raw += powershell ? (PS_ESCAPES[next] ?? next) : /[$`"\\\n]/.test(next) ? (next === '\n' ? '' : next) : `\\${next}`;
         i += 2;
       } else if (at('$(')) {
         i += 2;
@@ -87,6 +100,8 @@ function scan(text: string, powershell: boolean): string[][] {
 
   /** Reads commands up to an unquoted `close` (the end of the text when it is empty) and moves past it. */
   const list = (close: string): void => {
+    // The heredocs of this list: a substitution reads its own at its own line ends, and the outer list reads its own after.
+    const heredocs: Heredoc[] = [];
     let words: string[] = [];
     let word: string | undefined;
     const add = (s: string): void => {
@@ -110,7 +125,7 @@ function scan(text: string, powershell: boolean): string[][] {
       if (c === '\n' || c === '\r') {
         endCommand();
         i += c === '\r' && text[i + 1] === '\n' ? 2 : 1;
-        if (!powershell) readHeredocs();
+        if (!powershell) readHeredocs(heredocs);
       } else if (c === ' ' || c === '\t') {
         endWord();
         i += 1;
@@ -118,7 +133,7 @@ function scan(text: string, powershell: boolean): string[][] {
         const next = text[i + 1];
         if (next === '\n' || next === '\r') i += text.startsWith('\r\n', i + 1) ? 3 : 2;
         else {
-          add(next ?? '');
+          add(powershell ? (PS_ESCAPES[next ?? ''] ?? next ?? '') : (next ?? ''));
           i += 2;
         }
       } else if (powershell && word === undefined && at('<#')) {
@@ -170,7 +185,13 @@ function scan(text: string, powershell: boolean): string[][] {
         while (text[i] === ' ' || text[i] === '\t') i += 1;
         let delimiter = '';
         while (i < text.length && !/[\s;&|<>()]/.test(text[i]!)) {
-          if (text[i] === "'" || text[i] === '"') {
+          if (at("$'")) {
+            let j = i + 2;
+            while (j < text.length && text[j] !== "'") j += text[j] === '\\' ? 2 : 1;
+            delimiter += ansiC(text.slice(i + 2, j));
+            i = j + 1;
+          } else if (at('$"')) i += 1;
+          else if (text[i] === "'" || text[i] === '"') {
             const end = text.indexOf(text[i]!, i + 1);
             const stop = end < 0 ? text.length : end;
             delimiter += text.slice(i + 1, stop);
@@ -266,7 +287,7 @@ function innerCommand(name: string, words: string[]): { text: string; powershell
     for (let k = 1; k < words.length; k += 1) {
       const w = words[k]!;
       if (w === '--' || w === '-') return command ? (words[k + 1] === undefined ? undefined : { text: words[k + 1]!, powershell: false }) : undefined;
-      if (/^[-+]o$/.test(w)) k += 1;
+      if (/^[-+][oO]$/.test(w) || w === '--rcfile' || w === '--init-file') k += 1;
       else if (/^-[A-Za-z]+$/.test(w)) command ||= w.includes('c');
       else if (!/^(?:--|\+)/.test(w)) return command ? { text: w, powershell: false } : undefined;
     }

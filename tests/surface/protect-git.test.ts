@@ -47,6 +47,11 @@ const BASH_REFUSED: Array<[string, string]> = [
   ["echo $(cat <<'EOF'\n(\nEOF\n); git reset --hard", 'git reset --hard'],
   ["git push $'--for\\x63e'", 'git push --force'],
   ['cmd /c cmd /c cmd /c cmd /c cmd /c git push --force', 'git push --force'],
+  // R3 decision 2: a NUL in an ANSI-C quote, an ANSI-C heredoc delimiter, a heredoc inside a substitution, `bash -O <value>`.
+  ["git push $'--force\\0ignored'", 'git push --force'],
+  ["cat <<$'EOF'\ntext\nEOF\ngit push --force", 'git push --force'],
+  ['cat <<OUT $(cat <<IN\n\nIN\n)\ny\nOUT\ngit push --force', 'git push --force'],
+  ["bash -O extglob -c 'git push --force'", 'git push --force'],
 ];
 
 const PS_REFUSED: Array<[string, string]> = [
@@ -87,9 +92,11 @@ const BASH_PASSED = [
   "echo $(cat <<'EOF'\n)\ngit push --force\nEOF\n)",
   "bash script.sh -c 'git push --force'",
   'git commit -m "fix" -m "-n is a flag"',
+  // R3 decision 2: an incomplete ANSI-C escape stays literal.
+  "echo $'\\x'",
 ];
 
-const PS_PASSED = ["Write-Output @'\ngit push --force\n'@", 'git status', "git commit -m 'say git push --force'", "pwsh -File script.ps1 -Command 'git push --force'", "pwsh script.ps1 -Command 'git push --force'"];
+const PS_PASSED = ["Write-Output @'\ngit push --force\n'@", 'git status', "git commit -m 'say git push --force'", "pwsh -File script.ps1 -Command 'git push --force'", "pwsh script.ps1 -Command 'git push --force'", 'git commit -m "--no-""verify"', 'git commit -m "--no-ve`rify"', 'git commit -m --no-ve`rify'];
 
 test('T0-PROTECT-GIT acceptance 1: each listed spelling of an irreversible git command is refused and named [R1] [R2] [R3]', () => {
   for (const [c, git] of BASH_REFUSED) assert.deepEqual(runHook(GUARD, shell('Bash', c), { cwd: '.', env: {} }), refused(git), c);
