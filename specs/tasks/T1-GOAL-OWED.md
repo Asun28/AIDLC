@@ -1,7 +1,7 @@
 ---
 id: T1-GOAL-OWED
 title: "A goal write and its event survive a failure of either: a stop and every other change owe their event on the record, a re-admission journals first and its rerun appends no second event (issue 300, second of two cards)"
-status: todo
+status: merged
 branch: T1-GOAL-OWED
 worktree: D:\wt\AIDLC\T1-GOAL-OWED
 allow_paths:
