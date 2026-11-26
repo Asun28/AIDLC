@@ -13,6 +13,8 @@
  *  - protect-tests     (PreToolUse Edit|Write): test files are locked while a fix task is active.
  *  - secrets-guard     (PreToolUse Write|Edit|Bash|PowerShell): credential-looking content never enters a diff.
  *  - stdin-script      (PreToolUse Bash|PowerShell): python, node and pwsh never read their program from standard input.
+ *  - protect-git       (PreToolUse Bash|PowerShell): a git command that cannot be taken back (force push, reset --hard,
+ *                      clean -f, checkout of paths, --no-verify) is refused in every spelling `./protect-git.ts` reads.
  *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done (not said
  *                      while Claude Code reports running background work), and a goal whose lease this session
  *                      holds commits its planning artifacts first; nothing is said while Claude Code is already
@@ -40,6 +42,7 @@ import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
 import * as lazy from './lazy.ts';
 import { stdinScript } from './stdin-script.ts';
+import { protectGit } from './protect-git.ts';
 
 export interface HookEvent {
   hook_event_name?: string;
@@ -800,7 +803,7 @@ export function readStdinJson(text: string): HookEvent {
 }
 
 /** The guards `aidlc hook <name>` runs by name; `auto` is the CLI's own name for `dispatchHook`. */
-export const HOOK_NAMES = ['production-gate', 'protect-paths', 'protect-tests', 'secrets-guard', 'stdin-script', 'verify-before-done', 'route-new-work'] as const;
+export const HOOK_NAMES = ['production-gate', 'protect-paths', 'protect-tests', 'secrets-guard', 'stdin-script', 'protect-git', 'verify-before-done', 'route-new-work'] as const;
 export type HookName = (typeof HOOK_NAMES)[number];
 
 /**
@@ -845,6 +848,8 @@ function decideGuard(name: HookName, event: HookEvent, cwd: string, env: NodeJS.
       return secretsGuard(event);
     case 'stdin-script':
       return stdinScript(event);
+    case 'protect-git':
+      return protectGit(event);
     case 'verify-before-done':
       return verifyBeforeDone(cwd, env, hookSession(event, env), event);
     case 'route-new-work':

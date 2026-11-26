@@ -11,7 +11,7 @@ import { tmpDir } from '../infra/helpers.ts';
 import { changelogSince010 } from '../infra/changelog.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const KNOWN = 'known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, stdin-script, verify-before-done, route-new-work';
+const KNOWN = 'known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, stdin-script, protect-git, verify-before-done, route-new-work';
 const line = (quoted: string): string => `aidlc hook: unknown hook name ${quoted}; ${KNOWN}`;
 
 function tempDir(): string {
