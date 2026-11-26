@@ -1825,9 +1825,15 @@ export class CardRunner {
     // The record is re-read under the card-run lock right before the external effect: the candidate this ship was issued
     // for must still be the record's, with its receipts, no stop, no round or decision reserved meanwhile and the same
     // owner generation; anything else cancels the intent and the pool request and sends the caller back to `card next`.
+    // A selection CARD_STATE no gate saved (card T0-CARD-STATE-OWED R1) rides in this re-read, written only when the record
+    // shows no drift, and is appended after it lands, before the external effect; a withdrawn ship journals none.
+    const selection = this.takeStateOwed(goal, card);
     let armed: CardRun;
     try {
-      armed = this.store.updateCardRun(goal.id, card.id, (current) => current ?? run);
+      armed = this.store.updateCardRun(goal.id, card.id, (current) => {
+        const locked = current ?? run;
+        return selection && !this.shipDrift(card, locked, run) ? { ...locked, journalOwed: this.owedWith(goal.id, locked, selection.owed) } : locked;
+      });
     } catch (err) {
       // Nothing was dispatched: the intent and the pool admission are withdrawn, each step on its own so none masks the
       // failure or skips the next; the failure is the caller's.
@@ -1876,6 +1882,7 @@ export class CardRunner {
       }
       return { run: armed, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The card run changed after the ship gate (${drift}); nothing was dispatched. Run \`aidlc card next ${card.id}\` again.${cleanup}` } };
     }
+    if (selection && armed.journalOwed?.some((o) => o.key === selection.owed.key)) this.deliverState(goal, card, armed, selection.owed, selection.writer);
     this.ops.markIssued(op.id, undefined, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id } });
     let result: ShipResult;
@@ -3384,26 +3391,21 @@ export class CardRunner {
     // moment, a decision or a failed check recorded meanwhile included); the ledger written in the decision transaction
     // above is never replaced by the copy captured then.
     const history = { superseded: false, stopped: false, newer: 'none' };
-    // A selection CARD_STATE no gate saved (card T0-CARD-STATE-OWED R1) rides in this write and is appended after it lands,
-    // before the result's own events.
-    const selection = this.takeStateOwed(goal, card);
     const finish = (patchOf: (latest: CardRun) => Partial<CardRun>, then: (saved: CardRun) => { run: CardRun; directive: CardDirective }): { run: CardRun; directive: CardDirective } => {
       const saved = this.store.updateCardRun(goal.id, card.id, (current) => {
         const latest = current ?? run;
         const evidence = [...latest.evidence, evidenceEntry];
-        const owing = (next: CardRun): CardRun => (selection ? { ...next, journalOwed: this.owedWith(goal.id, next, selection.owed) } : next);
         if ((latest.candidate?.digest ?? 'unknown') !== candidateDigest) {
           history.superseded = true;
           history.newer = latest.candidate?.digest?.slice(0, 12) ?? 'none';
-          return owing({ ...latest, evidence });
+          return { ...latest, evidence };
         }
         if (latest.stop || latest.state === 'STOP') {
           history.stopped = true;
-          return owing({ ...latest, evidence });
+          return { ...latest, evidence };
         }
-        return owing({ ...latest, ...patchOf(latest), evidence });
+        return { ...latest, ...patchOf(latest), evidence };
       });
-      if (selection) this.deliverState(goal, card, saved, selection.owed, selection.writer);
       if (!history.superseded && !history.stopped) return then(saved);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
       const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' || result.outcome === 'effect-unknown' ? 'UNKNOWN' : 'failed';

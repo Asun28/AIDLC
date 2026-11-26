@@ -201,7 +201,7 @@ function builtCandidate(fx: Fixture, shipPath: DryRunShipPath): { goalId: string
 }
 
 for (const outcome of ['merged', 'auth-failed'] as const) {
-  test(`T0-CARD-STATE-OWED R3 decision 1 F1: a ship whose result is written outside the dispatch save (${outcome}) journals BUILD to SHIP once, carried by the write of the ship result [R1] [R5]`, () => {
+  test(`T0-CARD-STATE-OWED R3 decision 1 F1: a ship whose result is written outside the dispatch save (${outcome}) journals BUILD to SHIP once, after the ship's locked re-read write and before the external effect [R1] [R5]`, () => {
     const fx = makeFixture({ actor: actorA });
     try {
       const { goalId, runner } = builtCandidate(fx, new DryRunShipPath([outcome]));
@@ -213,8 +213,8 @@ for (const outcome of ['merged', 'auth-failed'] as const) {
       assert.equal(ships.length, 1, 'one BUILD to SHIP');
       assert.equal(ships[0]!.data['completed'], undefined, 'journaled by the command whose write carried it');
       const at = events.indexOf(ships[0]!);
-      assert.ok(at > events.findIndex((e) => e.type === 'OPERATION_INTENT'), 'after the ship: no write before it stored SHIP');
-      assert.ok(fx.store.getCardRun(goalId, CARD)!.journalOwed?.some((o) => o.key === ships[0]!.data['eventKey']), 'the ship result write carried it');
+      assert.ok(at > events.findIndex((e) => e.type === 'OPERATION_INTENT'), 'after the ship intent: no earlier write carried it');
+      assert.ok(at < events.findIndex((e) => e.type === 'OPERATION_ISSUED'), 'before the external effect');
     } finally {
       setActorForTests(actorA);
       fx.cleanup();
