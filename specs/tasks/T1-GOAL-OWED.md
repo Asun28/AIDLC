@@ -83,7 +83,7 @@ The goal record gains an optional field. A record without it is read and written
 No new input, command or credential.
 
 ### Tests and review
-A new file fails each append and record write of 33 commands and transitions in turn, and compares the recovery with a run that did not fail. Two tests of main change, as the owner amended. R3 reviews the candidate.
+A new file fails each append and record write of 34 commands and transitions in turn, and compares the recovery with a run that did not fail. Two tests of main change, as the owner amended. R3 reviews the candidate.
 
 ### Risk
 Medium. A stop is now in the record before its event. `aidlc next` reads the journal when the record owes events.
@@ -99,9 +99,11 @@ RED commits b54f9b1d33f42963e87adecdbe4a67a2eb8ad3de and 3cc53be09f9077a67693219
 
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `tests/scenarios/goal-owed.test.ts`, the three fault-table tests (each call of 33 commands and transitions failed in turn, recovered by the named command, compared with a twin), and the tests of a resume whose derived stop failed, the delivery by the next writer, a refused report, two `next` at once and a held lock, a repeated resume and extension, a ruling and a continuation, a moved card run and `aidlc goal cancel` through the CLI | RED, then pass |
+| 1 | `tests/scenarios/goal-owed.test.ts`, the three fault-table tests (each call of 34 commands and transitions failed in turn, recovered by the named command, compared with a twin whose command did not fail, followed by `aidlc next` when that is the recovery), and the tests of a resume whose derived stop failed, the delivery by the next writer, a refused report, two `next` at once and a held lock, a repeated resume and extension, a ruling and a continuation, a moved card run and `aidlc goal cancel` through the CLI | RED, then pass |
 | 2 | Same file: chain and `WORK_AFTER_TERMINAL` checked before and after each recovery and after a dispatch | pass |
 | 3 | Same file, "acceptance 3" | RED, then pass |
 | 4 | Every other file of the DoD, no line changed | pass |
 | 5 | The documents and the fragment | reviewer-verified |
 | 6 | `side-write-faults.test.ts` 6a and `approver.test.ts`, the two changed tests | RED (6a), then pass |
+
+R3 decision 1: F1, an extension of a goal in WAIT whose card is merged, recovered by `aidlc next`, ends in VERIFY_ARC, where the extension alone stays in WAIT. The owner amended R4 and acceptance 1 (amendment 2): a recovery by `aidlc next` is compared with the command followed by that `next`; the row is added. F2 and F3: `docs/ARCHITECTURE.md` and the fragment now state the non-zero exit and which command recovers.

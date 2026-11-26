@@ -152,7 +152,7 @@ type Act = (fx: Fixture, id: string) => void;
 /** `faults`: each call of the command that can fail, with its recovery: `next`, or `again` for the same command. */
 type Row = [name: string, setup: (fx: Fixture) => Goal, act: Act, faults: Record<string, 'next' | 'again'>];
 
-/** Fails each call of each row in turn, and compares the recovered goal with a twin whose command did not fail. */
+/** Fails each call of each row in turn, and compares the recovered goal with a twin whose command did not fail, followed by `aidlc next` when that is the recovery (R4). */
 function checkRows(rows: Row[]): void {
   for (const [name, setup, act, faults] of rows) {
     const twin = makeFixture();
@@ -160,7 +160,9 @@ function checkRows(rows: Row[]): void {
       const whole = setup(twin);
       const { calls, error } = watched(twin, whole.id, () => act(twin, whole.id));
       assert.equal(error, undefined, name);
-      const expected = view(twin, whole.id);
+      const again = view(twin, whole.id);
+      next(twin, whole.id);
+      const expected = { again, next: view(twin, whole.id) };
       for (const [fail, recovery] of Object.entries(faults)) {
         const where = `${name}, ${fail} fails, ${recovery}`;
         const fx = makeFixture();
@@ -170,7 +172,7 @@ function checkRows(rows: Row[]): void {
           assertSound(fx, id, `${where}: before the recovery`);
           if (recovery === 'again') act(fx, id);
           else next(fx, id);
-          assert.deepEqual(view(fx, id), expected, where);
+          assert.deepEqual(view(fx, id), expected[recovery], where);
           assertSound(fx, id, where);
           // The goal goes on: a card it admits is dispatched, and nothing is appended twice later.
           if (!fx.goal(id).terminal && fx.controller.next(id).kind === 'run-card') {
@@ -199,6 +201,7 @@ test('T1-GOAL-OWED acceptance 1 and 2: an owner act survives a failure of its ev
   checkRows([
     ['a cancellation', running, cancel, STOPPED],
     ['an extension of a running goal', running, extend, { 'record 1': 'again', 'append NOTE 1': 'next' }],
+    ['an extension of a goal in WAIT whose card is merged', closed('WAIT'), extend, { 'record 1': 'again', 'append NOTE 1': 'next' }],
     ['an extension that moves a card deadline', waiting, extend, { 'record 1': 'again', 'append NOTE 1': 'next', 'append NOTE 2': 'next' }],
     ['an extension of a time stop', stoppedForTime, extend, { 'append NOTE 1': 'again', 'append GOAL_STATE 1': 'again', 'record 1': 'again' }],
     ['a resume', cancelled, resume, { 'append GOAL_TAKEOVER 1': 'again', 'record 1': 'again', 'record 2': 'next' }],
