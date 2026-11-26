@@ -1006,7 +1006,9 @@ export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: s
   if (names.exitCode !== 0) throw new Error(`git diff --name-only ${range} failed in ${cwd}: ${names.stderr.trim() || `exit ${names.exitCode}`}`);
   // --text: a file that is binary on the base (a stray NUL byte) still shows its hunks to the reviewer. --no-color,
   // --no-ext-diff and --no-textconv: the reviewer and the effort count read a plain unified diff under any user git configuration.
-  const full = runner('git', ['diff', '--text', range, '--no-color', '--no-ext-diff', '--no-textconv'], { cwd });
+  // --irreversible-delete: a deleted file is its header only, so removed content counts toward neither the cap nor the effort
+  // count, and `changedPaths` still names it (card T0-REVIEW-DIFF-DELETE, issue 517).
+  const full = runner('git', ['diff', '--text', range, '--no-color', '--no-ext-diff', '--no-textconv', '--irreversible-delete'], { cwd });
   if (full.exitCode !== 0) throw new Error(`git diff ${range} failed in ${cwd}: ${full.stderr.trim() || `exit ${full.exitCode}`}`);
   const changedPaths = nulList(names.stdout);
   const bytes = Buffer.byteLength(full.stdout, 'utf8');

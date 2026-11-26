@@ -181,7 +181,7 @@ test('acceptance 7: on the ship path a [pre-existing] block on an unchanged line
   assert.equal(pass.persisted.state, 'STOP');
   assert.equal(pass.persisted.stop?.reason, 'review');
   assert.ok(pass.persisted.stop?.detail.includes(outside), pass.persisted.stop?.detail);
-  assert.deepEqual(pass.calls.filter((c) => c.startsWith('git diff')), ['git diff --name-only -z main...HEAD --no-renames', 'git diff --text main...HEAD --no-color --no-ext-diff --no-textconv'], 'the diff is collected against the run base');
+  assert.deepEqual(pass.calls.filter((c) => c.startsWith('git diff')), ['git diff --name-only -z main...HEAD --no-renames', 'git diff --text main...HEAD --no-color --no-ext-diff --no-textconv --irreversible-delete'], 'the diff is collected against the run base');
 
   const inside = shipReason(2);
   assertShipBlock(shipRun(inside, SHIP_DIFF), inside, 'a changed line');

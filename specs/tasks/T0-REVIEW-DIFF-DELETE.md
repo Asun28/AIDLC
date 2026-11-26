@@ -56,6 +56,11 @@ npm run typecheck && node --test tests/surface/review-diff-delete.test.ts tests/
 
 | Item | Proof | Result |
 |---|---|---|
+| 1 | tests/surface/review-diff-delete.test.ts, "a deleted file is its header only" | RED at 189fa9a0 (throws: 85203 bytes above the 4096 cap); pass on the candidate |
+| 2 | tests/surface/review-diff-delete.test.ts, "the effort line count reads the changed file only" | RED at 189fa9a0 (same throw); pass on the candidate: count 2, added and NUL-byte hunks present |
+| 3 | tests/scenarios/pre-existing.test.ts (argv pin), tests/surface/pre-review.test.ts, tests/core/review-effort.test.ts; `git diff origin/main --stat -- tests/` | one expected argv string changed; the other files pass unchanged; only the new file and pre-existing.test.ts listed |
+| 4 | `git diff origin/main -- docs changelog.d`; tests/surface/changelog-fragments.test.ts | one sentence after "a diff is never cut.", one fragment line; pass |
+| 5 | `npm run typecheck` | exit 0 |
 
 ## PR summary
 
