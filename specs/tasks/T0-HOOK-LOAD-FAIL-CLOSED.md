@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-LOAD-FAIL-CLOSED
 title: "A hook process whose modules fail to load blocks a PreToolUse call, through both bin entries"
-status: todo
+status: merged
 branch: T0-HOOK-LOAD-FAIL-CLOSED
 allow_paths:
   - bin/aidlc.js
