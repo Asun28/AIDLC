@@ -236,12 +236,12 @@ test('runHook dispatches by name and refuses unknown names', () => {
   const { cwd, env } = envWithState();
   assert.equal(decision(runHook('secrets-guard', { tool_input: { file_path: '.env' } }, { cwd, env })), 'deny');
   assert.deepEqual(runHook('protect-tests', { tool_input: { file_path: 'tests/a.test.ts' } }, { cwd, env }), { exitCode: 0 });
-  assert.deepEqual(runHook('nope' as never, {}, { cwd, env }), { exitCode: 2, stderr: 'aidlc hook: unknown hook name "nope"; known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, stdin-script, verify-before-done, route-new-work' });
+  assert.deepEqual(runHook('nope' as never, {}, { cwd, env }), { exitCode: 2, stderr: 'aidlc hook: unknown hook name "nope"; known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, stdin-script, protect-git, verify-before-done, route-new-work' });
 });
 
 test('dispatchHook runs every guard for the event in one process: first block wins, advisory output passes through', () => {
   const { cwd, env } = envWithState();
-  assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script']);
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script', 'protect-git']);
   assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Edit' }), ['protect-paths', 'secrets-guard', 'protect-tests']);
   assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'MultiEdit' }), hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Write' }));
   assert.deepEqual(hookNamesFor({ hook_event_name: 'Stop' }), ['verify-before-done']);
@@ -249,7 +249,7 @@ test('dispatchHook runs every guard for the event in one process: first block wi
   assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Read' }), []);
   assert.deepEqual(hookNamesFor({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }), []);
   const covered = new Set([{ hook_event_name: 'PreToolUse', tool_name: 'Bash' }, { hook_event_name: 'PreToolUse', tool_name: 'Write' }, { hook_event_name: 'Stop' }, { hook_event_name: 'UserPromptSubmit' }].flatMap((e) => hookNamesFor(e)));
-  assert.deepEqual([...covered].sort(), ['production-gate', 'protect-paths', 'protect-tests', 'route-new-work', 'secrets-guard', 'stdin-script', 'verify-before-done']);
+  assert.deepEqual([...covered].sort(), ['production-gate', 'protect-git', 'protect-paths', 'protect-tests', 'route-new-work', 'secrets-guard', 'stdin-script', 'verify-before-done']);
   // blocks: an exit-2 gate and a deny decision each stop the tool. The literals are assembled across lines so
   // the guards of this repository never see a gated pattern in the command that writes this file.
   const gatedCommand = ['make deploy',

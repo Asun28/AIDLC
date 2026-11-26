@@ -71,7 +71,7 @@ describe('T1-PS-GUARD-WIRE: wiring', () => {
 
   test('acceptance 2: a PowerShell event selects the guard list of a Bash event [R2]', () => {
     const list = hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'PowerShell' });
-    assert.deepEqual(list, ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script']);
+    assert.deepEqual(list, ['production-gate', 'protect-paths', 'secrets-guard', 'stdin-script', 'protect-git']);
     assert.deepEqual(list, hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }));
   });
 
