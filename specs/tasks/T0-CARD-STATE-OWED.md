@@ -66,7 +66,9 @@ RED: `7fc0ddaa`, `tests/scenarios/card-state-owed.test.ts` on main code: accepta
 
 Attempt 1 (`8e9052df`) was withdrawn before review: the full `npm test` failed `tests/scenarios/journal-owed.test.ts`, which pins the T0-JOURNAL-FAULT-EVENTS sentence at the end of ARCHITECTURE item 1. Attempt 2 restores that sentence and puts this card's sentence before it.
 
-R3 decision 1 repair (attempt 3): F1/F4 fixed: when no gate saved the run, the ship's locked re-read before the external effect writes the owed CARD_STATE when the record shows no drift, and appends it after that write lands. The state is not changed there, so `shipDrift` and the contract gate read the record as on main. Tests `R3 decision 1 F1` (merged, auth-failed) fail on `bef615d2`. F3/F6 fixed, since the dispatch's first owed-event delivery now runs after the foreign-lease check and through the dispatch writer, and the test `R3 decision 1 F3` proves it. Each new test passes on the repair. F2/F5 disputed: R5 keeps the `from` and `to` of main, and the card sweep names the `prepare` STOP save as a save of the PREPARE selection.
+R3 decision 1 repair (attempt 3), superseded for F1 by attempt 4 below: F1/F4 fixed: when no gate saved the run, the ship's locked re-read before the external effect writes the owed CARD_STATE when the record shows no drift, and appends it after that write lands. The state is not changed there, so `shipDrift` and the contract gate read the record as on main. Tests `R3 decision 1 F1` (merged, auth-failed) fail on `bef615d2`. F3/F6 fixed, since the dispatch's first owed-event delivery now runs after the foreign-lease check and through the dispatch writer, and the test `R3 decision 1 F3` proves it. Each new test passes on the repair. F2/F5 disputed: R5 keeps the `from` and `to` of main, and the card sweep names the `prepare` STOP save as a save of the PREPARE selection.
+
+R3 decision 2 re-raised F2 at the ship site and found F7 (a throw of that append after review admission leaves the intent and the pool slot held) and F8 (the coverage record misses the new ship write). The owner ruled F2 deferred to issue 511 and continued the run for one more decision. Attempt 4 removes the ship-site carrier: `ship` appends the CARD_STATE of a SHIP selection at its start, before any write, with the data of main, as on main. So the ship adds no write (F8) and the append comes before the intent and the admission (F7). Tests `R3 decision 1 F1, issue 511` (merged, auth-failed) check one BUILD to SHIP with the data of main, before the ship intent.
 
 | Item | Proof | Result |
 |---|---|---|
@@ -87,7 +89,7 @@ The `CARD_STATE` of a `card next` or `card takeover` selection is now an owed ev
 Issue 502. A save refused as stale left a `CARD_STATE` in the journal. The journal then showed a stop that the run record did not hold, or two stops for one.
 
 ### How / Behaviour
-`assess` owes the event instead of appending it. The first card-run save of the dispatch carries it in `journalOwed`, and `saveOwing` appends it after that save. The ownership-stop reconciliation and `takeover` do the same.
+`assess` owes the event instead of appending it. The first card-run save of the dispatch carries it in `journalOwed`, and `saveOwing` appends it after that save. The ownership-stop reconciliation and `takeover` do the same. A SHIP selection keeps the append of main at the start of `ship`; issue 511 tracks that site.
 
 ### System impact
 Without a fault, the journal holds the same `CARD_STATE` events. Each one now follows the write of its state. A lost append is completed once by the next card command.

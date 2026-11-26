@@ -1720,6 +1720,11 @@ export class CardRunner {
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    // The ship site keeps the append of main (card T0-CARD-STATE-OWED, issue 511): the CARD_STATE of a SHIP selection is
+    // appended here, before any write, because the ship may reach its external effect and its result write with no save of
+    // the run that could carry it.
+    const selection = this.takeStateOwed(goal, card);
+    if (selection) (selection.writer?.append ?? ((event: Parameters<Journal['append']>[0]) => this.journal(goal.id).append(event)))({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: selection.owed.generation, data: { from: selection.owed.data['from'], to: selection.owed.data['to'], reason: selection.owed.data['reason'] } });
     if (hasUnreconciledRerun(run.ci)) {
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'ci-rerun', pollSeconds: 90, narration: 'A CI rerun is persisted but not reconciled; look it up (aidlc card ci-reconcile) before shipping again.' } };
@@ -1825,15 +1830,9 @@ export class CardRunner {
     // The record is re-read under the card-run lock right before the external effect: the candidate this ship was issued
     // for must still be the record's, with its receipts, no stop, no round or decision reserved meanwhile and the same
     // owner generation; anything else cancels the intent and the pool request and sends the caller back to `card next`.
-    // A selection CARD_STATE no gate saved (card T0-CARD-STATE-OWED R1) rides in this re-read, written only when the record
-    // shows no drift, and is appended after it lands, before the external effect; a withdrawn ship journals none.
-    const selection = this.takeStateOwed(goal, card);
     let armed: CardRun;
     try {
-      armed = this.store.updateCardRun(goal.id, card.id, (current) => {
-        const locked = current ?? run;
-        return selection && !this.shipDrift(card, locked, run) ? { ...locked, journalOwed: this.owedWith(goal.id, locked, selection.owed) } : locked;
-      });
+      armed = this.store.updateCardRun(goal.id, card.id, (current) => current ?? run);
     } catch (err) {
       // Nothing was dispatched: the intent and the pool admission are withdrawn, each step on its own so none masks the
       // failure or skips the next; the failure is the caller's.
@@ -1882,7 +1881,6 @@ export class CardRunner {
       }
       return { run: armed, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The card run changed after the ship gate (${drift}); nothing was dispatched. Run \`aidlc card next ${card.id}\` again.${cleanup}` } };
     }
-    if (selection && armed.journalOwed?.some((o) => o.key === selection.owed.key)) this.deliverState(goal, card, armed, selection.owed, selection.writer);
     this.ops.markIssued(op.id, undefined, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id } });
     let result: ShipResult;
