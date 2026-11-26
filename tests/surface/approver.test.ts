@@ -92,7 +92,7 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       const accepted = await f.run(['report', '--goal', goalId, '--result', 'intent-accepted']);
       assert.equal(accepted.status, 0, String(accepted.stderr));
       const planAccepted = f.journal(goalId).readAll().filter((e) => e.type === 'PLAN_ACCEPTED');
-      assert.deepEqual(planAccepted.map((e) => e.data), [{}], 'intent-accepted records no by');
+      assert.deepEqual(planAccepted.map(({ data: { eventKey: _key, ...data } }) => data), [{}], 'intent-accepted records no by');
 
       await approveThreeWays(f, goalId, []);
       assert.deepEqual((await f.lastAuthorizations(goalId, 3)).map((a) => ({ kind: a.kind, grantedBy: a.grantedBy })), [
