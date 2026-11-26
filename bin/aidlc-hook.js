@@ -20,5 +20,12 @@ try {
 } catch {
   /* no lookup started: the guards ask git when they need the root */
 }
-const mod = await import(pathToFileURL(chosen.target).href);
+// Modules that fail to load block a PreToolUse call (exit 2) and end as before on any other event (card
+// T0-HOOK-LOAD-FAIL-CLOSED).
+let mod;
+try {
+  mod = await import(pathToFileURL(chosen.target).href);
+} catch (err) {
+  await (await import('./hook-load-failure.js')).failHookLoad(err);
+}
 await mod.main();

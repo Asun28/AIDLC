@@ -61,9 +61,38 @@ npm run typecheck && node --test tests/surface/hook-load-fail-closed.test.ts tes
 
 | Item | Proof | Result |
 |---|---|---|
-| 1 | | |
-| 2 | | |
-| 3 | | |
-| 4 | | |
-| 5 | | |
-| 6 | | |
+| 1 | tests/surface/hook-load-fail-closed.test.ts, acceptance 1 | RED at e403800a (status 1, expected 2); passes on the candidate |
+| 2 | tests/surface/hook-load-fail-closed.test.ts, acceptance 2 | RED at e403800a (status 1, expected 2); passes on the candidate. A first candidate read stdin with `readFileSync(0)` and failed this row once in eight runs; the handler now reads stdin as `readStdin` of src/hooks/entry.ts does, and 12 runs of the file passed |
+| 3 | tests/surface/hook-load-fail-closed.test.ts, acceptance 3 | passes on main and on the candidate (a guard row) |
+| 4 | tests/surface/hook-lazy.test.ts, hook-fail-closed.test.ts, hook-name.test.ts, tests/infra/bin-entry.test.ts; `git diff origin/main --stat -- tests/`; `npm run bench -- --check` | pass unchanged; only the new test file; bench exit 0, "every count within its ceiling (6 journeys)", module counts equal to main at 4f3eb5e3 (hook.pre-bash 112, cli.start 259) |
+| 5 | `git diff origin/main -- docs/OPERATIONS.md changelog.d`; tests/surface/changelog-fragments.test.ts | the R4 sentence replaced, one fragment line; pass |
+| 6 | `npm run typecheck` | exit 0 |
+
+## PR summary
+
+### What
+A hook process whose modules fail to load now blocks a PreToolUse tool call. It exits 2 and names the load error.
+
+### Why / Intent
+Before, `aidlc hook` and `bin/aidlc-hook.js` exited 1 on a load failure. Claude Code runs the tool on exit 1, so a broken install turned every guard off (issue 508).
+
+### How / Behaviour
+Each bin entry catches the failure of its module import. A new `bin/hook-load-failure.js` reads the event from stdin. On PreToolUse it exits 2; on other events it rethrows, so the process exits 1 as before.
+
+### System impact
+`bin/aidlc.js` catches only for the `hook` subcommand, so other commands do not change and never read stdin. The handler loads only after a failure, so bench counts do not change.
+
+### Security
+A broken install can no longer turn the PreToolUse guards off without notice. This covers the template command `aidlc hook auto` and the direct `aidlc-hook` entry.
+
+### Tests and review
+A new test breaks the CLI or hook entry module in a temporary package copy. It checks exit 2 on PreToolUse, exit 1 on other events, and no stdin read for other commands.
+
+### Risk
+A broken install blocks every Bash, PowerShell and edit call. Read, Grep and Glob still work, so the session can read the error and the owner can fix the install.
+
+### Ownership
+The aidlc maintainers own `bin/` and `src/hooks/`.
+
+### Docs
+docs/OPERATIONS.md, Hooks section, states the rule. A changelog fragment records it.
