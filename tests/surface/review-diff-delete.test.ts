@@ -7,8 +7,8 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { countDiffLines } from '../../src/core/review-effort.ts';
 import { runSync } from '../../src/probes/exec.ts';
-import { collectCandidateDiff } from '../../src/review/pre-review.ts';
-import { tmpDir } from '../infra/helpers.ts';
+import { buildReviewPrompt, collectCandidateDiff } from '../../src/review/pre-review.ts';
+import { makeCard, tmpDir } from '../infra/helpers.ts';
 
 const dirs: string[] = [];
 after(() => {
@@ -79,4 +79,20 @@ test('the effort line count reads the changed file only; added and NUL-byte file
   assert.ok(added.diff.includes('+a\u0000c'), 'the NUL-byte file shows its hunk under --text');
   assert.ok(!added.diff.includes('Binary files'), added.diff);
   assert.deepEqual(added.changedPaths, ['src/new.ts', 'src/zero.bin']);
+});
+
+test('a repository-reading reviewer is given the collector command for the diff and the delta, which leaves the deleted body out [R2]', () => {
+  const r = deletion();
+  const collected = collectCandidateDiff(runSync, r.dir, r.base, 4096, r.head);
+  for (const stage of ['pre', 'formal'] as const) {
+    const prompt = buildReviewPrompt({ stage, includeDiff: false, reviewPolicy: 'policy', card: makeCard('T1-DEL'), base: r.base, head: r.head, changedPaths: collected.changedPaths, diff: 'SHOULD NOT APPEAR', priorFindings: [], round: 2, maxRounds: 2, delta: { sinceSha: r.base, changedPaths: collected.changedPaths, diff: collected.diff } });
+    const commands = [...prompt.matchAll(/Run `(git diff [^`]+)`/g)].map((m) => m[1]!);
+    assert.equal(commands.length, 2, `${stage}: one command for the delta and one for the diff: ${commands.join(' | ')}`);
+    for (const command of commands) {
+      assert.ok(command.startsWith(`git diff ${r.base}...${r.head} `), command);
+      const out = r.git(...command.split(' ').slice(1));
+      assert.equal(out, collected.diff, `${stage}: \`${command}\` prints the collected diff`);
+      assert.ok(!out.includes('corpus line'), 'no deleted content');
+    }
+  }
 });
