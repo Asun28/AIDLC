@@ -66,6 +66,8 @@ RED: `7fc0ddaa`, `tests/scenarios/card-state-owed.test.ts` on main code: accepta
 
 Attempt 1 (`8e9052df`) was withdrawn before review: the full `npm test` failed `tests/scenarios/journal-owed.test.ts`, which pins the T0-JOURNAL-FAULT-EVENTS sentence at the end of ARCHITECTURE item 1. Attempt 2 restores that sentence and puts this card's sentence before it.
 
+R3 decision 1 repair (attempt 3): F1/F4 fixed, since `ship` now stores SHIP with the owed CARD_STATE before any external effect when no gate saved the run, and the tests `R3 decision 1 F1` (merged, auth-failed) prove it. F3/F6 fixed, since the dispatch's first owed-event delivery now runs after the foreign-lease check and through the dispatch writer, and the test `R3 decision 1 F3` proves it. The three tests fail on `bef615d2` and pass on the repair. F2/F5 disputed: R5 keeps the `from` and `to` of main, and the card sweep names the `prepare` STOP save as a save of the PREPARE selection.
+
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `card-state-owed.test.ts` acceptance 1 | pass |
@@ -94,7 +96,7 @@ Without a fault, the journal holds the same `CARD_STATE` events. Each one now fo
 No change to authentication, secrets or permissions. The append stays under the card lease lock while the dispatch holds no lease.
 
 ### Tests and review
-A new test file covers both issue cases, a lost append and the reconciliation. All four tests failed on main. The DoD test files pass unchanged.
+A new test file covers both issue cases, a lost append, the reconciliation, a ship result written outside the dispatch save and a recovery under a foreign lease. Each test failed before its fix. The DoD test files pass unchanged.
 
 ### Risk
 Low. The event order changes in one way only: a `CARD_STATE` follows its save. No write is added or removed.

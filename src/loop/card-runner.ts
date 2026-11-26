@@ -1165,8 +1165,6 @@ export class CardRunner {
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
-    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card, run);
     // A T2 goal back in CARDS (a recovery re-entry after an extension or a resumed revision) whose plan checkpoint is not
     // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
     const checkpointMissing = (r: CardRun): boolean => goal.state === 'CARDS' && goal.routing.size === 'T2' && !r.stop && r.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing';
@@ -1176,6 +1174,10 @@ export class CardRunner {
     const key = resourceKeys.card(this.repo.key, card.id);
     const lease = this.leases.read(key);
     if (lease && foreignLive(lease, now)) return this.foreignDispatch(goal, card, run, lease, now);
+    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS), under the card
+    // lease's lock like every other dispatch write, so a lease another session holds or takes meanwhile refuses it (card
+    // T0-CARD-STATE-OWED R4).
+    this.deliverOwed(goal, card, run, { keys: [], append: write.append });
     if (checkpointMissing(run)) return checkpointWait(run);
     // A dispatch whose assessment selects PREPARE on a lease this session does not hold claims the lease before any
     // assessment write, so a lease another session takes after the read leaves the run and the journal as they were.
@@ -1730,6 +1732,10 @@ export class CardRunner {
     // stale verdict spends no retry; a HEAD read that throws ships as before.
     const moved = this.movedHead(card, run);
     if (moved) return { run, directive: moved };
+    // The selection's CARD_STATE still owed here (no gate saved the run) is stored with SHIP before any external effect, and
+    // appended after that write (card T0-CARD-STATE-OWED R1): the ship result is written through `updateCardRun`, which
+    // carries no owed selection.
+    if (this.allowShip && this.stateOwed?.card.id === card.id && this.stateOwed.goal.id === goal.id) run = this.save({ ...run, state: 'SHIP' });
     if (!this.allowShip) {
       const next = this.save({ ...run, state: 'SHIP', blocker: 'driver-ship-boundary' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'driver-ship-boundary', pollSeconds: 90, narration: 'Shipping requires a separate operator invocation outside aidlc run.' } };

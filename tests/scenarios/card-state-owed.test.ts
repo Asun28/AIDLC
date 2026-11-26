@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, actorA, T0, type Fixture } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, actorA, actorB, T0, type Fixture } from './_harness.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { resourceKeys } from '../../src/coordination/lease.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { HOUR_MS, MINUTE_MS, addMs, type CardRun, type JournalEvent } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -183,5 +185,75 @@ test('T0-CARD-STATE-OWED acceptance 4: the ownership-stop reconciliation journal
   } finally {
     setActorForTests(actorA);
     fy.cleanup();
+  }
+});
+
+/** A card driven to BUILD with a successful attempt, so the next `card next` selects SHIP and ships through `shipPath`. */
+function builtCandidate(fx: Fixture, shipPath: DryRunShipPath): { goalId: string; runner: ReturnType<Fixture['runner']> } {
+  writeCard(fx, { id: CARD, title: 'a' });
+  const goal = goalForCards(fx, [CARD]);
+  const runner = fx.runner(shipPath);
+  let r = runner.next(fx.goal(goal.id), fx.card(CARD), fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
+  r = runner.next(fx.goal(goal.id), fx.card(CARD), r.run);
+  assert.equal(r.directive.kind, 'build', r.directive.narration);
+  runner.recordAttempt(fx.goal(goal.id), fx.card(CARD), r.run, { outcome: 'success', dodReceipt: `dod:${CARD}`, redReceipt: `red:${CARD}`, candidateSha: candidateShaFor(CARD) });
+  return { goalId: goal.id, runner };
+}
+
+for (const outcome of ['merged', 'auth-failed'] as const) {
+  test(`T0-CARD-STATE-OWED R3 decision 1 F1: a ship whose result is written outside the dispatch save (${outcome}) still journals BUILD to SHIP once, after the write that stores SHIP [R1] [R5]`, () => {
+    const fx = makeFixture({ actor: actorA });
+    try {
+      const { goalId, runner } = builtCandidate(fx, new DryRunShipPath([outcome]));
+      const landed: { state: string; journal: number }[] = [];
+      wrapSaves(fx, { landed: (run) => landed.push({ state: run.state, journal: fx.events(goalId).length }) });
+      runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+      const events = fx.events(goalId);
+      const ships = transitions(events, 'BUILD', 'SHIP');
+      assert.equal(ships.length, 1, 'one BUILD to SHIP');
+      const stored = landed.find((s) => s.state === 'SHIP');
+      assert.ok(stored, 'a save stored SHIP before the ship');
+      assert.ok(events.indexOf(ships[0]!) >= stored.journal, 'the event follows that write');
+      assert.ok(events.indexOf(ships[0]!) < events.findIndex((e) => e.type === 'OPERATION_INTENT'), 'and precedes the ship intent');
+    } finally {
+      setActorForTests(actorA);
+      fx.cleanup();
+    }
+  });
+}
+
+test('T0-CARD-STATE-OWED R3 decision 1 F3: an owed CARD_STATE is not recovered by a card next under another session live lease [R4]', () => {
+  const fx = makeFixture({ actor: actorA });
+  const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const real = target['appendFileSync']!;
+  try {
+    const { goalId } = shipPastDeadline(fx);
+    let failed = false;
+    target['appendFileSync'] = (...args: unknown[]) => {
+      if (!failed && String(args[1]).includes('"type":"CARD_STATE"')) {
+        failed = true;
+        throw Object.assign(new Error('EIO: injected fault on a CARD_STATE line'), { code: 'EIO' });
+      }
+      return real(...args);
+    };
+    syncBuiltinESMExports();
+    try {
+      cardNext(fx, goalId);
+    } finally {
+      target['appendFileSync'] = real;
+      syncBuiltinESMExports();
+    }
+    assert.equal(owedStates(fx.store.getCardRun(goalId, CARD)).length, 1, 'the CARD_STATE is owed');
+    const key = resourceKeys.card(fx.repo.key, CARD);
+    assert.equal(fx.leases.claim(key, { actor: actorB, now: fx.now(), operation: `card:${CARD}` }).status, 'acquired', 'session B holds the card lease');
+    const refused = cardNext(fx, goalId);
+    assert.equal(refused.kind, 'stop', `the dispatch stops under the holder's lease: ${refused.error?.message ?? refused.kind}`);
+    assert.deepEqual(transitions(fx.events(goalId), 'SHIP', 'STOP'), [], 'no append under the foreign lease');
+    assert.equal(owedStates(fx.store.getCardRun(goalId, CARD)).length, 1, 'still owed');
+  } finally {
+    target['appendFileSync'] = real;
+    syncBuiltinESMExports();
+    setActorForTests(actorA);
+    fx.cleanup();
   }
 });
