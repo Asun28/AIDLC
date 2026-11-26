@@ -19,10 +19,11 @@ test('T1-SWEEP-DEAD-CODE acceptance 1: the library exports neither MAX_LIFECYCLE
   assert.equal(lib.MAX_INTEGRATION_REPAIR_CYCLES, 1);
 });
 
-test('T1-SWEEP-DEAD-CODE acceptance 3: the README Limits table states the lifecycle repair bound as unenforced [R1]', () => {
+test('T1-SWEEP-DEAD-CODE acceptance 3: the README Limits table states the lifecycle repair bound as unenforced [R1] [T0-README-PLAIN R4]', () => {
   const readme = read('README.md');
   assert.ok(readme.includes('| Integration repair cycles | 1 | `src/core/arc.ts`, `src/loop/controller.ts` |\n'));
-  assert.ok(readme.includes('| Lifecycle repair cycles | 1, stated in the release-health stop directive; not enforced in code | `src/loop/controller.ts` |\n'));
+  // T0-README-PLAIN: the release-health stop names no number (src/loop/controller.ts), so the row cites the plan.
+  assert.ok(readme.includes('| Lifecycle repair cycles | 1, specified by the plan; not enforced in code | `docs/plans/PLAN-aidlc-loop.md` |\n'));
   assert.ok(!readme.includes('Integration / lifecycle'));
 });
 
