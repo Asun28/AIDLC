@@ -242,7 +242,7 @@ class ForeignLeaseError extends Error {
  */
 interface DispatchWriter {
   save: (run: CardRun) => CardRun;
-  append: (event: Parameters<Journal['append']>[0]) => void;
+  append: (event: Parameters<Journal['append']>[0]) => JournalEvent;
   own: () => void;
 }
 
@@ -890,7 +890,45 @@ export class CardRunner {
    * locked record.
    */
   private save(run: CardRun): CardRun {
-    return this.store.saveCardRun(run);
+    return this.saveOwing(run, (r) => this.store.saveCardRun(r));
+  }
+
+  /**
+   * The CARD_STATE a `card next` selection owes (card T0-CARD-STATE-OWED): set by `dispatch` once `assess` selected a new
+   * state and cleared when the dispatch ends. The first card-run save of the card made while it is set stores it in the
+   * run's `journalOwed` and, once that save lands, appends it (`saveOwing`), so a refused save leaves no CARD_STATE.
+   */
+  private stateOwed?: { goal: Goal; card: Card; owed: OwedEvent; writer?: DispatchWriter };
+
+  /**
+   * `persist` `run`; while a selection's CARD_STATE is owed for this card (`stateOwed`), the write carries it and, once it
+   * lands, the CARD_STATE is appended as the command's own (R1), under the dispatch writer when there is one (R4).
+   */
+  /** The selection's CARD_STATE still owed for this card (`stateOwed`), taken by a write made outside `saveOwing`. */
+  private takeStateOwed(goal: Goal, card: Card): { owed: OwedEvent; writer?: DispatchWriter } | undefined {
+    const pending = this.stateOwed;
+    if (!pending || pending.goal.id !== goal.id || pending.card.id !== card.id) return undefined;
+    this.stateOwed = undefined;
+    return { owed: pending.owed, writer: pending.writer };
+  }
+
+  private saveOwing(run: CardRun, persist: (run: CardRun) => CardRun): CardRun {
+    const pending = this.stateOwed;
+    if (!pending || run.goalId !== pending.goal.id || run.cardId !== pending.card.id) return persist(run);
+    const carried = run.journalOwed?.some((o) => o.key === pending.owed.key) ? run : { ...run, journalOwed: this.owedWith(pending.goal.id, run, pending.owed) };
+    const saved = persist(carried);
+    this.stateOwed = undefined;
+    this.deliverState(pending.goal, pending.card, saved, pending.owed, pending.writer);
+    return saved;
+  }
+
+  /**
+   * Append the CARD_STATE `owed` that `saved`, a landed write, stores (card T0-CARD-STATE-OWED R1): as the command's own,
+   * with no `completed`; every other owed entry stays for its own command. The append is made under the dispatch writer
+   * when there is one (R4). A failed append leaves it owed for the next command (R3).
+   */
+  private deliverState(goal: Goal, card: Card, saved: CardRun, owed: OwedEvent, writer?: DispatchWriter): void {
+    this.deliverOwed(goal, card, saved, { keys: [owed.key], hold: 'others', append: writer?.append });
   }
 
   /** A fresh owed entry (R1); every type but the merge result carries its key in its data as `eventKey`. */
@@ -915,19 +953,21 @@ export class CardRunner {
    * R2 and R4: append each owed event the goal journal does not hold, in one card-run lock section that writes nothing, once
    * `read` (the run as the command read it) shows one due. The entries named in `own` are the calling command's commit,
    * appended with `extra`; every other one is completed for an earlier command (`completed: true`). The entries named in `hold`
-   * stay owed for a later call (`continueStop`, card T1-CONTINUE-CI).
+   * stay owed for a later call (`continueStop`, card T1-CONTINUE-CI); `hold: 'others'` holds every entry not named in `own.keys`
+   * (`deliverState`, card T0-CARD-STATE-OWED). `append` replaces the plain journal append (the dispatch writer's gated one, R4).
    */
-  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown>; hold?: string[] } = { keys: [] }): void {
+  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown>; hold?: string[] | 'others'; append?: DispatchWriter['append'] } = { keys: [] }): void {
     const journal = this.journal(goal.id);
+    const append = own.append ?? ((event: Parameters<Journal['append']>[0]) => journal.append(event));
     const seen = read.journalOwed?.length ? journal.readAll() : [];
-    const held = (o: OwedEvent) => own.hold?.includes(o.key) ?? false;
+    const held = (o: OwedEvent) => (own.hold === 'others' ? !own.keys.includes(o.key) : (own.hold?.includes(o.key) ?? false));
     if (!(read.journalOwed ?? []).some((o) => !held(o) && this.owedDue(o, seen))) return;
     this.store.updateCardRun(goal.id, card.id, (current) => {
       const events = journal.readAll();
       for (const owed of current?.journalOwed ?? []) {
         if (held(owed) || !this.owedDue(owed, events)) continue;
         const data = own.keys.includes(owed.key) ? { ...owed.data, ...own.extra } : { ...owed.data, completed: true };
-        events.push(journal.append({ type: owed.type, goalId: goal.id, cardId: card.id, generation: owed.generation, data }));
+        events.push(append({ type: owed.type, goalId: goal.id, cardId: card.id, generation: owed.generation, data }));
       }
       return current as CardRun;
     });
@@ -945,7 +985,7 @@ export class CardRunner {
    * `gated` (the dispatch of `next`) applies the contract gate to the selection this assessment makes, before any write of it
    * (card T0-CONTRACT-GATE-2 R4).
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter; record?: CardRun; facts?: SelectionFacts; gated?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run), read?: { lease: Lease | undefined; dry?: boolean; writer?: DispatchWriter; record?: CardRun; facts?: SelectionFacts; gated?: boolean }): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined; owed?: OwedEvent } {
     const dry = read?.dry ?? false;
     if (dry) save = (run) => run;
     const append = (event: Parameters<Journal['append']>[0]): void => {
@@ -975,8 +1015,10 @@ export class CardRunner {
     // A merged card stopped for ownership is reconciled once the blocking lease is gone (released, expired or ours):
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
-      append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
-      run = save({ ...run, state: 'CLOSE', stop: undefined });
+      // Its CARD_STATE is owed in the write that stores CLOSE and appended once that write lands (card T0-CARD-STATE-OWED R1).
+      const reconciled = this.owe(goal, 'CARD_STATE', { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' });
+      run = save({ ...run, state: 'CLOSE', stop: undefined, journalOwed: this.owedWith(goal.id, run, reconciled) });
+      if (!dry) this.deliverState(goal, card, run, reconciled, read?.writer);
     }
     // An unmerged run stopped for ownership whose blocking lease is gone (absent or released; never merely expired, which
     // proves nothing) is reconciled the same way: the stop is lifted and the selection proceeds, so the claim is reachable.
@@ -1076,11 +1118,18 @@ export class CardRunner {
     // A stop the machine builds here from a recorded decision (`reviewStop`) has its generic text: the runner names the ruling.
     const decision = selected.reason === 'review allowance exhausted' && selected.stop ? { ...selected, stop: { ...selected.stop, nextAction: this.reviewNextAction(card.id, run.review, selected.stop.nextAction) } } : selected;
     let next: CardRun = { ...run, state: decision.state, stop: decision.stop ?? run.stop, blocker: decision.state === 'STOP' ? decision.reason : undefined };
+    // The selection's CARD_STATE is owed, not appended (card T0-CARD-STATE-OWED R1): the write that stores the selected state
+    // carries it, and it is appended once that write lands. The caller makes that write; a dry assessment owes nothing.
+    const owed = !dry && next.state !== run.state ? this.owe(goal, 'CARD_STATE', { from: run.state, to: next.state, reason: decision.reason }) : undefined;
     // A revalidated ownership stop is persisted with the re-derived state before any action: a ship issued from this call
-    // reads the record as persisted and must not find the stop it cleared.
-    if (revalidatedStop) next = save(next);
-    if (next.state !== run.state) append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
-    return { run, next, decision, lease };
+    // reads the record as persisted and must not find the stop it cleared. That write stores the selected state, so it
+    // carries the CARD_STATE and appends it.
+    if (revalidatedStop) {
+      next = save(owed ? { ...next, journalOwed: this.owedWith(goal.id, next, owed) } : next);
+      if (owed) this.deliverState(goal, card, next, owed, read?.writer);
+      return { run, next, decision, lease };
+    }
+    return { run, next, decision, lease, owed };
   }
 
   /**
@@ -1105,15 +1154,17 @@ export class CardRunner {
   private dispatchWriter(goal: Goal, card: Card, now: string): DispatchWriter {
     const key = resourceKeys.card(this.repo.key, card.id);
     let owned = false;
-    const admit = (write: () => void): void => {
+    const admit = <T>(write: () => T): T => {
       if (owned) return write();
+      let written: T | undefined;
       this.leases.update(key, (held) => {
         if (held && foreignLive(held, now)) throw new ForeignLeaseError(held);
-        write();
+        written = write();
         return held;
       });
+      return written as T;
     };
-    return { save: (run) => this.store.saveCardRun(run, admit), append: (event) => admit(() => this.journal(goal.id).append(event)), own: () => (owned = true) };
+    return { save: (run) => this.saveOwing(run, (r) => this.store.saveCardRun(r, admit)), append: (event) => admit(() => this.journal(goal.id).append(event)), own: () => (owned = true) };
   }
 
   private dispatch(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel }): { run: CardRun; directive: CardDirective } {
@@ -1122,8 +1173,6 @@ export class CardRunner {
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
-    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card, run);
     // A T2 goal back in CARDS (a recovery re-entry after an extension or a resumed revision) whose plan checkpoint is not
     // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
     const checkpointMissing = (r: CardRun): boolean => goal.state === 'CARDS' && goal.routing.size === 'T2' && !r.stop && r.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing';
@@ -1133,6 +1182,10 @@ export class CardRunner {
     const key = resourceKeys.card(this.repo.key, card.id);
     const lease = this.leases.read(key);
     if (lease && foreignLive(lease, now)) return this.foreignDispatch(goal, card, run, lease, now);
+    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS), under the card
+    // lease's lock like every other dispatch write, so a lease another session holds or takes meanwhile refuses it (card
+    // T0-CARD-STATE-OWED R4).
+    this.deliverOwed(goal, card, run, { keys: [], append: write.append });
     if (checkpointMissing(run)) return checkpointWait(run);
     // A dispatch whose assessment selects PREPARE on a lease this session does not hold claims the lease before any
     // assessment write, so a lease another session takes after the read leaves the run and the journal as they were.
@@ -1152,8 +1205,17 @@ export class CardRunner {
     // run as it stands now, before any action.
     if (checkpointMissing(run)) return checkpointWait(run);
     const { decision } = assessed;
-    let next = assessed.next;
+    if (assessed.owed) this.stateOwed = { goal, card, owed: assessed.owed, writer: write };
+    try {
+      return this.act(goal, card, run, assessed.next, decision, claimed, write, options);
+    } finally {
+      this.stateOwed = undefined;
+    }
+  }
 
+  /** The bounded action of the state `dispatch` selected; `next` is the run as the selection would save it. */
+  private act(goal: Goal, card: Card, run: CardRun, next: CardRun, decision: CardDecision, claimed: ClaimResult | undefined, write: DispatchWriter, options: { effort?: EffortLevel }): { run: CardRun; directive: CardDirective } {
+    const now = this.clock();
     switch (decision.state) {
       case 'PREPARE':
         return this.prepare(goal, card, next, claimed, write);
@@ -1320,7 +1382,11 @@ export class CardRunner {
     // The assessment, its lease renewal and its saves, runs once the run carries the generation.
     const { assessed, next } = unlessLocked(() => {
       const assessed = this.assess(goal, card, owned, now, saveHolding);
-      return { assessed, next: saveHolding(assessed.next) };
+      // The selection's CARD_STATE rides in the write that stores the selected state and is appended after it (card T0-CARD-STATE-OWED R1).
+      const owed = assessed.owed;
+      const next = saveHolding(owed ? { ...assessed.next, journalOwed: this.owedWith(goal.id, assessed.next, owed) } : assessed.next);
+      if (owed) this.deliverState(goal, card, next, owed);
+      return { assessed, next };
     }, (refusal) => `the takeover of card ${card.id} is done and the run carries lease generation ${lease.generation}, but its assessment was refused (${refusal}); run ${scoped('next')} to go on`);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
@@ -1654,6 +1720,11 @@ export class CardRunner {
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    // The ship site keeps the append of main (card T0-CARD-STATE-OWED, issue 511): the CARD_STATE of a SHIP selection is
+    // appended here, before any write, because the ship may reach its external effect and its result write with no save of
+    // the run that could carry it.
+    const selection = this.takeStateOwed(goal, card);
+    if (selection) (selection.writer?.append ?? ((event: Parameters<Journal['append']>[0]) => this.journal(goal.id).append(event)))({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: selection.owed.generation, data: { from: selection.owed.data['from'], to: selection.owed.data['to'], reason: selection.owed.data['reason'] } });
     if (hasUnreconciledRerun(run.ci)) {
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'ci-rerun', pollSeconds: 90, narration: 'A CI rerun is persisted but not reconciled; look it up (aidlc card ci-reconcile) before shipping again.' } };
