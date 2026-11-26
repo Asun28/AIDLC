@@ -41,6 +41,13 @@ test('failureText: control sequences are removed and controls become spaces; the
   assert.equal(long, `%5BSHIP-PUSH-FAIL%5D ${'\u{1F600}'.repeat(483)}`);
   assert.equal([...long.replace('%5BSHIP-PUSH-FAIL%5D ', '[SHIP-PUSH-FAIL] ')].length, 500);
   assert.ok(!/[\uD800-\uDBFF]$/.test(long), 'no split surrogate pair');
+  // An escape at the 500th code point is decoded before the cut and encoded whole (R3 decision 1 F1).
+  const head = '[SHIP-MERGE-FAIL] ';
+  for (const [escape, kept] of [['%5B', '%5B'], ['%5D', '%5D'], ['%25', '%25']] as const) {
+    const at499 = `${head}${'a'.repeat(499 - head.length)}`;
+    assert.equal(classify([`${at499}${escape}tail`]).failureText, `%5BSHIP-MERGE-FAIL%5D ${'a'.repeat(499 - head.length)}${kept}`, `${escape} as the 500th code point`);
+    assert.equal(classify([`${at499}a${escape}tail`]).failureText, `%5BSHIP-MERGE-FAIL%5D ${'a'.repeat(500 - head.length)}`, `${escape} past the cut`);
+  }
 });
 
 test('the other fields of a result are those of main; outcomes with no sentinel rule carry no failureText [R1]', () => {
@@ -95,16 +102,15 @@ test('a refused merge stops STOP/tool with the failure text in the detail, the n
     const stop = s.fx.store.getCardRun(s.goalId, 'T1-FT')!.stop!;
     assert.equal(stop.reason, 'tool');
     assert.equal(stop.detail, `unclassified ship outcome (exit 1): ${JSON.stringify('sentinel \\[SHIP-MERGE-FAIL\\]')}; failure text: ${JSON.stringify(REFUSED_TEXT)}; the ship path's resume marker, a diagnostic that does not lift this stop: ${JSON.stringify('aidlc card next T1-FT')}`);
-    assert.ok(s.out.directive.narration.includes(`failure text: ${JSON.stringify(REFUSED_TEXT)}`), s.out.directive.narration);
-    assert.ok(stop.nextAction.startsWith("read the ship failure text in this stop's detail; this stop is final for card T1-FT"), stop.nextAction);
+    assert.equal(s.out.directive.narration, stop.detail, 'the card next narration is the stop detail');
+    assert.equal(stop.nextAction, `read the ship failure text in this stop's detail; this stop is final for card T1-FT: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${s.goalId} --reason "..." --replace '{"T1-FT":"<replacement>"}'\``);
     const again = s.again();
     assert.equal(again.directive.kind, 'stop');
     assert.deepEqual(again.run.stop, stop, 'card next returns the same stop');
     // R3: the operation record and the journal event keep main's text.
     const ops = s.fx.ops.list({ cardId: 'T1-FT', kind: 'merge' });
     assert.equal(ops.length, 1, JSON.stringify(ops));
-    const op = JSON.stringify(ops[0]);
-    assert.ok(op.includes('merge-failed: sentinel \\\\[SHIP-MERGE-FAIL\\\\]') && !op.includes('failure text'), op);
+    assert.equal(ops[0]!.error, 'merge-failed: sentinel \\[SHIP-MERGE-FAIL\\]', "the operation error is main's");
     const results = s.fx.events(s.goalId).filter((e) => e.type === 'OPERATION_RESULT');
     assert.deepEqual(results.map((e) => e.data), [{ operationId: ops[0]!.id, status: 'failed', outcome: 'merge-failed' }]);
   } finally {
@@ -117,7 +123,7 @@ test('an unclassified ship keeps main\'s stop text; a base-sync conflict still r
   try {
     const stop = s.fx.store.getCardRun(s.goalId, 'T1-FT')!.stop!;
     assert.equal(stop.detail, `unclassified ship outcome (exit 1): ${JSON.stringify('exit 1 with no known sentinel; STOP/tool with diagnostics')}`);
-    assert.ok(stop.nextAction.startsWith('inspect the ship output and the retained receipt; this stop is final for card T1-FT'), stop.nextAction);
+    assert.equal(stop.nextAction, `inspect the ship output and the retained receipt; this stop is final for card T1-FT: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${s.goalId} --reason "..." --replace '{"T1-FT":"<replacement>"}'\``);
   } finally {
     s.fx.cleanup();
   }
@@ -125,7 +131,7 @@ test('an unclassified ship keeps main\'s stop text; a base-sync conflict still r
   try {
     assert.equal(c.out.directive.kind, 'build', c.out.directive.narration);
     if (c.out.directive.kind === 'build') assert.ok(c.out.directive.skills?.includes('merge-conflicts'));
-    assert.equal(c.out.directive.narration.startsWith(`Merge conflict on the base sync (${JSON.stringify('sentinel \\[SHIP-BASE-SYNC-CONFLICT\\]')}): resolve every hunk`), true, c.out.directive.narration);
+    assert.equal(c.out.directive.narration, `Merge conflict on the base sync (${JSON.stringify('sentinel \\[SHIP-BASE-SYNC-CONFLICT\\]')}): resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.`);
     assert.equal(c.fx.store.getCardRun(c.goalId, 'T1-FT')!.pendingRepair?.detail, 'merge conflict on the base sync (sentinel \\[SHIP-BASE-SYNC-CONFLICT\\])');
   } finally {
     c.fx.cleanup();

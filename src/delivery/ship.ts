@@ -223,14 +223,15 @@ const FAILURE_TEXT_WIDTH = 500;
 
 /**
  * The line a sentinel rule matched, for a stop to quote (card T0-SHIP-FAILURE-TEXT): read as `failingLine` reads a line,
- * never normalised, cut to 500 code points, then decoded for `%25`, `%5B` and `%5D` in one pass and encoded again, so
- * text the ship path already encoded is unchanged and no bracket remains.
+ * never normalised, decoded for `%25`, `%5B` and `%5D` in one pass, cut to 500 code points and encoded again, so text
+ * the ship path already encoded is unchanged and no bracket remains.
  */
 function failureText(text: string, sentinel: RegExp): string | undefined {
   const line = printedLines(text).find((l) => sentinel.test(l));
   if (line === undefined) return undefined;
-  const decoded = firstCodePoints(line, FAILURE_TEXT_WIDTH).replace(/%(25|5B|5D)/g, (_, code: string) => (code === '25' ? '%' : code === '5B' ? '[' : ']'));
-  return encodeUntrusted(decoded);
+  // Decoded before the cut, so an escape at the 500th code point is never split into a stray `%` (R3 decision 1 F1).
+  const decoded = line.replace(/%(25|5B|5D)/g, (_, code: string) => (code === '25' ? '%' : code === '5B' ? '[' : ']'));
+  return encodeUntrusted(firstCodePoints(decoded, FAILURE_TEXT_WIDTH));
 }
 
 /** The leg names of the scaffold's saga (`$sagaLegs` of task.ps1), matched exactly. */
