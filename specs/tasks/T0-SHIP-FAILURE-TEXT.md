@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-FAILURE-TEXT
 title: "A ship that stops on a failure sentinel keeps the sentinel line's text in the STOP/tool detail"
-status: todo
+status: merged
 branch: T0-SHIP-FAILURE-TEXT
 allow_paths:
   - src/delivery/ship.ts
