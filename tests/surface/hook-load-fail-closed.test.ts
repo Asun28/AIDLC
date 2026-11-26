@@ -86,7 +86,7 @@ test('acceptance 3: other events and other stdin exit 1 through each entry, and 
   await withPackage(async ({ pkg, repo, state }) => {
     breakModule(pkg, 'cli/main.ts', 'boom');
     breakModule(pkg, 'hooks/entry.ts', 'boom');
-    const inputs = [event({ hook_event_name: 'Stop' }, repo), event({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, repo), '{}', 'not json'];
+    const inputs = [event({ hook_event_name: 'Stop' }, repo), event({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, repo), '{}', 'not json', ''];
     for (const args of [['aidlc.js', 'hook', 'auto'], ['aidlc-hook.js']]) {
       for (const stdin of inputs) {
         const r = run(pkg, repo, state, args, stdin);
