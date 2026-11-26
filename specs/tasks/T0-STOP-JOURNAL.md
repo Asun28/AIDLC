@@ -57,3 +57,43 @@ npm run typecheck && node --test tests/surface/stop-journal.test.ts tests/surfac
 ```
 - Expected exit code: 0
 - Assertion: each Stop with listed runs journals one event per goal, receipts read none, fresh, stale or unknown, and the guard never blocks.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/stop-journal.test.ts, acceptance 1 | RED at ad0dedc5 (no `SESSION_STOPPED` event), passes on the candidate |
+| 2 | tests/surface/stop-journal.test.ts, acceptance 2: a git repository in a temporary directory as the worktree | RED at ad0dedc5 (no event to read the receipt from; a receipt is never stale on main), passes on the candidate |
+| 3 | tests/surface/stop-journal.test.ts, acceptance 3 | RED at ad0dedc5 (no event for the waiting Stop), passes on the candidate |
+| 4 | tests/surface/hooks.test.ts, hook-lazy.test.ts, lease-heartbeat.test.ts, tests/core/journal-event-types.test.ts | pass, unchanged |
+| 5 | `git diff origin/main -- docs changelog.d`; tests/surface/changelog-fragments.test.ts | the `verify-before-done` row, one paragraph with the count, one fragment line; pass |
+| 6 | `npm run typecheck`; `npm run check` before the first SHIP | exit 0 |
+
+## PR summary
+
+### What
+The Stop guard now writes a `SESSION_STOPPED` journal event for each goal with open card runs of the session. It also reminds about a DoD receipt of an earlier candidate.
+
+### Why / Intent
+Issue 499 asks if the Stop guard should block. No journal showed how often a session ended with an unverified run, so this card measures first.
+
+### How / Behaviour
+Each event records the session, background work, the reminder, and each run with its receipt as none, fresh, stale or unknown. Fresh means the worktree candidate digest still equals the digest the receipt was bound to.
+
+### System impact
+A Stop with open runs appends one journal line per goal and runs git once per run with a receipt. A Stop with no open run does as before.
+
+### Security
+No new input is trusted. The event holds card ids, states and the session id only.
+
+### Tests and review
+tests/surface/stop-journal.test.ts covers the event, each receipt value, waiting work, a repeated Stop and a failed append.
+
+### Risk
+A failed append is dropped, so the answer of the guard does not change. The guard still never blocks.
+
+### Ownership
+Hooks, `src/hooks/index.ts`.
+
+### Docs
+docs/OPERATIONS.md says how to count the session ends with no fresh receipt. A changelog fragment states the change.

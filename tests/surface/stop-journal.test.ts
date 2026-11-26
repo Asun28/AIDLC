@@ -96,7 +96,9 @@ test('T0-STOP-JOURNAL acceptance 2: a receipt reads fresh, stale or unknown agai
   const probe = new GitProbe().candidate(worktree);
   const candidate = { sha: probe.sha, dirty: probe.dirty, untracked: probe.untracked, digest: probe.digest };
   const receiptOf = () => (events(journalDir, 'g1').at(-1)?.data['runs'] as Array<{ receipt: string }>)[0]?.receipt;
-  const withReceipt = (extra: Record<string, unknown>) => store.saveCardRun(run('g1', 'T1-FOO', { dodReceipt: 'npm test: exit 0', worktree, candidate, ...extra }));
+  // A save carries the persisted revision (the store compares and sets it).
+  const revision = () => store.listCardRuns('g1').find((r) => r.cardId === 'T1-FOO')?.revision ?? 0;
+  const withReceipt = (extra: Record<string, unknown>) => store.saveCardRun(run('g1', 'T1-FOO', { dodReceipt: 'npm test: exit 0', worktree, candidate, revision: revision(), ...extra }));
 
   withReceipt({});
   assert.equal(context(runHook('verify-before-done', stop(), { cwd, env })), '');

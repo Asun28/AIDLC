@@ -34,7 +34,8 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { droppedCards } from '../core/amendments.ts';
 import { requireAuthority } from '../core/authorization.ts';
-import { AuthorizationRecord, nowIso, type ActorIdentity, type Goal, type Lease } from '../core/types.ts';
+import { AuthorizationRecord, nowIso, type ActorIdentity, type CardRun, type Goal, type Lease } from '../core/types.ts';
+import { amendedDigest } from '../core/contract.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 import { StoreError, atomicWriteText } from '../state/store.ts';
 import type { LeaseStore } from '../coordination/lease.ts';
@@ -644,6 +645,28 @@ function leaseReadCode(err: unknown): string {
   return err instanceof StoreError && LEASE_READ_CODES.has(err.code) ? err.code : 'UNREADABLE';
 }
 
+type ReceiptFreshness = 'none' | 'fresh' | 'stale' | 'unknown';
+
+/**
+ * Whether a run's DoD receipt still describes its worktree (card T0-STOP-JOURNAL): `fresh` when the candidate digest of the
+ * worktree now, as the card runner computes it at a successful attempt (`GitProbe.candidate`, then `amendedDigest` once per
+ * amendment that invalidated review), equals the run's candidate digest; `stale` when it differs; `unknown` when the run has
+ * no candidate or worktree, the directory is gone, or git does not answer. An edit to a file already modified at the attempt
+ * keeps the `git status` entries, and so the digest, as they were.
+ */
+function receiptFreshness(run: CardRun): ReceiptFreshness {
+  if (!run.dodReceipt) return 'none';
+  if (!run.candidate || !run.worktree || !existsSync(run.worktree)) return 'unknown';
+  let digest: string;
+  try {
+    digest = new GitProbe().candidate(run.worktree).digest;
+  } catch {
+    return 'unknown';
+  }
+  const amended = run.amendments.filter((a) => a.invalidated.includes('review')).length;
+  return digest === run.candidate.digest || amendedDigest(digest, amended) === run.candidate.digest ? 'fresh' : 'stale';
+}
+
 export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: string, event: HookEvent = {}): HookResult {
   // Claude Code is already continuing the turn for a stop hook: another reminder adds a model turn and no information,
   // so a turn end gives at most one (card T1-EFF-HOOK-QUIET-2). Nothing is kept between Stops.
@@ -684,18 +707,36 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
     // check alone, and a failure of the planning check ends that reminder alone; neither hides the other.
     try {
       const pending: string[] = [];
+      const stops: Array<{ goalId: string; runs: Array<{ cardId: string; state: string; receipt: ReceiptFreshness }> }> = [];
       for (const goal of active) {
         // A card a revision removed or superseded keeps its run as evidence; it is no longer the goal's work to verify,
         // unless the projection lists it again. Its lease is not read.
         const dropped = droppedCards(goal);
+        const runs: Array<{ cardId: string; state: string; receipt: ReceiptFreshness }> = [];
         for (const run of store.listCardRuns(goal.id)) {
           if (dropped.has(run.cardId)) continue;
-          if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
+          if (!['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) || !ownedHere(run.cardId)) continue;
+          const receipt = receiptFreshness(run);
+          runs.push({ cardId: run.cardId, state: run.state, receipt });
+          if (receipt === 'none') pending.push(`${run.cardId} (${run.state})`);
+          else if (receipt === 'stale') pending.push(`${run.cardId} (${run.state}, DoD receipt of an earlier candidate)`);
         }
+        if (runs.length) stops.push({ goalId: goal.id, runs });
       }
-      if (pending.length && !waiting) {
+      const reminded = pending.length > 0 && !waiting;
+      if (reminded) {
         const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
         contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
+      }
+      // How the session ended, per goal with listed runs (card T0-STOP-JOURNAL, issue 499): the measurement a blocking Stop
+      // would rest on. A failed append is dropped; the guard's answer does not depend on it.
+      for (const { goalId, runs } of stops) {
+        try {
+          if (acting === undefined) acting = lazy.journal().resolveSessionId(env, cwd).session;
+          lazy.journal().Journal.forGoal(paths.journal, goalId).append({ type: 'SESSION_STOPPED', goalId, data: { session: acting, waiting, reminded, runs } });
+        } catch (err) {
+          lazy.rethrowLoadError(err);
+        }
       }
     } catch (err) {
       lazy.rethrowLoadError(err);
