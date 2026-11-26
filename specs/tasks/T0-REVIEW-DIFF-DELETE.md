@@ -56,6 +56,13 @@ npm run typecheck && node --test tests/surface/review-diff-delete.test.ts tests/
 
 | Item | Proof | Result |
 |---|---|---|
+| 1 | tests/surface/review-diff-delete.test.ts, "a deleted file is its header only" | RED at 189fa9a0 (throws: 85203 bytes above the 4096 cap); pass on the candidate |
+| 2 | tests/surface/review-diff-delete.test.ts, "the effort line count reads the changed file only" | RED at 189fa9a0 (same throw); pass on the candidate: count 2, added and NUL-byte hunks present |
+| 3 | tests/scenarios/pre-existing.test.ts (argv pin), tests/surface/pre-review.test.ts, tests/core/review-effort.test.ts; `git diff origin/main --stat -- tests/` | one expected argv string changed; the other files pass unchanged; only the new file and pre-existing.test.ts listed |
+| 4 | `git diff origin/main -- docs changelog.d`; tests/surface/changelog-fragments.test.ts | one sentence after "a diff is never cut.", one fragment line; pass |
+| 5 | `npm run typecheck` | exit 0 |
+| R3 d1 F1, F2 | tests/surface/review-diff-delete.test.ts, "a repository-reading reviewer is given the collector command": for stage pre and formal, both prompt commands (diff and delta) are run on the repository and print exactly the collected diff | fails with the pre-review.ts of 8ae7eadb (plain `git diff` restores the deleted body); passes on the repair, where `reviewDiffCommand` and the collector share `REVIEW_DIFF_OPTIONS` |
+| R3 d1 inputs | The repair hunks build a command from a range: the base range and the delta range, each in the pre and formal prompt; the existing substring pins `git diff main...def456` and `git diff sha-1...sha-2` (tests/surface/pre-review.test.ts:228, :622; tests/scenarios/t0-flow.test.ts:3424, :3466) still hold since the options follow the range. No I/O and no error path | covered as named |
 
 ## PR summary
 
