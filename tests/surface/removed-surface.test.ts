@@ -123,3 +123,11 @@ test('T1-SWEEP2-TEST-ONLY acceptance 4: the rows of the uncalled pure checks say
     '- T1-SWEEP2-TEST-ONLY: removed the library exports that only tests called. `fitsBeforeDeadline`, `isGlobalStop`, `gateChecks` and `evalFromIncident` are gone with their tests; the `gateChecks` assertions now read the decoded check names through `classifyCiFailure`, which reads the CI gate lines in the loop. `countedFailures`, `ensureStatePaths`, `renderSpec` and `renderPlan` moved into the tests under the same names (`tests/scenarios/_harness.ts`, `tests/infra/helpers.ts`, `tests/surface/_artifacts.ts`). `ClaudeApiOptions` drops `showThinking`, which no caller set, so the Claude API provider always requests thinking display `omitted`. The traceability rows MA3, LC9, R25-R27, Q5 and LC4 now say that `reviewerIndependent`, `binaryRollbackCompatible`, `findingMarker`, `routeAmendment` and `unattendedMutationAllowed` exist as pure functions the loop does not call, instead of calling them implemented.',
   );
 });
+
+test('T0-STALE-DOCS-REMOVE acceptance 1: the dated project snapshot and the v3 plan archive are gone, and nothing live names them [R1] [R2]', () => {
+  for (const rel of ['docs/PROJECT-STATE.md', 'docs/plans/PLAN-aidlc-loop-v3-archive.md']) assert.equal(existsSync(path.join(root, rel)), false, rel);
+  assert.equal(read('README.md').includes('PROJECT-STATE'), false, 'README.md names no PROJECT-STATE.md');
+  const plan = read('docs/plans/PLAN-aidlc-loop.md');
+  assert.ok(plan.includes('the historical v4 archive'), 'the plan names the historical v4 archive');
+  assert.equal(plan.includes('v4/v3'), false, 'the plan names no v3 archive');
+});
