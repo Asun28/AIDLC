@@ -206,6 +206,15 @@ test('T0-HOOK-FAIL-CLOSED acceptance 1 (was T0-HOOK-LAZY-2 acceptance 7): a modu
     const gate = 'production-gate could not decide; the tool call is blocked: ';
     broken('state/goal-store.ts', () => run(stop), '../state/goal-store');
     broken('state/goal-store.ts', () => run(deploy, { RELEASE_APPROVAL: 'rel-1' }), '../state/goal-store', 2, gate);
+    // The same under a valid config file, which the gate reads as it is.
+    broken('state/goal-store.ts', () => {
+      writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }));
+      try {
+        return run(deploy, { RELEASE_APPROVAL: 'rel-1' });
+      } finally {
+        rmSync(path.join(repo, 'aidlc.config.json'));
+      }
+    }, '../state/goal-store', 2, gate);
     // Under a config the schema rejects, the gate first decides on the legacy reading (legacyDecision), whose catch rethrows too.
     broken('state/goal-store.ts', () => {
       writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ mode: 'x' }));

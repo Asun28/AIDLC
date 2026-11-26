@@ -64,7 +64,7 @@ npm run typecheck && node --test tests/surface/hook-fail-closed.test.ts tests/su
 
 | Item | Proof | Result |
 |---|---|---|
-| 1 | tests/surface/hook-lazy.test.ts, T0-HOOK-FAIL-CLOSED acceptance 1 | RED at aae3329c (deploy row status 0, expected 2), passes on the candidate |
+| 1 | tests/surface/hook-lazy.test.ts, T0-HOOK-FAIL-CLOSED acceptance 1: deploy rows with no config file, a valid config file (added at R3 decision 1) and a config the schema rejects | RED at aae3329c (deploy row status 0, expected 2); with the base `src/hooks/index.ts` put back after R3 decision 1 the test still stops at its first deploy row (status 0); all rows pass on the candidate |
 | 2 | tests/surface/hook-lazy.test.ts, T0-HOOK-FAIL-CLOSED acceptance 2 | passes on main and on the candidate (a guard row) |
 | 3 | tests/surface/hook-fail-closed.test.ts | RED at aae3329c (the PreToolUse rows throw `no command`), passes on the candidate; the R2 rows pass on both |
 | 4 | tests/surface/hooks.test.ts, tests/surface/hook-name.test.ts; git diff origin/main -- tests/surface/hooks.test.ts | pass; one comment and one line in `mainDecision` |
