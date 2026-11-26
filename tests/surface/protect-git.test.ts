@@ -39,6 +39,14 @@ const BASH_REFUSED: Array<[string, string]> = [
   ['sh -lc "git -C x reset --hard"', 'git -C x reset --hard'],
   ['echo $(git reset --hard)', 'git reset --hard'],
   ['git push "--force"', 'git push --force'],
+  // R3 decision 1: an attached commit message, a parenthesis in a comment or heredoc, an ANSI-C escape, five nested shells.
+  ['git commit -mteam -n', 'git commit -mteam -n'],
+  ['git commit -nmfix-123', 'git commit -nmfix-123'],
+  ['echo $(echo x # (\n); git push --force', 'git push --force'],
+  ["cat <<'EOF'\n)\nEOF\ngit push --force", 'git push --force'],
+  ["echo $(cat <<'EOF'\n(\nEOF\n); git reset --hard", 'git reset --hard'],
+  ["git push $'--for\\x63e'", 'git push --force'],
+  ['cmd /c cmd /c cmd /c cmd /c cmd /c git push --force', 'git push --force'],
 ];
 
 const PS_REFUSED: Array<[string, string]> = [
@@ -48,6 +56,8 @@ const PS_REFUSED: Array<[string, string]> = [
   ['pwsh -Command "git push --force"', 'git push --force'],
   ['cmd /c git push --force', 'git push --force'],
   ['GIT push --force', 'GIT push --force'],
+  ["Write-Output @'\n'@\ngit reset --hard", 'git reset --hard'],
+  ['Write-Output @"\n"@\ngit reset --hard', 'git reset --hard'],
 ];
 
 const BASH_PASSED = [
@@ -72,9 +82,14 @@ const BASH_PASSED = [
   'git PUSH --force',
   'gitk --all',
   '# git push --force',
+  // R3 decision 1: a quote inside a quoted substitution's heredoc, a parenthesis in a heredoc body, a script's own arguments.
+  "git commit -m \"$(cat <<'EOF'\n\"\ngit push --force\n\"\nEOF\n)\"",
+  "echo $(cat <<'EOF'\n)\ngit push --force\nEOF\n)",
+  "bash script.sh -c 'git push --force'",
+  'git commit -m "fix" -m "-n is a flag"',
 ];
 
-const PS_PASSED = ["Write-Output @'\ngit push --force\n'@", 'git status', "git commit -m 'say git push --force'"];
+const PS_PASSED = ["Write-Output @'\ngit push --force\n'@", 'git status', "git commit -m 'say git push --force'", "pwsh -File script.ps1 -Command 'git push --force'", "pwsh script.ps1 -Command 'git push --force'"];
 
 test('T0-PROTECT-GIT acceptance 1: each listed spelling of an irreversible git command is refused and named [R1] [R2] [R3]', () => {
   for (const [c, git] of BASH_REFUSED) assert.deepEqual(runHook(GUARD, shell('Bash', c), { cwd: '.', env: {} }), refused(git), c);

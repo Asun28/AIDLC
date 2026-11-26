@@ -16,62 +16,40 @@ const GIT_VALUES = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace
 const COMMIT_VALUES = new Set(['--message', '--file', '--author', '--date', '--reuse-message', '--reedit-message', '--template', '--fixup', '--squash', '--trailer', '--cleanup']);
 const COMMIT_SHORT_VALUES = 'mFCct';
 const BASH_SHELLS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh']);
-/** How deep `bash -c`, `pwsh -Command`, `cmd /c` and a Bash substitution are read again. */
-const MAX_DEPTH = 4;
+/** The PowerShell host parameters (and their aliases) that take the next word as their value. */
+const PWSH_VALUES = new Set(['-executionpolicy', '-ep', '-ex', '-workingdirectory', '-wd', '-windowstyle', '-w', '-configurationname', '-config', '-outputformat', '-o', '-of', '-inputformat', '-in', '-if', '-encodedcommand', '-e', '-ec', '-encodedarguments', '-encodeda', '-ea', '-version', '-v', '-custompipename', '-settingsfile', '-settings']);
 
-/** The words of each command of `text`, in order, with the commands of every Bash substitution after the command holding it. */
+const ANSI_C: Record<string, string> = { n: '\n', t: '\t', r: '\r', a: '\x07', b: '\b', e: '\x1b', E: '\x1b', f: '\f', v: '\v', '\\': '\\', "'": "'", '"': '"', '?': '?' };
+
+/** The text of a Bash `$'...'` quote with its escapes decoded. */
+function ansiC(raw: string): string {
+  return raw.replace(/\\(x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|[0-7]{1,3}|c.|.)/gs, (_, e: string) => {
+    if (/^[xuU]/.test(e)) return String.fromCodePoint(parseInt(e.slice(1), 16));
+    if (/^[0-7]/.test(e)) return String.fromCharCode(parseInt(e, 8) & 0xff);
+    if (e.startsWith('c')) return String.fromCharCode(e.charCodeAt(1) & 0x1f);
+    return ANSI_C[e] ?? `\\${e}`;
+  });
+}
+
+/**
+ * The words of each command of `text`, in order: one reader from left to right that keeps quotes, comments, heredocs and
+ * brackets in step, so a substitution ends at its own closing parenthesis. The commands of an unquoted Bash substitution or
+ * backtick span, and of a bracketed group, are listed as commands of their own; a substitution inside double quotes is data.
+ */
 function scan(text: string, powershell: boolean): string[][] {
   const commands: string[][] = [];
-  let words: string[] = [];
-  let word: string | undefined;
+  const escape = powershell ? '`' : '\\';
   const heredocs: Array<{ delimiter: string; tabs: boolean }> = [];
   let i = 0;
-  const add = (s: string): void => {
-    word = (word ?? '') + s;
-  };
-  const endWord = (): void => {
-    if (word !== undefined) words.push(word);
-    word = undefined;
-  };
-  const endCommand = (): void => {
-    endWord();
-    if (words.length) commands.push(words);
-    words = [];
-  };
-  /** The index after the `)` that closes a `$(` whose text starts at `from`; quotes and escapes inside are skipped. */
-  const closing = (from: number): number => {
-    let depth = 1;
-    let j = from;
-    while (j < text.length) {
-      const c = text[j]!;
-      if (c === '\\') j += 2;
-      else if (c === "'") j = skipPast(j + 1, "'");
-      else if (c === '"') j = doubleEnd(j + 1);
-      else {
-        if (c === '(') depth += 1;
-        else if (c === ')' && --depth === 0) return j + 1;
-        j += 1;
-      }
-    }
-    return text.length;
-  };
-  const skipPast = (from: number, end: string): number => {
-    const at = text.indexOf(end, from);
-    return at < 0 ? text.length : at + end.length;
-  };
-  /** The index after the closing double quote of a quote whose text starts at `from`. */
-  const doubleEnd = (from: number): number => {
-    const escape = powershell ? '`' : '\\';
-    let j = from;
-    while (j < text.length && text[j] !== '"') j += text[j] === escape ? 2 : 1;
-    return j + 1;
-  };
+  /** Above zero inside double quotes: the commands read there are dropped. */
+  let muted = 0;
+  const at = (s: string): boolean => text.startsWith(s, i);
+
   const readHeredocs = (): void => {
     for (const { delimiter, tabs } of heredocs.splice(0)) {
       while (i < text.length) {
         const end = text.indexOf('\n', i);
-        const stop = end < 0 ? text.length : end;
-        let line = text.slice(i, stop).replace(/\r$/, '');
+        let line = text.slice(i, end < 0 ? text.length : end).replace(/\r$/, '');
         if (tabs) line = line.replace(/^\t+/, '');
         i = end < 0 ? text.length : end + 1;
         if (line === delimiter) break;
@@ -79,128 +57,181 @@ function scan(text: string, powershell: boolean): string[][] {
     }
   };
 
-  while (i < text.length) {
-    const c = text[i]!;
-    if (c === '\n' || c === '\r') {
-      endCommand();
-      i += c === '\r' && text[i + 1] === '\n' ? 2 : 1;
-      if (!powershell) readHeredocs();
-    } else if (c === ' ' || c === '\t') {
-      endWord();
-      i += 1;
-    } else if (c === (powershell ? '`' : '\\')) {
-      const next = text[i + 1];
-      if (next === '\n' || next === '\r') i += text.startsWith('\r\n', i + 1) ? 3 : 2;
-      else {
-        add(next ?? '');
+  /** A double-quoted text from after its opening quote; its substitutions are passed over as data. */
+  const doubleQuoted = (): string => {
+    let raw = '';
+    muted += 1;
+    while (i < text.length && text[i] !== '"') {
+      if (text[i] === escape) {
+        const next = text[i + 1] ?? '';
+        raw += powershell || /[$`"\\\n]/.test(next) ? (next === '\n' ? '' : next) : `\\${next}`;
         i += 2;
-      }
-    } else if (powershell && word === undefined && text.startsWith('<#', i)) {
-      i = skipPast(i + 2, '#>');
-    } else if (c === '#' && word === undefined) {
-      while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i += 1;
-    } else if (powershell && word === undefined && /^@(['"])[ \t]*\r?\n/.test(text.slice(i, i + 64))) {
-      const quote = text[i + 1]!;
-      const start = text.indexOf('\n', i) + 1;
-      const end = text.indexOf(`\n${quote}@`, start);
-      add(text.slice(start, end < 0 ? text.length : end));
-      i = end < 0 ? text.length : end + 3;
-    } else if (c === "'" && powershell) {
-      let j = i + 1;
-      let raw = '';
-      for (; j < text.length; j += 1) {
-        if (text[j] === "'" && text[j + 1] === "'") {
-          raw += "'";
-          j += 1;
-        } else if (text[j] === "'") break;
-        else raw += text[j];
-      }
-      add(raw);
-      i = j + 1;
-    } else if (c === "'") {
-      const end = skipPast(i + 1, "'");
-      add(text.slice(i + 1, end - 1));
-      i = end;
-    } else if (!powershell && text.startsWith("$'", i)) {
-      let j = i + 2;
-      let raw = '';
-      while (j < text.length && text[j] !== "'") {
-        raw += text[j] === '\\' ? (text[j + 1] ?? '') : text[j];
-        j += text[j] === '\\' ? 2 : 1;
-      }
-      add(raw);
-      i = j + 1;
-    } else if (c === '"') {
-      const end = doubleEnd(i + 1);
-      const inner = text.slice(i + 1, end - 1);
-      add(powershell ? inner.replace(/`(.)/gs, '$1').replace(/""/g, '"') : inner.replace(/\\([$`"\\\n])/g, '$1'));
-      i = end;
-    } else if (!powershell && text.startsWith('$(', i)) {
-      const end = closing(i + 2);
-      commands.push(...scan(text.slice(i + 2, end - 1), false));
-      add('$()');
-      i = end;
-    } else if (!powershell && c === '`') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
-      commands.push(...scan(text.slice(i + 1, j), false));
-      add('``');
-      i = j + 1;
-    } else if (!powershell && (text.startsWith('<<-', i) || (text.startsWith('<<', i) && text[i + 2] !== '<'))) {
-      endWord();
-      const tabs = text[i + 2] === '-';
-      i += tabs ? 3 : 2;
-      while (text[i] === ' ' || text[i] === '\t') i += 1;
-      let delimiter = '';
-      while (i < text.length && !/[\s;&|<>()]/.test(text[i]!)) {
-        if (text[i] === "'" || text[i] === '"') {
-          const end = text.indexOf(text[i]!, i + 1);
-          const stop = end < 0 ? text.length : end;
-          delimiter += text.slice(i + 1, stop);
-          i = stop + 1;
-        } else if (text[i] === '\\') {
-          delimiter += text[i + 1] ?? '';
-          i += 2;
-        } else delimiter += text[i++];
-      }
-      heredocs.push({ delimiter, tabs });
-    } else if (c === '>' || c === '<' || (c === '&' && text[i + 1] === '>')) {
-      endWord();
-      i += 1;
-      while (i < text.length && /[<>&|]/.test(text[i]!)) i += 1;
-    } else if (c === ';' || c === '&' || c === '|' || c === '(' || c === ')' || (powershell && (c === '{' || c === '}'))) {
-      endCommand();
-      i += 1;
-    } else {
-      add(c);
-      i += 1;
+      } else if (powershell && at('""')) {
+        raw += '"';
+        i += 2;
+      } else if (at('$(')) {
+        i += 2;
+        list(')');
+        raw += '$()';
+      } else if (!powershell && text[i] === '`') {
+        i += 1;
+        while (i < text.length && text[i] !== '`') i += text[i] === '\\' ? 2 : 1;
+        i += 1;
+        raw += '``';
+      } else raw += text[i++];
     }
-  }
-  endCommand();
+    i += 1;
+    muted -= 1;
+    return raw;
+  };
+
+  /** Reads commands up to an unquoted `close` (the end of the text when it is empty) and moves past it. */
+  const list = (close: string): void => {
+    let words: string[] = [];
+    let word: string | undefined;
+    const add = (s: string): void => {
+      word = (word ?? '') + s;
+    };
+    const endWord = (): void => {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+    };
+    const endCommand = (): void => {
+      endWord();
+      if (words.length && !muted) commands.push(words);
+      words = [];
+    };
+    while (i < text.length) {
+      const c = text[i]!;
+      if (close && c === close) {
+        i += 1;
+        break;
+      }
+      if (c === '\n' || c === '\r') {
+        endCommand();
+        i += c === '\r' && text[i + 1] === '\n' ? 2 : 1;
+        if (!powershell) readHeredocs();
+      } else if (c === ' ' || c === '\t') {
+        endWord();
+        i += 1;
+      } else if (c === escape) {
+        const next = text[i + 1];
+        if (next === '\n' || next === '\r') i += text.startsWith('\r\n', i + 1) ? 3 : 2;
+        else {
+          add(next ?? '');
+          i += 2;
+        }
+      } else if (powershell && word === undefined && at('<#')) {
+        const end = text.indexOf('#>', i + 2);
+        i = end < 0 ? text.length : end + 2;
+      } else if (c === '#' && word === undefined) {
+        while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i += 1;
+      } else if (powershell && word === undefined && /^@(['"])[ \t]*\r?\n/.test(text.slice(i, i + 64))) {
+        // A here-string: its body runs from after the opening line to a line that starts with its quote and `@`.
+        const quote = text[i + 1]!;
+        const open = text.indexOf('\n', i);
+        const end = text.indexOf(`\n${quote}@`, open);
+        add(end > open ? text.slice(open + 1, end).replace(/\r$/, '') : text.slice(open + 1));
+        i = end < 0 ? text.length : end + 3;
+      } else if (c === "'" && powershell) {
+        let raw = '';
+        for (i += 1; i < text.length && !(text[i] === "'" && text[i + 1] !== "'"); i += 1) {
+          raw += text[i];
+          if (text[i] === "'") i += 1;
+        }
+        add(raw);
+        i += 1;
+      } else if (c === "'") {
+        const end = text.indexOf("'", i + 1);
+        add(text.slice(i + 1, end < 0 ? text.length : end));
+        i = end < 0 ? text.length : end + 1;
+      } else if (!powershell && at("$'")) {
+        let j = i + 2;
+        while (j < text.length && text[j] !== "'") j += text[j] === '\\' ? 2 : 1;
+        add(ansiC(text.slice(i + 2, j)));
+        i = j + 1;
+      } else if (c === '"') {
+        i += 1;
+        add(doubleQuoted());
+      } else if (!powershell && at('$(')) {
+        i += 2;
+        list(')');
+        add('$()');
+      } else if (!powershell && c === '`') {
+        let j = i + 1;
+        while (j < text.length && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
+        if (!muted) commands.push(...scan(text.slice(i + 1, j).replace(/\\([`\\$])/g, '$1'), false));
+        add('``');
+        i = j + 1;
+      } else if (!powershell && (at('<<-') || (at('<<') && !at('<<<')))) {
+        endWord();
+        const tabs = at('<<-');
+        i += tabs ? 3 : 2;
+        while (text[i] === ' ' || text[i] === '\t') i += 1;
+        let delimiter = '';
+        while (i < text.length && !/[\s;&|<>()]/.test(text[i]!)) {
+          if (text[i] === "'" || text[i] === '"') {
+            const end = text.indexOf(text[i]!, i + 1);
+            const stop = end < 0 ? text.length : end;
+            delimiter += text.slice(i + 1, stop);
+            i = stop + 1;
+          } else if (text[i] === '\\') {
+            delimiter += text[i + 1] ?? '';
+            i += 2;
+          } else delimiter += text[i++];
+        }
+        heredocs.push({ delimiter, tabs });
+      } else if (c === '>' || c === '<' || (c === '&' && text[i + 1] === '>')) {
+        endWord();
+        i += 1;
+        while (i < text.length && /[<>&|]/.test(text[i]!)) i += 1;
+      } else if (c === '(' || (powershell && c === '{')) {
+        // A bracketed group: its commands are listed on their own, and the command around it goes on after it.
+        const outer = words;
+        const pending = word;
+        words = [];
+        word = undefined;
+        i += 1;
+        list(c === '(' ? ')' : '}');
+        words = outer;
+        word = pending === undefined ? undefined : `${pending}()`;
+      } else if (c === ';' || c === '&' || c === '|' || c === ')' || (powershell && c === '}')) {
+        endCommand();
+        i += 1;
+      } else {
+        add(c);
+        i += 1;
+      }
+    }
+    endCommand();
+  };
+
+  while (i < text.length) list('');
   return commands;
 }
 
-/** Whether a single-dash option cluster such as `-xdf` holds `letter`. */
-function cluster(arg: string, letter: string): boolean {
-  return /^-[A-Za-z]+$/.test(arg) && arg.includes(letter);
-}
-
-/** Whether the `git commit` arguments hold `-n` (`--no-verify`) in a cluster, before an option whose value follows it. */
+/** Whether the `git commit` arguments hold `-n` (`--no-verify`) in a short option cluster, before an option whose value follows. */
 function commitSkipsHooks(args: string[]): boolean {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (COMMIT_VALUES.has(arg)) i += 1;
-    else if (/^-[A-Za-z]+$/.test(arg)) {
-      for (const letter of arg.slice(1)) {
-        if (letter === 'n') return true;
-        if (COMMIT_SHORT_VALUES.includes(letter)) {
-          if (arg.endsWith(letter)) i += 1;
+    else if (/^-[^-]/.test(arg)) {
+      for (let k = 1; k < arg.length; k += 1) {
+        if (arg[k] === 'n') return true;
+        if (COMMIT_SHORT_VALUES.includes(arg[k]!)) {
+          // The value is the rest of the cluster, or the next word when the cluster ends here.
+          if (k === arg.length - 1) i += 1;
           break;
         }
       }
     }
   }
   return false;
+}
+
+/** Whether a single-dash option cluster such as `-xdf` holds `letter`. */
+function cluster(arg: string, letter: string): boolean {
+  return /^-[A-Za-z]+$/.test(arg) && arg.includes(letter);
 }
 
 /** Whether the words of a git command (`words[0]` is its name) run an operation that cannot be taken back. */
@@ -227,28 +258,55 @@ function irreversible(words: string[]): boolean {
   }
 }
 
-/** The first git command of `text` that cannot be taken back, as its words, read again inside a shell's own command. */
-function refusedGit(text: string, powershell: boolean, depth = 0): string[] | undefined {
-  for (const all of scan(text, powershell)) {
-    let at = 0;
-    while (at < all.length && (WRAPPERS.has(all[at]!) || /^[A-Za-z_]\w*=/.test(all[at]!))) at += 1;
-    const words = all.slice(at);
-    const name = (words[0] ?? '').toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '');
-    if (name === 'git' && irreversible(words)) return words;
-    if (depth >= MAX_DEPTH) continue;
-    let inner: { text: string; powershell: boolean } | undefined;
-    if (BASH_SHELLS.has(name)) {
-      const option = words.findIndex((w, k) => k > 0 && /^-[A-Za-z]*c$/.test(w));
-      if (option > 0 && words[option + 1] !== undefined) inner = { text: words[option + 1]!, powershell: false };
-    } else if (name === 'pwsh' || name === 'powershell') {
-      const option = words.findIndex((w, k) => k > 0 && /^-c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?$/i.test(w));
-      if (option > 0) inner = { text: words.slice(option + 1).join(' '), powershell: true };
-    } else if (name === 'cmd') {
-      const option = words.findIndex((w, k) => k > 0 && /^\/[ck]$/i.test(w));
-      if (option > 0) inner = { text: words.slice(option + 1).join(' '), powershell: false };
+/** The command text a shell runs from its arguments (`bash -c`, `pwsh -Command`, `cmd /c`), or undefined when it runs a script. */
+function innerCommand(name: string, words: string[]): { text: string; powershell: boolean } | undefined {
+  if (BASH_SHELLS.has(name)) {
+    // The command string is the first operand when an option cluster before it holds `c`; a script operand ends the options.
+    let command = false;
+    for (let k = 1; k < words.length; k += 1) {
+      const w = words[k]!;
+      if (w === '--' || w === '-') return command ? (words[k + 1] === undefined ? undefined : { text: words[k + 1]!, powershell: false }) : undefined;
+      if (/^[-+]o$/.test(w)) k += 1;
+      else if (/^-[A-Za-z]+$/.test(w)) command ||= w.includes('c');
+      else if (!/^(?:--|\+)/.test(w)) return command ? { text: w, powershell: false } : undefined;
     }
-    const found = inner && refusedGit(inner.text, inner.powershell, depth + 1);
-    if (found) return found;
+    return undefined;
+  }
+  if (name === 'pwsh' || name === 'powershell') {
+    for (let k = 1; k < words.length; k += 1) {
+      const w = words[k]!.toLowerCase();
+      if (!w.startsWith('-')) return undefined; // a positional word is the script file
+      const key = w.replace(/^--?/, '').replace(/:.*$/, '');
+      if (key && 'command'.startsWith(key)) return { text: words.slice(k + 1).join(' '), powershell: true };
+      if (key && 'file'.startsWith(key)) return undefined;
+      if (PWSH_VALUES.has(`-${key}`)) k += 1;
+    }
+    return undefined;
+  }
+  if (name === 'cmd') {
+    for (let k = 1; k < words.length; k += 1) {
+      const w = words[k]!;
+      if (/^\/[ck]$/i.test(w)) return { text: words.slice(k + 1).join(' '), powershell: false };
+      if (!w.startsWith('/')) return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** The first git command of `text` that cannot be taken back, as its words; a shell's own command is read again, at any depth. */
+function refusedGit(text: string, powershell: boolean): string[] | undefined {
+  const work = [{ text, powershell }];
+  for (let item = work.shift(); item; item = work.shift()) {
+    for (const all of scan(item.text, item.powershell)) {
+      let at = 0;
+      while (at < all.length && (WRAPPERS.has(all[at]!) || /^[A-Za-z_]\w*=/.test(all[at]!))) at += 1;
+      const words = all.slice(at);
+      const name = (words[0] ?? '').toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '');
+      if (name === 'git' && irreversible(words)) return words;
+      const inner = innerCommand(name, words);
+      // Each inner text is shorter than the text it came from, so the work list ends.
+      if (inner && inner.text.length < item.text.length) work.push(inner);
+    }
   }
   return undefined;
 }
