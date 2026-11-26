@@ -53,3 +53,41 @@ npm run typecheck && node --test tests/surface/settings-deny.test.ts tests/surfa
 ```
 - Expected exit code: 0
 - Assertion: both deny lists are the same 41 rules, the denied rows match and the allowed rows do not.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/settings-deny.test.ts, acceptance 1 | RED at 59b54c90 (18 rules against 41 expected), passes on the candidate |
+| 2 | tests/surface/settings-deny.test.ts, acceptance 2 | RED at 59b54c90 (`Bash denies: git reset --hard`), passes on the candidate: 15 denied rows match, 12 allowed rows match no rule |
+| 3 | git diff origin/main -- docs/OPERATIONS.md changelog.d; tests/surface/changelog-fragments.test.ts | one paragraph replaces the sentence at line 378; fragment line passes |
+| 4 | `npm run typecheck`; tests/surface/templates.test.ts, tests/infra/init.test.ts | see the DoD receipt |
+
+## PR summary
+
+### What
+Both settings files deny 23 more commands. They are `Read(~/.ssh/**)` and 11 git rules for each of Bash and PowerShell.
+
+### Why / Intent
+CLAUDE.md forbids force push, `reset --hard` and `--no-verify` in text only. Auto mode still lets about one dangerous command in ten through. These commands cannot be undone (issue 498).
+
+### How / Behaviour
+Claude Code checks a deny rule before the auto mode classifier. A matching tool call does not run. `aidlc init` merges the list into downstream repositories.
+
+### System impact
+Only agent tool calls change. Git that the ship path, tests or aidlc commands spawn is not a tool call, so it still runs.
+
+### Security
+The rules close a gap for irreversible git commands and SSH key reads. They match command text only. Forms such as `git -C dir push --force` still pass, and a later hook card covers them.
+
+### Tests and review
+A new test checks that both lists are equal and pins 15 denied and 12 allowed commands. The ship path's `git checkout --conflict=diff3 -- CHANGELOG.md` is an allowed row.
+
+### Risk
+Low. A rule can deny a safe command that holds the same text, for example `git clean -n -- foo`. The agent then asks the owner.
+
+### Ownership
+The aidlc maintainers own both settings files and the hook guards.
+
+### Docs
+docs/OPERATIONS.md, Hooks section, states what the list denies and what it misses. A changelog fragment records the change.

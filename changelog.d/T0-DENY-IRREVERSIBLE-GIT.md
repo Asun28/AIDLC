@@ -1,0 +1,1 @@
+- T0-DENY-IRREVERSIBLE-GIT: both settings files, and so `aidlc init`, deny `Read(~/.ssh/**)` and, for the Bash and PowerShell tools, `git reset --hard`, force pushes, `git clean -f`, `git checkout -- <paths>`, `git checkout .` and `--no-verify`; a rule misses other forms such as `git -C <dir> push --force`.
