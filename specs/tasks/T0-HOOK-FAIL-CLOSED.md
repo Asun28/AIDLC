@@ -8,6 +8,7 @@ allow_paths:
   - src/hooks/lazy.ts
   - tests/surface/hook-lazy.test.ts
   - tests/surface/hook-fail-closed.test.ts
+  - tests/surface/hooks.test.ts
   - docs/OPERATIONS.md
   - changelog.d/T0-HOOK-FAIL-CLOSED.md
   - specs/tasks/T0-HOOK-FAIL-CLOSED.md
@@ -24,7 +25,7 @@ acceptance:
   - 2. Same file, one new test on the same fixture with `state/goal-store.ts` broken: a `PreToolUse` Bash event with the command `git status` through `bin/aidlc-hook.js` exits 0 with empty stdout and stderr, since no guard loads the goal store for it. [R3] [dod arm 2]
   - 3. `tests/surface/hook-fail-closed.test.ts`, new file, in process. A `tool_input` whose `command` (Bash) or `file_path` (Edit) getter throws makes the guard throw. `runHook('production-gate', ...)` on a `PreToolUse` Bash event and `runHook('protect-paths', ...)` on a `PreToolUse` Edit event return `{ exitCode: 2, stderr }` with the R1 line naming that guard; an error message `a
 b` gives `a | b`; `dispatchHook` on the Bash event returns exit 2 naming `production-gate`, the first guard. The same `runHook('production-gate', ...)` call on a `UserPromptSubmit` event and on an event with no `hook_event_name` throws the getter's error. RED on main for the `PreToolUse` rows, which throw there. `aidlc hook <name>` and `aidlc hook auto` reach the guards only through `runHook` and `dispatchHook` (`src/cli/main.ts:1710-1722`, reviewer-verified). [R1] [R2] [dod arm 2]
-  - 4. `tests/surface/hooks.test.ts` and `tests/surface/hook-name.test.ts` pass unchanged. [R3] [dod arm 2]
+  - 4. `tests/surface/hook-name.test.ts` passes unchanged. In `tests/surface/hooks.test.ts`, `mainDecision`, which models the decision before card T0-HOOK-CONFIG-CLOSED-3 by calling `runHook` and turning a throw into a pass, turns a result whose stderr starts `[aidlc hook] <guard> could not decide; the tool call is blocked: ` into a pass as well, since that result is this card's form of the same throw; no other line of the file changes, and the file passes (owner amendment of 2026-11-26). [R3] [dod arm 2]
   - 5. One paragraph added to the Hooks section of `docs/OPERATIONS.md`, not as its second paragraph (which T0-HOOK-LAZY-2 acceptance 5 pins), states R1, R2 and the recovery: Read, Grep and Glob stay outside the PreToolUse matcher, so the session can read the error; the owner fixes the guard or removes the hook entry from `.claude/settings.json` by hand. The `LazyLoadError` comment says a `PreToolUse` guard blocks and other events exit as before (reviewer-verified against the diff). `changelog.d/T0-HOOK-FAIL-CLOSED.md` holds one line in the form of `changelog.d/README.md`. [R4] [dod arm 2]
   - 6. The typecheck is clean. [dod arm 1]
 depends_on: []
