@@ -171,7 +171,7 @@ test('T0-SIDE-WRITE-FAULTS acceptance 6a: a failed diagnostic NOTE beside a fail
   }
 });
 
-test('T0-SIDE-WRITE-FAULTS acceptance 6a: a failed GOAL_STOPPED append still propagates and stops nothing [R4]', () => {
+test('T0-SIDE-WRITE-FAULTS acceptance 6a: a failed GOAL_STOPPED append still propagates; the stop stands and the next aidlc next appends the event once (card T1-GOAL-OWED) [R4]', () => {
   const fx = makeFixture();
   try {
     const { goalId } = opened(fx);
@@ -182,7 +182,9 @@ test('T0-SIDE-WRITE-FAULTS acceptance 6a: a failed GOAL_STOPPED append still pro
     } finally {
       failing = undefined;
     }
-    assert.equal(fx.goal(goalId).terminal, false);
+    assert.deepEqual([fx.goal(goalId).terminal, fx.goal(goalId).stop?.reason], [true, 'time']);
+    assert.equal(fx.controller.next(goalId).kind, 'stop');
+    assert.deepEqual(fx.events(goalId).filter((e) => e.type === 'GOAL_STOPPED').map((e) => e.data['completed']), [true]);
   } finally {
     fx.cleanup();
   }

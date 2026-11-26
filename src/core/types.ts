@@ -879,6 +879,17 @@ export const OwedEvent = z.object({
 });
 export type OwedEvent = z.infer<typeof OwedEvent>;
 
+/**
+ * An event a goal write owes to the goal journal (card T1-GOAL-OWED): the write records it, and the command appends it after
+ * that write, in the same section of the goal lock; an append that did not land is made by the next goal command that writes
+ * the goal, or by `aidlc next`. `cardId` is the card of a `CARD_RESULT`.
+ */
+export const GoalOwedEvent = OwedEvent.extend({
+  type: z.enum(['GOAL_STATE', 'GOAL_STOPPED', 'GOAL_DONE', 'GOAL_REVISED', 'PLAN_ACCEPTED', 'PLAN_INVOKED', 'CARDS_PROJECTED', 'AUTHORIZATION_GRANTED', 'CARD_RESULT', 'RELEASE_STATE', 'NOTE']),
+  cardId: z.string().optional(),
+});
+export type GoalOwedEvent = z.infer<typeof GoalOwedEvent>;
+
 /** A repository path as git prints it: relative, forward slashes, no empty, `.` or `..` segment. */
 const RepoPath = z.string().refine((p) => !p.includes('\\') && !/^[A-Za-z]:/.test(p) && !p.split('/').some((s) => s === '' || s === '.' || s === '..'), 'expected a relative repository path: forward slashes, no drive, no empty, . or .. segment');
 /** One expected defect site of a reviewer bench bug case: a cited line within `window` lines of `line` is a hit. */
@@ -1098,6 +1109,8 @@ export const Goal = z.object({
   linkedFrom: z.string().optional(),
   /** The writes of this record after its first, counted by the store; `GoalStore.saveGoal` refuses a snapshot with another count. */
   writes: z.number().int().nonnegative().default(0),
+  /** The events of the last write, owed to the goal journal until it holds them (card T1-GOAL-OWED); absent when that write owed none. */
+  journalOwed: z.array(GoalOwedEvent).optional(),
   createdAt: IsoTimestamp,
   updatedAt: IsoTimestamp,
 });
