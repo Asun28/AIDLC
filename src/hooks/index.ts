@@ -822,11 +822,23 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
   // A config that cannot be used is never replaced by the defaults; the Stop output does not name it, since Stop context
   // starts another model turn at every turn end, while a prompt names it once per user turn.
   const error = isHookConfigError(config) ? config : undefined;
+  try {
+    return decideGuard(name, event, cwd, env, config, error, options.classic);
+  } catch (err) {
+    // A guard that throws on PreToolUse blocks the call (card T0-HOOK-FAIL-CLOSED): the hook entry would exit 0 and
+    // `aidlc hook` 1, and Claude Code runs the tool on both. On any other event the throw reaches the entry as before.
+    if (event.hook_event_name !== 'PreToolUse') throw err;
+    const message = (err instanceof Error ? err.message : String(err)).split(/\r\n|\r|\n/).join(' | ');
+    return { exitCode: 2, stderr: `[aidlc hook] ${name} could not decide; the tool call is blocked: ${message}` };
+  }
+}
+
+function decideGuard(name: HookName, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, config: LoadedHookConfig, error: HookConfigError | undefined, classic?: boolean): HookResult {
   switch (name) {
     case 'production-gate':
-      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd, options.classic);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd, classic);
     case 'protect-paths':
-      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config, options.classic);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config, classic);
     case 'protect-tests':
       return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectTests(event, cwd, env, config);
     case 'secrets-guard':

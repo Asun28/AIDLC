@@ -158,19 +158,37 @@ function stopFixture(repo: string, state: string): void {
   new LeaseStore(paths.leases).claim(resourceKeys.goal(resolveRepoIdentity(repo).key, 'g-lazy'), { actor, now: FIXTURE_AT, ttlMs: 100 * 365 * 24 * 3600_000 });
 }
 
-test('T0-HOOK-LAZY-2 acceptance 7: a module that fails to load reaches the hook entry through every guard catch, which names it on stderr and exits 0 (R3 decision 1) [R2]', () => {
+/** A copy of src/ and bin/ in `dir` (so a test can break a module), a repository with the Stop fixture, and a runner of bin/aidlc-hook.js there. */
+function lazyPackage(dir: string) {
+  const pkg = path.join(dir, 'pkg');
+  for (const part of ['src', 'bin']) cpSync(path.join(root, part), path.join(pkg, part), { recursive: true });
+  cpSync(path.join(root, 'package.json'), path.join(pkg, 'package.json'));
+  symlinkSync(path.join(root, 'node_modules'), path.join(pkg, 'node_modules'), 'junction');
+  const repo = path.join(dir, 'repo');
+  const state = path.join(dir, 'state');
+  mkdirSync(repo);
+  mkdirSync(state);
+  stopFixture(repo, state);
+  const run = (event: Record<string, unknown>, extra: Record<string, string> = {}) =>
+    spawnSync(process.execPath, [path.join(pkg, 'bin', 'aidlc-hook.js')], { cwd: repo, input: JSON.stringify({ ...event, cwd: repo, session_id: 'hook-lazy' }), env: childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'hook-lazy', ...extra }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+  return { pkg, repo, run };
+}
+
+/** Runs `act` with `src/<rel>` of `pkg` replaced by a module that throws, and restores it. */
+function withBroken<T>(pkg: string, rel: string, act: () => T): T {
+  const file = path.join(pkg, 'src', rel);
+  const source = readFileSync(file, 'utf8');
+  writeFileSync(file, "throw new Error('broken by the test');\n");
+  try {
+    return act();
+  } finally {
+    writeFileSync(file, source);
+  }
+}
+
+test('T0-HOOK-FAIL-CLOSED acceptance 1 (was T0-HOOK-LAZY-2 acceptance 7): a module that fails to load reaches the hook entry through every guard catch; a PreToolUse guard then blocks (exit 2) and a Stop exits 0, each naming it on stderr [R1] [R2]', () => {
   withTemp((dir) => {
-    const pkg = path.join(dir, 'pkg');
-    for (const part of ['src', 'bin']) cpSync(path.join(root, part), path.join(pkg, part), { recursive: true });
-    cpSync(path.join(root, 'package.json'), path.join(pkg, 'package.json'));
-    symlinkSync(path.join(root, 'node_modules'), path.join(pkg, 'node_modules'), 'junction');
-    const repo = path.join(dir, 'repo');
-    const state = path.join(dir, 'state');
-    mkdirSync(repo);
-    mkdirSync(state);
-    stopFixture(repo, state);
-    const run = (event: Record<string, unknown>, extra: Record<string, string> = {}) =>
-      spawnSync(process.execPath, [path.join(pkg, 'bin', 'aidlc-hook.js')], { cwd: repo, input: JSON.stringify({ ...event, cwd: repo, session_id: 'hook-lazy' }), env: childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'hook-lazy', ...extra }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const { pkg, repo, run } = lazyPackage(dir);
     const stop = { hook_event_name: 'Stop' };
     const deploy = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm run deploy -- --env production' } };
     // Before any module is broken: the DoD reminder and the planning check run; the approval names no authorization, so the gate denies.
@@ -178,21 +196,25 @@ test('T0-HOOK-LAZY-2 acceptance 7: a module that fails to load reaches the hook 
     assert.equal(intact.status, 0, intact.stderr);
     assert.ok(intact.stdout.includes('T1-LAZY (BUILD) have no fresh DoD receipt'), intact.stdout);
     assert.equal(run(deploy, { RELEASE_APPROVAL: 'rel-1' }).status, 2, 'the gate denies an approval that names no recorded authorization');
-    const broken = (rel: string, act: () => ReturnType<typeof run>, module: string) => {
-      const file = path.join(pkg, 'src', rel);
-      const source = readFileSync(file, 'utf8');
-      writeFileSync(file, "throw new Error('broken by the test');\n");
-      try {
-        const r = act();
-        assert.deepEqual([r.status, r.stdout], [0, ''], `${rel}: ${r.stderr}`);
-        // The cause is the module's own throw, or a link error in a module that imports it (journal.ts through lease.ts).
-        assert.ok(r.stderr.startsWith(`[aidlc hook] cannot load ${module}: `), `${rel}: ${r.stderr}`);
-      } finally {
-        writeFileSync(file, source);
-      }
+    // A Stop exits 0 and a PreToolUse guard exits 2 (card T0-HOOK-FAIL-CLOSED); each stderr names the module.
+    const broken = (rel: string, act: () => ReturnType<typeof run>, module: string, status = 0, prefix = '') => {
+      const r = withBroken(pkg, rel, act);
+      assert.deepEqual([r.status, r.stdout], [status, ''], `${rel}: ${r.stderr}`);
+      // The cause is the module's own throw, or a link error in a module that imports it (journal.ts through lease.ts).
+      assert.ok(r.stderr.startsWith(`[aidlc hook] ${prefix}cannot load ${module}: `), `${rel}: ${r.stderr}`);
     };
+    const gate = 'production-gate could not decide; the tool call is blocked: ';
     broken('state/goal-store.ts', () => run(stop), '../state/goal-store');
-    broken('state/goal-store.ts', () => run(deploy, { RELEASE_APPROVAL: 'rel-1' }), '../state/goal-store');
+    broken('state/goal-store.ts', () => run(deploy, { RELEASE_APPROVAL: 'rel-1' }), '../state/goal-store', 2, gate);
+    // The same under a valid config file, which the gate reads as it is.
+    broken('state/goal-store.ts', () => {
+      writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }));
+      try {
+        return run(deploy, { RELEASE_APPROVAL: 'rel-1' });
+      } finally {
+        rmSync(path.join(repo, 'aidlc.config.json'));
+      }
+    }, '../state/goal-store', 2, gate);
     // Under a config the schema rejects, the gate first decides on the legacy reading (legacyDecision), whose catch rethrows too.
     broken('state/goal-store.ts', () => {
       writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ mode: 'x' }));
@@ -201,9 +223,17 @@ test('T0-HOOK-LAZY-2 acceptance 7: a module that fails to load reaches the hook 
       } finally {
         rmSync(path.join(repo, 'aidlc.config.json'));
       }
-    }, '../state/goal-store');
+    }, '../state/goal-store', 2, gate);
     broken('state/journal.ts', () => run(stop), '../coordination/lease');
     broken('state/claims.ts', () => run(stop), '../state/claims');
+  });
+});
+
+test('T0-HOOK-FAIL-CLOSED acceptance 2: with the goal store broken, a PreToolUse Bash `git status` loads no goal store and is not blocked [R3]', () => {
+  withTemp((dir) => {
+    const { pkg, run } = lazyPackage(dir);
+    const r = withBroken(pkg, 'state/goal-store.ts', () => run({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git status' } }));
+    assert.deepEqual([r.status, r.stdout, r.stderr], [0, '', '']);
   });
 });
 

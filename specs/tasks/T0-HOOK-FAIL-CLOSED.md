@@ -59,3 +59,43 @@ npm run typecheck && node --test tests/surface/hook-fail-closed.test.ts tests/su
 ```
 - Expected exit code: 0
 - Assertion: a guard that throws on PreToolUse exits 2 through both entries, Stop exits as before, and `git status` is not blocked.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/hook-lazy.test.ts, T0-HOOK-FAIL-CLOSED acceptance 1: deploy rows with no config file, a valid config file (added at R3 decision 1) and a config the schema rejects | RED at aae3329c (deploy row status 0, expected 2); with the base `src/hooks/index.ts` put back after R3 decision 1 the test still stops at its first deploy row (status 0); all rows pass on the candidate |
+| 2 | tests/surface/hook-lazy.test.ts, T0-HOOK-FAIL-CLOSED acceptance 2 | passes on main and on the candidate (a guard row) |
+| 3 | tests/surface/hook-fail-closed.test.ts | RED at aae3329c (the PreToolUse rows throw `no command`), passes on the candidate; the R2 rows pass on both |
+| 4 | tests/surface/hooks.test.ts, tests/surface/hook-name.test.ts; git diff origin/main -- tests/surface/hooks.test.ts | pass; one comment and one line in `mainDecision` |
+| 5 | git diff origin/main -- docs/OPERATIONS.md src/hooks/lazy.ts changelog.d; tests/surface/changelog-fragments.test.ts | one paragraph at the end of the Hooks section, the comment, one fragment line; pass |
+| 6 | `npm run typecheck` | exit 0 |
+
+## PR summary
+
+### What
+A hook guard that throws on a PreToolUse event now blocks the tool call. It exits 2 and names the guard on stderr.
+
+### Why / Intent
+Before, the hook entry exited 0 and `aidlc hook` exited 1 on a throw. Claude Code runs the tool on both, so a broken guard was off (issue 501).
+
+### How / Behaviour
+`runHook` catches a throw of the guard it runs. On PreToolUse it returns the block. On other events it rethrows, so Stop and UserPromptSubmit exit as before.
+
+### System impact
+Both hook entries and both dispatcher passes call `runHook`, so one catch covers all of them. A guard that decides without a throw decides as before.
+
+### Security
+A broken module or a guard bug can no longer turn a guard off without notice. The production gate stays closed when the goal store fails to load.
+
+### Tests and review
+The hook-lazy rows now expect exit 2 for the deploy event with a broken goal store. A new test makes guards throw in process. The `mainDecision` model in hooks.test.ts reads the new block as the old pass (owner amendment).
+
+### Risk
+A guard that throws on every call blocks every shell and edit call. Read, Grep and Glob still work. The owner then fixes the guard or removes the hook entry.
+
+### Ownership
+The aidlc maintainers own `src/hooks/`.
+
+### Docs
+docs/OPERATIONS.md, Hooks section, states the rule and the recovery. The `LazyLoadError` comment and a changelog fragment record it.
