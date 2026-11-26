@@ -64,6 +64,8 @@ npm run typecheck && node --test tests/scenarios/card-state-owed.test.ts tests/s
 
 RED: `7fc0ddaa`, `tests/scenarios/card-state-owed.test.ts` on main code: acceptance 1 and 4 found one CARD_STATE of a refused write, acceptance 2 found two, acceptance 3 found the run still in SHIP.
 
+Attempt 1 (`8e9052df`) was withdrawn before review: the full `npm test` failed `tests/scenarios/journal-owed.test.ts`, which pins the T0-JOURNAL-FAULT-EVENTS sentence at the end of ARCHITECTURE item 1. Attempt 2 restores that sentence and puts this card's sentence before it.
+
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `card-state-owed.test.ts` acceptance 1 | pass |
