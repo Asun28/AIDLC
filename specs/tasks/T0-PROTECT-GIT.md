@@ -1,7 +1,7 @@
 ---
 id: T0-PROTECT-GIT
 title: "A protect-git hook guard refuses the irreversible git forms the deny rules cannot match"
-status: todo
+status: merged
 branch: T0-PROTECT-GIT
 allow_paths:
   - src/hooks/protect-git.ts
