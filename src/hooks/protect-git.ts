@@ -40,7 +40,8 @@ function ansiC(raw: string): string {
     if (/^c./s.test(e)) return String.fromCharCode(e.charCodeAt(1) & 0x1f);
     return ANSI_C[e] ?? `\\${e}`;
   });
-  return decoded.split('\0')[0]!;
+  const nul = decoded.indexOf('\0');
+  return nul < 0 ? decoded : decoded.slice(0, nul);
 }
 
 /**

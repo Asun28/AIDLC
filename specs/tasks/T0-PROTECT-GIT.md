@@ -76,7 +76,7 @@ npm run typecheck && node --test tests/surface/protect-git.test.ts tests/surface
 | 4 | tests/surface/hooks.test.ts, hook-name.test.ts, ps-guard-wire.test.ts, stdin-script.test.ts, readme.test.ts; `git diff origin/main -- tests/surface` | pass; one list line each (three in hooks.test.ts) and the `GUARD_CELLS` row |
 | 5 | tests/surface/settings-deny.test.ts; the other tests of stdin-script.test.ts | pass; settings-deny.test.ts unchanged |
 | 6 | `git diff origin/main -- docs changelog.d README.md`; tests/surface/changelog-fragments.test.ts | OPERATIONS table row, forms paragraph, deny-list note and known-name list; ARCHITECTURE guard count; one fragment line; pass |
-| 7 | `npm run typecheck` | exit 0 |
+| 7 | `npm run typecheck`; after CI on PR 512 failed `tests/core/parse-guard.test.ts` (a NUL split outside `nulList`, from the ANSI-C NUL cut), `npm run check` on the repaired candidate | exit 0; 4340 tests, 4306 pass, 0 fail, 34 skipped |
 
 ## PR summary
 
