@@ -53,3 +53,42 @@ npm run typecheck && node --test tests/surface/claude-md-dupes.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: the removed text is gone, every pinned line stays, and the file is shorter.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/claude-md-dupes.test.ts, acceptance 1: after R3 decision 1, one test per removed text (four command lines, three names, the bold span), the `npm test` prefix without a trailing space | with main's CLAUDE.md put in place each of the eight removal tests fails on its own assertion and the two kept-text tests pass; all pass on the candidate |
+| 2 | tests/surface/claude-md-dupes.test.ts, acceptance 2; `git diff origin/main -- CLAUDE.md` | RED at 2a0eb05a (199 lines); 192 lines on the candidate; the diff holds the four removed command lines, the rewrapped Layers and Conventions lines and the dropped bold only |
+| 3 | the ten pinning test files of the DoD; `git diff origin/main -- templates/CLAUDE.aidlc.md` | pass unchanged; no template change |
+| 4 | changelog.d/T0-CLAUDE-MD-DUPES.md; tests/surface/changelog-fragments.test.ts | one line with 199 and 192; pass |
+| 5 | `npm run typecheck` | exit 0 |
+
+## PR summary
+
+### What
+CLAUDE.md drops seven lines that restate package.json, tsconfig.json and docs/ARCHITECTURE.md, and the bold of five lead-ins. It goes from 199 lines to 192.
+
+### Why / Intent
+Every session loads CLAUDE.md. Issue 500 and the talk say it should hold only what the code cannot show, without emphasis.
+
+### How / Behaviour
+Four script lines, the `src/` layer list and two tsconfig option names are removed. Bold lead-ins become plain sentences.
+
+### System impact
+No code changes. The aidlc section and templates/CLAUDE.aidlc.md stay as they are.
+
+### Security
+No change. The Hard limits stay as they are.
+
+### Tests and review
+A new test pins the removed and kept text. Every test that pins CLAUDE.md text passes unchanged.
+
+### Risk
+Low. Lines that other tests pin stay in the file.
+
+### Ownership
+Repository instructions, CLAUDE.md.
+
+### Docs
+A changelog fragment states the change and the line counts.
