@@ -16,7 +16,7 @@ test('T0-CLAUDE-MD-DUPES acceptance 1: the duplicated lines and the bold are gon
   for (const removed of ['npm run typecheck', 'npm test ', 'npm run test:watch', 'npm run dev']) assert.ok(!starts(removed), `Commands still holds ${removed}`);
   for (const kept of ['npm run check', 'node --test tests/core/router.test.ts', 'node --test --test-name-pattern', 'npm run build', 'node bin/aidlc.js <cmd>', 'npm run bench']) assert.ok(starts(kept), `Commands lost ${kept}`);
   for (const removed of ['erasableSyntaxOnly', 'verbatimModuleSyntax', '`core/` (pure decision engines']) assert.ok(!claude.includes(removed), `CLAUDE.md still names ${removed}`);
-  assert.ok(!claude.includes('**'), 'CLAUDE.md holds no bold markup');
+  assert.equal(/(^|\s)\*\*\S/m.test(claude), false, 'CLAUDE.md holds no bold span; the path globs keep their **');
   assert.ok(conventions.includes('Relative imports carry an explicit `.ts` extension'), 'Conventions keeps the import extension rule');
 });
 

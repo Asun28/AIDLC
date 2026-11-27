@@ -13,14 +13,10 @@ build step is needed for development.
 
 ```bash
 npm run check                  # typecheck (src + tests) then the full suite; CI runs this, then `npm run build`
-npm run typecheck              # tsc -p tsconfig.test.json --noEmit
-npm test                       # node --test over tests/**/*.test.ts, spec reporter
 node --test tests/core/router.test.ts                                   # one file
 node --test --test-name-pattern "same cause" tests/core/effort.test.ts  # one test by name
-npm run test:watch
 npm run build                  # scripts/build.ts: tsc -> dist/, each file written whole (rewrites .ts imports to .js)
 node bin/aidlc.js <cmd>        # the CLI (dist/ when it is at least as new as src/, else src/)
-npm run dev -- <cmd>           # the CLI from src/cli/main.ts, always current
 npm run bench                  # loop benchmark: deterministic counts of each hook event against bench/baseline.json (--check, --ratchet, --time 5)
 ```
 
@@ -37,14 +33,12 @@ Module map, state diagrams and the persisted-state table: `docs/ARCHITECTURE.md`
 Operating guide (running goals, hooks, R2/R3 review, audit): `docs/OPERATIONS.md`.
 The parts that take several files to see:
 
-**One directive per call.** `aidlc next` is read-only apart from derived
+One directive per call. `aidlc next` is read-only apart from derived
 transitions and returns exactly one typed `Directive` (`src/loop/directive.ts`);
 cards follow the same shape through `aidlc card next <id>` /
 `aidlc card attempt <id>`.
 
-**Layers, inner to outer** (`src/`): `core/` (pure decision engines, no I/O),
-`scaffold/`, `probes/`, `state/`, `coordination/`, `delivery/`, `review/`,
-`loop/`, `hooks/` and `cli/`. `docs/ARCHITECTURE.md`, Module map, describes each.
+The layers of `src/`, inner to outer: `docs/ARCHITECTURE.md`, Module map, describes each.
 Runtime details: state lives under `<main checkout>/.aidlc/`, shared
 by all worktrees; every `ShipPath` adapter (`scaffold`, `github`, `dry-run`)
 prints the same scaffold-style sentinels so `classifyShipOutput` maps outcomes
@@ -52,14 +46,14 @@ uniformly; a review verdict is the last stdout line of JSON, written next to
 the candidate under `<worktree>/.review/`; and the hooks are wired in
 `.claude/settings.json` for PreToolUse, Stop and UserPromptSubmit.
 
-**Card state is selected, not stored.** `selectCardState`
+Card state is selected, not stored. `selectCardState`
 (`src/core/card-machine.ts`) re-derives the state from evidence on every
 call in a fixed precedence: unknown operations, terminal or stale
 ownership, DONE, WAIT, CLOSE, deadline, exhausted allowances, PREPARE,
 REVIEW_FIX, BUILD, SHIP. To change what the loop does next, change the
 evidence or the precedence, not a transition table.
 
-**Review before ship.** SHIP requires an R3 formal review pass on the current
+Review before ship. SHIP requires an R3 formal review pass on the current
 candidate, and a fresh R2 pre-review pass before it only when `preReview.command` is set.
 This repository leaves it empty, so a candidate goes from the DoD to R3. Both
 are external commands configured in `aidlc.config.json` (`preReview`,
@@ -69,7 +63,7 @@ as the fallback) and can be run by hand with `aidlc review pre <card>` /
 by `core/review-policy.ts`, and a missing or malformed verdict fails closed;
 what a block or a quota hold does: `docs/OPERATIONS.md`, Pre-review (R2).
 
-**Every side effect is injectable.** `GoalController`, `CardRunner` and
+Every side effect is injectable. `GoalController`, `CardRunner` and
 `ReleaseRunner` take a deps object (`runner`, `git`, `gh`, `shipPath`, `now`,
 stores). Tests use `scriptedRunner` from `src/probes/exec.ts`,
 `DryRunShipPath`, a fixed clock and a temp `.aidlc`.
@@ -91,9 +85,8 @@ Some tests read real time to measure or bound a wait, or for a file time.
 
 ## Conventions
 
-- ESM, strict TypeScript with `erasableSyntaxOnly` (no enums, namespaces or
-  parameter properties) and `verbatimModuleSyntax` (`import type` for
-  types). Relative imports carry an explicit `.ts` extension.
+- ESM and strict TypeScript; `tsconfig.json` sets the compiler rules and the
+  typecheck reports them. Relative imports carry an explicit `.ts` extension.
 - Before adding a package or writing code, check `package.json` dependencies,
   Node built-ins, and helpers in `src/` and `tests/` for the needed capability.
   Read the relevant APIs before choosing reuse or custom code.
