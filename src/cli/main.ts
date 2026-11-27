@@ -507,7 +507,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
   program
     .command('next [goalId]')
-    .description('derive the single next directive for a goal (read-only apart from derived transitions)')
+    .description('derive the single next directive for a goal (writes only derived transitions and the board view)')
     .option('--goal <id>', 'goal id (alternative to the positional argument)')
     .action((goalId: string | undefined, o: { goal?: string }) => {
       const c = ctx(g());
