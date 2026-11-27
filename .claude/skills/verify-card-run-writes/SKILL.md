@@ -38,7 +38,7 @@ never reached GitHub ends without an issue, by
 `card close --skip-followups`. Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
-Sync commit: `decf61a8982742352af0771d197dc66a7ef94754`
+Sync commit: `4ed4d2f751ffadac31784ec562c29131b1be9c2a`
 
 ## Run
 ```

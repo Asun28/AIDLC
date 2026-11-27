@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-STATE-STORED
 title: "The CARD_STATE of a SHIP or PREPARE selection names the state each card-run write of its branch stores, and is journaled after that write"
-status: todo
+status: merged
 branch: T0-CARD-STATE-STORED
 allow_paths:
   - src/loop/card-runner.ts
