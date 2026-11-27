@@ -1,7 +1,7 @@
 ---
 id: T0-CLAUDE-MD-DUPES
 title: "CLAUDE.md drops the lines package.json, tsconfig.json and docs/ARCHITECTURE.md already state, and its bold lead-ins"
-status: todo
+status: merged
 branch: T0-CLAUDE-MD-DUPES
 allow_paths:
   - CLAUDE.md
