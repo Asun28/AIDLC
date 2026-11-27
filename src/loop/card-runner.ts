@@ -21,7 +21,7 @@ import { makeStop } from '../core/stop.ts';
 import { envValue } from '../core/env-name.ts';
 import { amendedDigest, changedContractFields, contractDigests, invalidatedBy } from '../core/contract.ts';
 import { admittedDecisions, continueCiStop, continueReviewStop, type ContinuationAct } from '../core/continuation.ts';
-import { ActorIdentity, CardRun, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, type CardState, type FindingRuling, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortEpisode, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type LoopDod, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys, type ClaimResult } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -515,7 +515,7 @@ export class CardRunner {
     if (run.preReview.handoffs.some((h) => h.cycle === cycle && h.candidateDigest === candidateDigest)) return run;
     // The marker is persisted under the lock first; the event is journaled only for the write that inserted it.
     let inserted = false;
-    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    const next = this.updateRun(goal.id, card.id, (persisted) => {
       const current = persisted ?? run;
       if (current.preReview.handoffs.some((h) => h.cycle === cycle && h.candidateDigest === candidateDigest)) return current;
       inserted = true;
@@ -693,7 +693,7 @@ export class CardRunner {
   ruleFinding(goal: Goal, card: Card, id: string, ruling: Omit<FindingRuling, 'at'>): CardRun {
     const at = this.clock();
     let owed: OwedEvent[] = [];
-    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    const next = this.updateRun(goal.id, card.id, (persisted) => {
       if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to rule on`);
       const findings = ruleFinding(persisted, id, { at, ...ruling });
       owed = [this.owe(goal, 'FINDING_RULED', { finding: id.toUpperCase(), ruling: { at, ...ruling } })];
@@ -722,7 +722,7 @@ export class CardRunner {
     const at = this.clock();
     let owed: OwedEvent[] = [];
     let hold: string[] = [];
-    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    const next = this.updateRun(goal.id, card.id, (persisted) => {
       if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to continue`);
       if (persisted.state === 'STOP' && persisted.stop?.reason === 'ci') {
         const { continuation, step } = continueCiStop(persisted, { ...act, at }, checkAdmission(persisted.deadline, at).phase === 'open');
@@ -751,7 +751,7 @@ export class CardRunner {
   amendCard(goal: Goal, card: Card, act: { by: string; reason: string }): CardRun {
     const [at, by, reason] = [this.clock(), act.by.trim(), act.reason.trim()];
     let owed: OwedEvent[] = [];
-    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    const next = this.updateRun(goal.id, card.id, (persisted) => {
       if (!persisted) throw new Error(`card ${card.id} has no card run in goal ${goal.id}; nothing to amend`);
       const refusal = this.amendmentRefusal(card, persisted, by, reason);
       if (refusal) throw new Error(refusal);
@@ -835,7 +835,7 @@ export class CardRunner {
    * disposition overwrites another window's.
    */
   private changeFinding(goal: Goal, card: Card, run: CardRun, id: string, change: (findings: ReviewFinding[]) => ReviewFinding[]): CardRun {
-    return this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    return this.updateRun(goal.id, card.id, (persisted) => {
       const current = persisted ?? run;
       this.guardFindingsMutation(current);
       if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), this.clock());
@@ -878,7 +878,7 @@ export class CardRunner {
    */
   private releaseReservation(goal: Goal, card: Card, invocationId: string): void {
     if (!this.store.getCardRun(goal.id, card.id)) return;
-    this.store.updateCardRun(goal.id, card.id, (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }));
+    this.updateRun(goal.id, card.id, (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }));
   }
 
   /**
@@ -890,7 +890,7 @@ export class CardRunner {
    * locked record.
    */
   private save(run: CardRun): CardRun {
-    return this.saveOwing(run, (r) => this.store.saveCardRun(r));
+    return this.saveOwing(run, (r) => this.saveRun(r));
   }
 
   /**
@@ -901,17 +901,97 @@ export class CardRunner {
   private stateOwed?: { goal: Goal; card: Card; owed: OwedEvent; writer?: DispatchWriter };
 
   /**
+   * The SHIP or PREPARE branch `dispatch` is running (card T0-CARD-STATE-STORED): set once `assess` selected SHIP or PREPARE
+   * and cleared when the dispatch ends. Such a branch may store another state than the selected one, or none before its
+   * external effect, so no CARD_STATE of the selection is owed; instead each card-run write of the card made while it is set
+   * that changes the stored state carries a CARD_STATE of that change and appends it once the write lands (`updateRun`,
+   * `saveRun`).
+   */
+  private storedState?: { goal: Goal; card: Card; selected: CardState; reason: string; writer?: DispatchWriter; next?: string; deferred: string[] };
+
+  /**
+   * The reason of the directive a SHIP or PREPARE branch returns for the state its next write stores (R2): set right before
+   * that write, used by the CARD_STATE it owes, and cleared there. Outside such a branch it does nothing.
+   */
+  private storedReason(reason: string): void {
+    if (this.storedState) this.storedState.next = reason;
+  }
+
+  /**
+   * The CARD_STATE a write from `current` to `next` owes while a SHIP or PREPARE branch runs (`storedState`, R2): one when
+   * the write changes the stored state, none otherwise. The reason is the selection's when the write stores the selected state,
+   * else the one the branch set for that write (`storedReason`), else the stop's detail for a STOP.
+   */
+  private storedChange(current: CardRun | undefined, next: CardRun): OwedEvent | undefined {
+    const branch = this.storedState;
+    if (!branch || !current || next === current || next.goalId !== branch.goal.id || next.cardId !== branch.card.id || next.state === current.state) return undefined;
+    // CLOSE to DONE is journaled by close itself, as on main (out of scope of card T0-CARD-STATE-STORED).
+    if (next.state === 'DONE') return undefined;
+    const reason = next.state === branch.selected ? branch.reason : branch.next ?? (next.state === 'STOP' && next.stop ? next.stop.detail : branch.reason);
+    branch.next = undefined;
+    return this.owe(branch.goal, 'CARD_STATE', { from: current.state, to: next.state, reason });
+  }
+
+  /**
+   * Append the CARD_STATE `owed` of a landed write of a SHIP or PREPARE branch (R2), under the dispatch writer. A failed
+   * append leaves it owed for the next command and does not throw (R4): the write landed, and after a ship's intent the
+   * command settles the operation and the pool request as it does when the append succeeds. Its key is then held from every
+   * later delivery of this dispatch (`deferred`, read by `deliverOwed`), so only the next command appends it. A refusal by
+   * another session's live lease is not a failed append and still ends the dispatch.
+   */
+  private deliverStored(saved: CardRun, owed: OwedEvent): void {
+    const branch = this.storedState;
+    if (!branch) return;
+    try {
+      this.deliverOwed(branch.goal, branch.card, saved, { keys: [owed.key], hold: 'others', append: branch.writer?.append });
+    } catch (err) {
+      // A lease another session took ends the dispatch with its holder's stop and nothing more written (card
+      // T0-FOREIGN-DISPATCH-NO-WRITE-2); any other failure leaves the event owed for the next card command (R4).
+      if (ForeignLeaseError.is(err)) throw err;
+      branch.deferred.push(owed.key);
+    }
+  }
+
+  /** `GoalStore.updateCardRun`; while a SHIP or PREPARE branch runs, a change of the stored state carries its CARD_STATE (R2). */
+  private updateRun(goalId: string, cardId: string, change: (current: CardRun | undefined) => CardRun, within?: (write: () => void) => void): CardRun {
+    if (!this.storedState) return this.store.updateCardRun(goalId, cardId, change, within);
+    let owed: OwedEvent | undefined;
+    const branch = this.storedState;
+    let saved: CardRun;
+    try {
+      saved = this.store.updateCardRun(goalId, cardId, (current) => {
+        const next = change(current);
+        owed = this.storedChange(current, next);
+        return owed ? { ...next, journalOwed: this.owedWith(goalId, next, owed) } : next;
+      }, within);
+    } finally {
+      // A reason set for this write (`storedReason`) is never carried to a later one.
+      branch.next = undefined;
+    }
+    if (owed) this.deliverStored(saved, owed);
+    return saved;
+  }
+
+  /**
+   * `GoalStore.saveCardRun`; while a SHIP or PREPARE branch runs, a change of the stored state carries its CARD_STATE (R2).
+   * The save is a compare-and-set on the revision, so a record read at the snapshot's revision is the one the save replaces
+   * if it lands; a record at another revision makes the save refuse, and no event is owed (R3).
+   */
+  private saveRun(run: CardRun, within?: (write: () => void) => void): CardRun {
+    const branch = this.storedState;
+    if (!branch || run.goalId !== branch.goal.id || run.cardId !== branch.card.id) return this.store.saveCardRun(run, within);
+    const before = this.store.getCardRun(run.goalId, run.cardId);
+    const owed = before && before.revision === run.revision ? this.storedChange(before, run) : undefined;
+    branch.next = undefined;
+    const saved = this.store.saveCardRun(owed ? { ...run, journalOwed: this.owedWith(run.goalId, run, owed) } : run, within);
+    if (owed) this.deliverStored(saved, owed);
+    return saved;
+  }
+
+  /**
    * `persist` `run`; while a selection's CARD_STATE is owed for this card (`stateOwed`), the write carries it and, once it
    * lands, the CARD_STATE is appended as the command's own (R1), under the dispatch writer when there is one (R4).
    */
-  /** The selection's CARD_STATE still owed for this card (`stateOwed`), taken by a write made outside `saveOwing`. */
-  private takeStateOwed(goal: Goal, card: Card): { owed: OwedEvent; writer?: DispatchWriter } | undefined {
-    const pending = this.stateOwed;
-    if (!pending || pending.goal.id !== goal.id || pending.card.id !== card.id) return undefined;
-    this.stateOwed = undefined;
-    return { owed: pending.owed, writer: pending.writer };
-  }
-
   private saveOwing(run: CardRun, persist: (run: CardRun) => CardRun): CardRun {
     const pending = this.stateOwed;
     if (!pending || run.goalId !== pending.goal.id || run.cardId !== pending.card.id) return persist(run);
@@ -960,9 +1040,11 @@ export class CardRunner {
     const journal = this.journal(goal.id);
     const append = own.append ?? ((event: Parameters<Journal['append']>[0]) => journal.append(event));
     const seen = read.journalOwed?.length ? journal.readAll() : [];
-    const held = (o: OwedEvent) => (own.hold === 'others' ? !own.keys.includes(o.key) : (own.hold?.includes(o.key) ?? false));
+    // A CARD_STATE whose append failed in this SHIP or PREPARE branch waits for the next command (card T0-CARD-STATE-STORED R4).
+    const deferred = this.storedState?.deferred ?? [];
+    const held = (o: OwedEvent) => deferred.includes(o.key) || (own.hold === 'others' ? !own.keys.includes(o.key) : (own.hold?.includes(o.key) ?? false));
     if (!(read.journalOwed ?? []).some((o) => !held(o) && this.owedDue(o, seen))) return;
-    this.store.updateCardRun(goal.id, card.id, (current) => {
+    this.updateRun(goal.id, card.id, (current) => {
       const events = journal.readAll();
       for (const owed of current?.journalOwed ?? []) {
         if (held(owed) || !this.owedDue(owed, events)) continue;
@@ -1164,7 +1246,7 @@ export class CardRunner {
       });
       return written as T;
     };
-    return { save: (run) => this.saveOwing(run, (r) => this.store.saveCardRun(r, admit)), append: (event) => admit(() => this.journal(goal.id).append(event)), own: () => (owned = true) };
+    return { save: (run) => this.saveOwing(run, (r) => this.saveRun(r, admit)), append: (event) => admit(() => this.journal(goal.id).append(event)), own: () => (owned = true) };
   }
 
   private dispatch(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel }): { run: CardRun; directive: CardDirective } {
@@ -1205,11 +1287,16 @@ export class CardRunner {
     // run as it stands now, before any action.
     if (checkpointMissing(run)) return checkpointWait(run);
     const { decision } = assessed;
-    if (assessed.owed) this.stateOwed = { goal, card, owed: assessed.owed, writer: write };
+    // A SHIP or PREPARE branch may store another state than the one selected, or none before its external effect: each of its
+    // writes that changes the stored state journals that change (card T0-CARD-STATE-STORED); any other selection's CARD_STATE
+    // rides the write that stores it (card T0-CARD-STATE-OWED).
+    if (decision.state === 'SHIP' || decision.state === 'PREPARE') this.storedState = { goal, card, selected: decision.state, reason: decision.reason, writer: write, deferred: [] };
+    else if (assessed.owed) this.stateOwed = { goal, card, owed: assessed.owed, writer: write };
     try {
       return this.act(goal, card, run, assessed.next, decision, claimed, write, options);
     } finally {
       this.stateOwed = undefined;
+      this.storedState = undefined;
     }
   }
 
@@ -1370,7 +1457,7 @@ export class CardRunner {
     // The run update refuses when the run read under the lock carries the generation already. One acquisition per generation
     // across goals, whatever journaled it (PREPARE's claim journals one before it saves the generation): a completion after
     // one journals the completion instead of a second acquisition.
-    const owned = unlessLocked(() => this.store.updateCardRun(goal.id, card.id, (current) => {
+    const owned = unlessLocked(() => this.updateRun(goal.id, card.id, (current) => {
       if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
       return { ...(current ?? caller), ownerGeneration: lease.generation };
     }, holding(() => {
@@ -1378,7 +1465,7 @@ export class CardRunner {
       if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
       else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
     })), (refusal) => `the takeover of card ${card.id} took lease generation ${lease.generation}, but its run update was refused (${refusal}); run ${scoped('takeover')} again to complete it`);
-    const saveHolding = (run: CardRun) => this.store.saveCardRun(run, holding());
+    const saveHolding = (run: CardRun) => this.saveRun(run, holding());
     // The assessment, its lease renewal and its saves, runs once the run carries the generation.
     const { assessed, next } = unlessLocked(() => {
       const assessed = this.assess(goal, card, owned, now, saveHolding);
@@ -1440,6 +1527,8 @@ export class CardRunner {
     // the next `card next` decides again (card T0-PREPARE-WORKTREE R1). An attach, and either decision of the dry-run ship
     // path, which makes no worktree (R3), records the path and opens BUILD.
     const start = decision.action === 'start' && this.config.shipPath !== 'dry-run';
+    // A write that stores BUILD carries the reason of the prepare directive's worktree decision (card T0-CARD-STATE-STORED R2).
+    if (!start) this.storedReason(`${decision.action} ${decision.path}: ${decision.reason}`);
     const next = write.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
@@ -1664,7 +1753,7 @@ export class CardRunner {
     if (!finding) throw new Error('a withdrawal needs the finding that refutes the candidate: --cause "<finding>"');
     if ((this.store.getGoal(goal.id) ?? goal).terminal) throw new Error(`goal ${goal.id} is terminal; nothing can be withdrawn`);
     let owed: OwedEvent | undefined;
-    const saved = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    const saved = this.updateRun(goal.id, card.id, (persisted) => {
       const current = persisted ?? caller;
       const refusal = this.withdrawalRefusal(goal, card, current, now);
       if (refusal) throw new Error(refusal);
@@ -1720,12 +1809,9 @@ export class CardRunner {
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
-    // The ship site keeps the append of main (card T0-CARD-STATE-OWED, issue 511): the CARD_STATE of a SHIP selection is
-    // appended here, before any write, because the ship may reach its external effect and its result write with no save of
-    // the run that could carry it.
-    const selection = this.takeStateOwed(goal, card);
-    if (selection) (selection.writer?.append ?? ((event: Parameters<Journal['append']>[0]) => this.journal(goal.id).append(event)))({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: selection.owed.generation, data: { from: selection.owed.data['from'], to: selection.owed.data['to'], reason: selection.owed.data['reason'] } });
     if (hasUnreconciledRerun(run.ci)) {
+      // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+      this.storedReason('ci-rerun');
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'ci-rerun', pollSeconds: 90, narration: 'A CI rerun is persisted but not reconciled; look it up (aidlc card ci-reconcile) before shipping again.' } };
     }
@@ -1786,6 +1872,8 @@ export class CardRunner {
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
     if (!op) {
+      // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+      this.storedReason(`operation:${duplicate!.id}`);
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `operation:${duplicate!.id}`, pollSeconds: 60, narration: `A ship for this candidate is already ${duplicate!.status} (${duplicate!.id}); reconcile it instead of launching a second one.` } };
     }
@@ -1804,6 +1892,8 @@ export class CardRunner {
     this.journal(goal.id).append({ type: 'REVIEW_REQUESTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, status: enq.status } });
     if (enq.status === 'joined' && enq.request.state === 'running') {
       if (recorded) this.ops.markResult(op.id, 'cancelled', { error: 'joined running review request' }, now);
+      // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+      this.storedReason(`review:${key}`);
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review:${key}`, pollSeconds: 60, narration: 'A matching review is already running in the shared pool; join it instead of launching another.' } };
     }
@@ -1811,6 +1901,8 @@ export class CardRunner {
     // `admitReview` asks with its key, so an admission is always this request's own.
     if (admit.status !== 'admitted') {
       if (recorded) this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` }, now);
+      // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+      this.storedReason(`review-pool:${goal.reviewPool}:${admit.status}`);
       const next = this.save({ ...run, state: 'WAIT' });
       const until = admit.status === 'reset-pending' ? ` until ${admit.resetAt}` : admit.status === 'behind' ? ` the request of ${admit.ahead.requesters.join(', ')}` : '';
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review-pool:${goal.reviewPool}:${admit.status}`, pollSeconds: 120, narration: `Review pool ${goal.reviewPool} is ${admit.status}${until}; waiting holds no active slot. Continue independent work within limits.` } };
@@ -1832,7 +1924,7 @@ export class CardRunner {
     // owner generation; anything else cancels the intent and the pool request and sends the caller back to `card next`.
     let armed: CardRun;
     try {
-      armed = this.store.updateCardRun(goal.id, card.id, (current) => current ?? run);
+      armed = this.updateRun(goal.id, card.id, (current) => current ?? run);
     } catch (err) {
       // Nothing was dispatched: the intent and the pool admission are withdrawn, each step on its own so none masks the
       // failure or skips the next; the failure is the caller's.
@@ -1910,7 +2002,7 @@ export class CardRunner {
         return false;
       }
     };
-    const owed = attempt(() => this.store.updateCardRun(goal.id, card.id, (run) => ({ ...run!, journalOwed: this.owedWith(goal.id, run!, result) })));
+    const owed = attempt(() => this.updateRun(goal.id, card.id, (run) => ({ ...run!, journalOwed: this.owedWith(goal.id, run!, result) })));
     attempt(() => this.ops.markResult(operationId, 'UNKNOWN', { error }, this.clock()));
     attempt(() => this.queue.cancel(key, error, this.clock()));
     attempt(() => {
@@ -2005,13 +2097,15 @@ export class CardRunner {
       const timeoutOf = (r: PreReviewRound) => (r.timeoutMs ?? cfg.timeoutMs) + (r.fallbackTimeoutMs ?? 0);
       const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
+        // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+        this.storedReason(`pre-review:${pending.reservationId ?? pending.requestedAt}`);
         const next = this.save({ ...run, state: 'WAIT' });
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((timeoutOf(pending) + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
       }
       // Abandonment is decided on the locked record: only a round still pending and still expired there is dropped, and
       // only that drop is journaled; a round decided meanwhile stays and drives the gate from here on.
       let cancelled: PreReviewRound | undefined;
-      run = this.store.updateCardRun(goal.id, card.id, (current) => {
+      run = this.updateRun(goal.id, card.id, (current) => {
         const latest = current ?? run;
         const still = latest.preReview.rounds.find((r) => r.outcome === 'pending' && r.reservationId === pending.reservationId && r.requestedAt === pending.requestedAt);
         if (!still || Date.parse(now) < expiry(still)) return latest;
@@ -2061,6 +2155,7 @@ export class CardRunner {
       if (!answered.answered) {
         // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons and the open finding ids.
         // The episode reopens so the repair can be recorded; the review budget, not the ladder, paid for the block.
+        this.storedReason('pre-review block still pending');
         const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined, effort: run.effort ? reopenAfterReviewBlock(run.effort, 'pre-review block still pending') : run.effort, blockedReceipt: this.keepReceipt(run, { stage: 'pre', cycle, round: last.round, candidateSha: run.candidate?.sha }) });
         const admitted = run.effort ? repairAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the round runs on the unchanged candidate once every finding of the block is disputed.` : '';
@@ -2072,6 +2167,8 @@ export class CardRunner {
     const { cfg: reviewer, waitUntil } = this.preReviewerNow(run, digest, now);
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
     if (waitUntil) {
+      // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+      this.storedReason('pre-review-quota');
       const next = this.save({ ...run, state: 'WAIT' });
       const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
       const held = cfg.fallback ? `Pre-reviewers ${cfg.reviewer} and fallback ${cfg.fallback.reviewer} both reported a quota/rate limit` : `Pre-reviewer ${cfg.reviewer} reported a quota/rate limit`;
@@ -2148,6 +2245,7 @@ export class CardRunner {
       }
       const answered = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }) : { answered: false, open: [] };
       if (!answered.answered) {
+        this.storedReason('resolve candidate defects or document dispute within remaining review allowance');
         const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined, blockedReceipt: this.keepReceipt(run, { stage: 'formal', candidateSha: run.candidate?.sha }) });
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
         return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.${ids}${this.classRepairNote(run)} ${REPRO_REQUEST}` } };
@@ -2158,6 +2256,8 @@ export class CardRunner {
     // The reviewer's pool can keep a later reset than its own hold (issue 54): the wait names the hold the pool keeps.
     const waitUntil = held && this.queue.heldUntil(this.formalPool(goal, cfg), held, now);
     if (waitUntil) {
+      // The CARD_STATE of this WAIT carries the directive's reason (card T0-CARD-STATE-STORED R2).
+      this.storedReason('review-quota');
       const next = this.save({ ...run, state: 'WAIT' });
       const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
       // The held reviewer is the one resolved above: a due base-sync decision waits on the base-sync reviewer alone.
@@ -2522,7 +2622,7 @@ export class CardRunner {
     let held: string[] = [];
     try {
       this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
-      this.store.updateCardRun(goal.id, card.id, (locked) => {
+      this.updateRun(goal.id, card.id, (locked) => {
         const current = locked ?? persisted;
         this.refuseAmendedContract(card, current);
         this.refuseReplacedCandidate(current, card, 'formal', candidateSha, candidateDigest);
@@ -2864,7 +2964,7 @@ export class CardRunner {
     // Only an entry still pending on the locked record is released (one decided meanwhile keeps its decision), and only a
     // released entry is journaled.
     const released: ReviewInvocation[] = [];
-    const next = this.store.updateCardRun(goal.id, card.id, (current) => {
+    const next = this.updateRun(goal.id, card.id, (current) => {
       const latest = current ?? persisted;
       released.length = 0;
       released.push(...latest.review.invocations.filter((i) => ids.has(i.invocationId) && i.outcome === 'pending'));
@@ -3009,7 +3109,7 @@ export class CardRunner {
       return { ...decision.commit(withFindings, found), ownerGeneration: latest.ownerGeneration };
     };
     // The decision event of whatever status the write reaches is owed in that same write (card T0-JOURNAL-FAULT-EVENTS, R1).
-    const run = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    const run = this.updateRun(goal.id, card.id, (persisted) => {
       const next = change(persisted);
       const event = input.event(outcome.status, found);
       const entry = this.owe(goal, event.type, event.data);
@@ -3137,7 +3237,7 @@ export class CardRunner {
     let reservation: PreReviewRound | undefined;
     let priorFindings: PriorFinding[] = [];
     let seen: Record<string, FindingSnapshot> = {};
-    this.store.updateCardRun(goal.id, card.id, (locked) => {
+    this.updateRun(goal.id, card.id, (locked) => {
       const current = locked ?? persisted;
       this.refuseAmendedContract(card, current);
       this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
@@ -3162,7 +3262,7 @@ export class CardRunner {
     if (!reservation) throw new Error('pre-review round not reserved');
     const reserved: PreReviewRound = reservation;
     const { cycle, round, attemptNo } = numbering;
-    const dropReservation = () => this.store.updateCardRun(goal.id, card.id, (locked) => ({ ...(locked ?? persisted), preReview: { ...(locked ?? persisted).preReview, rounds: (locked ?? persisted).preReview.rounds.filter((r) => r.reservationId !== fileStem) } }));
+    const dropReservation = () => this.updateRun(goal.id, card.id, (locked) => ({ ...(locked ?? persisted), preReview: { ...(locked ?? persisted).preReview, rounds: (locked ?? persisted).preReview.rounds.filter((r) => r.reservationId !== fileStem) } }));
     // Deterministic scope gate (dimension 1) first: a block with no model call and no tokens spent.
     const outOfScope = changedPaths.filter((p) => !pathAllowed(p, card.allow_paths));
     let result: PanelResult;
@@ -3342,7 +3442,7 @@ export class CardRunner {
       let found: RecordFindingsResult = { findings: run.findings, raised: [], reraised: [], resolved: [] };
       const pin = this.pinDecided(classified.outcome, this.reviewCheckout(run), run.candidate?.sha);
       const identities = shipVerdict && (classified.outcome === 'block-defect' || classified.outcome === 'block-advisory') ? this.findingIdentities(this.reviewCheckout(run), run.candidate?.sha, citedReasonsOf(shipVerdict)) : {};
-      const locked = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      const locked = this.updateRun(goal.id, card.id, (persisted) => {
         const current = persisted ?? run;
         rec = undefined;
         recorded = false;
@@ -3390,7 +3490,7 @@ export class CardRunner {
     // above is never replaced by the copy captured then.
     const history = { superseded: false, stopped: false, newer: 'none' };
     const finish = (patchOf: (latest: CardRun) => Partial<CardRun>, then: (saved: CardRun) => { run: CardRun; directive: CardDirective }): { run: CardRun; directive: CardDirective } => {
-      const saved = this.store.updateCardRun(goal.id, card.id, (current) => {
+      const saved = this.updateRun(goal.id, card.id, (current) => {
         const latest = current ?? run;
         const evidence = [...latest.evidence, evidenceEntry];
         if ((latest.candidate?.digest ?? 'unknown') !== candidateDigest) {
@@ -3466,7 +3566,9 @@ export class CardRunner {
       }
       // The merge result is owed in `finish`'s write and appended after `markResult`, while the ledger shows it (card T0-JOURNAL-FAULT-EVENTS).
       const owedResult = this.owe(goal, 'OPERATION_RESULT', { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts });
-      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && mergeVerified ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
+      // The CARD_STATE of this write carries the reason of the directive it leads to (card T0-CARD-STATE-STORED R2).
+    this.storedReason(mergeVerified ? 'merge verified; complete only missing closure steps' : `merge-verify:${operationId}`);
+    return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && mergeVerified ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
         const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` }, now);
         this.deliverOwed(goal, card, next, { keys: [owedResult.key] });
@@ -3478,7 +3580,8 @@ export class CardRunner {
       // A push, PR create or merge that timed out may have taken effect (card T0-SHIP-TIMEOUT): the operation is UNKNOWN and counts
       // no attempt. As for a merge, the result is owed in `finish`'s write and appended after `markResult`, while the ledger shows it.
       const owedResult = this.owe(goal, 'OPERATION_RESULT', { operationId, status: 'UNKNOWN', outcome: result.outcome, detail: result.detail });
-      return finish((latest) => ({ state: 'WAIT', journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
+      this.storedReason(`operation:${operationId}`);
+    return finish((latest) => ({ state: 'WAIT', journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
         this.ops.markResult(operationId, 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: result.detail }, now);
         this.deliverOwed(goal, card, next, { keys: [owedResult.key] });
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: `operation:${operationId}`, pollSeconds: 60, narration: `The ship stopped on an effect of unknown outcome: ${result.detail}. Look up whether it took effect and record it with \`aidlc ops reconcile ${operationId} --status succeeded|failed|cancelled\`, then run \`aidlc card next ${card.id}\`, which ships again under a new operation.` } };
@@ -3492,13 +3595,15 @@ export class CardRunner {
       const runningIndex = next.effort?.attempts.findIndex((a) => a.outcome === 'running') ?? -1;
       return { kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? (next.effort ? ladderNumber(next.effort, runningIndex >= 0 ? runningIndex : next.effort.attempts.length) : 1), skills: skills ?? this.buildSkills(goal, card), narration };
     };
-    const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
+    const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => (this.storedReason(narration), { ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
     // A ship that fails on the candidate's own code (T0-SHIP-REPAIR-ATTEMPT): the success that bound the candidate is a
     // counted failure whose cause names the outcome, the episode reopens, and the next step is the ladder's on the locked
     // record (the repair attempt, the one justified escalation, or STOP/card), the same one `card attempt` admits.
     let refutation: ShipFailureStep | undefined;
     const refutePatch = (latest: CardRun, cause: string): Partial<CardRun> => {
       refutation = latest.effort ? afterShipFailure(latest.effort, cause, { harderProblem: true, limitsPermit: checkAdmission(latest.deadline, now).phase === 'open' }) : undefined;
+      // The CARD_STATE of a BUILD this write stores carries the failure the repair directive names (card T0-CARD-STATE-STORED R2).
+      if (refutation?.action.action !== 'stop') this.storedReason(cause);
       if (refutation?.action.action !== 'stop') return { state: 'BUILD', effort: refutation?.episode ?? latest.effort, dodReceipt: undefined, blockedReceipt: undefined };
       const stop = makeStop('card', `${JSON.stringify(cause)}; the effort ladder admits no repair attempt: ${refutation.action.reason}: ${refutation.action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
       return { state: 'STOP', stop, effort: refutation.episode, dodReceipt: undefined, blockedReceipt: undefined };
@@ -3533,7 +3638,8 @@ export class CardRunner {
             }
             // The two R3 decisions are the formal review's own budget: the episode reopens and the repair is the next attempt.
             const effort = latest.effort ? reopenAfterReviewBlock(latest.effort, classified.reasons[0] ?? 'review block') : latest.effort;
-            return { state: 'REVIEW_FIX', effort, dodReceipt: undefined, blockedReceipt: this.keepReceipt(latest, { stage: 'formal', candidateSha: latest.candidate?.sha }) };
+            this.storedReason('resolve candidate defects or document dispute within remaining review allowance');
+        return { state: 'REVIEW_FIX', effort, dodReceipt: undefined, blockedReceipt: this.keepReceipt(latest, { stage: 'formal', candidateSha: latest.candidate?.sha }) };
           },
           (next) =>
             next.state === 'STOP' && next.stop
@@ -3546,7 +3652,7 @@ export class CardRunner {
         // ships the same candidate again once the hold has passed.
         if (classified.outcome === 'quota-hold') {
           const pollSeconds = Math.max(60, Math.ceil((Date.parse(holdUntil) - Date.parse(now)) / 1000));
-          return finish(() => ({ state: 'WAIT' }), (next) => ({ run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `The ship-path reviewer reported a quota/rate limit; review pool ${goal.reviewPool} is held until ${holdUntil} (not a decision, no retry spent). Then run \`aidlc card next ${card.id}\`.` } }));
+          return finish(() => (this.storedReason('review-quota'), { state: 'WAIT' }), (next) => ({ run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `The ship-path reviewer reported a quota/rate limit; review pool ${goal.reviewPool} is held until ${holdUntil} (not a decision, no retry spent). Then run \`aidlc card next ${card.id}\`.` } }));
         }
         if (reviewDecision?.action === 'retry-review') {
           return finish(() => ({ state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
@@ -3577,6 +3683,7 @@ export class CardRunner {
             decided = rerunOn(latest.ci);
             if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
             if (cls.class === 'code-defect') return refutePatch(latest, `ship ${result.outcome}: CI code defect (${cls.evidence[0] ?? ''})`);
+            if (snapshotAllowed) this.storedReason('record-changed');
             if (snapshotAllowed) return { state: 'WAIT' };
             return { state: 'STOP', stop: makeStop('ci', decided.reason, 'diagnose the failure before any further rerun', { at: now, global: false }) };
           },
@@ -3790,7 +3897,7 @@ export class CardRunner {
     // (card-run lock first, then the lease lock), where `ship` records its merge intent and claims and takeovers run, so no
     // lease or operation is admitted between the re-check and the write.
     let current: CardRun = run;
-    const written = this.store.updateCardRun(
+    const written = this.updateRun(
       goal.id,
       card.id,
       (persisted) => {
@@ -3924,7 +4031,7 @@ export class CardRunner {
   private writeClosure(goal: Goal, card: Card, generation: number, change: (stored: CardRun) => CardRun, before?: (next: CardRun) => void): CardRun {
     const key = resourceKeys.card(this.repo.key, card.id);
     let next: CardRun;
-    return this.store.updateCardRun(
+    return this.updateRun(
       goal.id,
       card.id,
       (stored) => {
