@@ -336,7 +336,7 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
   };
   /** The Sessions sentence: the same, with the takeover's nested hold and every window that remains, each with its recovery. */
   const LOCK_SESSIONS =
-    "Every lease write, every goal and card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), and every run write of a takeover, the assessment's saves included, holds the card-run lock and then the lease lock until the run record is on disk, while `recordAttempt` and a raw `card report` patch stay unfenced, release and review-pool records stay last-writer-wins, a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again, and a review commit, reservation or finding disposition whose fence read the lease before a takeover's lease write still lands, ahead of that takeover's run update.";
+    "Every lease write, every goal and card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), and every run write of a takeover, the assessment's saves included, holds the card-run lock and then the lease lock until the run record is on disk, while `recordAttempt` and a raw `card report` patch stay unfenced, release records stay last-writer-wins, a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again, and a review commit, reservation or finding disposition whose fence read the lease before a takeover's lease write still lands, ahead of that takeover's run update.";
   /** The Sessions sentence: the release's two steps, the window the ruling of 2026-09-27 accepted. */
   const RELEASE_GAP =
     'A writer releases its own lock in two steps, a read that finds its own text and then the unlink, so a lock deleted by hand and replaced between the two is removed as well; deleting only the lock of a process confirmed dead, as above, keeps that from happening (ruling of 2026-09-27).';
@@ -349,7 +349,7 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
     const texts: Array<[string, string, number, string]> = [['docs/OPERATIONS.md Sessions', sessions(), 13_701, LOCK_SESSIONS]];
     for (const [name, text, base, sentence] of texts) {
       assert.equal(sentence.split(SENTENCE_BREAK).length, 1, `${name}: the lock statement is one sentence`);
-      for (const unfenced of ['`recordAttempt`', 'a raw `card report` patch', 'release and review-pool records', 'between the lease write and the run update']) assert.ok(sentence.includes(unfenced), `${name}: the sentence names ${unfenced}`);
+      for (const unfenced of ['`recordAttempt`', 'a raw `card report` patch', 'release records stay last-writer-wins', 'between the lease write and the run update']) assert.ok(sentence.includes(unfenced), `${name}: the sentence names ${unfenced}`);
       assert.ok(text.length > 1_000, `${name} resolved (${text.length} characters)`);
       assert.ok(Buffer.byteLength(text, 'utf8') < base, `${name} is shorter than on the base: ${Buffer.byteLength(text, 'utf8')} bytes, base ${base}`);
       assert.ok(!text.includes('compare-and-set'), `${name} names no compare-and-set`);

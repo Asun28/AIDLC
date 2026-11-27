@@ -95,4 +95,3 @@ Test files are under `tests/core`, `tests/infra` and `tests/surface`; the suite 
 
 - No scenario tests yet for `src/loop/controller.ts`, `src/loop/card-runner.ts` and `src/loop/release-runner.ts` beyond the engines they compose.
 - `src/delivery/github-ship.ts` (native git/gh ship chain) has no dedicated test yet; its sentinels reuse `classifyShipOutput`, which is tested.
-- `src/scaffold/init.ts` and `src/cli/main.ts` have no automated tests.

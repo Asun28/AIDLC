@@ -33,10 +33,10 @@ Module map, state diagrams and the persisted-state table: `docs/ARCHITECTURE.md`
 Operating guide (running goals, hooks, R2/R3 review, audit): `docs/OPERATIONS.md`.
 The parts that take several files to see:
 
-One directive per call. `aidlc next` is read-only apart from derived
-transitions and returns exactly one typed `Directive` (`src/loop/directive.ts`);
-cards follow the same shape through `aidlc card next <id>` /
-`aidlc card attempt <id>`.
+One directive per call. `aidlc next` writes only its derived transitions and
+the board view, a derived view, and returns exactly one typed `Directive`
+(`src/loop/directive.ts`); cards follow the same shape through
+`aidlc card next <id>` / `aidlc card attempt <id>`.
 
 The layers of `src/`, inner to outer: `docs/ARCHITECTURE.md`, Module map, describes each.
 Runtime details: state lives under `<main checkout>/.aidlc/`, shared
