@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, candidateShaFor, actorA, actorB, type Fixture } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, actorA, actorB, InjectedShipPath, type Fixture } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS } from '../../src/coordination/lease.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -16,6 +16,8 @@ import { MINUTE_MS, type JournalEvent } from '../../src/core/types.ts';
 // never by timing.
 
 const CARD = 'T1-A';
+/** Structured CI gate evidence that classifies as transient (ci-rerun.test.ts). */
+const TRANSIENT_CI = '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}';
 
 const states = (events: JournalEvent[]) => events.filter((e) => e.type === 'CARD_STATE' && e.cardId === CARD);
 const transitions = (events: JournalEvent[], from: string, to: string) => states(events).filter((e) => e.data['from'] === from && e.data['to'] === to);
@@ -265,6 +267,53 @@ const OUTCOMES = ['merged', 'dod-failed', 'verify-failed', 'scope-blocked', 'bud
 
 const SHIP_REASON = 'dispatch/resume the existing ship path with preserved base and mode';
 
+/** The directive each DryRunShipPath outcome returns and the state it stores, from a record in BUILD or SHIP alike. */
+const EXPECTED: Record<(typeof OUTCOMES)[number], [string, string]> = {
+  'merged': ['close', 'CLOSE'],
+  'dod-failed': ['build', 'BUILD'],
+  'verify-failed': ['build', 'BUILD'],
+  'scope-blocked': ['build', 'BUILD'],
+  'budget-over': ['build', 'BUILD'],
+  'license-blocked': ['stop', 'STOP'],
+  'secrets-blocked': ['stop', 'STOP'],
+  'review-blocked': ['review-fix', 'REVIEW_FIX'],
+  'review-no-verdict': ['ship', 'SHIP'],
+  'ci-red': ['stop', 'STOP'],
+  'ci-timeout': ['stop', 'STOP'],
+  'push-failed': ['stop', 'STOP'],
+  'pr-failed': ['stop', 'STOP'],
+  'merge-failed': ['stop', 'STOP'],
+  'auth-failed': ['stop', 'STOP'],
+  'no-reviewer': ['stop', 'STOP'],
+  'red-missing': ['build', 'BUILD'],
+  'merge-unconfirmed': ['close', 'CLOSE'],
+  'effect-unknown': ['wait', 'WAIT'],
+  'unclassified': ['stop', 'STOP'],
+};
+
+test('T0-CARD-STATE-STORED R3 decision 4: a transient CI failure with structured evidence, shipped from a record stored in BUILD, persists one rerun and journals one BUILD to SHIP with the selection reason [R2] [R5]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, runner } = builtCandidate(fx, new InjectedShipPath(['ci-red'], TRANSIENT_CI));
+    assert.equal(fx.store.getCardRun(goalId, CARD)!.state, 'BUILD');
+    const start = fx.events(goalId).length;
+    const landed = wrapWrites(fx, goalId);
+    const r = runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+    assert.equal(r.directive.kind, 'ship', r.directive.narration);
+    const stored = fx.store.getCardRun(goalId, CARD)!;
+    assert.equal(stored.state, 'SHIP', 'the rerun write stores SHIP');
+    assert.deepEqual(stored.ci.reruns.map((x) => [x.runId, x.outcome]), [['12345', 'requested']], 'one rerun persisted');
+    const events = fx.events(goalId);
+    const ships = transitions(events.slice(start), 'BUILD', 'SHIP');
+    assert.equal(ships.length, 1, 'exactly one BUILD to SHIP');
+    assert.equal(ships[0]!.data['reason'], SHIP_REASON, 'the selection reason, not the transient-CI narration');
+    assertStoredChanges(events, start, landed);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
 test('T0-CARD-STATE-STORED R3 decisions 2 and 3: from a record stored in BUILD or SHIP, every ship outcome journals each stored change with the selection reason for the selected SHIP and the reason of the directive it leads to for any other state, and no second CLOSE to DONE [R2] [R5]', () => {
   for (const from of ['BUILD', 'SHIP'] as const) for (const outcome of OUTCOMES) {
     const fx = makeFixture({ actor: actorA });
@@ -274,22 +323,22 @@ test('T0-CARD-STATE-STORED R3 decisions 2 and 3: from a record stored in BUILD o
       if (from === 'SHIP') fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, CARD)!, state: 'SHIP' });
       const start = fx.events(goalId).length;
       const landed = wrapWrites(fx, goalId);
-      let r: ReturnType<CardRunner['next']> | undefined;
-      try {
-        r = runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
-      } catch {
-        /* a throwing outcome is judged by its writes alone */
-      }
+      // No outcome throws: an exception fails the test instead of leaving the case with nothing compared.
+      const r = runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
       const events = fx.events(goalId);
-      assertStoredChanges(events, start, landed);
+      const [kind, state] = EXPECTED[outcome];
+      assert.equal(r.directive.kind, kind, `${from} ${outcome}: the directive (${r.directive.narration})`);
       const stored = fx.store.getCardRun(goalId, CARD)!;
+      assert.equal(stored.state, state, `${from} ${outcome}: the stored state`);
+      assert.equal(states(events.slice(start)).length, state === from ? 0 : 1, `${from} ${outcome}: one CARD_STATE when the stored state changed, none when it did not`);
+      assertStoredChanges(events, start, landed);
       for (const e of states(events.slice(start))) {
         const to = String(e.data['to']);
         const reason = String(e.data['reason']);
         if (to === 'SHIP') assert.equal(reason, SHIP_REASON, `${from} ${outcome}: a write that stores the selected SHIP carries the selection reason`);
         else if (to === 'STOP') assert.equal(reason, stored.stop?.detail, `${from} ${outcome}: a STOP carries its stop detail`);
         else assert.notEqual(reason, SHIP_REASON, `${from} ${outcome}: ${to} does not carry the SHIP selection reason (${reason})`);
-        if (to === 'WAIT' && r?.directive.kind === 'wait' && stored.state === 'WAIT') assert.equal(reason, r.directive.on, `${from} ${outcome}: a WAIT carries its directive's on`);
+        if (to === 'WAIT' && r.directive.kind === 'wait') assert.equal(reason, r.directive.on, `${from} ${outcome}: a WAIT carries its directive's on`);
       }
       assert.ok(transitions(events, 'CLOSE', 'DONE').length <= 1, `${from} ${outcome}: at most one CLOSE to DONE`);
     } finally {
