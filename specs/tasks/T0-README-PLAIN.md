@@ -98,3 +98,56 @@ npm run typecheck && npm run check:tree && node --test tests/surface/readme.test
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## PR summary
+
+### What
+This change rewrites README.md in plain English for IT professionals. It removes 15 sentences that only answered objections.
+
+### Why / Intent
+The owner asked for a clear and concise README for IT professionals. Claude and Codex agreed on each change in four planning rounds.
+
+### How / Behaviour
+README.md now has an opening paragraph, How it works, Status, Install and a first-goal dry run. The init path list moves to docs/OPERATIONS.md Setup. The goal states table moves to docs/ARCHITECTURE.md with corrected rows.
+
+### System impact
+No source file changes. Only documents and the tests that pin their text change.
+
+### Security
+No security effect. The README guard table still lists every guard, and docs/OPERATIONS.md Hooks keeps the exact conditions.
+
+### Tests and review
+tests/surface/readme.test.ts pins the new README parts and checks that each removed sentence is absent. The new tests failed on the old README at commit 5c00cc9b and pass now. R3 reviews the candidate before ship.
+
+### Risk
+Low. A reader who looks for a moved fact finds a link to its new place.
+
+### Ownership
+The aidlc maintainers own README.md, docs/OPERATIONS.md and docs/ARCHITECTURE.md.
+
+### Docs
+README.md, docs/OPERATIONS.md, docs/ARCHITECTURE.md and changelog.d/T0-README-PLAIN.md change.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/readme.test.ts, `T0-README-PLAIN acceptance 1` | pass |
+| 2 | tests/surface/readme.test.ts, `T0-README-PLAIN acceptance 2` and `2.1` to `2.15`, one test per excerpt; with README.md of 359fbd14 all 15 fail (15 fail, 0 pass), first RED at 5c00cc9b | pass |
+| 3 | tests/surface/readme.test.ts, `T1-INIT-SURFACE acceptance 2`, `3` and `6`, with the dispatch facts of docs/OPERATIONS.md Hooks pinned (R3 decision 1, F2) | pass |
+| 4 | tests/surface/prose.test.ts, `acceptance 8`; docs/OPERATIONS.md Sessions unchanged at 13,696 bytes | pass |
+| 5 | tests/surface/verifier.test.ts, `T1-AUDIT-FACTS acceptance 8`; tests/surface/removed-surface.test.ts, `T1-SWEEP-DEAD-CODE acceptance 3`; the other Limits rows against src/core/deadlines.ts:30-33 and 49-52, src/core/effort.ts:76-80 and src/loop/controller.ts:185-191 and 417-418 | pass; reviewer check |
+| 6 | Moved facts in the candidate: docs/OPERATIONS.md:87-89, 577 and 791 (git), 388 (build selection), 61 (PATH), 15 (`--no-hooks`), 17-59 (path list), 405 (guard quoting), 396 (`goals/` tail), 415 (unusable config), 307 (Sessions), 639 and 641 (bounds), 615 (Limits order); docs/ARCHITECTURE.md:91-102 (states table), 104 (resume sentence), 18 (review queue, its own paragraph: tests/scenarios/review-admit-strand.test.ts:205-226 pins the sentence before line 16's T0-REVIEW-ADMIT-STRAND sentence), 14 (identity change), 153 (card precedence), 187 (report results), 8 (Module map). README links: #sessions, #setup, #hooks, #running-a-goal, #watching-a-goal, #bound-statistics, #module-map | reviewer check |
+| 7 | Dry run on a fresh `aidlc init` repository (below) | done |
+| 8 | DoD arm 3; `git diff --numstat origin/main...HEAD -- src` is empty | pass |
+| 9 | changelog.d/T0-README-PLAIN.md (one line); no em dash or corner bracket in the changed files (owner amendment, revision 1, dropped the `superseded_by` item: tests/surface/outcome-clean.test.ts:69-87) | pass |
+
+Dry run (item 7), 2026-11-27, on a new repository with one commit and a bare `origin`:
+- `aidlc init`: provider `mock`, ship path `dry-run`, `formalReview.command` empty; `aidlc doctor` reported `provider: mock: ok`.
+- `aidlc goal new "fix the crash when a claim has no adjuster" --bug-evidence`: size T0-bugfix, directive `plan`.
+- Card T0-CLAIM-NO-ADJUSTER written, `aidlc cards validate` ok, committed and pushed; `aidlc report --result cards-projected` returned `run-card`.
+- `aidlc card next`: `prepare` (the `git worktree add` command), then `build`.
+- RED commit 880f684: `a claim with no adjuster has no adjuster name` failed (2 tests, 1 pass, 1 fail).
+- DoD: `node --test tests/claims.test.mjs: exit 0, 2 pass, 0 fail`; `aidlc card attempt --outcome success` recorded.
+- `aidlc card next`: the dry-run ship recorded a merge operation `succeeded` and returned `close`; `main` stayed at the card commit (simulated merge).
+- `aidlc card close --all`, then `--skip-lesson`: card `done`; `aidlc next`: `verify-arc`; `aidlc report --result arc-verified`: goal `done`.

@@ -11,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
 
 /** Characters the writing rule (CLAUDE.md, Writing density) bans in prose: the em dash and the CJK corner brackets. */
-const BANNED = /[—「」]/u;
+const BANNED = /[\u2014\u300c\u300d]/u;
 
 /** 1-based line numbers of `text` that carry a banned character. */
 export function bannedProse(text: string): number[] {
@@ -51,8 +51,8 @@ const SCOPE: string[] = [
 
 describe('prose (writing density)', () => {
   test('bannedProse flags an em dash and corner brackets and passes plain punctuation', () => {
-    assert.deepEqual(bannedProse('a — b'), [1]);
-    assert.deepEqual(bannedProse('first\n「quoted」\nthird'), [2]);
+    assert.deepEqual(bannedProse('a \u2014 b'), [1]);
+    assert.deepEqual(bannedProse('first\n\u300cquoted\u300d\nthird'), [2]);
     assert.deepEqual(bannedProse('plain, with a hyphen - a colon: and "quotes"'), []);
   });
 
@@ -334,16 +334,6 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
     const at = ops.indexOf('\n## Sessions\n') + 1;
     return ops.slice(at, ops.indexOf('\n## ', at) + 1);
   };
-  /** The paragraph under the README Multi-session heading. */
-  const multiSession = (): string => {
-    const readme = lf(read('README.md'));
-    const heading = '\n## Multi-session\n\n';
-    const at = readme.indexOf(heading) + heading.length;
-    return readme.slice(at, readme.indexOf('\n\n', at));
-  };
-  /** The README sentence: what the lock covers and what stays unfenced. */
-  const LOCK =
-    "Every lease write, every goal and card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), while `recordAttempt` and a raw `card report` patch stay unfenced, release and review-pool records stay last-writer-wins, and a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again.";
   /** The Sessions sentence: the same, with the takeover's nested hold and every window that remains, each with its recovery. */
   const LOCK_SESSIONS =
     "Every lease write, every goal and card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), and every run write of a takeover, the assessment's saves included, holds the card-run lock and then the lease lock until the run record is on disk, while `recordAttempt` and a raw `card report` patch stay unfenced, release and review-pool records stay last-writer-wins, a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again, and a review commit, reservation or finding disposition whose fence read the lease before a takeover's lease write still lands, ahead of that takeover's run update.";
@@ -354,12 +344,9 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
   const RECOVERY =
     "A lock whose owner process is gone is never removed automatically: the command refuses with `LOCKED` naming the lock file and the process id; delete that file only once that process is confirmed dead, then run the command again.";
 
-  test('acceptance 8: the Sessions section and the README Multi-session paragraph are shorter than on the base, name no compare-and-set windows and state in one sentence what the lock covers and what stays unfenced [R5]', () => {
-    // UTF-8 bytes on the base (41f4319) with LF line ends: the Sessions section from its heading to the next heading, and the Multi-session paragraph.
-    const texts: Array<[string, string, number, string]> = [
-      ['docs/OPERATIONS.md Sessions', sessions(), 13_701, LOCK_SESSIONS],
-      ['README.md Multi-session', multiSession(), 2_831, LOCK],
-    ];
+  test('acceptance 8: the Sessions section is shorter than on the base, names no compare-and-set windows and states in one sentence what the lock covers and what stays unfenced; README.md links it and has no Multi-session section [R5] [T0-README-PLAIN R3]', () => {
+    // UTF-8 bytes on the base (41f4319) with LF line ends: the Sessions section from its heading to the next heading.
+    const texts: Array<[string, string, number, string]> = [['docs/OPERATIONS.md Sessions', sessions(), 13_701, LOCK_SESSIONS]];
     for (const [name, text, base, sentence] of texts) {
       assert.equal(sentence.split(SENTENCE_BREAK).length, 1, `${name}: the lock statement is one sentence`);
       for (const unfenced of ['`recordAttempt`', 'a raw `card report` patch', 'release and review-pool records', 'between the lease write and the run update']) assert.ok(sentence.includes(unfenced), `${name}: the sentence names ${unfenced}`);
@@ -369,6 +356,10 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
       assert.ok(!text.includes('four windows'), `${name} names no four windows`);
       assert.ok(text.includes(sentence), `${name} states what the lock covers and what stays unfenced`);
     }
+    // T0-README-PLAIN: the README sends the reader to Sessions instead of restating it.
+    const readme = lf(read('README.md'));
+    assert.ok(!readme.includes('\n## Multi-session\n'), 'README.md has no Multi-session section');
+    assert.ok(readme.includes('](docs/OPERATIONS.md#sessions)'), 'README.md links docs/OPERATIONS.md#sessions');
   });
 
   test('acceptance 13: the Sessions section states the recovery step for a lock whose owner process is gone [R7]', () => {

@@ -471,7 +471,7 @@ const FACT_DOC_SENTENCES = {
     'The facts ride in the one merge result only when they can all be read; a shipped card whose merge result carries none is a `FACT_MISSING` warning and blocks a "fully audited" claim.',
   ],
   readme: [
-    '- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.',
+    '- `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.',
   ],
   changelog: [
     '- Audit facts, card T1-AUDIT-FACTS-2 (the successor of T1-AUDIT-FACTS): the card runner journals the one merge `OPERATION_RESULT` of a merge it verifies through a PR with the PR head, the merge commit, its tree and the PR number when `gh pr view`, a fetch of the base and `git rev-parse` can all read them, never from the ship output, and without them otherwise; `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning, and a shipped card whose merge result carries no facts is a `FACT_MISSING` warning.',
