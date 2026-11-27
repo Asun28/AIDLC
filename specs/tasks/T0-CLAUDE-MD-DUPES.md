@@ -58,7 +58,7 @@ npm run typecheck && node --test tests/surface/claude-md-dupes.test.ts tests/sur
 
 | Item | Proof | Result |
 |---|---|---|
-| 1 | tests/surface/claude-md-dupes.test.ts, acceptance 1; the bold-span regex of the owner amendment run on main's CLAUDE.md | RED at 2a0eb05a (main holds each removed text); the regex matches main's file and not the candidate's; passes on the candidate |
+| 1 | tests/surface/claude-md-dupes.test.ts, acceptance 1: after R3 decision 1, one test per removed text (four command lines, three names, the bold span), the `npm test` prefix without a trailing space | with main's CLAUDE.md put in place each of the eight removal tests fails on its own assertion and the two kept-text tests pass; all pass on the candidate |
 | 2 | tests/surface/claude-md-dupes.test.ts, acceptance 2; `git diff origin/main -- CLAUDE.md` | RED at 2a0eb05a (199 lines); 192 lines on the candidate; the diff holds the four removed command lines, the rewrapped Layers and Conventions lines and the dropped bold only |
 | 3 | the ten pinning test files of the DoD; `git diff origin/main -- templates/CLAUDE.aidlc.md` | pass unchanged; no template change |
 | 4 | changelog.d/T0-CLAUDE-MD-DUPES.md; tests/surface/changelog-fragments.test.ts | one line with 199 and 192; pass |

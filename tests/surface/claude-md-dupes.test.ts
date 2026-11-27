@@ -1,4 +1,5 @@
 // Card T0-CLAUDE-MD-DUPES, issue 500: CLAUDE.md holds what the code cannot show, without bold emphasis.
+// One test per removed text, so each fails on main for its own removal (lesson of T0-STOP-JOURNAL).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -12,12 +13,28 @@ const starts = (prefix: string) => commands.some((line) => line.startsWith(prefi
 const flat = claude.replace(/\s+/g, ' ');
 const conventions = flat.slice(flat.indexOf(' ## Conventions '), flat.indexOf(' ## AI-native SDLC (aidlc) '));
 
-test('T0-CLAUDE-MD-DUPES acceptance 1: the duplicated lines and the bold are gone, and the lines the code cannot show stay [R1] [R2] [R3] [R4]', () => {
-  for (const removed of ['npm run typecheck', 'npm test ', 'npm run test:watch', 'npm run dev']) assert.ok(!starts(removed), `Commands still holds ${removed}`);
+for (const removed of ['npm run typecheck', 'npm test', 'npm run test:watch', 'npm run dev']) {
+  test(`T0-CLAUDE-MD-DUPES acceptance 1: the Commands block holds no line starting ${removed} [R1]`, () => {
+    assert.equal(starts(removed), false);
+  });
+}
+
+test('T0-CLAUDE-MD-DUPES acceptance 1: the Commands block keeps the lines package.json does not state [R1]', () => {
   for (const kept of ['npm run check', 'node --test tests/core/router.test.ts', 'node --test --test-name-pattern', 'npm run build', 'node bin/aidlc.js <cmd>', 'npm run bench']) assert.ok(starts(kept), `Commands lost ${kept}`);
-  for (const removed of ['erasableSyntaxOnly', 'verbatimModuleSyntax', '`core/` (pure decision engines']) assert.ok(!claude.includes(removed), `CLAUDE.md still names ${removed}`);
-  assert.equal(/(^|\s)\*\*\S/m.test(claude), false, 'CLAUDE.md holds no bold span; the path globs keep their **');
-  assert.ok(conventions.includes('Relative imports carry an explicit `.ts` extension'), 'Conventions keeps the import extension rule');
+});
+
+for (const removed of ['erasableSyntaxOnly', 'verbatimModuleSyntax', '`core/` (pure decision engines']) {
+  test(`T0-CLAUDE-MD-DUPES acceptance 1: CLAUDE.md does not name ${removed} [R2] [R3]`, () => {
+    assert.equal(claude.includes(removed), false);
+  });
+}
+
+test('T0-CLAUDE-MD-DUPES acceptance 1: CLAUDE.md holds no bold span; the path globs keep their ** (owner amendment of 2026-11-27) [R4]', () => {
+  assert.equal(/(^|\s)\*\*\S/m.test(claude), false);
+});
+
+test('T0-CLAUDE-MD-DUPES acceptance 1: Conventions keeps the import extension rule [R3]', () => {
+  assert.ok(conventions.includes('Relative imports carry an explicit `.ts` extension'));
 });
 
 test('T0-CLAUDE-MD-DUPES acceptance 2: CLAUDE.md is shorter than the 199 lines of main at 5ef3ec3e [R5]', () => {
