@@ -263,13 +263,15 @@ for (const persistent of [false, true]) {
 }
 const OUTCOMES = ['merged', 'dod-failed', 'verify-failed', 'scope-blocked', 'budget-over', 'license-blocked', 'secrets-blocked', 'review-blocked', 'review-no-verdict', 'ci-red', 'ci-timeout', 'push-failed', 'pr-failed', 'merge-failed', 'auth-failed', 'no-reviewer', 'red-missing', 'merge-unconfirmed', 'effect-unknown', 'unclassified'] as const;
 
-test('T0-CARD-STATE-STORED R3 decision 2: from a record stored in SHIP, every ship outcome journals each stored change with the reason of the directive it leads to, never the selection reason for another state, and no second CLOSE to DONE [R2] [R5]', () => {
-  for (const outcome of OUTCOMES) {
+const SHIP_REASON = 'dispatch/resume the existing ship path with preserved base and mode';
+
+test('T0-CARD-STATE-STORED R3 decisions 2 and 3: from a record stored in BUILD or SHIP, every ship outcome journals each stored change with the selection reason for the selected SHIP and the reason of the directive it leads to for any other state, and no second CLOSE to DONE [R2] [R5]', () => {
+  for (const from of ['BUILD', 'SHIP'] as const) for (const outcome of OUTCOMES) {
     const fx = makeFixture({ actor: actorA });
     try {
       const { goalId, runner } = builtCandidate(fx, new DryRunShipPath([outcome]));
-      // A record already stored in SHIP (a ship stopped at the driver boundary): every change the ship makes leaves SHIP.
-      fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, CARD)!, state: 'SHIP' });
+      // From SHIP (a ship stopped at the driver boundary) every change the ship makes leaves SHIP; from BUILD a write may store SHIP.
+      if (from === 'SHIP') fx.store.saveCardRun({ ...fx.store.getCardRun(goalId, CARD)!, state: 'SHIP' });
       const start = fx.events(goalId).length;
       const landed = wrapWrites(fx, goalId);
       let r: ReturnType<CardRunner['next']> | undefined;
@@ -284,11 +286,12 @@ test('T0-CARD-STATE-STORED R3 decision 2: from a record stored in SHIP, every sh
       for (const e of states(events.slice(start))) {
         const to = String(e.data['to']);
         const reason = String(e.data['reason']);
-        if (to === 'STOP') assert.equal(reason, stored.stop?.detail, `${outcome}: a STOP carries its stop detail`);
-        else if (to !== 'SHIP') assert.notEqual(reason, 'dispatch/resume the existing ship path with preserved base and mode', `${outcome}: ${to} does not carry the SHIP selection reason (${reason})`);
-        if (to === 'WAIT' && r?.directive.kind === 'wait' && stored.state === 'WAIT') assert.equal(reason, r.directive.on, `${outcome}: a WAIT carries its directive's on`);
+        if (to === 'SHIP') assert.equal(reason, SHIP_REASON, `${from} ${outcome}: a write that stores the selected SHIP carries the selection reason`);
+        else if (to === 'STOP') assert.equal(reason, stored.stop?.detail, `${from} ${outcome}: a STOP carries its stop detail`);
+        else assert.notEqual(reason, SHIP_REASON, `${from} ${outcome}: ${to} does not carry the SHIP selection reason (${reason})`);
+        if (to === 'WAIT' && r?.directive.kind === 'wait' && stored.state === 'WAIT') assert.equal(reason, r.directive.on, `${from} ${outcome}: a WAIT carries its directive's on`);
       }
-      assert.ok(transitions(events, 'CLOSE', 'DONE').length <= 1, `${outcome}: at most one CLOSE to DONE`);
+      assert.ok(transitions(events, 'CLOSE', 'DONE').length <= 1, `${from} ${outcome}: at most one CLOSE to DONE`);
     } finally {
       setActorForTests(actorA);
       fx.cleanup();

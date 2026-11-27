@@ -919,15 +919,15 @@ export class CardRunner {
 
   /**
    * The CARD_STATE a write from `current` to `next` owes while a SHIP or PREPARE branch runs (`storedState`, R2): one when
-   * the write changes the stored state, none otherwise. The reason is the one the branch set for that write (`storedReason`),
-   * else the stop's detail for a STOP, else the selection's.
+   * the write changes the stored state, none otherwise. The reason is the selection's when the write stores the selected state,
+   * else the one the branch set for that write (`storedReason`), else the stop's detail for a STOP.
    */
   private storedChange(current: CardRun | undefined, next: CardRun): OwedEvent | undefined {
     const branch = this.storedState;
     if (!branch || !current || next === current || next.goalId !== branch.goal.id || next.cardId !== branch.card.id || next.state === current.state) return undefined;
     // CLOSE to DONE is journaled by close itself, as on main (out of scope of card T0-CARD-STATE-STORED).
     if (next.state === 'DONE') return undefined;
-    const reason = branch.next ?? (next.state === 'STOP' && next.stop ? next.stop.detail : branch.reason);
+    const reason = next.state === branch.selected ? branch.reason : branch.next ?? (next.state === 'STOP' && next.stop ? next.stop.detail : branch.reason);
     branch.next = undefined;
     return this.owe(branch.goal, 'CARD_STATE', { from: current.state, to: next.state, reason });
   }
@@ -3655,7 +3655,7 @@ export class CardRunner {
           return finish(() => (this.storedReason('review-quota'), { state: 'WAIT' }), (next) => ({ run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `The ship-path reviewer reported a quota/rate limit; review pool ${goal.reviewPool} is held until ${holdUntil} (not a decision, no retry spent). Then run \`aidlc card next ${card.id}\`.` } }));
         }
         if (reviewDecision?.action === 'retry-review') {
-          return finish(() => (this.storedReason(`no verdict (${classified.runStatus}): retry the ship`), { state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
+          return finish(() => ({ state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
         }
         return stopWith(makeStop('review', 'missing/malformed/stale verdict after the single retry', this.reviewNextAction(card.id, run.review, 'preserve raw output; never pass; hand off for adjudication'), { at: now, global: false }));
       }
@@ -3681,7 +3681,6 @@ export class CardRunner {
         const applied = finish(
           (latest) => {
             decided = rerunOn(latest.ci);
-            if (decided.allowed) this.storedReason(`transient CI failure: one same-origin rerun of run ${runId}`);
             if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
             if (cls.class === 'code-defect') return refutePatch(latest, `ship ${result.outcome}: CI code defect (${cls.evidence[0] ?? ''})`);
             if (snapshotAllowed) this.storedReason('record-changed');
