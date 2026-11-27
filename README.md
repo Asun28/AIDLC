@@ -1,194 +1,122 @@
 # aidlc
 
-AI-native SDLC orchestrator in TypeScript. It implements the Anthropic AI-native SDLC playbook loop, intent -> spec -> plan -> cards -> diff -> review -> release -> incident, with the bounded autonomy of the v5 plan in `docs/plans/PLAN-aidlc-loop.md`: sized routing (T0-bugfix/T0/T1/T2), one coordinator per goal, shared-session leases and review admission, hard admission deadlines, bounded review/CI/effort retries, opt-in release and migration stages, and a hash-chained evidence journal that an independent verifier can check. Every `aidlc next` call returns exactly one typed directive; the agent (Claude Code or any other driver) performs that move and reports the result. aidlc is not an implementation of the AWS AI-DLC methodology; it is a driver-agnostic bounded-autonomy control plane for coding agents.
+aidlc is a command-line tool and TypeScript library for coordinating AI coding agents in a Git repository. Give it a goal, such as fixing a bug. It tells Claude Code or another agent how to break the work into task cards and what to do next. It sets time and retry limits, tracks test results and reviews, checks the configured gates before shipping, and records the evidence for each card.
+
+## How it works
+
+- **Sizing.** A goal is one request, sized T0-bugfix or T0 (one task card), T1 (about 2 to 5 cards) or T2 (a new system, planned and approved first).
+- **One step at a time.** `aidlc next` returns one directive, the next step as JSON; the agent does it and records the outcome with `aidlc report`.
+- **Gates.** A card ships only after a passing run of its Definition of Done (DoD) command is recorded and, when the project requires it, R3: a review of the exact commit by a separate reviewer.
+- **Limits.** By default a card gets 3 hours and a multi-card goal 12; attempts, reviews and CI reruns are capped. A goal that hits a limit stops and names the reason and the next action.
+- **Shared sessions.** Leases record which session owns each goal and card. After another session takes over a card, the previous owner cannot start shipping it ([Sessions](docs/OPERATIONS.md#sessions)).
+- **Evidence.** A hash-chained journal records each state change and operation; `aidlc audit verify` checks it.
+- **Opt-in delivery.** Package, staging, production and migration run only for goals that target them, with commands bound in `aidlc.ops.json`.
 
 ## Status
 
 Version 0.2.0.
 
-- The development-only loop (intake, routing, planning gates, card execution, arc selection, integrated acceptance, closure) is implemented and tested (unit suites plus end-to-end scenarios for the T0 flow, T1 arc, review block, CI rerun, deadlines, two windows, staging/production release, audit and amendments).
-- Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, candidate-bound verdict, base sync, push, PR, CI check runs, squash merge; a base that conflicts leaves the merge in the worktree and returns the card to BUILD instead of opening a PR GitHub runs no workflow on). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).
-- Release and migration modules are opt-in. Until provider operations are bound in `aidlc.ops.json`, an enabled target stops with `release-config` and prints `NOT CONFIGURED`; a development-only goal never needs them.
-- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.
+- The development loop, from request to merged cards, is implemented and tested. This repository ships its own pull requests with it, through the `github` ship path.
+- Ship paths: `github` runs the chain with `git` and `gh` (commit, candidate-bound verdict, base sync, push, PR, CI check runs, squash merge); `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold; `dry-run`, the default after `aidlc init`, records a simulated merge without pushing or merging.
+- Development is the default target. Package, staging, production and migration targets need their commands bound in `aidlc.ops.json`; until then a goal for one of them stops with `release-config`.
+- `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.
 
 ## Requirements
 
-- Node.js >= 22.18 (the CLI runs TypeScript sources directly through type stripping; `npm run build` emits `dist/`).
-- git 2.45 or newer (state lives in the main checkout's `.aidlc/` so all worktrees share it). The `baseSync` line of `aidlc doctor` and the identity of an R3 finding read git with `--no-lazy-fetch`, which an older git refuses, so there `baseSync` is `UNREADABLE` and a finding gets no identity; the `github` ship path tests the merge with `git merge-tree --write-tree`. The `git` line of `aidlc doctor` prints the installed version and marks one older than 2.45 `UNSUPPORTED`.
-- Optional: `gh` (remote ship, PR and CI probes), `pwsh` 7 (scaffold ship path), `claude` CLI or an Anthropic API credential (model providers).
+- Node.js 22.18 or newer. The CLI runs the TypeScript sources directly, so no build step is needed.
+- git 2.45 or newer (`aidlc doctor` marks an older git `UNSUPPORTED`).
+- Optional: `gh` for the `github` ship path and its CI checks, PowerShell 7 (`pwsh`) for the `scaffold` ship path, and the `claude` CLI or an Anthropic API key for a model provider.
 
-## Quick start
+## Install
+
+aidlc runs from its own checkout against a separate target repository.
 
 ```bash
+git clone <aidlc repository URL> aidlc
+cd aidlc
 npm install
-npm run build                      # optional; bin/aidlc.js runs src/ on Node 22 unless dist/ is at least as new as every source file
-node bin/aidlc.js init             # lays intent/, specs/, plans/, .claude/, REVIEW.md, bands.yaml, evals/, aidlc.config.json over the repo
-node bin/aidlc.js doctor           # toolchain, config, state dir, card registry, provider
-node bin/aidlc.js goal new "fix the null pointer when a claim has no adjuster" --bug-evidence
-node bin/aidlc.js next             # one directive: ask | plan | project-cards | checkpoint | run-card | verify-arc | release | wait | close | done | stop
-node bin/aidlc.js run --goal <id> --max-steps 40  # drive a goal with the claude-code provider until attention is needed
+npm link        # puts aidlc on PATH; without it, run node <aidlc checkout>/bin/aidlc.js
+cd <your repository>
+aidlc init      # configuration, Claude Code skills, agents and hooks, review policy, templates
+aidlc doctor    # checks git, gh, the state directory, the configuration and the cards
 ```
 
-The commands below and in the skills call `aidlc`. Setup does not put it on PATH: run `npm link` in this checkout, or run `node <checkout>/bin/aidlc.js` in its place. When `aidlc` is not on PATH, `aidlc init` prints `aidlc is not on PATH: run each aidlc command as node "<checkout>/bin/aidlc.js" <command>, or run npm link in "<checkout>" to put aidlc on PATH`, and its `next` line names `node "<checkout>/bin/aidlc.js" doctor` in place of `aidlc doctor`. Its JSON report carries the field `cli`: `onPath`, `command` (`aidlc` or the `node` command) and, when `aidlc` is not on PATH, `note`. When the checkout path holds `$`, a backtick, `%` or `"`, which a shell can expand or end a quote at, `init` prints no command: `cli` has no `command`, the note names the checkout in plain text and says to run node with its `bin/aidlc.js`, quoted for your shell, or to run `npm link` there, and the `next` line reads `next: review aidlc.config.json, then run doctor through node as the line above says`.
+`aidlc init` sets the provider to `mock` and the ship path to `dry-run`. For real runs, choose the ship path (`shipPath`), the provider (`provider`) and the R3 reviewer (`formalReview.command`) in `aidlc.config.json`; [Setup](docs/OPERATIONS.md#setup) lists every key.
 
-The loop is `next` -> act -> `report` -> `next`:
+## First goal
+
+A dry run of one bug fix on a fresh `aidlc init` repository with the default configuration. Each comment names the directive the call returned. Commands print JSON when the output is piped or `--json` is set; `aidlc board` prints text.
 
 ```bash
-aidlc report --result plan-produced --plan-ref plans/claims-status.md
-aidlc report --result cards-projected --cards T1-STATUS-API,T1-STATUS-PANEL
-aidlc card next T1-STATUS-API          # prepare | build | ship | review-fix | wait | close | done | stop
-aidlc card attempt T1-STATUS-API --outcome success --dod-receipt "npm test exit 0: 42 pass, 0 fail"
-aidlc card next T1-STATUS-API          # ships through the configured ship path
-aidlc report --result arc-verified --data '{"evidence":"e2e run 1234"}'
-aidlc audit verify
+aidlc goal new "fix the crash when a claim has no adjuster" --bug-evidence
+aidlc next                              # plan: T0-bugfix, write one card
+# the agent writes specs/tasks/T0-CLAIM-NO-ADJUSTER.md from specs/tasks/_TEMPLATE.md
+aidlc cards validate --card T0-CLAIM-NO-ADJUSTER
+git add specs/tasks && git commit -m "card: T0-CLAIM-NO-ADJUSTER" && git push
+aidlc report --result cards-projected --cards T0-CLAIM-NO-ADJUSTER
+aidlc next                              # run-card
+aidlc card next T0-CLAIM-NO-ADJUSTER    # prepare: names the git worktree command to run
+aidlc card next T0-CLAIM-NO-ADJUSTER    # build: commit a failing test, then the fix
+aidlc card attempt T0-CLAIM-NO-ADJUSTER --outcome success --red-receipt "880f684:a claim with no adjuster has no adjuster name" --dod-receipt "node --test tests/claims.test.mjs: exit 0, 2 pass, 0 fail"
+aidlc card next T0-CLAIM-NO-ADJUSTER    # close: the dry-run ship recorded a simulated merge
+aidlc card close T0-CLAIM-NO-ADJUSTER --all
+aidlc card close T0-CLAIM-NO-ADJUSTER --skip-lesson "first run"
+aidlc next                              # verify-arc
+aidlc report --result arc-verified --data '{"evidence":"node --test tests/claims.test.mjs: exit 0, 2 pass, 0 fail"}'
+aidlc next                              # done
 ```
 
-When stdout is not a TTY every command prints one JSON document; pass `--json` to force it.
+A receipt is the observed result of a check: the RED receipt names the commit and the test that failed before the fix, and the DoD receipt names the command, its exit code and the pass count. `aidlc card next` is also the operator's shipping command. On the `github` ship path it pushes the branch, opens the pull request, waits for the required CI checks and squash-merges; with an R3 reviewer configured, it first returns `review`, which `aidlc review r3 <card>` runs.
 
-`aidlc run` uses the configured `claude-code` provider to execute existing goal and card commands. It stops at human gates, review blocks, review quota holds, the shipping boundary, deadlines or its step limit; it prints the pending directive on exit. Shipping requires a separate operator invocation. See [Running a goal](docs/OPERATIONS.md#running-a-goal).
-
-`aidlc board --watch` re-renders a read-only screen of one goal (state, card states, live leases) every few seconds and writes nothing; its output contract and exit codes are in [Watching a goal](docs/OPERATIONS.md#watching-a-goal).
+`aidlc run --goal <id> --max-steps 40` lets the `claude-code` provider do the steps. It needs `provider` set to `claude-code`, stops before shipping, and also stops at a question, a checkpoint, a release step, a review block or quota hold, the end of the goal or its step limit ([Running a goal](docs/OPERATIONS.md#running-a-goal)). `aidlc board --watch` shows a goal and its cards ([Watching a goal](docs/OPERATIONS.md#watching-a-goal)).
 
 ## What aidlc init writes
 
-`aidlc init` writes these paths into the repository, with the default `--cards-dir`. It skips a file that exists unless `--force` is set, and it merges `.claude/settings.json`, `.gitignore` and the `CLAUDE.md` section into a file that exists. In a repository with content and no `package.json` it skips `.github/workflows/aidlc-ci.yml` and `.github/workflows/agent-evals.yml`.
+`aidlc init` adds the configuration (`aidlc.config.json`), Claude Code skills, agents and hook settings, the review policy (`REVIEW.md`), CI workflows and planning templates; [Setup](docs/OPERATIONS.md#setup) lists every path. It skips a file that exists unless `--force` is set, and merges `.claude/settings.json`, `.gitignore` and its `CLAUDE.md` section into files that exist.
 
-```text
-.claude/agents/implementer.md
-.claude/agents/investigator.md
-.claude/agents/planner.md
-.claude/agents/release-specialist.md
-.claude/agents/reviewer.md
-.claude/agents/verifier.md
-.claude/settings.json
-.claude/skills/aidlc-loop/SKILL.md
-.claude/skills/aidlc-loop/arc.md
-.claude/skills/aidlc-loop/card-loop.md
-.claude/skills/aidlc-loop/migrate.md
-.claude/skills/aidlc-loop/release.md
-.claude/skills/diagnose/SKILL.md
-.claude/skills/grilling/SKILL.md
-.claude/skills/merge-conflicts/SKILL.md
-.claude/skills/secure-api-review/SKILL.md
-.claude/skills/tdd/SKILL.md
-.claude/skills/ui-verify/SKILL.md
-.github/workflows/agent-evals.yml
-.github/workflows/aidlc-ci.yml
-.github/workflows/security-scanners.yml
-.gitignore
-CLAUDE.md
-REVIEW.md
-aidlc.config.json
-aidlc.ops.example.json
-bands.yaml
-docs/DELIVERY-OPS.md
-docs/LESSONS.md
-docs/THIRD-PARTY-NOTICES.md
-evals/README.md
-evals/example-regression.json
-intent/README.md
-intent/_TEMPLATE.md
-plans/README.md
-plans/_TEMPLATE.md
-specs/README.md
-specs/_SPEC-TEMPLATE.md
-specs/tasks/_TEMPLATE.md
-```
+The hook settings run these guards on Claude Code tool calls; [Hooks](docs/OPERATIONS.md#hooks) gives the exact conditions.
 
-`.claude/settings.json` holds a `permissions.deny` list and the hook entries. `aidlc init --no-hooks` writes the same files and the same deny list and merges no hook entry. A hook already in the file stays as it is and keeps running, so a repository with no hooks wired runs no guard. With no dispatcher wired, `aidlc doctor` prints `not wired` on its `hookCommand` line.
-
-The hook entries start one process per event, which runs the guards below and returns the first block. Each guard prints repository content and environment values as JSON strings, apart from an id that is one plain word (`[A-Za-z0-9._:-]+`).
-
-| Guard | Event | Reads | Blocks when |
-|---|---|---|---|
-| `production-gate` | `PreToolUse`: Bash, PowerShell | the command, `hooks.productionPatterns`, `RELEASE_APPROVAL` or `AIDLC_RELEASE_APPROVAL`, the production authorizations on goals with each goal's state and generation | a command that writes matches a production pattern and no goal that is not terminal and not in `DONE` or `STOP` has, as its first record whose id or ref equals the approval reference, a production authorization of the goal's current generation that has not expired; with no `goals/` directory in the resolved state directory, any non-empty selected approval reference passes this lookup |
-| `protect-paths` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, the command, `hooks.frozenPaths` | a file path matches a frozen path, or a command that names one writes files |
-| `protect-tests` | `PreToolUse`: Edit, Write, MultiEdit | the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns` | a fix task is active and the file path matches a test pattern |
-| `secrets-guard` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, `content`, `new_string`, `command` | the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern |
-| `stdin-script` | `PreToolUse`: Bash, PowerShell | the command | the command starts `python`, `py`, `node` or `pwsh` on a program read from standard input, in one of the forms `docs/OPERATIONS.md` lists |
-| `protect-git` | `PreToolUse`: Bash, PowerShell | the command | a git command in it force-pushes, runs `reset --hard`, `clean -f`, `checkout -- <paths>` or `checkout .`, or skips the git hooks, in one of the forms `docs/OPERATIONS.md` lists |
-| `verify-before-done` | `Stop` | goals, card runs, leases, the git status of planning files | never: it adds a reminder of a missing DoD receipt or of uncommitted planning files |
-| `route-new-work` | `UserPromptSubmit` | the prompt, the `aidlc.config.json` error | never: it prints the routing line |
-
-While `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` deny every shell command but `aidlc doctor`, `protect-paths` denies every edit of another file, and `protect-tests` denies the same edits while a fix task is active.
-
-## The loop
-
-Goal states (`src/core/goal-machine.ts`):
-
-| State | Meaning | Leaves when |
+| Guard | Runs on | Blocks |
 |---|---|---|
-| PLAN | intent accepted, plan pending | plan produced (or T0 card resolved) |
-| CARDS | projection validated, authority pending | cards valid and (for T2) the plan+projection checkpoint approved |
-| RUN | dispatching ready cards, at most two workers | all required cards closed |
-| WAIT | child result, provider hold or dependency pending | evidence permits progress |
-| VERIFY_ARC | integrated acceptance on the final SHA | `arc-verified` or one bounded repair cycle |
-| DELIVER | opt-in package/staging/production attempt | requested target verified |
-| CLOSE | closure predicates (status, doc sync, findings, evidence, cleanup, lessons, follow-up issue) | all verified |
-| DONE / STOP | terminal; late wakeups do no new work | never (a resume links a new generation) |
-
-Card states (`src/core/card-machine.ts`) are selected from evidence in a fixed precedence: reconcile unknown operations first, then STOP conditions, DONE, WAIT, CLOSE, admission deadline, exhausted allowances, PREPARE, REVIEW_FIX, BUILD, SHIP.
-
-`aidlc next` is read-only apart from derived transitions (deadline STOP, CARDS -> RUN once authorized, RUN -> VERIFY_ARC once all cards closed, CLOSE -> DONE once closure holds). `aidlc report --result <r>` commits externally observed results: `intent-accepted`, `plan-produced`, `plan-failed`, `cards-projected`, `approved`, `rejected`, `card-result`, `arc-verified`, `arc-failed`, `release-result`, `revision`, `cancel`, `resume`.
-
-## Multi-session
-
-Several windows may work on one repository. State is shared through `<main checkout>/.aidlc/`. Each window must identify itself: under Claude Code every subprocess carries `CLAUDE_CODE_SESSION_ID` and every hook event its `session_id`, so each Claude Code session is one loop session (a `/clear` starts a new one); elsewhere set `AIDLC_SESSION` per window; without either, every process shares one default token stored in `.aidlc/session-default`, which is the plan's interim single-controller mode and `aidlc doctor` warns about it. Lease records are never rewritten for an identity change: a lease claimed under the default token by an earlier version, or by a session that has ended, stays as recorded and expires after its 10-minute TTL. `aidlc goal takeover <id>` then takes the goal lease once the old owner's operations are reconciled; it does not take card leases. While a card lease is live, the card is continued only by running with `AIDLC_SESSION` set to the owner session id that `aidlc card status <card>` prints as `lease.owner.session`, when the run's `ownerGeneration` equals `lease.generation`, which every completed PREPARE records (a run stopped for ownership before PREPARE carries no owner in its stop text; a run interrupted inside PREPARE has no generation and is not continued this way). Once the lease has expired and no operation of the card is unresolved in any goal, `aidlc card takeover <card> --goal <id>` takes it in the acting session: the generation advances and the old owner is fenced, the run records the new generation, a run without one included, and its state is selected again with the ownership stop cleared, so `aidlc card next <card>` continues it; a missing or released lease, a lease this session holds at the run's generation, a live lease of another session and an unresolved operation refuse the takeover without a write. A handoff intent is journaled before the lease write and one acquisition per generation after it, both resolved across goals. Every lease write, every goal and card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), while `recordAttempt` and a raw `card report` patch stay unfenced, release and review-pool records stay last-writer-wins, and a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again. A goal the dispatch stopped on the card's stop is resumed with `aidlc goal resume` after the takeover; the dispatch then reports the card running until `aidlc card next` continues it.
-
-- Leases (`src/coordination/lease.ts`): atomic file claims per goal, card, integration base, environment and review pool, with owner session/pid/start, expiry, heartbeat and a monotonically advancing generation. A mutation is fenced against its generation; a stale writer cannot commit.
-- Takeover (`aidlc goal takeover`, `aidlc card takeover`) is allowed only after the previous owner's operations are reconciled; lease expiry alone does not prove the owner stopped.
-- Review admission (`src/coordination/review-queue.ts`): one shared queue per provider pool, deduplicated by repository + candidate digest + base + policy version + reviewer; a matching running request is joined, admission follows persisted order, a lost response keeps its slot until looked up.
-- Quota holds are WAIT, not defects: a confirmed rate limit records the provider's retry-after on the pool, one notification owner is registered, and other windows do not retry the same signal.
+| `production-gate` | `PreToolUse`: Bash, PowerShell | a command that writes and matches a production pattern, unless the approval reference in `RELEASE_APPROVAL` names a current production authorization |
+| `protect-paths` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | an edit of a frozen path (`hooks.frozenPaths`), or a command that writes one |
+| `protect-tests` | `PreToolUse`: Edit, Write, MultiEdit | an edit of a test file while a fix task is active |
+| `secrets-guard` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | a write to a secret file such as `.env` or a `.pem` key, or text that holds a credential |
+| `stdin-script` | `PreToolUse`: Bash, PowerShell | a command that starts an interpreter on a script read from standard input |
+| `protect-git` | `PreToolUse`: Bash, PowerShell | a git command that force-pushes, runs `reset --hard` or `clean -f`, discards changes with `checkout`, or skips the git hooks |
+| `verify-before-done` | `Stop` | nothing; it reminds the agent of a missing DoD receipt or of uncommitted planning files |
+| `route-new-work` | `UserPromptSubmit` | nothing; it prints the routing line for a new request |
 
 ## Limits
 
+Values are defaults. A shorter admission limit, set with `aidlc goal new --limit-hours` or `userLimitMs` in `aidlc.config.json`, wins.
+
 | Limit | Value | Where |
 |---|---|---|
-| Card admission | 3 h from first PREPARE (or the goal deadline, whichever is earlier) | `src/core/deadlines.ts` |
-| Arc admission | 12 h for multi-card goals; 3 h for one-card and standalone release goals | `src/core/deadlines.ts` |
+| Card admission | 3 h from first PREPARE, or the goal deadline when that is earlier | `src/core/deadlines.ts` |
+| Arc admission | 12 h for an explicit T1 or T2 goal, a standalone release included, and for an unknown or multiple card count; 3 h for one card and for any other standalone release | `src/core/deadlines.ts`, `src/loop/controller.ts` |
 | Reconciliation grace | 5 min after a deadline; unresolved outcomes stay UNKNOWN | `src/core/deadlines.ts`, `src/core/card-machine.ts` |
 | Substantive review decisions | 2 (initial + one for a repaired candidate); with a command reviewer up to 4 for repairs; from decision 2 a block re-raising a finding the author disputed, or a block on decision 4, stops (a ship-path reviewer: second block stops); a continuation the owner records with `aidlc card continue` admits the further decisions it names | `src/core/review-policy.ts` |
 | No-verdict retry | 1 total across script and driver | `src/core/review-policy.ts` |
 | Transient CI rerun | 1 per run/attempt/candidate, persisted before the request | `src/core/ci-policy.ts` |
-| Implementation attempts | 3 at baseline effort, plus 1 escalated attempt only with evidenced progress and an available level; same cause twice stops early | `src/core/effort.ts` |
+| Implementation attempts | 3 at baseline effort, plus 1 escalated attempt only with evidenced progress and an available level; the same cause twice in a row without progress stops early | `src/core/effort.ts` |
 | Planning invocations | 2 (initial + one corrective) | `src/loop/controller.ts` |
 | Integration repair cycles | 1 | `src/core/arc.ts`, `src/loop/controller.ts` |
-| Lifecycle repair cycles | 1, stated in the release-health stop directive; not enforced in code | `src/loop/controller.ts` |
-| Card workers | 2, only with disjoint paths and resources; 1 with a single reviewer slot | `src/core/arc.ts` |
+| Lifecycle repair cycles | 1, specified by the plan; not enforced in code | `docs/plans/PLAN-aidlc-loop.md` |
+| Card workers | 2, only with disjoint paths and resources | `src/core/arc.ts` |
 
-`aidlc bounds [--goal <id>]` counts how often each of the first nine limits fired, from the goal and card-run records only, with the current outcome of the goal that hit it (DONE, STOP/<reason> or open) and each goal's deadline extension count. It also reports the recorded owner acts by month (deadline extensions and how many came after the deadline, continuations, amendments, rulings), who recorded them, and the card runs left in STOP by month. A time STOP that `aidlc goal extend` lifted is not counted. Records are read one at a time with no snapshot across files, so a count taken while the loop writes can combine records from different moments. Details in `docs/OPERATIONS.md`, Bound statistics.
-
-## Layout
-
-```
-src/
-  core/          types (zod schemas), router, deadlines, effort, review/ci policies, health, authorization, arc, goal/card/release machines, migrate, amendments, roles
-  state/         canonical paths, atomic JSON store, hash-chained journal, goal store, board view
-  coordination/  leases + fencing, shared review queue, operation ledger + reconciliation
-  probes/        exec receipts, git and gh probes
-  delivery/      worktree start-or-attach, ship path adapters, provider operation bindings
-  artifacts/     front matter, cards, intent.md, spec.md, plan.md (+ definition-of-ready gates)
-  providers/     model provider interface, mock, Claude API (SDK), Claude Code CLI
-  maintain/      control bands (Western Electric), incident ledger -> intent
-  evals/         deterministic eval runner
-  audit/         evidence manifest + seal, independent verifier
-  review/        R2 pre-review and the verdict reader, reviewer bench, finding reproduction, mutants, review stats
-  hooks/         Claude Code hook handlers
-  loop/          typed directives, goal controller, card runner, release runner
-  scaffold/      `aidlc init`
-  cli/           commander entry
-templates/       files copied by `aidlc init` (.claude skills: aidlc-loop plus the tdd, diagnose, grilling and merge-conflicts companions; agents; settings; REVIEW.md; bands.yaml; artifact templates; docs incl. LESSONS and third-party notices; workflows)
-tests/           node:test suites (core, infra, scenarios, surface)
-docs/            architecture, traceability, operations, plans
-```
+`aidlc bounds [--goal <id>]` counts how often each of the first nine limits fired, with the current outcome of each goal that hit one, and reports the owner acts recorded by month and the card runs left in STOP. [Bound statistics](docs/OPERATIONS.md#bound-statistics) explains each count.
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` - modules, state machines, directive contract, persisted state, audit chain, ship adapters.
-- `docs/REQUIREMENTS-TRACEABILITY.md` - v5 plan requirements (R, MS, MA, LC, Q) mapped to code and tests.
-- `docs/OPERATIONS.md` - running goals end to end, provider bindings, hooks, evals, audit, STOP reasons.
-- `docs/plans/PLAN-aidlc-loop.md` - the canonical v5 plan this implementation follows.
-- `docs/PROJECT-STATE.md` - a snapshot of 2026-09-18: what was verified, what was pending and the next steps at that date.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): modules, state machines, the directive contract, persisted state, the audit chain and ship paths.
+- [docs/OPERATIONS.md](docs/OPERATIONS.md): setup, running goals, sessions, hooks, review, audit and STOP reasons.
+- [docs/DELIVERY-OPS.md](docs/DELIVERY-OPS.md): binding release, migration and recovery to your own tools.
+- [REVIEW.md](REVIEW.md): the review policy R3 applies.
+- [docs/REQUIREMENTS-TRACEABILITY.md](docs/REQUIREMENTS-TRACEABILITY.md): plan requirements mapped to code and tests.
+- [docs/plans/PLAN-aidlc-loop.md](docs/plans/PLAN-aidlc-loop.md): the plan this implementation follows.
+- [docs/LESSONS.md](docs/LESSONS.md): rules learned from past cards.
+- [CHANGELOG.md](CHANGELOG.md) and `changelog.d/`: changes by release.
 
 ## Development
 
@@ -198,7 +126,7 @@ node --test "tests/**/*.test.ts"
 npm run build        # scripts/build.ts: tsc -> dist/, each file written whole
 ```
 
-Conventions: ESM, strict TypeScript with `erasableSyntaxOnly` (no enums, namespaces or parameter properties), relative imports with explicit `.ts` extensions (rewritten to `.js` on build), every persisted record has a zod schema, no shell strings for provider commands (argv arrays only), fixed ISO timestamps in tests.
+Conventions: [CLAUDE.md](CLAUDE.md), section Conventions. Source layout: [Module map](docs/ARCHITECTURE.md#module-map).
 
 ## License
 

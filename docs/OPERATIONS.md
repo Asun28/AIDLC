@@ -14,6 +14,50 @@ node bin/aidlc.js doctor
 
 `--no-hooks` writes the same files and the same `permissions.deny` list and merges no hook entry into `.claude/settings.json`; a hook already in the file stays as it is and keeps running, so a repository with no hooks wired runs no guard, and `aidlc doctor` prints `not wired` on its `hookCommand` line when the file wires no dispatcher.
 
+`aidlc init` writes these paths into the repository, with the default `--cards-dir`. It skips a file that exists unless `--force` is set, and it merges `.claude/settings.json`, `.gitignore` and the `CLAUDE.md` section into a file that exists. In a repository with content and no `package.json` it skips `.github/workflows/aidlc-ci.yml` and `.github/workflows/agent-evals.yml`.
+
+```text
+.claude/agents/implementer.md
+.claude/agents/investigator.md
+.claude/agents/planner.md
+.claude/agents/release-specialist.md
+.claude/agents/reviewer.md
+.claude/agents/verifier.md
+.claude/settings.json
+.claude/skills/aidlc-loop/SKILL.md
+.claude/skills/aidlc-loop/arc.md
+.claude/skills/aidlc-loop/card-loop.md
+.claude/skills/aidlc-loop/migrate.md
+.claude/skills/aidlc-loop/release.md
+.claude/skills/diagnose/SKILL.md
+.claude/skills/grilling/SKILL.md
+.claude/skills/merge-conflicts/SKILL.md
+.claude/skills/secure-api-review/SKILL.md
+.claude/skills/tdd/SKILL.md
+.claude/skills/ui-verify/SKILL.md
+.github/workflows/agent-evals.yml
+.github/workflows/aidlc-ci.yml
+.github/workflows/security-scanners.yml
+.gitignore
+CLAUDE.md
+REVIEW.md
+aidlc.config.json
+aidlc.ops.example.json
+bands.yaml
+docs/DELIVERY-OPS.md
+docs/LESSONS.md
+docs/THIRD-PARTY-NOTICES.md
+evals/README.md
+evals/example-regression.json
+intent/README.md
+intent/_TEMPLATE.md
+plans/README.md
+plans/_TEMPLATE.md
+specs/README.md
+specs/_SPEC-TEMPLATE.md
+specs/tasks/_TEMPLATE.md
+```
+
 `init` checks whether `aidlc` is on PATH (card T0-INIT-CLI-PATH): a file `aidlc` in a PATH directory, on Windows `aidlc` with a PATHEXT extension. Setup does not put it there, and `npx --no-install aidlc` finds only a package installed in the repository. When it is absent, `init` prints `aidlc is not on PATH: run each aidlc command as node "<path>/bin/aidlc.js" <command>, or run npm link in "<path>" to put aidlc on PATH`, with the path of the CLI that ran it, and its `next` line names `node "<path>/bin/aidlc.js" doctor`; the JSON report carries the field `cli` (`onPath`, `command` and, when absent, `note`). When that path holds `$`, a backtick, `%` or `"`, which a shell can expand or end a quote at, `init` prints no command: `cli` has no `command`, the note names the checkout in plain text and says to run node with its `bin/aidlc.js`, quoted for the shell, or `npm link` there, and the `next` line reads `next: review aidlc.config.json, then run doctor through node as the line above says`. Entry check 1 of the `aidlc-loop` skill and the Commands list of the CLAUDE.md section say to run `node <aidlc checkout>/bin/aidlc.js` in place of `aidlc`.
 
 `-C <dir>` (`--cwd`) names the directory a command works in (card T0-CLI-CWD-FILE-ARGS-2). The value is resolved against the process directory, lexically (`a/../b` names `b` whether or not `a` exists), and must name an existing directory: an empty or whitespace-only value, one that names nothing or a file, and on Windows a drive-relative value (`C:wt`) or a network path without a server and a share (`\\x`) are refused with `aidlc: --cwd "<value>": ...` before the command reads or writes anything, exit 1, or exit 2 under `aidlc hook <name>`, where exit 1 would let the tool call through. These take that resolved directory: the command's context (its repository, its configuration and, when `AIDLC_STATE_DIR` is unset, its state directory), the base of its file arguments, `init` without a directory, the checkout root of `review bench run`, and the directory `aidlc hook <name>` runs its guards in. `-C` changes neither the process directory nor the environment: a relative `AIDLC_STATE_DIR` is read against the process directory, with or without `-C`, and the default session token is read from the state directory of the process directory, so set `AIDLC_SESSION` when `-C` names another repository. With `-C`, these file arguments resolve against the `-C` directory: `init [dir]`, `cards project --plan`, the `<file>` of `intent validate`, `spec validate` and `plan check`, `review bench compare <before.json> <after.json>`, `review resolve --verdict`, `ci classify --log`, `migrate assess --diff`, `evidence retain --file`, and `monitor check --bands` and `--data`. A relative value resolves lexically against it, and a fully qualified one is not joined to it and is normalized lexically as well (`/a/link/../f` names `/a/f`, whatever `link` is); on Windows `\x` is `x` at the root of the `-C` directory's drive. Without `-C` a value is passed to the command as given, so it is read against the process directory as before. With or without `-C`, an empty or whitespace-only value is refused naming the option, and on Windows so are `C:x` and `\\x`, because they name the current directory of drive C and a network server; every value of a command is checked before it opens an input or writes anything. A value that names no file fails, when the command reaches the read of that input, with the command's own error, which names the resolved path when `-C` is given; `init [dir]` is the exception, since it names a directory that `init` may create. With `-C`, the `plan_ref` that `cards project` drafts is the plan's canonical path relative to the canonical main checkout; without `-C`, it is the typed value relative to the main checkout, as before. An absent optional value keeps its meaning: `init` without a directory targets the `-C` directory, else the process directory, `migrate assess` without `--diff` scans no diff, and `evidence retain` without `--file` retains `--content`. `hook <name>` without `-C` keeps the event's `cwd`, else the process directory. These keep their base: `init --cards-dir` (relative to the init target), `goal new --intent` and `report --plan-ref` (relative to the main checkout), `goal new --surface` and `migrate assess --paths` (labels, never opened), `review repro --files` (repository-relative), `review bench run --dir`, `review bench export --dir` and `evals run --dir` (the checkout or worktree root of the command's directory), and `AIDLC_STATE_DIR`.
@@ -357,6 +401,8 @@ What a hook process loads (card T0-HOOK-LAZY-2): the guards load the router, the
 | `protect-git` | PreToolUse Bash, PowerShell | a git command force-pushes, runs `reset --hard`, `clean -f`, `checkout -- <paths>` or `checkout .`, or skips the git hooks, in one of the forms of the paragraph below the `stdin-script` one; exit 2 naming the git command |
 | `verify-before-done` | Stop | never blocks; adds context when an active card run in BUILD, SHIP or REVIEW_FIX has no DoD receipt and its card lease is absent, released or owned by the acting session (the hook event's `session_id`, or `AIDLC_SESSION`); a run whose card a revision of its goal removed or superseded is not listed unless the goal lists that card again, and every other run is listed as before, a run of a goal that lists no cards included (card T0-REMOVED-CARD-RUNS); a run whose lease names another session is that session's to verify; a lease record that cannot be read leaves its run listed for every session and is named by card id and store error code only, never by content; adds Stop context asking for the verification output, except while the Stop input lists running `background_tasks`, since the session is then waiting on background work (card T1-EFF-HOOK-QUIET-2); nothing at all is added while `stop_hook_active` is true, since Claude Code is then already continuing for a stop hook, so a turn end gives at most one reminder, and no state is kept between Stops; and, in the same message, when a goal whose lease the acting session holds has uncommitted planning artifacts on main (Sessions, Planning claims) |
 | `route-new-work` | UserPromptSubmit | never blocks; prints the `[route]` line and size guidance for build/fix/deploy requests a person typed; a prompt that starts with `<task-notification>`, `This session is being continued from a previous conversation` or `Base directory for this skill:`, or contains `<cross-session-message`, is not routed (card T1-EFF-HOOK-QUIET-2), since UserPromptSubmit carries no source field and Claude Code submits those texts on its own or for another session |
+
+Each guard prints repository content and environment values as JSON strings, apart from an id that is one plain word (`[A-Za-z0-9._:-]+`).
 
 Which commands `stdin-script` refuses (card T0-SMALL-ISSUES-463-428-ZOD, issue 463): a command whose name, without its path and `.exe`, is `python` with any version digits, `py` or `node`, and whose first argument that is neither an option nor an option's value is `-` (the options with a value are `-X` and `-W` of Python, and `-r`, `--require`, `--import`, `--loader`, `-C`, `--conditions`, `--input-type` and `--env-file` of node); the same command with no such argument when it stands after a pipe with white space on either side or takes a `<`, `<<` or `<<<` redirection; and `pwsh` or `powershell` whose `-Command` or `-File`, or a shorter spelling of one, is followed by `-`. A program option (`-c` and `-m` of Python, alone or ending a short option group; `-e`, `--eval`, `-p`, `--print`, `-pe` and `--test` of node) means the program is not standard input, so the command passes. A command stands at the start, after a separator, a pipe, a bracket, a backtick or `$(`, and after an assignment, a shell keyword, or `sudo`, `time`, `env`, `exec`, `command`, `nohup` or `timeout <n>`. A comment, a heredoc or here-string body and a quoted text of more than one plain word are not read, except that a double-quoted text holding `$(` is read up to its next double quote. Every other spelling passes: a wrapper's own options, another launcher (`docker exec`, `uv run`, `xargs`), another interpreter, `python` with no argument and nothing fed to it. It decides after every other guard and reads no configuration.
 
