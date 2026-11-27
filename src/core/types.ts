@@ -1161,6 +1161,7 @@ export const JournalEventType = z.enum([
   'INTENT_FILED',
   'NOTE',
   'MERGE_ADOPTED',
+  'SESSION_STOPPED',
 ]);
 export type JournalEventType = z.infer<typeof JournalEventType>;
 

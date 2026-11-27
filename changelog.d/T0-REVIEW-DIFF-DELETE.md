@@ -1,0 +1,1 @@
+- T0-REVIEW-DIFF-DELETE (issue 517): the R2 and R3 review diff is collected with `git diff --irreversible-delete`, so a deleted file shows its header and no body; deleted content no longer counts toward `maxDiffBytes` or the effort line count, and the reviewer sees which files were removed but not what they held.
