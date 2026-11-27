@@ -2,6 +2,7 @@
 id: T0-REVIEW-DIFF-DELETED
 title: "A review diff above the cap is collected again without deleted file bodies (git diff -D), and is sent when that fits"
 status: todo
+superseded_by: T0-REVIEW-DIFF-DELETE
 branch: T0-REVIEW-DIFF-DELETED
 allow_paths:
   - src/review/pre-review.ts
