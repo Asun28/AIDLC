@@ -1,0 +1,1 @@
+- T0-CARD-STATE-STORED: The `CARD_STATE` of a SHIP or PREPARE selection now names the state each card-run write of its branch stores and is journaled after that write, so a merged ship journals `BUILD` to `CLOSE` and a refused ship write leaves no `CARD_STATE` (issue 511).

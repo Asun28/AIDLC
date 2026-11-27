@@ -62,3 +62,54 @@ npm run typecheck && node --test tests/scenarios/card-state-stored.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: each `CARD_STATE` of a SHIP or PREPARE branch names a state its write stored and follows that write; a refused write leaves none; a lost append after the merge is completed once and does not throw.
+
+## Attempt evidence
+
+RED: `63c622fc`, `tests/scenarios/card-state-stored.test.ts` on main code: 0 of 5 pass (acceptance 1 merged and auth-failed found BUILD to SHIP before the ship, acceptance 2 found the BUILD to SHIP of the refused call, acceptance 3 found X to PREPARE on a STOP and no change to BUILD, acceptance 4 found no owed event).
+
+Attempt 1: every card-run write of `src/loop/card-runner.ts` goes through `updateRun` or `saveRun`. While a SHIP or PREPARE branch runs (`storedState`, set by `dispatch`), a write that changes the stored state carries a `CARD_STATE` of that change and `deliverStored` appends it after the write lands. A failed append stays owed; a refusal by another session's live lease still ends the dispatch (the foreign-dispatch `GATED` counts pass). The start of `ship` no longer appends. In the dry-run ship path a PREPARE stores BUILD for either worktree decision, so acceptance 3 checks the attach case by the stored state. In acceptance 4 the merged ship's own owed-result delivery may complete the lost event in the same command (`completed: true`), which `deliverOwed` does for any entry not its own; the test accepts it owed or journaled once.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `card-state-stored.test.ts` acceptance 1 (merged, auth-failed) | pass |
+| 2 | `card-state-stored.test.ts` acceptance 2 | pass |
+| 3 | `card-state-stored.test.ts` acceptance 3 | pass |
+| 4 | `card-state-stored.test.ts` acceptance 4 | pass |
+| 5 | `card-state-owed.test.ts` issue 511 tests assert R5; `git diff origin/main --stat -- tests/` lists the new file and `card-state-owed.test.ts`; DoD files green | pass |
+| 6 | `fault-points.test.ts` passes unchanged; the coverage record's method list names only methods `fault-points.test.ts` names (`tests/surface/templates.test.ts` acceptance 3), so its stage D text records the moved `CARD_STATE` fault point and the write wrappers; the sync commit moves at CLOSE, to a commit on main | pass |
+| 7 | OPERATIONS Audit paragraph, ARCHITECTURE item 1 and `continueStop` hold sentence, `bench/outcome/README.md` limit paragraph; `changelog.d/T0-CARD-STATE-STORED.md` | pass |
+| 8 | `npm run typecheck` | pass |
+
+## PR summary
+
+### What
+The `CARD_STATE` of a SHIP or PREPARE selection now names the state each card-run write of its branch stores. It is appended only after that write lands.
+
+### Why / Intent
+Issue 511. `ship` appended BUILD to SHIP before any write, so a refused early ship write left the event and a retry journaled it twice. `prepare` stored STOP or BUILD with an event that said PREPARE.
+
+### How / Behaviour
+All card-run writes of the runner go through `updateRun` and `saveRun`. While a SHIP or PREPARE branch runs, a write that changes the stored state records a `CARD_STATE` from the old state to the new one in `journalOwed`, and `deliverStored` appends it after the write. A failed append stays owed and does not throw.
+
+### System impact
+Journals now show the stored changes: a merged ship journals BUILD to CLOSE (no SHIP), an attach journals a change to BUILD, an expired-lease PREPARE journals a change to STOP. `bench/outcome` state spans follow, as its README notes.
+
+### Security
+No change to authentication, secrets or permissions. Appends stay under the card lease lock while the dispatch holds no lease.
+
+### Tests and review
+A new test file covers a merged and a failed ship, a refused ship write, the three PREPARE outcomes and a lost append after the merge. All five failed on main. The two `issue 511` tests of `card-state-owed.test.ts` now assert the new rule.
+
+### Risk
+Medium-low. No write is added; the order of a CARD_STATE and its write changes at the ship and prepare sites only, and the event data now names the stored state.
+
+### Ownership
+The card loop owns this change (`src/loop/card-runner.ts`).
+
+### Docs
+`docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, `bench/outcome/README.md`, the verify-card-run-writes coverage record and a changelog fragment.
+R3 decision 1 (block, 5 findings) repair, attempt 2. F1: each write of a SHIP or PREPARE branch that stores a state other than the selected one sets the reason of the directive it leads to (`storedReason`): the WAIT `on` (`ci-rerun`, `operation:<id>`, `review:<key>`, `review-pool:<pool>:<status>`, `pre-review:<id>`, `pre-review-quota`, `review-quota`, `merge-verify:<id>`), the machine's CLOSE and REVIEW_FIX reasons, the attach decision; a STOP keeps its stop detail; acceptance 1 to 3 assert the values. F2: a CARD_STATE whose append failed is held (`deferred`) from every later delivery of the same dispatch, so the owed ship result's delivery neither completes it nor throws on a persistent fault; acceptance 4 runs a one-shot and a persistent fault. F3: acceptance 3 is three tests; the attach test attaches a real worktree on the github ship path, asserts `action` attach and fails on main by itself. F4: acceptance 4 asserts the CLOSE directive, a completed pool request, no BUILD to CLOSE after the faulted command, one owed entry, and runs the next `card next` unconditionally. F5: the evidence of item 6 claimed record entries the record cannot hold; corrected above, and the record's stage D text names the moved fault point. RED of the repaired tests on main `card-runner.ts`: 7 of 8 fail (the start case journals BUILD to PREPARE on main too, as the card says).
+R3 decision 2 (block, 7 findings) repair, attempt 3. Six findings named further writes of the F1 class; the repair swept every state-changing write a SHIP or PREPARE dispatch reaches (the review-commit writes of `review pre` and `review r3` run with no branch tracked) and set the directive's reason at each: the pre-review hand-back to BUILD (`pre-review block still pending`), the formal gate's REVIEW_FIX (the machine's reason), `buildWith` (its narration), `refutePatch` BUILD (the failure cause), the ship-path quota WAIT (`review-quota`), the no-verdict retry and the CI rerun SHIP, and the record-changed WAIT (`record-changed`). The seventh: a DONE write no longer owes a CARD_STATE, since `close` appends CLOSE to DONE itself, as on main. New tests: every ship outcome from a record stored in SHIP (none carries the SHIP selection reason for another state; a WAIT carries its `on`; a STOP its detail), and a merged ship with closure already complete (one CLOSE to DONE). Both fail on the attempt-2 candidate `b6abca35`.
+R3 decision 3 (block, 2 findings) repair, attempt 4: a write that stores the selected state carries the selection reason, before any reason the branch set for that write (R2); the no-verdict retry and the CI rerun SHIP no longer set one. The outcome test runs from a record stored in BUILD and in SHIP and asserts the selection reason on every CARD_STATE to SHIP; it fails on the attempt-3 candidate `f1c423af`.
+
+R3 decision 4 (block, 2 test findings) repair, attempt 5, after the owner's continuation (one further decision): a new test ships a transient CI failure with structured gate evidence (the `TRANSIENT` text of `ci-rerun.test.ts`) from a record stored in BUILD and asserts the ship directive, SHIP stored, one persisted rerun of run 12345 and exactly one BUILD to SHIP with the selection reason; it fails on `f1c423af` (reason `transient CI failure: one same-origin rerun of run 12345`). The outcome sweep no longer catches exceptions (no outcome throws) and asserts, for each outcome from BUILD and from SHIP, the directive kind, the stored state and the number of CARD_STATE events (one when the stored state changed, none when it did not). No source change.
