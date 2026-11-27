@@ -15,7 +15,7 @@ test('T0-DOC-CLAIMS-3 acceptance 1a: the Sessions lock sentence lists release re
 
 test('T0-DOC-CLAIMS-3 acceptance 1b: CLAUDE.md names the board write of aidlc next [R3]', () => {
   const claude = read('CLAUDE.md');
-  assert.ok(!claude.includes(STALE_NEXT), `CLAUDE.md holds no "${STALE_NEXT}"`);
+  assert.ok(!claude.replace(/\s+/g, ' ').includes(STALE_NEXT), `CLAUDE.md holds no "${STALE_NEXT}", across line breaks too`);
   const paragraph = claude.split('\nOne directive per call.')[1]?.split('\n\n')[0] ?? '';
   assert.ok(paragraph.includes('board view'), 'the One directive per call. paragraph names the board view');
 });
