@@ -76,7 +76,7 @@ Attempt 1: every card-run write of `src/loop/card-runner.ts` goes through `updat
 | 3 | `card-state-stored.test.ts` acceptance 3 | pass |
 | 4 | `card-state-stored.test.ts` acceptance 4 | pass |
 | 5 | `card-state-owed.test.ts` issue 511 tests assert R5; `git diff origin/main --stat -- tests/` lists the new file and `card-state-owed.test.ts`; DoD files green | pass |
-| 6 | `fault-points.test.ts` passes; coverage record lists `saveRun`, `updateRun`, `deliverStored`; sync commit moves at CLOSE | pass |
+| 6 | `fault-points.test.ts` passes unchanged; the coverage record's method list names only methods `fault-points.test.ts` names (`tests/surface/templates.test.ts` acceptance 3), so its stage D text records the moved `CARD_STATE` fault point and the write wrappers; the sync commit moves at CLOSE, to a commit on main | pass |
 | 7 | OPERATIONS Audit paragraph, ARCHITECTURE item 1 and `continueStop` hold sentence, `bench/outcome/README.md` limit paragraph; `changelog.d/T0-CARD-STATE-STORED.md` | pass |
 | 8 | `npm run typecheck` | pass |
 
@@ -108,3 +108,4 @@ The card loop owns this change (`src/loop/card-runner.ts`).
 
 ### Docs
 `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, `bench/outcome/README.md`, the verify-card-run-writes coverage record and a changelog fragment.
+R3 decision 1 (block, 5 findings) repair, attempt 2. F1: each write of a SHIP or PREPARE branch that stores a state other than the selected one sets the reason of the directive it leads to (`storedReason`): the WAIT `on` (`ci-rerun`, `operation:<id>`, `review:<key>`, `review-pool:<pool>:<status>`, `pre-review:<id>`, `pre-review-quota`, `review-quota`, `merge-verify:<id>`), the machine's CLOSE and REVIEW_FIX reasons, the attach decision; a STOP keeps its stop detail; acceptance 1 to 3 assert the values. F2: a CARD_STATE whose append failed is held (`deferred`) from every later delivery of the same dispatch, so the owed ship result's delivery neither completes it nor throws on a persistent fault; acceptance 4 runs a one-shot and a persistent fault. F3: acceptance 3 is three tests; the attach test attaches a real worktree on the github ship path, asserts `action` attach and fails on main by itself. F4: acceptance 4 asserts the CLOSE directive, a completed pool request, no BUILD to CLOSE after the faulted command, one owed entry, and runs the next `card next` unconditionally. F5: the evidence of item 6 claimed record entries the record cannot hold; corrected above, and the record's stage D text names the moved fault point. RED of the repaired tests on main `card-runner.ts`: 7 of 8 fail (the start case journals BUILD to PREPARE on main too, as the card says).

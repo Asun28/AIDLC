@@ -87,6 +87,11 @@ for (const outcome of ['merged', 'auth-failed'] as const) {
         const closes = transitions(events, 'BUILD', 'CLOSE');
         assert.equal(closes.length, 1, 'exactly one BUILD to CLOSE');
         assert.deepEqual(Object.keys(closes[0]!.data).sort(), ['eventKey', 'from', 'reason', 'to'], 'the data of an owed CARD_STATE, without completed');
+        assert.equal(closes[0]!.data['reason'], 'merge verified; complete only missing closure steps', 'the reason of the close directive the merge leads to');
+      }
+      for (const e of states(events.slice(start))) {
+        if (e.data['to'] === 'STOP') assert.equal(e.data['reason'], fx.store.getCardRun(goalId, CARD)!.stop?.detail, 'a STOP carries its stop detail');
+        assert.doesNotMatch(String(e.data['reason']), /action stored/, 'no reason made up from the state names');
       }
     } finally {
       setActorForTests(actorA);
@@ -109,6 +114,8 @@ test('T0-CARD-STATE-STORED acceptance 2: a refused first ship write (the WAIT of
     assert.equal(r.directive.kind, 'wait', r.directive.narration);
     const journaled = states(fx.events(goalId).slice(start));
     assert.deepEqual(journaled.map((e) => [e.data['from'], e.data['to']]), [['BUILD', 'WAIT']], 'one CARD_STATE, for the landed WAIT write');
+    assert.equal(r.directive.kind === 'wait' && r.directive.on, 'ci-rerun');
+    assert.equal(journaled[0]!.data['reason'], 'ci-rerun', 'the reason of the WAIT directive the write leads to');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
@@ -134,103 +141,123 @@ function git(cwd: string, args: string[]): void {
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
 }
 
-test('T0-CARD-STATE-STORED acceptance 3: PREPARE journals the state its write stored: STOP on an expired lease, BUILD on an attach, PREPARE on a start [R2] [R5]', () => {
-  {
-    const { fx, goalId } = expiredB();
-    try {
-      const start = fx.events(goalId).length;
-      const r = fx.runner().next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
-      assert.equal(r.directive.kind, 'stop', r.directive.narration);
-      assert.equal(fx.store.getCardRun(goalId, CARD)?.state, 'STOP');
-      const events = fx.events(goalId).slice(start);
-      assert.equal(toState(events, 'STOP').length, 1, 'one CARD_STATE to STOP');
-      assert.deepEqual(toState(events, 'PREPARE'), [], 'none to PREPARE, a state the record never held');
-    } finally {
-      setActorForTests(actorA);
-      fx.cleanup();
-    }
-  }
-  {
-    const fx = makeFixture({ actor: actorA });
-    try {
-      writeCard(fx, { id: CARD, title: 'a' });
-      const goal = goalForCards(fx, [CARD]);
-      const r = fx.runner().next(fx.goal(goal.id), fx.card(CARD), fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
-      // The dry-run ship path makes no worktree: its PREPARE stores BUILD, as an attach does.
-      assert.equal(r.directive.kind, 'prepare', r.directive.narration);
-      assert.equal(fx.store.getCardRun(goal.id, CARD)?.state, 'BUILD');
-      const events = fx.events(goal.id);
-      assert.deepEqual(states(events).map((e) => [e.data['from'], e.data['to']]), [['PREPARE', 'BUILD']], 'one CARD_STATE to BUILD, none to PREPARE');
-    } finally {
-      setActorForTests(actorA);
-      fx.cleanup();
-    }
-  }
-  {
-    // A start on the github ship path from a run stored in BUILD that holds no owner generation: the PREPARE write journals BUILD to PREPARE.
-    const fx = makeFixture({ actor: actorA });
-    try {
-      writeCard(fx, { id: CARD, title: 'a' });
-      const goal = goalForCards(fx, [CARD]);
-      writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\nwt/\n');
-      git(fx.tmp, ['init', '-q', '-b', 'main']);
-      git(fx.tmp, ['add', '-A']);
-      git(fx.tmp, ['commit', '-q', '-m', 'base']);
-      mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
-      const root = realpathSync.native(path.join(fx.tmp, 'wt'));
-      const mainRoot = realpathSync.native(fx.tmp);
-      const runner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, mainRoot, worktreeRoot: mainRoot }, config: { ...fx.config, shipPath: 'github', worktreeRoot: root }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
-      const run = fx.controller.ensureCardRun(fx.goal(goal.id), CARD);
-      fx.store.saveCardRun({ ...run, state: 'BUILD' });
-      const start = fx.events(goal.id).length;
-      const r = runner.next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD)!);
-      assert.equal(r.directive.kind === 'prepare' && r.directive.action, 'start', r.directive.narration);
-      assert.equal(fx.store.getCardRun(goal.id, CARD)?.state, 'PREPARE');
-      assert.deepEqual(states(fx.events(goal.id).slice(start)).map((e) => [e.data['from'], e.data['to']]), [['BUILD', 'PREPARE']], 'one CARD_STATE to PREPARE');
-    } finally {
-      setActorForTests(actorA);
-      fx.cleanup();
-    }
-  }
-});
 
-test('T0-CARD-STATE-STORED acceptance 4: a lost CARD_STATE append after the merged ship result landed does not throw, settles the ship, stays owed and is completed once by the next card next [R4]', () => {
-  const fx = makeFixture({ actor: actorA });
-  const real = fs.appendFileSync;
+/** A goal projecting the card in a real git repository, with `card next` on the github ship path (prepare-worktree.test.ts). */
+function githubRepo(fx: Fixture): { goalId: string; worktree: string; next: () => ReturnType<CardRunner['next']> } {
+  writeCard(fx, { id: CARD, title: 'a' });
+  const goal = goalForCards(fx, [CARD]);
+  writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\nwt/\n');
+  git(fx.tmp, ['init', '-q', '-b', 'main']);
+  git(fx.tmp, ['add', '-A']);
+  git(fx.tmp, ['commit', '-q', '-m', 'base']);
+  mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
+  const root = realpathSync.native(path.join(fx.tmp, 'wt'));
+  const mainRoot = realpathSync.native(fx.tmp);
+  const runner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, mainRoot, worktreeRoot: mainRoot }, config: { ...fx.config, shipPath: 'github', worktreeRoot: root }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+  const next = () => runner.next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD) ?? fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
+  return { goalId: goal.id, worktree: path.join(root, CARD), next };
+}
+
+test('T0-CARD-STATE-STORED acceptance 3, expired lease: PREPARE stores STOP and journals one CARD_STATE to STOP with the stop detail, none to PREPARE [R2] [R5]', () => {
+  const { fx, goalId } = expiredB();
   try {
-    const { goalId, runner } = builtCandidate(fx, new DryRunShipPath(['merged']));
-    let failed = false;
-    fs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
-      if (!failed && String(args[1]).includes('"type":"CARD_STATE"')) {
-        failed = true;
-        throw Object.assign(new Error('EIO: injected fault on a CARD_STATE line'), { code: 'EIO' });
-      }
-      return real(...args);
-    }) as typeof fs.appendFileSync;
-    syncBuiltinESMExports();
-    const r = runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
-    fs.appendFileSync = real;
-    syncBuiltinESMExports();
-    assert.ok(failed, 'the fault fired');
-    assert.notEqual(r.directive.kind, 'stop', r.directive.narration);
+    const start = fx.events(goalId).length;
+    const r = fx.runner().next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
     const stored = fx.store.getCardRun(goalId, CARD)!;
-    assert.equal(stored.state, 'CLOSE', 'the result write landed');
-    const ops = fx.ops.list({ goalId, cardId: CARD, kind: 'merge' });
-    assert.deepEqual(ops.map((o) => o.status), ['succeeded'], 'the merge operation is settled');
-    assert.deepEqual(fx.queue.list().filter((q) => q.state === 'running'), [], 'no pool request is held');
-    // The CARD_STATE is owed on the run, or a later delivery of the same command (the owed ship result) completed it already.
-    const owedNow = (stored.journalOwed ?? []).filter((o) => o.type === 'CARD_STATE' && !transitions(fx.events(goalId), 'BUILD', 'CLOSE').some((e) => e.data['eventKey'] === o.key));
-    assert.equal(owedNow.length + transitions(fx.events(goalId), 'BUILD', 'CLOSE').length, 1, 'the CARD_STATE is owed or journaled once');
-    if (owedNow.length) runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
-    const closes = transitions(fx.events(goalId), 'BUILD', 'CLOSE');
-    assert.equal(closes.length, 1, 'the next card next appends it once');
-    assert.equal(closes[0]!.data['completed'], true);
-    runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
-    assert.equal(transitions(fx.events(goalId), 'BUILD', 'CLOSE').length, 1, 'a third card next appends none');
+    assert.equal(stored.state, 'STOP');
+    const events = fx.events(goalId).slice(start);
+    const stops = toState(events, 'STOP');
+    assert.equal(stops.length, 1, 'one CARD_STATE to STOP');
+    assert.equal(stops[0]!.data['reason'], stored.stop?.detail, 'the reason is the stop detail');
+    assert.deepEqual(toState(events, 'PREPARE'), [], 'none to PREPARE, a state the record never held');
   } finally {
-    fs.appendFileSync = real;
-    syncBuiltinESMExports();
     setActorForTests(actorA);
     fx.cleanup();
   }
 });
+
+test('T0-CARD-STATE-STORED acceptance 3, attach: a PREPARE that attaches an existing worktree stores BUILD and journals one CARD_STATE to BUILD, none to PREPARE [R2] [R5]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, worktree, next } = githubRepo(fx);
+    const first = next();
+    assert.equal(first.directive.kind === 'prepare' && first.directive.action, 'start', first.directive.narration);
+    git(fx.tmp, ['worktree', 'add', '-q', '-b', CARD, worktree]);
+    const start = fx.events(goalId).length;
+    const attach = next();
+    assert.equal(attach.directive.kind === 'prepare' && attach.directive.action, 'attach', attach.directive.narration);
+    assert.equal(fx.store.getCardRun(goalId, CARD)?.state, 'BUILD');
+    const journaled = states(fx.events(goalId).slice(start));
+    assert.deepEqual(journaled.map((e) => [e.data['from'], e.data['to']]), [['PREPARE', 'BUILD']], 'one CARD_STATE to BUILD, none to PREPARE');
+    assert.match(String(journaled[0]!.data['reason']), /^attach /, 'the reason of the attach decision');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-CARD-STATE-STORED acceptance 3, start: a PREPARE that starts a worktree from a run stored in BUILD journals one CARD_STATE to PREPARE [R2] [R5]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, next } = githubRepo(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goalId), CARD);
+    fx.store.saveCardRun({ ...run, state: 'BUILD' });
+    const start = fx.events(goalId).length;
+    const r = next();
+    assert.equal(r.directive.kind === 'prepare' && r.directive.action, 'start', r.directive.narration);
+    assert.equal(fx.store.getCardRun(goalId, CARD)?.state, 'PREPARE');
+    assert.deepEqual(states(fx.events(goalId).slice(start)).map((e) => [e.data['from'], e.data['to']]), [['BUILD', 'PREPARE']], 'one CARD_STATE to PREPARE');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+/** Make `fs.appendFileSync` throw on CARD_STATE lines: once, or on every one while `persistent` is set. */
+function failStateAppends(persistent: boolean): { restore: () => void; fired: () => number } {
+  const real = fs.appendFileSync;
+  let fired = 0;
+  fs.appendFileSync = ((...args: Parameters<typeof fs.appendFileSync>) => {
+    if ((persistent || fired === 0) && String(args[1]).includes('"type":"CARD_STATE"')) {
+      fired += 1;
+      throw Object.assign(new Error('EIO: injected fault on a CARD_STATE line'), { code: 'EIO' });
+    }
+    return real(...args);
+  }) as typeof fs.appendFileSync;
+  syncBuiltinESMExports();
+  return { restore: () => { fs.appendFileSync = real; syncBuiltinESMExports(); }, fired: () => fired };
+}
+
+for (const persistent of [false, true]) {
+  test(`T0-CARD-STATE-STORED acceptance 4: a ${persistent ? 'persistent' : 'one-shot'} CARD_STATE append fault after the merged ship result landed: card next returns CLOSE, settles the ship, leaves the event owed and undelivered, and the next card next appends it once, completed [R4]`, () => {
+    const fx = makeFixture({ actor: actorA });
+    let fault = { restore: () => undefined as void, fired: () => 0 };
+    try {
+      const { goalId, runner } = builtCandidate(fx, new DryRunShipPath(['merged']));
+      fault = failStateAppends(persistent);
+      const r = runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+      fault.restore();
+      assert.ok(fault.fired() >= 1, 'the fault fired');
+      assert.equal(r.directive.kind, 'close', r.directive.narration);
+      const stored = fx.store.getCardRun(goalId, CARD)!;
+      assert.equal(stored.state, 'CLOSE', 'the result write landed');
+      assert.deepEqual(fx.ops.list({ goalId, cardId: CARD, kind: 'merge' }).map((o) => o.status), ['succeeded'], 'the merge operation is settled');
+      assert.deepEqual(fx.queue.list().map((q) => q.state), ['completed'], 'the pool request is completed');
+      assert.deepEqual(transitions(fx.events(goalId), 'BUILD', 'CLOSE'), [], 'the command journals no BUILD to CLOSE');
+      const owed = (stored.journalOwed ?? []).filter((o) => o.type === 'CARD_STATE' && o.data['to'] === 'CLOSE');
+      assert.equal(owed.length, 1, 'one CARD_STATE owed on the run');
+      runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+      const closes = transitions(fx.events(goalId), 'BUILD', 'CLOSE');
+      assert.equal(closes.length, 1, 'the next card next appends it once');
+      assert.equal(closes[0]!.data['completed'], true, 'marked completed');
+      assert.equal(closes[0]!.data['eventKey'], owed[0]!.key);
+      runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+      assert.equal(transitions(fx.events(goalId), 'BUILD', 'CLOSE').length, 1, 'a third card next appends none');
+    } finally {
+      fault.restore();
+      setActorForTests(actorA);
+      fx.cleanup();
+    }
+  });
+}
