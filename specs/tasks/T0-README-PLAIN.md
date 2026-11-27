@@ -133,8 +133,8 @@ README.md, docs/OPERATIONS.md, docs/ARCHITECTURE.md and changelog.d/T0-README-PL
 | Item | Proof | Result |
 |---|---|---|
 | 1 | tests/surface/readme.test.ts, `T0-README-PLAIN acceptance 1` | pass |
-| 2 | tests/surface/readme.test.ts, `T0-README-PLAIN acceptance 2`; RED at 5c00cc9b (8 tests failed on the old README) | pass |
-| 3 | tests/surface/readme.test.ts, `T1-INIT-SURFACE acceptance 2`, `3` and `6` | pass |
+| 2 | tests/surface/readme.test.ts, `T0-README-PLAIN acceptance 2` and `2.1` to `2.15`, one test per excerpt; with README.md of 359fbd14 all 15 fail (15 fail, 0 pass), first RED at 5c00cc9b | pass |
+| 3 | tests/surface/readme.test.ts, `T1-INIT-SURFACE acceptance 2`, `3` and `6`, with the dispatch facts of docs/OPERATIONS.md Hooks pinned (R3 decision 1, F2) | pass |
 | 4 | tests/surface/prose.test.ts, `acceptance 8`; docs/OPERATIONS.md Sessions unchanged at 13,696 bytes | pass |
 | 5 | tests/surface/verifier.test.ts, `T1-AUDIT-FACTS acceptance 8`; tests/surface/removed-surface.test.ts, `T1-SWEEP-DEAD-CODE acceptance 3`; the other Limits rows against src/core/deadlines.ts:30-33 and 49-52, src/core/effort.ts:76-80 and src/loop/controller.ts:185-191 and 417-418 | pass; reviewer check |
 | 6 | Moved facts in the candidate: docs/OPERATIONS.md:87-89, 577 and 791 (git), 388 (build selection), 61 (PATH), 15 (`--no-hooks`), 17-59 (path list), 405 (guard quoting), 396 (`goals/` tail), 415 (unusable config), 307 (Sessions), 639 and 641 (bounds), 615 (Limits order); docs/ARCHITECTURE.md:91-102 (states table), 104 (resume sentence), 18 (review queue, its own paragraph: tests/scenarios/review-admit-strand.test.ts:205-226 pins the sentence before line 16's T0-REVIEW-ADMIT-STRAND sentence), 14 (identity change), 153 (card precedence), 187 (report results), 8 (Module map). README links: #sessions, #setup, #hooks, #running-a-goal, #watching-a-goal, #bound-statistics, #module-map | reviewer check |
