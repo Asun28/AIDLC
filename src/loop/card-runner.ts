@@ -925,6 +925,8 @@ export class CardRunner {
   private storedChange(current: CardRun | undefined, next: CardRun): OwedEvent | undefined {
     const branch = this.storedState;
     if (!branch || !current || next === current || next.goalId !== branch.goal.id || next.cardId !== branch.card.id || next.state === current.state) return undefined;
+    // CLOSE to DONE is journaled by close itself, as on main (out of scope of card T0-CARD-STATE-STORED).
+    if (next.state === 'DONE') return undefined;
     const reason = branch.next ?? (next.state === 'STOP' && next.stop ? next.stop.detail : branch.reason);
     branch.next = undefined;
     return this.owe(branch.goal, 'CARD_STATE', { from: current.state, to: next.state, reason });
@@ -2153,6 +2155,7 @@ export class CardRunner {
       if (!answered.answered) {
         // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons and the open finding ids.
         // The episode reopens so the repair can be recorded; the review budget, not the ladder, paid for the block.
+        this.storedReason('pre-review block still pending');
         const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined, effort: run.effort ? reopenAfterReviewBlock(run.effort, 'pre-review block still pending') : run.effort, blockedReceipt: this.keepReceipt(run, { stage: 'pre', cycle, round: last.round, candidateSha: run.candidate?.sha }) });
         const admitted = run.effort ? repairAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the round runs on the unchanged candidate once every finding of the block is disputed.` : '';
@@ -2242,6 +2245,7 @@ export class CardRunner {
       }
       const answered = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }) : { answered: false, open: [] };
       if (!answered.answered) {
+        this.storedReason('resolve candidate defects or document dispute within remaining review allowance');
         const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined, blockedReceipt: this.keepReceipt(run, { stage: 'formal', candidateSha: run.candidate?.sha }) });
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
         return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.${ids}${this.classRepairNote(run)} ${REPRO_REQUEST}` } };
@@ -3591,13 +3595,15 @@ export class CardRunner {
       const runningIndex = next.effort?.attempts.findIndex((a) => a.outcome === 'running') ?? -1;
       return { kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? (next.effort ? ladderNumber(next.effort, runningIndex >= 0 ? runningIndex : next.effort.attempts.length) : 1), skills: skills ?? this.buildSkills(goal, card), narration };
     };
-    const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
+    const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => (this.storedReason(narration), { ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
     // A ship that fails on the candidate's own code (T0-SHIP-REPAIR-ATTEMPT): the success that bound the candidate is a
     // counted failure whose cause names the outcome, the episode reopens, and the next step is the ladder's on the locked
     // record (the repair attempt, the one justified escalation, or STOP/card), the same one `card attempt` admits.
     let refutation: ShipFailureStep | undefined;
     const refutePatch = (latest: CardRun, cause: string): Partial<CardRun> => {
       refutation = latest.effort ? afterShipFailure(latest.effort, cause, { harderProblem: true, limitsPermit: checkAdmission(latest.deadline, now).phase === 'open' }) : undefined;
+      // The CARD_STATE of a BUILD this write stores carries the failure the repair directive names (card T0-CARD-STATE-STORED R2).
+      if (refutation?.action.action !== 'stop') this.storedReason(cause);
       if (refutation?.action.action !== 'stop') return { state: 'BUILD', effort: refutation?.episode ?? latest.effort, dodReceipt: undefined, blockedReceipt: undefined };
       const stop = makeStop('card', `${JSON.stringify(cause)}; the effort ladder admits no repair attempt: ${refutation.action.reason}: ${refutation.action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
       return { state: 'STOP', stop, effort: refutation.episode, dodReceipt: undefined, blockedReceipt: undefined };
@@ -3646,10 +3652,10 @@ export class CardRunner {
         // ships the same candidate again once the hold has passed.
         if (classified.outcome === 'quota-hold') {
           const pollSeconds = Math.max(60, Math.ceil((Date.parse(holdUntil) - Date.parse(now)) / 1000));
-          return finish(() => ({ state: 'WAIT' }), (next) => ({ run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `The ship-path reviewer reported a quota/rate limit; review pool ${goal.reviewPool} is held until ${holdUntil} (not a decision, no retry spent). Then run \`aidlc card next ${card.id}\`.` } }));
+          return finish(() => (this.storedReason('review-quota'), { state: 'WAIT' }), (next) => ({ run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `The ship-path reviewer reported a quota/rate limit; review pool ${goal.reviewPool} is held until ${holdUntil} (not a decision, no retry spent). Then run \`aidlc card next ${card.id}\`.` } }));
         }
         if (reviewDecision?.action === 'retry-review') {
-          return finish(() => ({ state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
+          return finish(() => (this.storedReason(`no verdict (${classified.runStatus}): retry the ship`), { state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
         }
         return stopWith(makeStop('review', 'missing/malformed/stale verdict after the single retry', this.reviewNextAction(card.id, run.review, 'preserve raw output; never pass; hand off for adjudication'), { at: now, global: false }));
       }
@@ -3675,8 +3681,10 @@ export class CardRunner {
         const applied = finish(
           (latest) => {
             decided = rerunOn(latest.ci);
+            if (decided.allowed) this.storedReason(`transient CI failure: one same-origin rerun of run ${runId}`);
             if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
             if (cls.class === 'code-defect') return refutePatch(latest, `ship ${result.outcome}: CI code defect (${cls.evidence[0] ?? ''})`);
+            if (snapshotAllowed) this.storedReason('record-changed');
             if (snapshotAllowed) return { state: 'WAIT' };
             return { state: 'STOP', stop: makeStop('ci', decided.reason, 'diagnose the failure before any further rerun', { at: now, global: false }) };
           },
