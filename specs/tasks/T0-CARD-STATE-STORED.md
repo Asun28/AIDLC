@@ -7,13 +7,14 @@ allow_paths:
   - src/loop/card-runner.ts
   - tests/scenarios/card-state-stored.test.ts
   - tests/scenarios/card-state-owed.test.ts
+  - tests/scenarios/ship-effect-unknown.test.ts
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - bench/outcome/README.md
   - .claude/skills/verify-card-run-writes/SKILL.md
   - changelog.d/T0-CARD-STATE-STORED.md
   - specs/tasks/T0-CARD-STATE-STORED.md
-dod_command: npm run typecheck && node --test tests/scenarios/card-state-stored.test.ts tests/scenarios/card-state-owed.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/foreign-dispatch.test.ts tests/scenarios/card-contract-gate.test.ts tests/scenarios/deadline.test.ts tests/scenarios/extend-running-card.test.ts tests/scenarios/card-terminal-goal.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/card-continue-ci.test.ts tests/core/owed-event.test.ts tests/surface/outcome-ingest.test.ts tests/surface/templates.test.ts tests/surface/changelog-fragments.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/card-state-stored.test.ts tests/scenarios/card-state-owed.test.ts tests/scenarios/ship-effect-unknown.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/foreign-dispatch.test.ts tests/scenarios/card-contract-gate.test.ts tests/scenarios/deadline.test.ts tests/scenarios/extend-running-card.test.ts tests/scenarios/card-terminal-goal.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/card-continue-ci.test.ts tests/core/owed-event.test.ts tests/surface/outcome-ingest.test.ts tests/surface/templates.test.ts tests/surface/changelog-fragments.test.ts
 dod_exit: 0
 review_gate: codex {verdict:pass}
 requirements:
@@ -28,7 +29,7 @@ acceptance:
   - 2. Same file. A SHIP selection whose first ship write (the WAIT save of an unreconciled CI rerun, :1729) is refused as stale by the `wrapSaves` `before` hook: the journal holds no `CARD_STATE` from that call; a second `card next` journals exactly one for its own landed write. RED on main (BUILD to SHIP from the refused call). [R2] [R3] [dod arm 2]
   - 3. Same file. PREPARE on an expired foreign lease (the fixture of `tests/scenarios/foreign-dispatch.test.ts:323`): the stored run is STOP and the journal holds one `CARD_STATE` to STOP and none to PREPARE. A PREPARE whose worktree is attached (dry-run ship path) journals one to BUILD and none to PREPARE. A PREPARE that starts a worktree journals one to PREPARE. RED on main for the first two. [R2] [R5] [dod arm 2]
   - 4. Same file. `fs.appendFileSync` throws once on a `CARD_STATE` line (the fault form of `tests/scenarios/fault-points.test.ts`) after the merged ship's result write landed: `card next` returns the CLOSE directive without throwing, the operation is `succeeded`, the pool request is completed, the event is owed; the next `card next` appends it once with `completed: true` and a third appends none. [R4] [dod arm 2]
-  - 5. `tests/scenarios/card-state-owed.test.ts`: the two tests `R3 decision 1 F1, issue 511` (:203-221), which pin the append of main, assert R5 instead (no BUILD to SHIP; one `CARD_STATE` per stored change, after its write). No other existing test changes: `git diff origin/main --stat -- tests/` lists only the new file and `card-state-owed.test.ts`. `foreign-dispatch.test.ts` (its lease section counts included), `card-contract-gate.test.ts` (test 5 DONE row included) and the other DoD files pass. [R5] [dod arm 2]
+  - 5. `tests/scenarios/card-state-owed.test.ts`: the two tests `R3 decision 1 F1, issue 511` (:203-221), which pin the append of main, assert R5 instead (no BUILD to SHIP; one `CARD_STATE` per stored change, after its write). `tests/scenarios/ship-effect-unknown.test.ts:118-120` (owner amendment, 2026-11-27): its `held` also counts an owed `CARD_STATE` whose `eventKey` the journal holds, since the ship's WAIT write now owes one, journaled and left on the record as a delivered `OPERATION_RESULT` is. No other existing test changes: `git diff origin/main --stat -- tests/` lists only the new file, `card-state-owed.test.ts` and `ship-effect-unknown.test.ts`. `foreign-dispatch.test.ts` (its lease section counts included), `card-contract-gate.test.ts` (test 5 DONE row included) and the other DoD files pass. [R5] [dod arm 2]
   - 6. `tests/scenarios/fault-points.test.ts` passes; when a method named in the coverage record of `.claude/skills/verify-card-run-writes/SKILL.md` gains or loses a write or a fault point, that record and its `Sync commit:` line follow its Keeping in sync section. [R2] [R4] [dod arm 2]
   - 7. R6 holds in the three docs (reviewer-verified against the diff); `changelog.d/T0-CARD-STATE-STORED.md` holds one line in the form of `changelog.d/README.md`. [R6] [dod arm 2]
   - 8. The typecheck is clean. [dod arm 1]
@@ -57,7 +58,53 @@ For a SHIP or PREPARE selection, each card-run write of the branch that changes 
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/card-state-stored.test.ts tests/scenarios/card-state-owed.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/foreign-dispatch.test.ts tests/scenarios/card-contract-gate.test.ts tests/scenarios/deadline.test.ts tests/scenarios/extend-running-card.test.ts tests/scenarios/card-terminal-goal.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/card-continue-ci.test.ts tests/core/owed-event.test.ts tests/surface/outcome-ingest.test.ts tests/surface/templates.test.ts tests/surface/changelog-fragments.test.ts
+npm run typecheck && node --test tests/scenarios/card-state-stored.test.ts tests/scenarios/card-state-owed.test.ts tests/scenarios/ship-effect-unknown.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/foreign-dispatch.test.ts tests/scenarios/card-contract-gate.test.ts tests/scenarios/deadline.test.ts tests/scenarios/extend-running-card.test.ts tests/scenarios/card-terminal-goal.test.ts tests/scenarios/card-continue.test.ts tests/scenarios/card-continue-goal.test.ts tests/scenarios/card-continue-ci.test.ts tests/core/owed-event.test.ts tests/surface/outcome-ingest.test.ts tests/surface/templates.test.ts tests/surface/changelog-fragments.test.ts
 ```
 - Expected exit code: 0
 - Assertion: each `CARD_STATE` of a SHIP or PREPARE branch names a state its write stored and follows that write; a refused write leaves none; a lost append after the merge is completed once and does not throw.
+
+## Attempt evidence
+
+RED: `63c622fc`, `tests/scenarios/card-state-stored.test.ts` on main code: 0 of 5 pass (acceptance 1 merged and auth-failed found BUILD to SHIP before the ship, acceptance 2 found the BUILD to SHIP of the refused call, acceptance 3 found X to PREPARE on a STOP and no change to BUILD, acceptance 4 found no owed event).
+
+Attempt 1: every card-run write of `src/loop/card-runner.ts` goes through `updateRun` or `saveRun`. While a SHIP or PREPARE branch runs (`storedState`, set by `dispatch`), a write that changes the stored state carries a `CARD_STATE` of that change and `deliverStored` appends it after the write lands. A failed append stays owed; a refusal by another session's live lease still ends the dispatch (the foreign-dispatch `GATED` counts pass). The start of `ship` no longer appends. In the dry-run ship path a PREPARE stores BUILD for either worktree decision, so acceptance 3 checks the attach case by the stored state. In acceptance 4 the merged ship's own owed-result delivery may complete the lost event in the same command (`completed: true`), which `deliverOwed` does for any entry not its own; the test accepts it owed or journaled once.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `card-state-stored.test.ts` acceptance 1 (merged, auth-failed) | pass |
+| 2 | `card-state-stored.test.ts` acceptance 2 | pass |
+| 3 | `card-state-stored.test.ts` acceptance 3 | pass |
+| 4 | `card-state-stored.test.ts` acceptance 4 | pass |
+| 5 | `card-state-owed.test.ts` issue 511 tests assert R5; `git diff origin/main --stat -- tests/` lists the new file and `card-state-owed.test.ts`; DoD files green | pass |
+| 6 | `fault-points.test.ts` passes; coverage record lists `saveRun`, `updateRun`, `deliverStored`; sync commit moves at CLOSE | pass |
+| 7 | OPERATIONS Audit paragraph, ARCHITECTURE item 1 and `continueStop` hold sentence, `bench/outcome/README.md` limit paragraph; `changelog.d/T0-CARD-STATE-STORED.md` | pass |
+| 8 | `npm run typecheck` | pass |
+
+## PR summary
+
+### What
+The `CARD_STATE` of a SHIP or PREPARE selection now names the state each card-run write of its branch stores. It is appended only after that write lands.
+
+### Why / Intent
+Issue 511. `ship` appended BUILD to SHIP before any write, so a refused early ship write left the event and a retry journaled it twice. `prepare` stored STOP or BUILD with an event that said PREPARE.
+
+### How / Behaviour
+All card-run writes of the runner go through `updateRun` and `saveRun`. While a SHIP or PREPARE branch runs, a write that changes the stored state records a `CARD_STATE` from the old state to the new one in `journalOwed`, and `deliverStored` appends it after the write. A failed append stays owed and does not throw.
+
+### System impact
+Journals now show the stored changes: a merged ship journals BUILD to CLOSE (no SHIP), an attach journals a change to BUILD, an expired-lease PREPARE journals a change to STOP. `bench/outcome` state spans follow, as its README notes.
+
+### Security
+No change to authentication, secrets or permissions. Appends stay under the card lease lock while the dispatch holds no lease.
+
+### Tests and review
+A new test file covers a merged and a failed ship, a refused ship write, the three PREPARE outcomes and a lost append after the merge. All five failed on main. The two `issue 511` tests of `card-state-owed.test.ts` now assert the new rule.
+
+### Risk
+Medium-low. No write is added; the order of a CARD_STATE and its write changes at the ship and prepare sites only, and the event data now names the stored state.
+
+### Ownership
+The card loop owns this change (`src/loop/card-runner.ts`).
+
+### Docs
+`docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, `bench/outcome/README.md`, the verify-card-run-writes coverage record and a changelog fragment.

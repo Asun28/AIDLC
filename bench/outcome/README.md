@@ -51,7 +51,7 @@ Absent inputs:
 
 Every other row is still returned beside an error row. Other journal event types and blank journal lines are ignored. "Earlier" and "next" in the journal mean position in the file.
 
-Limit seen on the records of 2026-11-10: the journal holds a `CARD_STATE` event only where a command observed the change, and the 918 events have no `to` of `CLOSE` and three of `BUILD` (420 are `BUILD` to `SHIP`). A span therefore runs to the next journaled change, not to the next state change, and 41 of 153 runs with `mergeVerified` have no `CLOSE` or `DONE` span.
+Limit seen on the records of 2026-11-10: the journal holds a `CARD_STATE` event only where a command observed the change, and the 918 events have no `to` of `CLOSE` and three of `BUILD` (420 are `BUILD` to `SHIP`). A span therefore runs to the next journaled change, not to the next state change, and 41 of 153 runs with `mergeVerified` have no `CLOSE` or `DONE` span. From card T0-CARD-STATE-STORED on, the `CARD_STATE` of a SHIP or PREPARE branch names the state its write stored: a `SHIP` span exists only where a write stored SHIP (a merged ship journals `BUILD` to `CLOSE`), and a PREPARE that attaches a worktree journals a change to `BUILD`.
 
 ## Views (`views/10-cards.sql`)
 

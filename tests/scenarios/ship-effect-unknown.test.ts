@@ -115,8 +115,12 @@ test('a ship whose effect is unknown waits on its operation for aidlc ops reconc
     const results = fx.events(goal.id).filter((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === op!.id);
     assert.deepEqual(results.map((e) => [e.data['status'], e.data['outcome'], e.data['detail'], e.data['completed']]), [['UNKNOWN', 'effect-unknown', LINE, undefined]]);
     const stored = fx.store.getCardRun(goal.id, CARD)!;
-    // Nothing is still owed: every owed entry is a result the journal holds (an entry leaves the record at its next write).
-    const held = (o: { type: string; data: Record<string, unknown> }) => o.type === 'OPERATION_RESULT' && results.some((e) => e.data['operationId'] === o.data['operationId'] && e.data['status'] === o.data['status']);
+    // Nothing is still owed: every owed entry is a result, or the CARD_STATE of the ship's WAIT write (card
+    // T0-CARD-STATE-STORED), the journal holds (an entry leaves the record at its next write).
+    const journaled = fx.events(goal.id);
+    const held = (o: { type: string; data: Record<string, unknown> }) =>
+      (o.type === 'OPERATION_RESULT' && results.some((e) => e.data['operationId'] === o.data['operationId'] && e.data['status'] === o.data['status'])) ||
+      (o.type === 'CARD_STATE' && journaled.some((e) => e.type === 'CARD_STATE' && e.data['eventKey'] === o.data['eventKey']));
     assert.deepEqual((stored.journalOwed ?? []).filter((o) => !held(o)), []);
     assert.equal(stored.state, 'WAIT');
     assert.deepEqual(requestStates(fx, goal.id), ['completed']);

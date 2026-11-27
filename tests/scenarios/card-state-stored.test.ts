@@ -9,7 +9,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS } from '../../src/coordination/lease.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
-import { MINUTE_MS, type CardRun, type JournalEvent } from '../../src/core/types.ts';
+import { MINUTE_MS, type JournalEvent } from '../../src/core/types.ts';
 
 // Card T0-CARD-STATE-STORED (issue 511): the CARD_STATE of a SHIP or PREPARE selection names the state each card-run write of
 // its branch stores and is journaled after that write. Interleavings are injected by wrapping the store's write methods,

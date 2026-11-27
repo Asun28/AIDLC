@@ -201,18 +201,23 @@ function builtCandidate(fx: Fixture, shipPath: DryRunShipPath): { goalId: string
 }
 
 for (const outcome of ['merged', 'auth-failed'] as const) {
-  test(`T0-CARD-STATE-OWED R3 decision 1 F1, issue 511: a ship whose result is written outside the dispatch save (${outcome}) journals BUILD to SHIP once, before the ship, as on main [R5]`, () => {
+  test(`T0-CARD-STATE-OWED R3 decision 1 F1, issue 511 (card T0-CARD-STATE-STORED R5): a ship whose result is written outside the dispatch save (${outcome}) journals no BUILD to SHIP and one CARD_STATE per stored change, after the ship's intent [R5]`, () => {
     const fx = makeFixture({ actor: actorA });
     try {
       const { goalId, runner } = builtCandidate(fx, new DryRunShipPath([outcome]));
       const before = fx.store.getCardRun(goalId, CARD)!;
       assert.equal(before.state, 'BUILD');
+      const start = fx.events(goalId).length;
       runner.next(fx.goal(goalId), fx.card(CARD), before);
       const events = fx.events(goalId);
-      const ships = transitions(events, 'BUILD', 'SHIP');
-      assert.equal(ships.length, 1, 'one BUILD to SHIP');
-      assert.deepEqual(Object.keys(ships[0]!.data).sort(), ['from', 'reason', 'to'], 'the data of main');
-      assert.ok(events.indexOf(ships[0]!) < events.findIndex((e) => e.type === 'OPERATION_INTENT'), 'appended at the start of the ship, as on main');
+      assert.deepEqual(transitions(events, 'BUILD', 'SHIP'), [], 'no BUILD to SHIP: no write stored SHIP');
+      const changes = events.slice(start).filter((e) => e.type === 'CARD_STATE' && e.cardId === CARD);
+      const stored = fx.store.getCardRun(goalId, CARD)!.state;
+      if (stored !== 'BUILD') assert.equal(changes.at(-1)?.data['to'], stored, 'the last CARD_STATE names the stored state');
+      for (const e of changes) {
+        assert.deepEqual(Object.keys(e.data).sort(), ['eventKey', 'from', 'reason', 'to'], 'the data of an owed CARD_STATE');
+        assert.ok(events.indexOf(e) > events.findIndex((x) => x.type === 'OPERATION_INTENT'), 'appended after a write of the ship, not at its start');
+      }
     } finally {
       setActorForTests(actorA);
       fx.cleanup();
