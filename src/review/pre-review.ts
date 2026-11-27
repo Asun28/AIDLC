@@ -500,14 +500,14 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
       lines.push(`- since: ${i.delta.sinceSha}`, `- changed paths (${i.delta.changedPaths.length}): ${i.delta.changedPaths.join(', ') || 'none'}`, '- review the delta first: a finding inside it is a regression of the repair; a new finding outside it is a first-round miss (report it; it is recorded as one).');
       // The delta travels like the diff: embedded for a stdin reviewer, a pinned command for a repository-reading one (an argv prompt has a length limit).
       if (i.includeDiff) lines.push('```diff', i.delta.diff.trimEnd(), '```');
-      else lines.push(`Run \`git diff ${i.delta.sinceSha}...${i.head}\` in the repository working directory for the delta itself.`);
+      else lines.push(`Run \`${reviewDiffCommand(`${i.delta.sinceSha}...${i.head}`)}\` in the repository working directory for the delta itself.`);
     }
   }
   if (i.stage === 'formal' && i.baseSync) {
     lines.push('', '## Base sync', "- The base moved under this card: this candidate merges the new base into the candidate the last decision reviewed. Review the merged result against the new base, including how the base's changes meet the card's; no decision on an earlier candidate carries to this one.");
   }
   if (i.includeDiff) lines.push('', '## Diff', '```diff', i.diff.trimEnd(), '```');
-  else lines.push('', '## Diff', `Run \`git diff ${i.base}...${i.head}\` in the repository working directory and review exactly those committed changes; ignore uncommitted files.`);
+  else lines.push('', '## Diff', `Run \`${reviewDiffCommand(`${i.base}...${i.head}`)}\` in the repository working directory and review exactly those committed changes; ignore uncommitted files.`);
   lines.push('', 'Remember: the last line of your answer must be the JSON verdict document.');
   return lines.join('\n') + '\n';
 }
@@ -993,6 +993,17 @@ export interface CandidateDiff {
   bytes: number;
 }
 
+/** The options of the review diff after `--text` and the range, shared by the collector and the command a repository-reading reviewer is given. */
+const REVIEW_DIFF_OPTIONS: readonly string[] = ['--no-color', '--no-ext-diff', '--no-textconv', '--irreversible-delete'];
+
+/**
+ * The review diff of `range` as a command for a repository-reading reviewer: the collector's options after the range, so the
+ * reviewer reads what the collector sent, a deleted file as its header only (card T0-REVIEW-DIFF-DELETE R3 decision 1).
+ */
+function reviewDiffCommand(range: string): string {
+  return `git diff ${range} --text ${REVIEW_DIFF_OPTIONS.join(' ')}`;
+}
+
 /**
  * `git diff <base>...<head>` of the committed candidate, whole: a diff above the cap is refused before any dispatch (R7),
  * naming the size and the cap (`cap` names the configuration key), never cut.
@@ -1006,7 +1017,9 @@ export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: s
   if (names.exitCode !== 0) throw new Error(`git diff --name-only ${range} failed in ${cwd}: ${names.stderr.trim() || `exit ${names.exitCode}`}`);
   // --text: a file that is binary on the base (a stray NUL byte) still shows its hunks to the reviewer. --no-color,
   // --no-ext-diff and --no-textconv: the reviewer and the effort count read a plain unified diff under any user git configuration.
-  const full = runner('git', ['diff', '--text', range, '--no-color', '--no-ext-diff', '--no-textconv'], { cwd });
+  // --irreversible-delete: a deleted file is its header only, so removed content counts toward neither the cap nor the effort
+  // count, and `changedPaths` still names it (card T0-REVIEW-DIFF-DELETE, issue 517).
+  const full = runner('git', ['diff', '--text', range, ...REVIEW_DIFF_OPTIONS], { cwd });
   if (full.exitCode !== 0) throw new Error(`git diff ${range} failed in ${cwd}: ${full.stderr.trim() || `exit ${full.exitCode}`}`);
   const changedPaths = nulList(names.stdout);
   const bytes = Buffer.byteLength(full.stdout, 'utf8');

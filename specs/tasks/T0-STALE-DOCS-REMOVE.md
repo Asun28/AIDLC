@@ -1,7 +1,7 @@
 ---
 id: T0-STALE-DOCS-REMOVE
 title: "Remove the two out-of-date docs that Claude and Codex agreed are unnecessary: docs/PROJECT-STATE.md and docs/plans/PLAN-aidlc-loop-v3-archive.md"
-status: todo
+status: merged
 branch: T0-STALE-DOCS-REMOVE
 allow_paths:
   - docs/PROJECT-STATE.md
@@ -47,3 +47,41 @@ tests had no agreed removal. Two docs did:
   current; `git log`, `specs/tasks/` and `CHANGELOG.md` hold the current state.
 - `docs/plans/PLAN-aidlc-loop-v3-archive.md` is the v3 plan, replaced by the v4
   archive and the canonical v5 plan, and read by no code or test.
+
+## PR summary
+
+### What
+This change removes `docs/PROJECT-STATE.md` and `docs/plans/PLAN-aidlc-loop-v3-archive.md`. The README and the v5 plan no longer name them.
+
+### Why / Intent
+Claude and Codex audited the repository for old files. Both agreed that only these two files were out of date and not used.
+
+### How / Behaviour
+The change deletes the two files and the README bullet. The v5 plan now names only the v4 archive.
+
+### System impact
+No code changes. The canonical plan, the v4 archive and the transfer manifest stay.
+
+### Security
+No security impact. The change removes documentation only.
+
+### Tests and review
+A new test in `tests/surface/removed-surface.test.ts` checks the removals. R3 review is by Codex.
+
+### Risk
+Low. No code or test reads the removed files. Old cards still name them as history.
+
+### Ownership
+The aidlc maintainers own these docs.
+
+### Docs
+README.md, the v5 plan and one changelog fragment change.
+
+## Attempt evidence
+
+| item | proof | result |
+| --- | --- | --- |
+| 1 | `tests/surface/removed-surface.test.ts`, `T0-STALE-DOCS-REMOVE acceptance 1`; RED at 1ea31151 | pass |
+| 2 | same file, `T1-SWEEP-DEAD-CODE acceptance 6` unchanged; `git diff origin/main --stat -- docs/migration specs/tasks` lists only this card | pass |
+| 3 | `changelog.d/T0-STALE-DOCS-REMOVE.md`; `tests/surface/changelog-fragments.test.ts` | pass |
+| 4 | `npm run typecheck` and `npm run check:tree` | pass |

@@ -530,7 +530,7 @@ Rejected: full planning for every bug; prompt-length risk sizing; board-as-datab
 
 ## 10. Delivery and source status
 
-Current deliverables are this v5 plan, the canonical `PLAN-aidlc-loop.md` copy, historical v4/v3 archives, capability comparison and the latest Claude-session review. This plan update does not install a skill, register cards, change policy or execute deployment. After the document's consistency checks, all runtime claims remain pending their declared qualification.
+Current deliverables are this v5 plan, the canonical `PLAN-aidlc-loop.md` copy, the historical v4 archive, capability comparison and the latest Claude-session review. This plan update does not install a skill, register cards, change policy or execute deployment. After the document's consistency checks, all runtime claims remain pending their declared qualification.
 
 Sources: the user's drafts/feedback, explicit development-first correction and shared-session/model-effort requirements; actual MyInspection planning/routing/delivery/verification and lifecycle documents; the official Anthropic playbook and long-running harness articles; IBM Think, Bob and DevOps Deploy documentation; pinned AWS AI-DLC, specs.md and ai-sdlc-framework code inspections. URLs and version evidence are recorded in `SDLC-CAPABILITY-REVIEW.md`; specific corrections are in `REVIEW-claude-session-lifecycle.md`.
 
