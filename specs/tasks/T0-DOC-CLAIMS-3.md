@@ -1,7 +1,7 @@
 ---
 id: T0-DOC-CLAIMS-3
 title: "Three stale doc claims: review-pool writes, the board write of aidlc next, init and CLI tests (issues 523, 524, 525)"
-status: todo
+status: merged
 branch: T0-DOC-CLAIMS-3
 worktree: D:\wt\AIDLC\T0-DOC-CLAIMS-3
 allow_paths:
