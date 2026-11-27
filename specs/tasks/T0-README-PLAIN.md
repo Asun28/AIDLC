@@ -1,7 +1,7 @@
 ---
 id: T0-README-PLAIN
 title: README.md in plain English for IT professionals, without sentences that only guard against objections, with its operator detail moved to docs/OPERATIONS.md and docs/ARCHITECTURE.md
-status: todo
+status: merged
 branch: T0-README-PLAIN
 worktree: D:\wt\AIDLC\T0-README-PLAIN
 allow_paths:
