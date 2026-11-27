@@ -30,9 +30,9 @@ const OPENING =
   'aidlc is a command-line tool and TypeScript library for coordinating AI coding agents in a Git repository. Give it a goal, such as fixing a bug. It tells Claude Code or another agent how to break the work into task cards and what to do next. It sets time and retry limits, tracks test results and reviews, checks the configured gates before shipping, and records the evidence for each card.';
 /** The How it works section, whole. */
 const HOW_IT_WORKS = [
-  '- **Sizing.** A goal is one request, sized T0-bugfix or T0 (one task card), T1 (about 2 to 5 cards) or T2 (a new system, planned and approved first).',
+  '- **Sizing.** A goal is one request, sized T0-bugfix or T0 (one card), T1 (about 2 to 5 cards) or T2 (a new system, planned and approved first). A card is one task: the files it may change, a Definition of Done (DoD) command and an acceptance list.',
   '- **One step at a time.** `aidlc next` returns one directive, the next step as JSON; the agent does it and records the outcome with `aidlc report`.',
-  '- **Gates.** A card ships only after a passing run of its Definition of Done (DoD) command is recorded and, when the project requires it, R3: a review of the exact commit by a separate reviewer.',
+  '- **Gates.** A card ships only after a passing run of its DoD command is recorded and, when the project requires it, R3: a review of the exact commit by a separate reviewer.',
   '- **Limits.** By default a card gets 3 hours and a multi-card goal 12; attempts, reviews and CI reruns are capped. A goal that hits a limit stops and names the reason and the next action.',
   '- **Shared sessions.** Leases record which session owns each goal and card. After another session takes over a card, the previous owner cannot start shipping it ([Sessions](docs/OPERATIONS.md#sessions)).',
   '- **Evidence.** A hash-chained journal records each state change and operation; `aidlc audit verify` checks it.',
@@ -90,11 +90,17 @@ const REMOVED = [
   'Records are read one at a time with no snapshot across files',
 ];
 
-test('T0-README-PLAIN acceptance 2: README.md keeps no sentence whose only job was to guard against an objection [R2]', () => {
-  const readme = read('README.md');
+test('T0-README-PLAIN acceptance 2: the Removed list holds the 15 excerpts of the card [R2]', () => {
   assert.equal(REMOVED.length, 15);
-  for (const excerpt of REMOVED) assert.ok(!readme.includes(excerpt), `README.md still holds: ${excerpt}`);
+  assert.equal(new Set(REMOVED).size, 15);
 });
+
+// One test per excerpt (R3 decision 1, F1): each fails on its own on README.md at 359fbd14.
+for (const [i, excerpt] of REMOVED.entries()) {
+  test(`T0-README-PLAIN acceptance 2.${i + 1}: README.md no longer holds ${JSON.stringify(excerpt)} [R2]`, () => {
+    assert.ok(!read('README.md').includes(excerpt), `README.md still holds: ${excerpt}`);
+  });
+}
 
 const initSection = () => section(read('README.md'), 'What aidlc init writes');
 const setupSection = () => section(read('docs/OPERATIONS.md'), 'Setup');
@@ -129,6 +135,8 @@ const README_INIT = [
 /** The init and hook facts T1-INIT-SURFACE put in the README, in the docs/OPERATIONS.md sections that state them since T0-README-PLAIN. */
 const OPERATIONS_SENTENCES: Array<[heading: string, text: string]> = [
   ['Setup', '`aidlc init` writes these paths into the repository, with the default `--cards-dir`. It skips a file that exists unless `--force` is set, and it merges `.claude/settings.json`, `.gitignore` and the `CLAUDE.md` section into a file that exists. In a repository with content and no `package.json` it skips `.github/workflows/aidlc-ci.yml` and `.github/workflows/agent-evals.yml`.'],
+  ['Hooks', 'One hook process per event.'],
+  ['Hooks', '`templates/claude/settings.json` (merged by `init`) wires a single command for `PreToolUse` (matcher `Bash|PowerShell|Edit|Write|MultiEdit`), `Stop` and `UserPromptSubmit`; that process runs every guard that applies to the event (`src/hooks/entry.ts`, `dispatchHook`) and returns the first block, else the first advisory output.'],
   ['Hooks', 'Each guard prints repository content and environment values as JSON strings, apart from an id that is one plain word (`[A-Za-z0-9._:-]+`).'],
   ['Hooks', 'Beyond that, `production-gate` and `protect-paths` deny every Bash command except exactly `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`, and `protect-paths`, like `protect-tests` while a fix task is active, denies every edit of a file other than the config.'],
 ];

@@ -4,9 +4,9 @@ aidlc is a command-line tool and TypeScript library for coordinating AI coding a
 
 ## How it works
 
-- **Sizing.** A goal is one request, sized T0-bugfix or T0 (one task card), T1 (about 2 to 5 cards) or T2 (a new system, planned and approved first).
+- **Sizing.** A goal is one request, sized T0-bugfix or T0 (one card), T1 (about 2 to 5 cards) or T2 (a new system, planned and approved first). A card is one task: the files it may change, a Definition of Done (DoD) command and an acceptance list.
 - **One step at a time.** `aidlc next` returns one directive, the next step as JSON; the agent does it and records the outcome with `aidlc report`.
-- **Gates.** A card ships only after a passing run of its Definition of Done (DoD) command is recorded and, when the project requires it, R3: a review of the exact commit by a separate reviewer.
+- **Gates.** A card ships only after a passing run of its DoD command is recorded and, when the project requires it, R3: a review of the exact commit by a separate reviewer.
 - **Limits.** By default a card gets 3 hours and a multi-card goal 12; attempts, reviews and CI reruns are capped. A goal that hits a limit stops and names the reason and the next action.
 - **Shared sessions.** Leases record which session owns each goal and card. After another session takes over a card, the previous owner cannot start shipping it ([Sessions](docs/OPERATIONS.md#sessions)).
 - **Evidence.** A hash-chained journal records each state change and operation; `aidlc audit verify` checks it.
@@ -45,7 +45,7 @@ aidlc doctor    # checks git, gh, the state directory, the configuration and the
 
 ## First goal
 
-A dry run of one bug fix on a fresh `aidlc init` repository with the default configuration. Each comment names the directive the call returned. Commands print JSON when the output is piped or `--json` is set; `aidlc board` prints text.
+A dry run of one bug fix on a fresh `aidlc init` repository with the default configuration. Each comment names the directive the call returned. Commands print JSON when the output is piped or `--json` is set; `aidlc board` prints text. A receipt is the observed result of a check: the RED receipt names the commit and the test that failed before the fix, and the DoD receipt names the command, its exit code and the pass count.
 
 ```bash
 aidlc goal new "fix the crash when a claim has no adjuster" --bug-evidence
@@ -66,7 +66,7 @@ aidlc report --result arc-verified --data '{"evidence":"node --test tests/claims
 aidlc next                              # done
 ```
 
-A receipt is the observed result of a check: the RED receipt names the commit and the test that failed before the fix, and the DoD receipt names the command, its exit code and the pass count. `aidlc card next` is also the operator's shipping command. On the `github` ship path it pushes the branch, opens the pull request, waits for the required CI checks and squash-merges; with an R3 reviewer configured, it first returns `review`, which `aidlc review r3 <card>` runs.
+`aidlc card next` is also the operator's shipping command. On the `github` ship path it pushes the branch, opens the pull request, waits for the required CI checks and squash-merges. Before that it returns `pre-review` when a pre-review (R2) command is configured, which `aidlc review pre <card>` runs, and then `review` when an R3 reviewer is configured, which `aidlc review r3 <card>` runs.
 
 `aidlc run --goal <id> --max-steps 40` lets the `claude-code` provider do the steps. It needs `provider` set to `claude-code`, stops before shipping, and also stops at a question, a checkpoint, a release step, a review block or quota hold, the end of the goal or its step limit ([Running a goal](docs/OPERATIONS.md#running-a-goal)). `aidlc board --watch` shows a goal and its cards ([Watching a goal](docs/OPERATIONS.md#watching-a-goal)).
 

@@ -11,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
 
 /** Characters the writing rule (CLAUDE.md, Writing density) bans in prose: the em dash and the CJK corner brackets. */
-const BANNED = /[—「」]/u;
+const BANNED = /[\u2014\u300c\u300d]/u;
 
 /** 1-based line numbers of `text` that carry a banned character. */
 export function bannedProse(text: string): number[] {
@@ -51,8 +51,8 @@ const SCOPE: string[] = [
 
 describe('prose (writing density)', () => {
   test('bannedProse flags an em dash and corner brackets and passes plain punctuation', () => {
-    assert.deepEqual(bannedProse('a — b'), [1]);
-    assert.deepEqual(bannedProse('first\n「quoted」\nthird'), [2]);
+    assert.deepEqual(bannedProse('a \u2014 b'), [1]);
+    assert.deepEqual(bannedProse('first\n\u300cquoted\u300d\nthird'), [2]);
     assert.deepEqual(bannedProse('plain, with a hyphen - a colon: and "quotes"'), []);
   });
 
