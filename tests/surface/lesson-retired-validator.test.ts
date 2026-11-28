@@ -18,11 +18,22 @@ const ENTRY = `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-N 
 // One entry line per failed check of R2, in the order R2 names the checks.
 const FAILING: [string, string][] = [
   ['format', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A).toUpperCase()} BY 2026-01-05 T0-N ${sha(N)}: upper-case hash`],
+  ['format', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha(N).toUpperCase()}: upper-case new hash`],
+  ['format', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: a reason\rthat breaks the line`],
+  ['format', `- 2026-01-06 RETIRE 01-01-2026 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: old date not in YYYY-MM-DD`],
+  ['format', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 05-01-2026 T0-N ${sha(N)}: new date not in YYYY-MM-DD`],
+  ['format', `- 06-01-2026 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: entry date not in YYYY-MM-DD`],
+  ['format', `- 2026-01-06 RETIRE 2026-01-01 T0 A ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: old ref of two tokens`],
+  ['format', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0 N ${sha(N)}: new ref of two tokens`],
+  ['format', `- note - 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: text before the date`],
   ['old line', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha('no such line')} BY 2026-01-05 T0-N ${sha(N)}: unknown old line`],
   ['replacement', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha('no such line')}: unknown replacement`],
+  ['date or ref', `- 2026-01-06 RETIRE 2026-01-09 T0-A ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: wrong old date`],
   ['date or ref', `- 2026-01-06 RETIRE 2026-01-01 T0-X ${sha(A)} BY 2026-01-05 T0-N ${sha(N)}: wrong old ref`],
   ['date or ref', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-09 T0-N ${sha(N)}: wrong new date`],
+  ['date or ref', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-05 T0-X ${sha(N)}: wrong new ref`],
   ['order', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-02 T0-B ${sha(B)}: replacement before the last old line`],
+  ['order', `- 2026-01-06 RETIRE 2026-01-01 T0-A ${sha(A)} BY 2026-01-01 T0-A ${sha(A)}: a line replacing itself`],
 ];
 
 test('T0-LESSON-ACTIVE-VIEW acceptance 3: a resolving entry names the old lines and the replacement by line number and retires the old text [R1] [R2]', () => {
@@ -33,8 +44,11 @@ test('T0-LESSON-ACTIVE-VIEW acceptance 3: each failed check gives one problem na
   for (const [check, line] of FAILING) {
     assert.deepEqual(lessonRetirements(LESSONS, line), { retired: new Set(), entries: [], problems: [{ line: 1, check }] }, line);
   }
-  assert.deepEqual(lessonRetirements(LESSONS, FAILING.map(([, line]) => line).join('\n')).problems.map((p) => p.line), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(lessonRetirements(LESSONS, FAILING.map(([, line]) => line).join('\n')).problems.map((p) => p.line), FAILING.map((_, i) => i + 1));
   assert.deepEqual(lessonRetirements(LESSONS, 'RETIRE text that is not an entry line\n'), { retired: new Set(), entries: [], problems: [] });
+  const invalid = '- 2026-01-07 T0-Z: MAYBE keep this (source: PR 7)';
+  const naming = `- 2026-01-08 RETIRE 2026-01-07 T0-Z ${sha(invalid)} BY 2026-01-05 T0-N ${sha(N)}: names a line that is not a lesson`;
+  assert.deepEqual(lessonRetirements(`${invalid}\n${LESSONS}`, naming).problems, [{ line: 1, check: 'old line' }]);
 });
 
 test('T0-LESSON-ACTIVE-VIEW acceptance 3: with only unresolved entries, every delivery path gives what it gives with no retired file [R2] [R3]', () => {
