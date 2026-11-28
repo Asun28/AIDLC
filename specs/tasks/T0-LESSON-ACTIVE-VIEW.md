@@ -1,7 +1,7 @@
 ---
 id: T0-LESSON-ACTIVE-VIEW
 title: "Lesson delivery leaves out every line that a resolving entry of docs/LESSONS-RETIRED.md retires"
-status: todo
+status: merged
 branch: T0-LESSON-ACTIVE-VIEW
 allow_paths:
   - src/artifacts/lessons.ts
