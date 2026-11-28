@@ -97,6 +97,8 @@ Build attempt 1. RED receipt `c5f87bdd:T0-LESSON-ACTIVE-VIEW acceptance 1: readL
 | 5 | `tests/scenarios/lesson-dup.test.ts`, `tests/surface/changelog-fragments.test.ts`; `docs/OPERATIONS.md` Lessons paragraph, two sentences after the pinned pair | pass |
 | 6 | `npm run typecheck`, `npm run check:tree` | exit 0 |
 
+Repair attempt 2 (R3 decision 1, F1, R6): the two `docs/OPERATIONS.md` sentences now also state R3 (the retired file is `LESSONS-RETIRED.md` beside the lessons file) and R4 (`loadContextPack` reads `docs/LESSONS-RETIRED.md` through its checked source read and throws when that path resolves elsewhere). Still two sentences after the pinned pair; `tests/scenarios/lesson-dup.test.ts` and `tests/surface/prose.test.ts` pass.
+
 Guard sweep (each guard loosened, its test file run, restored):
 
 | Guard | Loosened form | Failing test |
