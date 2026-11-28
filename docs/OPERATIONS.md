@@ -323,6 +323,8 @@ Card T1-GOAL-OWED (issue 300): one failed append to the goal journal, or one fai
 
 ## Watching a goal
 
+The board (`aidlc board [goalId]`) has one row per card. A card with `superseded_by` and not merged shows `[~] SUPERSEDED` and `superseded by <id>` in its Blocker column when it has no run; with a run its state is followed by `(superseded)` and `superseded by <id>; ` is put before its existing Blocker text, and a row with a live owner lease keeps its box and state and gains only that Blocker prefix; the arc ignores the marker, so such a card still never counts as delivered (card T0-BOARD-SUPERSEDED).
+
 `aidlc board [goalId] --watch [--interval <s>]` re-renders one screen of a goal every interval seconds (a whole number from 1 to 3600, default 5) until Ctrl+C or until the reader closes stdout (card T1-BOARD-WATCH). It reads only the goal record, the card runs of the goal's cards, the goal lease and those cards' leases, and the card registry. It does not run `aidlc next`, write the board file or resolve a session, so it writes nothing under the state directory, not even `session-default`. Without a goal id it takes the newest active goal, as `aidlc board` does. A terminal is cleared before each screen; a pipe gets the screens one after another, separated by a blank line.
 
 The screen, in order:

@@ -1,0 +1,1 @@
+- T0-BOARD-SUPERSEDED: the board row of a card with `superseded_by` that is not merged shows `[~] SUPERSEDED` (or its run state followed by `(superseded)`) and `superseded by <id>` in the Blocker column; `outcomeOf` and the arc are unchanged.

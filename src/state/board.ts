@@ -69,16 +69,20 @@ export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: str
   lines.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const card of cards) {
     const run = runById.get(card.id);
-    const state = card.status === 'merged' && !run ? 'DONE' : (run?.state ?? 'todo');
+    // A card replaced by another (card T0-BOARD-SUPERSEDED) says so in its row only: outcomeOf and the arc above ignore the marker.
+    const supersededBy = card.status !== 'merged' ? card.superseded_by : undefined;
+    const runState = card.status === 'merged' && !run ? 'DONE' : (run?.state ?? 'todo');
     const owner = owners.get(card.id);
-    const box = owner ? '[-]' : (CHECKBOX[state] ?? '[ ]');
+    const state = supersededBy && !owner ? (run ? `${runState} (superseded)` : 'SUPERSEDED') : runState;
+    const box = owner ? '[-]' : supersededBy && !run ? '[~]' : (CHECKBOX[runState] ?? '[ ]');
     const wave = arc.wave.includes(card.id) ? 'next' : arc.blockedByStop.includes(card.id) ? 'blocked' : arc.waitingOn.includes(card.id) ? 'waiting' : '';
     const pr = run?.pr ? `#${run.pr.number} ${run.pr.state}` : '';
     const reviews = run ? `${run.review.substantiveDecisions}/2 blocks=${run.review.substantiveBlocks} nv=${run.review.noVerdictRetriesUsed}` : '';
     const ci = run ? `${run.ci.reruns.length}/1` : '';
     const attempts = run?.effort ? `${run.effort.attempts.filter((a) => a.outcome !== 'not-counted').length}/4${run.effort.escalationUsed ? '↑' : ''}` : '';
     const stopText = run?.stop ? `${run.stop.reason}: ${run.stop.detail}` : (run?.blocker ?? '');
-    const blocker = owner ? `${stopText}; the goal waits on owner ${owner.owner.session} until ${owner.expiresAt}` : stopText;
+    const ownerText = owner ? `${stopText}; the goal waits on owner ${owner.owner.session} until ${owner.expiresAt}` : stopText;
+    const blocker = supersededBy ? (run ? `superseded by ${supersededBy}; ${ownerText}` : `superseded by ${supersededBy}`) : ownerText;
     lines.push(`| ${box} | ${card.id} | ${owner ? `${state} (lease live)` : state} | ${card.depends_on.join(', ') || '-'} | ${wave} | ${run?.worktree ?? ''} | ${pr} | ${reviews} | ${ci} | ${attempts} | ${run?.deadline ?? ''} | ${blocker} |`);
   }
   lines.push('');

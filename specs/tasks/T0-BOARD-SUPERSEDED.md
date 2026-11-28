@@ -48,3 +48,42 @@ npm run typecheck && node --test tests/infra/board-superseded.test.ts tests/infr
 ```
 - Expected exit code: 0
 - Assertion: a superseded card's row says SUPERSEDED and names its successor; the arc and every other row are unchanged.
+
+## PR summary
+
+### What
+The board row of a card with `superseded_by` now shows that it is superseded. The row names the successor card.
+
+### Why / Intent
+A superseded card showed as `todo`, the same as a card still to run. The owner asked for the board to show it.
+
+### How / Behaviour
+With no run, the row shows `[~] SUPERSEDED` and "superseded by <id>". With a run, the state gets "(superseded)" and the Blocker gets the successor prefix. A live owner row keeps its box and state.
+
+### System impact
+Only `renderBoard` changes. `outcomeOf`, the Arc line and the controller do not change, so a superseded card never counts as delivered.
+
+### Security
+No security impact. The board is a read-only view.
+
+### Tests and review
+A new test file checks the rows, the owner row and the unchanged arc. R3 decision 1 blocked on three findings; the repair passed decision 2.
+
+### Risk
+Low. A merged card and a card without the marker render as before.
+
+### Ownership
+The owner asked for the card. The owner chose to move the docs sentence to Watching a goal (amendment 1).
+
+### Docs
+`docs/OPERATIONS.md` Watching a goal has one paragraph. One changelog fragment records the change.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/board-superseded.test.ts` acceptance 1 | pass; RED on main |
+| 2 | `tests/infra/board-superseded.test.ts` acceptance 2 and R3 decision 1 F1 (owner row) | pass; F1 RED on main and on a mutant without `!owner` |
+| 3 | `tests/infra/board-superseded.test.ts` acceptance 3 (merged case included); `tests/infra/board.test.ts` unchanged | pass |
+| 4 | OPERATIONS.md Watching a goal paragraph; `changelog.d/T0-BOARD-SUPERSEDED.md`; `tests/surface/prose.test.ts`, `tests/surface/changelog-fragments.test.ts` | pass |
+| 5 | `npm run typecheck` | exit 0 |
