@@ -1,0 +1,1 @@
+- T0-LESSON-ACTIVE-VIEW: lesson delivery leaves out each line of docs/LESSONS.md that a resolving entry of docs/LESSONS-RETIRED.md retires, in PREPARE, plan, project-cards, the context pack, both review rule selections and the review bench, and counts, scores and caps the remaining lines as if it were absent; an entry that does not resolve retires nothing.

@@ -2,6 +2,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import type { Card } from '../core/types.ts';
+import { withoutRetired } from '../artifacts/lessons.ts';
 
 export interface ContextSources { planSection: string; lessons: string; modules?: string[]; missingSources?: string[] }
 
@@ -107,7 +108,8 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
   const missingSources: string[] = [];
   const within = (file: string, dir: string) => { const rel = path.relative(dir, file); return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
   const isPlan = (file: string) => path.extname(file).toLowerCase() === '.md' && [plansDir, 'docs/plans'].some((dir) => within(file, path.resolve(root, dir)));
-  const read = (ref: string, plan = false): string => {
+  // A lesson source (docs/LESSONS.md or docs/LESSONS-RETIRED.md) must resolve to its own path; a missing optional one is not reported.
+  const read = (ref: string, plan = false, optional = false): string => {
     const target = path.resolve(root, ref);
     if (!within(target, root)) throw new Error('Context source outside repository');
     if (plan && !isPlan(target)) throw new Error('Context plan source must be Markdown in plansDir or docs/plans');
@@ -115,11 +117,11 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
     try { resolved = realpathSync.native(target); }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      missingSources.push(ref);
+      if (!optional) missingSources.push(ref);
       return '';
     }
     if (!within(resolved, root)) throw new Error('Context source outside repository');
-    if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, 'docs', 'LESSONS.md')) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
+    if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, ref)) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
     return readOpenedSource(resolved);
   };
   const [, file, anchor] = (card.plan_ref ?? '').match(/^([^#]*)(?:#([\s\S]*))?$/)!;
@@ -144,6 +146,6 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
     planSection = start < 0 ? '' : lines.slice(start, end < 0 ? undefined : end).join('\n').trim();
     if (start < 0) missingSources.push(card.plan_ref!);
   }
-  const lessons = read('docs/LESSONS.md');
+  const lessons = withoutRetired(read('docs/LESSONS.md'), read('docs/LESSONS-RETIRED.md', false, true)).join('\n');
   return contextPack(card, { planSection, lessons, modules, missingSources });
 }

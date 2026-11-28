@@ -55,3 +55,65 @@ npm run typecheck && npm run check:tree && node --test tests/surface/lesson-reti
 ```
 - Expected exit code: 0
 - Assertion: a lesson retired by a resolving entry reaches no delivery path and does not count toward selection; an unresolved entry retires nothing and is a problem.
+
+## PR summary
+
+### What
+Lesson delivery now leaves out each line of `docs/LESSONS.md` that a resolving entry of `docs/LESSONS-RETIRED.md` retires. A new pure validator, `lessonRetirements`, checks each entry.
+
+### Why / Intent
+A superseded lesson still reached PREPARE, the context pack and review prompts. This change removes it from delivery and keeps the file append-only.
+
+### How / Behaviour
+An entry names the old and new lines by date, ref and SHA-256. `readLessons`, `reviewLessons`, `matchedLessons` and `loadContextPack` drop retired lines before they count, score or cap. An entry that fails a check retires nothing and gives one problem.
+
+### System impact
+PREPARE, plan, project-cards, the context pack, both R3 rule selections and the review bench get fewer lines when entries exist. With no retired file, nothing changes.
+
+### Security
+The context pack reads the retired file through its checked source read. A link that resolves to another path is refused.
+
+### Tests and review
+Two new test files cover acceptance 1 to 4. Existing lesson, match, pack, card-writer, lesson-dup, second-pass and review-bench tests pass unchanged.
+
+### Risk
+Low. A wrong entry retires nothing, so the failure mode is the current behaviour.
+
+### Ownership
+The loop maintainers own `src/artifacts/lessons.ts` and `src/loop/context-pack.ts`.
+
+### Docs
+`docs/OPERATIONS.md`, Lessons paragraph, gets two sentences. One changelog fragment records the card.
+
+## Attempt evidence
+Build attempt 1. RED receipt `c5f87bdd:T0-LESSON-ACTIVE-VIEW acceptance 1: readLessons counts and lists only the lines no entry retires [R3]` (acceptance 1 and 2 tests failed on their first assertion against main; the validator file failed on the missing `lessonRetirements` export, a new interface).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/surface/lesson-retired.test.ts`, the three `acceptance 1` tests | pass (failed at RED: count 5, `[D, A]` omitted 3, `[B]`) |
+| 2 | `tests/surface/lesson-retired.test.ts`, the two `acceptance 2` tests | pass (failed at RED: lessons `[A, A, D]`, no throw) |
+| 3 | `tests/surface/lesson-retired-validator.test.ts`, four `acceptance 3` tests | pass |
+| 4 | `acceptance 4` test; existing lesson, match, pack, card-writer, lesson-dup, second-pass, review-bench tests unchanged; `git diff origin/main --stat -- tests/` lists the two new files only | pass |
+| 5 | `tests/scenarios/lesson-dup.test.ts`, `tests/surface/changelog-fragments.test.ts`; `docs/OPERATIONS.md` Lessons paragraph, two sentences after the pinned pair | pass |
+| 6 | `npm run typecheck`, `npm run check:tree` | exit 0 |
+
+Repair attempt 2 (R3 decision 1, F1, R6): the two `docs/OPERATIONS.md` sentences now also state R3 (the retired file is `LESSONS-RETIRED.md` beside the lessons file) and R4 (`loadContextPack` reads `docs/LESSONS-RETIRED.md` through its checked source read and throws when that path resolves elsewhere). Still two sentences after the pinned pair; `tests/scenarios/lesson-dup.test.ts` and `tests/surface/prose.test.ts` pass.
+
+Guard sweep (each guard loosened, its test file run, restored):
+
+| Guard | Loosened form | Failing test |
+|---|---|---|
+| `RETIRED_LINE` `^` anchor | removed | acceptance 3, each failed check |
+| `RETIRED_LINE` `$` anchor | removed | acceptance 3, each failed check (reason with a lone CR) |
+| old and new hash class `[0-9a-f]{64}` | `[0-9a-fA-F]{64}` | acceptance 3, each failed check |
+| entry, old and new date class | `\S+` | acceptance 3, each failed check |
+| old and new ref class `\S+` | `.+` | acceptance 3, each failed check |
+| entry line filter `startsWith('- ')` | removed | acceptance 3, resolving entry, each failed check, two entries |
+| hash only valid lesson lines | every line hashed | acceptance 3, each failed check |
+| old date, old ref, new date, new ref equal | each comparison removed | acceptance 3, each failed check and delivery |
+| replacement after the last old line `n.at > last` | `>=`; `last` as the first old line | acceptance 3, each failed check and delivery |
+| delivery drops retired lines | filter keeps all | acceptance 1, three tests |
+| missing retired file reads as empty | file never read | acceptance 1, three tests |
+| pack: missing retired file not a missing source | always pushed | `tests/scenarios/context-pack.test.ts` and acceptance 2 |
+| pack: retired file only at its own path | check skipped for it | acceptance 2, link test |
+| pack: lessons without retired lines | retired text empty | acceptance 2, both tests |

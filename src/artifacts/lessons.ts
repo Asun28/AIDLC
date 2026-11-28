@@ -5,6 +5,7 @@
  * file is created by one exclusive append of the embedded header and the first line, and every
  * lesson is one literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
  */
+import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -130,10 +131,75 @@ export function appendLesson(file: string, entry: LessonEntry): string {
   return line;
 }
 
-/** The context PREPARE hands the card: the file, the number of valid lessons and the most recent lines. */
+/** `- <date> RETIRE <old date> <old ref> <old sha256> BY <new date> <new ref> <new sha256>: <reason>`, one line of `LESSONS-RETIRED.md`. */
+export const RETIRED_LINE = /^- (\d{4}-\d{2}-\d{2}) RETIRE (\d{4}-\d{2}-\d{2}) (\S+) ([0-9a-f]{64}) BY (\d{4}-\d{2}-\d{2}) (\S+) ([0-9a-f]{64}): (.+)$/;
+export type RetirementCheck = 'format' | 'old line' | 'replacement' | 'date or ref' | 'order';
+export interface LessonRetirements {
+  /** The texts of the retired lesson lines. */
+  retired: Set<string>;
+  /** One per resolving entry line, in file order; line numbers are 1-based. */
+  entries: { line: number; old: number[]; by: number }[];
+  /** One per non-resolving entry line: the first check it failed. */
+  problems: { line: number; check: RetirementCheck }[];
+}
+
+/**
+ * The lesson lines that the entries of the retired text retire. An entry resolves only when its old hash is that of one
+ * or more valid lesson lines, its new hash that of a valid lesson line after the last of them, and each side's date and
+ * ref equal those of the lines it names; any other entry retires nothing and is a problem.
+ */
+export function lessonRetirements(lessonsText: string, retiredText: string): LessonRetirements {
+  const byHash = new Map<string, { at: number; entry: LessonEntry }[]>();
+  const lessonLines = lessonsText.split(/\r?\n/);
+  lessonLines.forEach((text, i) => {
+    const entry = parseLessonLine(text);
+    if (!entry) return;
+    const hash = createHash('sha256').update(text, 'utf8').digest('hex');
+    byHash.set(hash, [...(byHash.get(hash) ?? []), { at: i + 1, entry }]);
+  });
+  const result: LessonRetirements = { retired: new Set(), entries: [], problems: [] };
+  retiredText.split(/\r?\n/).forEach((text, i) => {
+    if (!text.startsWith('- ')) return;
+    const line = i + 1;
+    const check = (): RetirementCheck | undefined => {
+      const m = text.match(RETIRED_LINE);
+      if (!m) return 'format';
+      const old = byHash.get(m[4]!);
+      if (!old) return 'old line';
+      const next = byHash.get(m[7]!);
+      if (!next) return 'replacement';
+      if (old[0]!.entry.date !== m[2] || old[0]!.entry.ref !== m[3] || next[0]!.entry.date !== m[5] || next[0]!.entry.ref !== m[6]) return 'date or ref';
+      const last = old[old.length - 1]!.at;
+      const by = next.find((n) => n.at > last);
+      if (!by) return 'order';
+      result.retired.add(lessonLines[last - 1]!);
+      result.entries.push({ line, old: old.map((o) => o.at), by: by.at });
+      return undefined;
+    };
+    const failed = check();
+    if (failed) result.problems.push({ line, check: failed });
+  });
+  return result;
+}
+
+/** The lines of a lessons file without those that `LESSONS-RETIRED.md` beside it retires; an absent file has none. */
+function activeLines(file: string): string[] {
+  if (!existsSync(file)) return [];
+  const lines = readFileSync(file, 'utf8');
+  const retiredFile = path.join(path.dirname(file), 'LESSONS-RETIRED.md');
+  return withoutRetired(lines, existsSync(retiredFile) ? readFileSync(retiredFile, 'utf8') : '');
+}
+
+/** The lines of the lessons text that no resolving entry of the retired text retires. */
+export function withoutRetired(lessonsText: string, retiredText: string): string[] {
+  const { retired } = lessonRetirements(lessonsText, retiredText);
+  return lessonsText.split(/\r?\n/).filter((l) => !retired.has(l));
+}
+
+/** The context PREPARE hands the card: the file, the number of valid lessons and the most recent lines, retired lines left out. */
 export function readLessons(file: string, recent = 5): LessonsContext {
   if (!existsSync(file)) return { file, count: 0, recent: [] };
-  const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => parseLessonLine(l) !== undefined);
+  const lines = activeLines(file).filter((l) => parseLessonLine(l) !== undefined);
   return { file, count: lines.length, recent: lines.slice(-recent) };
 }
 
@@ -161,11 +227,10 @@ export interface LessonMatchInput {
   history: readonly { subject: string; files: readonly string[] }[];
 }
 
-/** The NEVER and ALWAYS lines of the file, newest (last written) first; an absent file carries none. */
+/** The active NEVER and ALWAYS lines of the file, newest (last written) first; an absent file carries none. */
 function ruleLines(file: string): string[] {
-  if (!existsSync(file)) return [];
   const rules: string[] = [];
-  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+  for (const line of activeLines(file)) {
     const entry = parseLessonLine(line);
     if (entry && entry.kind !== 'NOTE') rules.unshift(line);
   }
