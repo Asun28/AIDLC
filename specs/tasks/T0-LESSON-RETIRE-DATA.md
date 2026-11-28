@@ -1,7 +1,7 @@
 ---
 id: T0-LESSON-RETIRE-DATA
 title: "Retire the five lessons that later lessons name as superseded or replaced, and the close hint names `aidlc lessons retire`"
-status: todo
+status: merged
 branch: T0-LESSON-RETIRE-DATA
 allow_paths:
   - src/loop/card-runner.ts
