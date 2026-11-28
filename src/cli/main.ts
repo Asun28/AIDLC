@@ -31,6 +31,7 @@ import { ReportInput } from '../loop/directive.ts';
 import { loadCardRegistry, validateRegistry, renderCard, type ParsedCard } from '../artifacts/card.ts';
 import { parseIntent, renderIntent, slugify } from '../artifacts/intent.ts';
 import { parseSpec } from '../artifacts/spec.ts';
+import { lessonsPath, retireLesson, retirementsReport } from '../artifacts/lessons.ts';
 import { evaluatePlanReadiness, parsePlanCards } from '../artifacts/plan.ts';
 import { formatRouting } from '../core/router.ts';
 import { formatStop } from '../core/stop.ts';
@@ -335,6 +336,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       // The session line names the source token (env, claude, default) and what it means; default is a warning.
       const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
         source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
+      const retirements = retirementsReport(lessonsPath(c.repo.mainRoot));
       const checks = {
         node: process.version,
         git: toolchain.git,
@@ -355,8 +357,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         workingTree: doctorWorkingTree(c),
         baseSync: baseSyncReport({ isGit: c.repo.isGit, cwd: c.repo.mainRoot, base: c.config.base }),
         hookCommand: hookWiringReport(c.repo.worktreeRoot),
+        lessonRetirements: { entries: retirements.entries, problems: retirements.problems },
       };
-      out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${Array.isArray(v) ? v.join('\n' + ' '.repeat(13)) : v}`).join('\n'));
+      const shown = { ...checks, lessonRetirements: !retirements.present ? 'none' : retirements.problems.length === 0 ? `ok (${retirements.entries} entries)` : `PROBLEMS: ${retirements.problems.map((p) => `entry ${p.line}: ${p.check}`).join('; ')}` };
+      out(c, checks, () => Object.entries(shown).map(([k, v]) => `${k.padEnd(12)} ${Array.isArray(v) ? v.join('\n' + ' '.repeat(13)) : v}`).join('\n'));
     });
 
   // ------------------------------------------------------------------ goals
@@ -1068,6 +1072,20 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       const r = c.controller.report({ goalId, generation: c.controller.mustGoal(goalId).generation, result: 'approved', data: { kind: 'plan-checkpoint', by: o.by ?? defaultApprover(c) } });
       out(c, r.directive, () => `[${r.directive.kind}] ${r.directive.narration}`);
+    });
+  program
+    .command('lessons')
+    .description('docs/LESSONS.md of the checkout the command runs in')
+    .command('retire')
+    .description('append one validated entry to docs/LESSONS-RETIRED.md: lesson line <n> retired by lesson line <m>')
+    .requiredOption('--line <n>', 'the lesson line to retire (1-based line number of docs/LESSONS.md)')
+    .requiredOption('--by <m>', 'the lesson line that replaces it')
+    .requiredOption('--reason <text>', 'why, on one line')
+    .action((o: { line: string; by: string; reason: string }) => {
+      const c = ctx(g());
+      const r = retireLesson(lessonsPath(c.repo.worktreeRoot), { line: Number(o.line), by: Number(o.by), reason: o.reason, date: nowIso().slice(0, 10) });
+      if (!r.ok) return fail(`lessons retire: ${r.check}`);
+      out(c, { entry: r.entry, file: r.file }, () => `${r.entry}\n${r.file}`);
     });
 
   // ------------------------------------------------------------------ review / ci / ops

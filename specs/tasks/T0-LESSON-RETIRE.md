@@ -52,3 +52,64 @@ npm run typecheck && npm run check:tree && node --test tests/surface/lesson-reti
 ```
 - Expected exit code: 0
 - Assertion: the command appends one entry the validator resolves, in the checkout it runs in, or refuses and writes nothing; concurrent writers lose nothing; doctor reports the main checkout's entries and problems.
+
+## PR summary
+
+### What
+This change adds `aidlc lessons retire`, an append-only writer for `LESSONS-RETIRED.md` and a `lessonRetirements` doctor check.
+
+### Why / Intent
+Card T0-LESSON-ACTIVE-VIEW reads retirement entries, but nothing wrote them. A hash typed by hand is easy to get wrong.
+
+### How / Behaviour
+The command computes the dates, refs and hashes from the lessons file. It appends the entry only when the delivery validator resolves it. Otherwise it names the failed check and writes nothing.
+
+### System impact
+The command writes the checkout it runs in. Doctor reads the main checkout, which delivery also reads.
+
+### Security
+No new input reaches a shell. The command writes one file beside `docs/LESSONS.md` and opens it only in append mode.
+
+### Tests and review
+`tests/surface/lesson-retire.test.ts` covers the linked worktree, each refusal, the append race and the doctor output. Each guard was loosened once and a test failed.
+
+### Risk
+Low. An entry that does not resolve retires nothing, and doctor lists it.
+
+### Ownership
+The aidlc maintainers own the lessons files and this command.
+
+### Docs
+`docs/OPERATIONS.md`, Lessons paragraph, states the command and the doctor check. The changelog fragment records the card.
+
+## Attempt evidence
+
+| # | Proving test or command | Result |
+|---|---|---|
+| 1 | lesson-retire.test.ts: acceptance 1, linked worktree | pass |
+| 2 | lesson-retire.test.ts: acceptance 2, four refusal tests | pass |
+| 3 | lesson-retire.test.ts: acceptance 3, three appendRetirement and retireLesson tests | pass |
+| 4 | lesson-retire.test.ts: acceptance 4, doctor --json and human output | pass |
+| 5 | single write path: `appendRetirement` is the only writer of the retired file; OPERATIONS.md Lessons paragraph two sentences; changelog-fragments.test.ts | pass |
+| 6 | `npm run typecheck`, `npm run check:tree` | pass |
+
+Guard sweep (each loosened once, `node --test tests/surface/lesson-retire.test.ts`):
+
+| Guard | Loosened form | Test that failed |
+|---|---|---|
+| `appendRetirement` exclusive create `flag: 'ax'` | `flag: 'a'` | acceptance 1, 3 (all three) |
+| line feed before an entry when the file lacks one | never added | acceptance 3, empty file |
+| line n not a lesson line | check removed | acceptance 2, not a lesson line |
+| line m not a lesson line | check removed | acceptance 2, not a lesson line |
+| reason `trim()` non-empty | removed | acceptance 2, reason |
+| reason one line | removed | acceptance 2, reason |
+| line n already retired | `some(() => false)` | acceptance 1; acceptance 2, already retired |
+| validator problem refuses | check removed | acceptance 2, order |
+| problem matched at the entry's line | `at + 1` | acceptance 2, order |
+| line feed added to a retired text without one before validation | never added | acceptance 2, order (file without a last line feed) |
+| doctor: absent file gives `none` and 0 entries | check removed | acceptance 4, both tests |
+| doctor: entries counts resolving and problem lines | resolving only | acceptance 4, --json |
+| doctor: `none` text | never | acceptance 4, human |
+| doctor: `ok` when no problem | always `ok` | acceptance 4, human |
+
+equivalent: `retiredText.length > 0` in the line feed check: an empty text then validates with a blank first line, which is not an entry, and the problem lookup reads the same text, so no input gives a different outcome.
