@@ -32,7 +32,7 @@ tdd: true
 sweep: "On main at d3c0c712, `git grep -n -E 'about 200|200 lines'` over the tracked tree. The rule stands in four files, `.claude/agents/implementer.md:20`, `templates/claude/agents/implementer.md:20`, `.claude/skills/aidlc-loop/card-loop.md:54` and `templates/claude/skills/aidlc-loop/card-loop.md:54`, and in one test constant, `tests/surface/guard-sweep.test.ts:32`, the anchor line of T0-GUARD-SWEEP acceptance 1. No file under `src/`, `docs/` or `README.md` states it. The other hits are another rule or history and stay as they are. They are the 200-line limit of `CLAUDE.md` (`CLAUDE.md:112`, `tests/surface/claude-md-size.test.ts`, `tests/infra/stray-processes.test.ts:643`) and the texts of past goals (`intent/loop-evidence.md:59`, `plans/reliability-baseline-2.md:3`, `specs/reliability-baseline-2.md:3`). `card-loop.md` is 6,492 bytes against a cap of 6,500 (`tests/surface/templates.test.ts:20`), and `150` is as long as `200`."
 forbid: [network]
 non_goals:
-  - "`MAX_CODE_CARD_BUDGET` (250, `src/artifacts/card.ts:35`) and the `[CARD-SIZE]` rule of T0-CARD-SIZE. On 2026-11-28, 123 of 144 `todo` cards declare a budget over 150, so a lower validated limit is the owner's separate decision"
+  - "`MAX_CODE_CARD_BUDGET` (250, `src/artifacts/card.ts:35`) and the `[CARD-SIZE]` rule of T0-CARD-SIZE. On 2026-11-28, 123 of the 144 other `todo` cards declare a budget over 150, so a lower validated limit is the owner's separate decision"
   - "the `budget: 400` example line of both card templates and `budgets about <= 400 net lines per card` of both `planner.md` copies"
   - "the 200-line limit of `CLAUDE.md`"
   - "the texts of past goals that name 200 lines"
