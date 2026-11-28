@@ -1,7 +1,7 @@
 ---
 id: T0-BOARD-SUPERSEDED
 title: "The board row of a card with superseded_by says it is superseded and names the successor, instead of todo"
-status: todo
+status: merged
 branch: T0-BOARD-SUPERSEDED
 allow_paths:
   - src/state/board.ts
