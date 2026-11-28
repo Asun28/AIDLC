@@ -50,3 +50,44 @@ npm run typecheck && npm run check:tree && node --test tests/surface/lesson-reti
 ```
 - Expected exit code: 0
 - Assertion: the five lines are retired by their named replacements with no problem; `docs/LESSONS.md` only gains one line; the close hint names the command.
+
+## PR summary
+
+### What
+This change retires five lessons that later lessons supersede. It adds one lesson line and one sentence to the close hint.
+
+### Why / Intent
+Superseded lessons still went to sessions as active advice. The close hint now tells the session to retire a superseded line, so the problem does not occur again.
+
+### How / Behaviour
+`aidlc lessons retire` wrote the five entries in `docs/LESSONS-RETIRED.md`. The new lesson at line 268 keeps the SHIP warning of line 247. The close directive names the retire command.
+
+### System impact
+Delivery no longer shows lines 30, 32, 33, 194 and 247. No other line of `docs/LESSONS.md` changes.
+
+### Security
+No secret, network call or permission changes.
+
+### Tests and review
+A new surface test checks the five entries with the validator and finds no problem. The lesson-dup scenario pins the new hint text.
+
+### Risk
+Low. A base sync can move the new lesson down; the entries name lines by hash, and the test finds the line by its text.
+
+### Ownership
+The aidlc loop maintainers own the lesson files and the close directive.
+
+### Docs
+The changelog fragment records the change. The card changes no text in README.md, docs/OPERATIONS.md or docs/ARCHITECTURE.md.
+
+## Attempt evidence
+
+| Acceptance | Evidence |
+|---|---|
+| 1 | RED ef8ae66a: `T0-LESSON-DUP acceptance 3` failed on the narration without the retire sentence; green after `src/loop/card-runner.ts` adds it. |
+| 2 | RED ef8ae66a: `T0-LESSON-RETIRE-DATA acceptance 2` failed on `docs/LESSONS-RETIRED.md exists`; green after five `aidlc lessons retire` runs (30 by 105, 32 by 239, 33 by 109, 194 by 225, 247 by 268). Sweep: with the 247 entry removed, the test fails on `an entry retires line 247 by line 268`. |
+| 3 | `git diff origin/main --numstat -- docs/LESSONS.md` prints `1 0`: one line added at line 268, none removed. |
+| 4 | `changelog.d/T0-LESSON-RETIRE-DATA.md` holds one line; `tests/surface/changelog-fragments.test.ts` passes. |
+| 5 | `npm run typecheck` and `npm run check:tree` exit 0 in the DoD run. |
+
+Guard sweep: the change adds no guard in `src/`; the hint is one literal sentence, pinned exactly by acceptance 1.
