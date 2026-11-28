@@ -59,7 +59,7 @@ non_goals:
   - "the stop-and-ask line of `implementer.md` and `card-loop.md`, which card T0-CARD-CAP-150 changes"
   - "the texts that state 250 as history, named at the end of `sweep`"
 doc_sync: docs/OPERATIONS.md
-hygiene: "Owner's instruction of 2026-11-28, the budget maximum goes to 150. It settles issue 569 (three card size figures with no stated relation). Claude measured the records and Codex checked the counts and this contract before the card was logged. RED first: acceptance 1 and 3 on main. Existing prose pins follow the changed texts and no new pin is added (issue 516)."
+hygiene: "Owner's proposal of 2026-11-28 to set the budget maximum to 150, which Claude and Codex accept. It settles issue 569 (three card size figures with no stated relation). Claude measured the records, and Codex recomputed the counts and accepted this contract before the card was logged. RED first: acceptance 1 and 3 on main. Existing prose pins follow the changed texts and no new pin is added (issue 516)."
 ---
 
 # T0-CARD-SIZE-150
@@ -136,7 +136,7 @@ npm run typecheck && npm run check:tree && node --test tests/surface/card.test.t
 The `[CARD-SIZE]` limit goes from 250 to 150. The planner text and the card templates state 150 in place of 400 and 250.
 
 ### Why / Intent
-The owner's instruction of 2026-11-28, on the records in the section Why.
+The owner's proposal of 2026-11-28, which Claude and Codex accept on the records in the section Why.
 
 ### How / Behaviour
 One constant. `aidlc cards validate` blocks a card still to run that changes `src/` and declares more than 150, unless it records a `size_exception`. A draft card that `aidlc cards project` renders with no budget gets 150.
