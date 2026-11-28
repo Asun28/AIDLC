@@ -15,7 +15,7 @@ const TEXT = 'NEVER write the lesson line twice (source: lesson-dup scenario)';
 const TODAY = T0.slice(0, 10);
 const LINE = `- ${TODAY} ${CARD}: ${TEXT}`;
 const FIVE = { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, followups: true };
-const LESSON_HINT = `Record the lesson step with \`aidlc card close ${CARD} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.`;
+const LESSON_HINT = `Record the lesson step with \`aidlc card close ${CARD} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it. A lesson that supersedes or replaces an earlier line is followed, in the closure commit, by \`aidlc lessons retire --line <old> --by <new> --reason "<why>"\` run in the main checkout.`;
 
 /** A card of a fresh goal driven to CLOSE (merge verified, all seven closure steps missing). */
 function atClose(fx: Fixture) {
