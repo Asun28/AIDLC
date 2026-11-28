@@ -1,0 +1,1 @@
+- T0-LESSON-RETIRE-DATA: five lessons that later lessons supersede are retired in docs/LESSONS-RETIRED.md, a new lesson keeps the SHIP warning of the retired T0-BENCH-INPUTS line, and the close directive tells the session to run `aidlc lessons retire` for a lesson that supersedes an earlier line.
