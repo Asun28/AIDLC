@@ -182,6 +182,73 @@ export function lessonRetirements(lessonsText: string, retiredText: string): Les
   return result;
 }
 
+const RETIRED_HEADER = [
+  '# Retired lessons',
+  '',
+  'Append-only: one entry per retirement of a line of LESSONS.md beside this file,',
+  'written by `aidlc lessons retire`. An entry that does not resolve retires nothing.',
+  '',
+  'Format: `- <date> RETIRE <old date> <old ref> <old sha256> BY <new date> <new ref> <new sha256>: <reason>`',
+  '',
+  '## Entries',
+  '',
+].join('\n');
+
+/** The retired file beside a lessons file. */
+export function retiredPath(lessonsFile: string): string {
+  return path.join(path.dirname(lessonsFile), 'LESSONS-RETIRED.md');
+}
+
+/** Append one entry line as `appendLesson` appends a lesson: the header and the entry in one exclusive append, else one literal line. */
+export function appendRetirement(file: string, entryLine: string): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    appendFileSync(file, `${RETIRED_HEADER}${entryLine}\n`, { flag: 'ax' });
+    return;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  }
+  const current = readFileSync(file, 'utf8');
+  appendFileSync(file, `${current.length > 0 && !current.endsWith('\n') ? '\n' : ''}${entryLine}\n`, { flag: 'a' });
+}
+
+export type RetireResult = { ok: true; entry: string; file: string } | { ok: false; check: string };
+
+/**
+ * Retire lesson line `line` by lesson line `by` (1-based) of the lessons file: the entry carries the date, ref and SHA-256 of
+ * each line as the file holds it, and is appended to the retired file beside it only when both are lesson lines, the reason
+ * is one non-empty line, `line` is not retired already, and the validator resolves the entry; otherwise nothing is written.
+ */
+export function retireLesson(lessonsFile: string, o: { line: number; by: number; reason: string; date: string }): RetireResult {
+  const file = path.resolve(retiredPath(lessonsFile));
+  const lessonsText = existsSync(lessonsFile) ? readFileSync(lessonsFile, 'utf8') : '';
+  const retiredText = existsSync(file) ? readFileSync(file, 'utf8') : undefined;
+  const lines = lessonsText.split(/\r?\n/);
+  const lessonAt = (n: number) => parseLessonLine(lines[n - 1] ?? '');
+  const old = lessonAt(o.line);
+  if (!old) return { ok: false, check: `line ${o.line} is not a lesson line` };
+  const next = lessonAt(o.by);
+  if (!next) return { ok: false, check: `line ${o.by} is not a lesson line` };
+  if (!o.reason.trim() || !ONE_LINE.test(o.reason)) return { ok: false, check: 'the reason must be one non-empty line' };
+  if (lessonRetirements(lessonsText, retiredText ?? '').entries.some((e) => e.old.includes(o.line))) return { ok: false, check: `line ${o.line} is already retired` };
+  const hash = (n: number) => createHash('sha256').update(lines[n - 1]!, 'utf8').digest('hex');
+  const entry = `- ${o.date} RETIRE ${old.date} ${old.ref} ${hash(o.line)} BY ${next.date} ${next.ref} ${hash(o.by)}: ${o.reason}`;
+  const before = retiredText === undefined ? RETIRED_HEADER : retiredText.length > 0 && !retiredText.endsWith('\n') ? `${retiredText}\n` : retiredText;
+  const at = before.split(/\r?\n/).length;
+  const problem = lessonRetirements(lessonsText, `${before}${entry}\n`).problems.find((p) => p.line === at);
+  if (problem) return { ok: false, check: `the entry does not resolve: ${problem.check}` };
+  appendRetirement(file, entry);
+  return { ok: true, entry, file };
+}
+
+/** The doctor view of the retired file beside a lessons file: absent, or its entry lines and the validator's problems. */
+export function retirementsReport(lessonsFile: string): { present: boolean; entries: number; problems: LessonRetirements['problems'] } {
+  const file = retiredPath(lessonsFile);
+  if (!existsSync(file)) return { present: false, entries: 0, problems: [] };
+  const r = lessonRetirements(existsSync(lessonsFile) ? readFileSync(lessonsFile, 'utf8') : '', readFileSync(file, 'utf8'));
+  return { present: true, entries: r.entries.length + r.problems.length, problems: r.problems };
+}
+
 /** The lines of a lessons file without those that `LESSONS-RETIRED.md` beside it retires; an absent file has none. */
 function activeLines(file: string): string[] {
   if (!existsSync(file)) return [];

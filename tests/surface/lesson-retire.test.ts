@@ -128,6 +128,7 @@ test('T0-LESSON-RETIRE acceptance 2: a line n or m that is not a lesson line is 
 
 test('T0-LESSON-RETIRE acceptance 2: an empty or multi-line reason is refused and nothing is written [R1]', () => {
   refuses([A, N], `${RETIRED_HEAD}`, 1, 2, '', /reason/);
+  refuses([A, N], `${RETIRED_HEAD}`, 1, 2, '   ', /reason/);
   refuses([A, N], `${RETIRED_HEAD}`, 1, 2, 'one\ntwo', /reason/);
 });
 
@@ -137,6 +138,7 @@ test('T0-LESSON-RETIRE acceptance 2: a line already retired by a resolving entry
 
 test('T0-LESSON-RETIRE acceptance 2: lessons A, C, A with line 1 retired by line 2 is refused by the validator check order [R1]', () => {
   refuses([A, C, A], undefined, 1, 2, 'C after the first A only', /order/);
+  refuses([A, C, A], '# Retired lessons', 1, 2, 'a file without a last line feed', /order/);
 });
 
 const E1 = entryOf('2026-03-02', A, N, 'first');
@@ -158,6 +160,9 @@ test('T0-LESSON-RETIRE acceptance 3: an empty file another creator made gets the
   writeFileSync(file, '');
   lessons.appendRetirement(file, E1);
   assert.equal(readFileSync(file, 'utf8'), `${E1}\n`);
+  writeFileSync(file, `${E1}`);
+  lessons.appendRetirement(file, E2);
+  assert.equal(readFileSync(file, 'utf8'), `${E1}\n${E2}\n`, 'a last line without a line feed keeps its own line');
 });
 
 test('T0-LESSON-RETIRE acceptance 3: an entry appended after retireLesson read the file survives its write [R2]', () => {
