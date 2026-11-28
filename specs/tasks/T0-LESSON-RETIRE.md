@@ -1,7 +1,7 @@
 ---
 id: T0-LESSON-RETIRE
 title: "`aidlc lessons retire` appends one validated retirement entry, and `aidlc doctor` lists entries that do not resolve"
-status: todo
+status: merged
 branch: T0-LESSON-RETIRE
 allow_paths:
   - src/artifacts/lessons.ts
